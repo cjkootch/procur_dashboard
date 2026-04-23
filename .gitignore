@@ -39,6 +39,3 @@ coverage/
 
 # Trigger.dev
 .trigger/
-
-# Drizzle
-drizzle/meta/_journal.json

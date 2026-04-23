@@ -1,2 +1,3 @@
-// @procur/db — placeholder. Real implementation ships in later phases.
-export const __pkg = 'db' as const;
+export * from './schema';
+export { db } from './client';
+export type { Db } from './client';
