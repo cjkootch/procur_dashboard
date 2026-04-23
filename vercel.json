@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "pnpm turbo build --filter=@procur/marketing",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "outputDirectory": "apps/marketing/.next",
+  "framework": "nextjs"
+}

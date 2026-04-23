@@ -1,0 +1,5 @@
+{
+  "extends": "@procur/config/tsconfig/base.json",
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["node_modules", "dist", ".turbo"]
+}
