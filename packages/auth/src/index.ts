@@ -1,2 +1,2 @@
-// @procur/auth — placeholder. Real implementation ships in later phases.
-export const __pkg = 'auth' as const;
+export { requireUser, requireCompany, getCurrentUser, getCurrentCompany } from './server';
+export type { CurrentUser, CurrentCompany, AuthContext } from './types';

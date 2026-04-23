@@ -1,5 +1,9 @@
 {
-  "extends": "@procur/config/tsconfig/base.json",
+  "extends": "@procur/config/tsconfig/react-library.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["node_modules", "dist", ".turbo"]
 }

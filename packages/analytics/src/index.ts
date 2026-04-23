@@ -1,2 +1,3 @@
-// @procur/analytics — placeholder. Real implementation ships in later phases.
-export const __pkg = 'analytics' as const;
+export { PostHogProvider } from './client';
+export { captureServerEvent, flushServerEvents, getServerPostHog } from './server';
+export type { ServerEvent } from './server';

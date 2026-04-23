@@ -1,2 +1,1 @@
-// @procur/utils — placeholder. Real implementation ships in later phases.
-export const __pkg = 'utils' as const;
+export { log, type Logger, type LogLevel } from './logger';

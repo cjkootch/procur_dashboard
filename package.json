@@ -27,6 +27,15 @@
     "typescript": "^5.7.2"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["sharp", "@tailwindcss/oxide", "esbuild", "unrs-resolver"]
+    "onlyBuiltDependencies": [
+      "sharp",
+      "@tailwindcss/oxide",
+      "esbuild",
+      "unrs-resolver",
+      "@clerk/shared",
+      "@sentry/cli",
+      "core-js",
+      "protobufjs"
+    ]
   }
 }
