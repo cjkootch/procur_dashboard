@@ -4,6 +4,11 @@ import { ClerkProvider } from '@clerk/nextjs';
 import { PostHogProvider } from '@procur/analytics/client';
 import './globals.css';
 
+// The authenticated app is 100% user-dependent — nothing should be
+// statically prerendered. This also lets the build succeed without
+// Clerk credentials present (e.g. in CI).
+export const dynamic = 'force-dynamic';
+
 export const metadata: Metadata = {
   title: 'Procur App',
   description: 'Capture, pursue, and win government contracts.',
