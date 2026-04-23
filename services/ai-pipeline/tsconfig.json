@@ -1,5 +1,9 @@
 {
   "extends": "@procur/config/tsconfig/node.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", ".turbo"]
 }

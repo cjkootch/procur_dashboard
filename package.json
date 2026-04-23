@@ -36,6 +36,9 @@
       "@sentry/cli",
       "core-js",
       "protobufjs"
-    ]
+    ],
+    "overrides": {
+      "@opentelemetry/api": "1.9.0"
+    }
   }
 }

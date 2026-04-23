@@ -28,6 +28,7 @@ export abstract class TenderScraper {
   async run(options: ScraperRunOptions = {}): Promise<ScraperResult> {
     const started = Date.now();
     const errors: ScraperError[] = [];
+    const insertedIds: string[] = [];
     let recordsFound = 0;
     let recordsNew = 0;
     let recordsUpdated = 0;
@@ -62,10 +63,19 @@ export abstract class TenderScraper {
             recordsSkipped += 1;
             continue;
           }
-          const outcome = await upsertOpportunity(jurisdictionId, this.jurisdictionSlug, normalized);
-          if (outcome === 'inserted') recordsNew += 1;
-          else if (outcome === 'updated') recordsUpdated += 1;
-          else recordsSkipped += 1;
+          const { outcome, opportunityId } = await upsertOpportunity(
+            jurisdictionId,
+            this.jurisdictionSlug,
+            normalized,
+          );
+          if (outcome === 'inserted') {
+            recordsNew += 1;
+            if (opportunityId) insertedIds.push(opportunityId);
+          } else if (outcome === 'updated') {
+            recordsUpdated += 1;
+          } else {
+            recordsSkipped += 1;
+          }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           const stack = err instanceof Error ? err.stack : undefined;
@@ -114,6 +124,7 @@ export abstract class TenderScraper {
         recordsNew,
         recordsUpdated,
         recordsSkipped,
+        insertedIds,
         errors,
         durationMs,
       };
@@ -143,6 +154,7 @@ export abstract class TenderScraper {
         recordsNew,
         recordsUpdated,
         recordsSkipped,
+        insertedIds,
         errors,
         durationMs,
       };

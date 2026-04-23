@@ -42,6 +42,8 @@ export type ScraperResult = {
   recordsNew: number;
   recordsUpdated: number;
   recordsSkipped: number;
+  /** opportunities.id of every newly-inserted row this run — hand to AI pipeline. */
+  insertedIds: string[];
   errors: ScraperError[];
   durationMs: number;
 };
