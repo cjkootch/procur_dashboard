@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "./base.json",
+  "display": "Procur Next.js App",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "jsx": "preserve",
+    "allowJs": false,
+    "noEmit": true,
+    "plugins": [{ "name": "next" }],
+    "module": "ESNext",
+    "moduleResolution": "Bundler"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "procur",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Procur — AI-native government tender intelligence for emerging markets",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "type-check": "turbo run type-check",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "db:generate": "turbo run db:generate --filter=@procur/db",
+    "db:migrate": "turbo run db:migrate --filter=@procur/db",
+    "db:push": "turbo run db:push --filter=@procur/db",
+    "db:studio": "turbo run db:studio --filter=@procur/db",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json}\" --ignore-path .gitignore"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["sharp", "@tailwindcss/oxide", "esbuild", "unrs-resolver"]
+  }
+}
