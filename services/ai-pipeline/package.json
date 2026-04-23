@@ -5,11 +5,21 @@
   "type": "module",
   "scripts": {
     "type-check": "tsc --noEmit",
+    "test": "node --import tsx --test 'src/**/*.test.ts'",
     "clean": "rm -rf dist .turbo node_modules"
+  },
+  "dependencies": {
+    "@procur/ai": "workspace:*",
+    "@procur/db": "workspace:*",
+    "@procur/utils": "workspace:*",
+    "@trigger.dev/sdk": "^3.3.9",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.38.3"
   },
   "devDependencies": {
     "@procur/config": "workspace:*",
     "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
 }

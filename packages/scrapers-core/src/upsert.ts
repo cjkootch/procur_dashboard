@@ -12,7 +12,12 @@ import { parseMoney, toUsd } from './currency';
 import { buildOpportunitySlug } from './slug';
 import type { NormalizedOpportunity } from './types';
 
-export type UpsertResult = 'inserted' | 'updated' | 'skipped';
+export type UpsertOutcome = 'inserted' | 'updated' | 'skipped';
+
+export type UpsertResult = {
+  outcome: UpsertOutcome;
+  opportunityId: string | null;
+};
 
 async function resolveAgencyId(
   jurisdictionId: string,
@@ -109,9 +114,9 @@ export async function upsertOpportunity(
 
     if (created) {
       await upsertDocuments(created.id, norm);
-      return 'inserted';
+      return { outcome: 'inserted', opportunityId: created.id };
     }
-    return 'skipped';
+    return { outcome: 'skipped', opportunityId: null };
   }
 
   await db
@@ -119,7 +124,7 @@ export async function upsertOpportunity(
     .set({ ...row, updatedAt: new Date() })
     .where(eq(opportunities.id, existing.id));
   await upsertDocuments(existing.id, norm);
-  return 'updated';
+  return { outcome: 'updated', opportunityId: existing.id };
 }
 
 async function upsertDocuments(

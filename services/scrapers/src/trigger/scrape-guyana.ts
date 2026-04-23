@@ -1,13 +1,21 @@
-import { schedules } from '@trigger.dev/sdk/v3';
+import { schedules, tasks } from '@trigger.dev/sdk/v3';
 import { GuyanaNptabScraper } from '../jurisdictions/guyana-nptab/scraper';
 
-/** Run every 6 hours. */
 export const scrapeGuyana = schedules.task({
   id: 'scrape-guyana',
   cron: '0 */6 * * *',
   maxDuration: 1800,
   run: async (_payload, { ctx }) => {
     const scraper = new GuyanaNptabScraper();
-    return scraper.run({ triggerRunId: ctx.run.id });
+    const result = await scraper.run({ triggerRunId: ctx.run.id });
+
+    if (result.insertedIds.length > 0) {
+      await tasks.batchTrigger(
+        'opportunity.enrich',
+        result.insertedIds.map((opportunityId) => ({ payload: { opportunityId } })),
+      );
+    }
+
+    return result;
   },
 });
