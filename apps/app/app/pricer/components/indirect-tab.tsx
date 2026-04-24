@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import type { PricingModel } from '@procur/db';
-import { buildIndirectBuildup } from '../../../lib/pricer-queries';
+import { buildIndirectBuildup } from '../../../lib/pricer-math';
 import { updatePricingModelAction } from '../actions';
 
 /**

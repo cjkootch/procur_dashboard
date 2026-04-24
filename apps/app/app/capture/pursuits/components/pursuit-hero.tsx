@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import type { PursuitCard } from '../../../../lib/capture-queries';
 import { STAGE_LABEL } from '../../../../lib/capture-queries';
 import { flagFor, formatDate, formatMoney, timeUntil } from '../../../../lib/format';
