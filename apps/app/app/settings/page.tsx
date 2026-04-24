@@ -1,5 +1,8 @@
 import { requireCompany } from '@procur/auth';
-import { updateCompanyProfileAction } from './actions';
+import {
+  autofillCompanyProfileAction,
+  updateCompanyProfileAction,
+} from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +18,30 @@ export default async function CompanyProfilePage() {
           Accurate capabilities and industry data directly improve AI output quality.
         </p>
       </header>
+
+      <section className="mb-6 flex flex-wrap items-center gap-3 rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-4">
+        <div className="flex-1 min-w-[260px]">
+          <p className="text-sm font-medium">Autofill from website</p>
+          <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+            Fetch your website and let Sonnet suggest industry, capabilities, and founding
+            year. Existing values are preserved — new capabilities are appended.
+          </p>
+        </div>
+        <form action={autofillCompanyProfileAction} className="flex flex-wrap items-center gap-2">
+          <input
+            name="websiteUrl"
+            defaultValue={company.websiteUrl ?? ''}
+            placeholder="https://your-company.com"
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
+          />
+          <button
+            type="submit"
+            className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
+          >
+            Autofill with AI
+          </button>
+        </form>
+      </section>
 
       <form
         action={updateCompanyProfileAction}
