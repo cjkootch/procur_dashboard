@@ -8,8 +8,10 @@ import { templatesForJurisdiction } from '../../../lib/proposal-templates';
 import {
   createProposalAction,
   draftSectionAction,
+  markProposalSubmittedAction,
   regenerateComplianceAction,
   reviewProposalAction,
+  unmarkProposalSubmittedAction,
   updateComplianceMappingAction,
   updateSectionAction,
 } from '../actions';
@@ -217,6 +219,59 @@ export default async function ProposalDetailPage({
           </Link>
         </div>
       </header>
+
+      {proposal.status === 'submitted' && proposal.submittedAt ? (
+        <section className="mb-6 rounded-[var(--radius-lg)] border border-emerald-200 bg-emerald-50/40 p-5 text-emerald-900">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold">Submitted {formatDate(proposal.submittedAt)}</p>
+              {proposal.submissionConfirmation && (
+                <p className="mt-1 text-xs">
+                  Confirmation: {proposal.submissionConfirmation}
+                </p>
+              )}
+            </div>
+            <form action={unmarkProposalSubmittedAction}>
+              <input type="hidden" name="pursuitId" value={pursuitId} />
+              <button
+                type="submit"
+                className="rounded-[var(--radius-md)] border border-emerald-300 bg-white/70 px-3 py-1.5 text-xs font-medium hover:bg-white"
+                title="Re-open for revision"
+              >
+                Reopen for revision
+              </button>
+            </form>
+          </div>
+        </section>
+      ) : (
+        <section className="mb-6 flex flex-wrap items-center gap-3 rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-4">
+          <div className="flex-1 min-w-[260px]">
+            <p className="text-sm font-medium">Ready to submit?</p>
+            <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+              Recording a submission locks the proposal, captures a confirmation
+              reference, and advances the pursuit to the submitted stage. You can
+              reopen later if needed.
+            </p>
+          </div>
+          <form
+            action={markProposalSubmittedAction}
+            className="flex flex-wrap items-center gap-2"
+          >
+            <input type="hidden" name="pursuitId" value={pursuitId} />
+            <input
+              name="submissionConfirmation"
+              placeholder="Confirmation ref (optional)"
+              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
+            />
+            <button
+              type="submit"
+              className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)]"
+            >
+              Mark submitted
+            </button>
+          </form>
+        </section>
+      )}
 
       <section className="mb-8 grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-6 md:grid-cols-4">
         <Fact

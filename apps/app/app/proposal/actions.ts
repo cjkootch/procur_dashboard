@@ -585,3 +585,90 @@ export async function reviewProposalAction(formData: FormData): Promise<void> {
 
   revalidatePath(`/proposal/${pursuitId}`);
 }
+
+/**
+ * Records that a proposal was submitted. Captures an optional submission
+ * confirmation (ref number, receipt text), sets status=submitted, records
+ * submittedBy + submittedAt, and advances the pursuit stage to 'submitted'
+ * if it isn't already past that point.
+ */
+export async function markProposalSubmittedAction(formData: FormData): Promise<void> {
+  const { user, company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const confirmation = String(formData.get('submissionConfirmation') ?? '').trim();
+
+  const pursuit = await db.query.pursuits.findFirst({
+    where: and(eq(pursuits.id, pursuitId), eq(pursuits.companyId, company.id)),
+    columns: { id: true, stage: true },
+  });
+  if (!pursuit) throw new Error('pursuit not found');
+
+  const proposal = await db.query.proposals.findFirst({
+    where: eq(proposals.pursuitId, pursuitId),
+    columns: { id: true },
+  });
+  if (!proposal) throw new Error('proposal not found');
+
+  const now = new Date();
+  await db
+    .update(proposals)
+    .set({
+      status: 'submitted',
+      submittedAt: now,
+      submittedBy: user.id,
+      submissionConfirmation: confirmation.length > 0 ? confirmation : null,
+      updatedAt: now,
+    })
+    .where(eq(proposals.id, proposal.id));
+
+  const advanceableStages = new Set([
+    'identification',
+    'qualification',
+    'capture_planning',
+    'proposal_development',
+  ]);
+  if (advanceableStages.has(pursuit.stage)) {
+    await db
+      .update(pursuits)
+      .set({ stage: 'submitted', updatedAt: now })
+      .where(eq(pursuits.id, pursuitId));
+    revalidatePath(`/capture/pursuits/${pursuitId}`);
+  }
+
+  revalidatePath(`/proposal/${pursuitId}`);
+}
+
+/**
+ * Reverts a submission (for fixing a mis-click or re-opening for revision).
+ * Proposal status → in_review. Pursuit stage is left alone — user can move
+ * it explicitly from the capture page.
+ */
+export async function unmarkProposalSubmittedAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+
+  const pursuit = await db.query.pursuits.findFirst({
+    where: and(eq(pursuits.id, pursuitId), eq(pursuits.companyId, company.id)),
+    columns: { id: true },
+  });
+  if (!pursuit) throw new Error('pursuit not found');
+
+  const proposal = await db.query.proposals.findFirst({
+    where: eq(proposals.pursuitId, pursuitId),
+    columns: { id: true },
+  });
+  if (!proposal) throw new Error('proposal not found');
+
+  await db
+    .update(proposals)
+    .set({
+      status: 'in_review',
+      submittedAt: null,
+      submittedBy: null,
+      submissionConfirmation: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(proposals.id, proposal.id));
+
+  revalidatePath(`/proposal/${pursuitId}`);
+}
