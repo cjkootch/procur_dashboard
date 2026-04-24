@@ -1,29 +1,27 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { and, eq } from 'drizzle-orm';
-import { contracts, db } from '@procur/db';
+import { and, asc, eq } from 'drizzle-orm';
+import { contracts, db, documents, opportunities } from '@procur/db';
 import { requireCompany } from '@procur/auth';
 import {
   getPursuitById,
   getPursuitRaw,
   listPursuitTasks,
-  STAGE_LABEL,
-  STAGE_ORDER,
-  TERMINAL_STAGES,
+  type PursuitStageKey,
 } from '../../../../lib/capture-queries';
-import { flagFor, formatDate, formatMoney, timeUntil } from '../../../../lib/format';
-import {
-  addTaskAction,
-  moveStageAction,
-  toggleTaskAction,
-  updatePursuitAction,
-} from '../../actions';
-import { createContractFromPursuitAction } from '../../../contract/actions';
 import { CaptureQuestionsForm } from '../../components/capture-questions-form';
+import {
+  isTabKey,
+  PursuitLeftNav,
+  type TabKey,
+} from '../../pursuits/components/left-nav';
+import { PursuitHero } from '../../pursuits/components/pursuit-hero';
+import { PursuitRightRail } from '../../pursuits/components/right-rail';
+import { PursuitOverviewTab } from '../../pursuits/components/overview-tab';
+import { PursuitTasksTab } from '../../pursuits/components/tasks-tab';
+import { PursuitDocumentsTab } from '../../pursuits/components/documents-tab';
 
 export const dynamic = 'force-dynamic';
-
-type Params = { id: string };
 
 const CAPTURE_QUESTION_BLANK = {
   winThemes: [],
@@ -37,31 +35,57 @@ const CAPTURE_QUESTION_BLANK = {
   customerRelationships: [],
 };
 
+const CAPTURE_QUESTION_KEYS = [
+  'winThemes',
+  'customerBudget',
+  'customerPainPoints',
+  'incumbents',
+  'competitors',
+  'differentiators',
+  'risksAndMitigations',
+  'teamPartners',
+] as const;
+
+const DISCOVER_URL = process.env.NEXT_PUBLIC_DISCOVER_URL ?? 'https://discover.procur.app';
+
 export default async function PursuitDetailPage({
   params,
+  searchParams,
 }: {
-  params: Promise<Params>;
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const { id } = await params;
+  const { tab: tabParam } = await searchParams;
+  const tab: TabKey = isTabKey(tabParam) ? tabParam : 'overview';
+
   const { company } = await requireCompany();
   const card = await getPursuitById(company.id, id);
   if (!card) notFound();
 
-  const [raw, tasks] = await Promise.all([
+  const [raw, tasks, oppMeta] = await Promise.all([
     getPursuitRaw(company.id, id),
     listPursuitTasks(id),
+    db
+      .select({
+        description: opportunities.description,
+        aiSummary: opportunities.aiSummary,
+      })
+      .from(opportunities)
+      .where(eq(opportunities.id, card.opportunity.id))
+      .limit(1),
   ]);
-  const captureAnswers = (raw?.captureAnswers as Record<string, unknown> | null) ?? CAPTURE_QUESTION_BLANK;
+  const oppRow = oppMeta[0];
+
+  const captureAnswers =
+    (raw?.captureAnswers as Record<string, unknown> | null) ?? CAPTURE_QUESTION_BLANK;
+  const answeredCount = countAnsweredQuestions(captureAnswers);
   const canAdvanceToProposal = hasCoreCaptureAnswers(captureAnswers);
 
-  const op = card.opportunity;
-  const countdown = timeUntil(op.deadlineAt);
-  const value = formatMoney(op.valueEstimate, op.currency);
+  const openTaskCount = tasks.filter((t) => !t.completedAt).length;
 
-  const openTasks = tasks.filter((t) => !t.completedAt);
-  const doneTasks = tasks.filter((t) => t.completedAt);
-
-  const existingContract =
+  // Linked contract (only relevant when this pursuit has been awarded).
+  const linkedContract =
     card.stage === 'awarded'
       ? await db.query.contracts.findFirst({
           where: and(eq(contracts.pursuitId, id), eq(contracts.companyId, company.id)),
@@ -69,9 +93,29 @@ export default async function PursuitDetailPage({
         })
       : null;
 
+  // Documents attached to the underlying opportunity. Loaded only when the
+  // Documents tab is active to avoid an extra query on every page view.
+  const docRows =
+    tab === 'documents'
+      ? await db
+          .select({
+            id: documents.id,
+            title: documents.title,
+            documentType: documents.documentType,
+            originalUrl: documents.originalUrl,
+            r2Url: documents.r2Url,
+            pageCount: documents.pageCount,
+            fileSize: documents.fileSize,
+            processingStatus: documents.processingStatus,
+          })
+          .from(documents)
+          .where(eq(documents.opportunityId, card.opportunity.id))
+          .orderBy(asc(documents.createdAt))
+      : [];
+
   return (
-    <div className="mx-auto max-w-5xl px-8 py-10">
-      <nav className="mb-4 text-sm text-[color:var(--color-muted-foreground)]">
+    <div className="mx-auto max-w-7xl px-6 py-6">
+      <nav className="mb-3 text-xs text-[color:var(--color-muted-foreground)]">
         <Link href="/capture" className="hover:underline">
           Capture
         </Link>
@@ -79,312 +123,90 @@ export default async function PursuitDetailPage({
         <Link href="/capture/pursuits" className="hover:underline">
           Pursuits
         </Link>
+        <span> / </span>
+        <span className="text-[color:var(--color-foreground)]">{card.opportunity.title}</span>
       </nav>
 
-      <header className="mb-8 flex items-start gap-4">
-        <span aria-label={op.jurisdictionName} className="text-3xl leading-none">
-          {flagFor(op.jurisdictionCountry)}
-        </span>
-        <div className="flex-1">
-          <h1 className="text-2xl font-semibold tracking-tight">{op.title}</h1>
-          <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
-            {op.jurisdictionName}
-            {op.agencyName && <> · {op.agencyName}</>}
-            {op.referenceNumber && <> · {op.referenceNumber}</>}
-          </p>
-        </div>
-        {op.slug && (
-          <a
-            href={`${process.env.NEXT_PUBLIC_DISCOVER_URL ?? 'https://discover.procur.app'}/opportunities/${op.slug}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm underline"
-          >
-            View on Discover ↗
-          </a>
-        )}
-      </header>
+      <PursuitHero card={card} raw={oppRow ?? null} discoverUrl={DISCOVER_URL} />
 
-      <section className="mb-8 grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-6 md:grid-cols-4">
-        <Fact label="Stage" value={STAGE_LABEL[card.stage]} />
-        <Fact
-          label="Closes"
-          value={op.deadlineAt ? formatDate(op.deadlineAt) : '—'}
-          sub={countdown && countdown !== 'closed' ? `in ${countdown}` : undefined}
+      {/* 3-col layout on desktop: left mini-nav | main content | right rail.
+          Stacks vertically on narrow screens so nothing gets squeezed. */}
+      <div className="mt-6 grid gap-6 md:grid-cols-[13rem_1fr_16rem]">
+        <PursuitLeftNav
+          pursuitId={id}
+          activeTab={tab}
+          activeStage={card.stage as PursuitStageKey}
+          canAdvanceToProposal={canAdvanceToProposal}
+          captureAnswersCount={answeredCount}
+          totalCaptureQuestions={CAPTURE_QUESTION_KEYS.length}
+          openTaskCount={openTaskCount}
         />
-        <Fact label="Value" value={value ?? '—'} />
-        <Fact
-          label="P(Win)"
-          value={card.pWin != null ? `${Math.round(card.pWin * 100)}%` : '—'}
-        />
-      </section>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-          Stage
-        </h2>
-        <div className="flex flex-wrap gap-2">
-          {STAGE_ORDER.map((stage) => {
-            const isCurrent = card.stage === stage;
-            const blocked =
-              stage === 'proposal_development' &&
-              !canAdvanceToProposal &&
-              card.stage !== 'proposal_development';
-            return (
-              <form key={stage} action={moveStageAction}>
-                <input type="hidden" name="pursuitId" value={card.id} />
-                <input type="hidden" name="stage" value={stage} />
-                <button
-                  type="submit"
-                  disabled={isCurrent || blocked}
-                  title={blocked ? 'Answer capture questions first' : undefined}
-                  className={`rounded-full border px-3 py-1 text-xs transition ${
-                    isCurrent
-                      ? 'border-[color:var(--color-foreground)] bg-[color:var(--color-foreground)] text-[color:var(--color-background)]'
-                      : blocked
-                        ? 'cursor-not-allowed border-[color:var(--color-border)] opacity-50'
-                        : 'border-[color:var(--color-border)] hover:border-[color:var(--color-foreground)]'
-                  }`}
-                >
-                  {STAGE_LABEL[stage]}
-                </button>
-              </form>
-            );
-          })}
-        </div>
-        {TERMINAL_STAGES.includes(card.stage) && (
-          <p className="mt-2 text-xs text-[color:var(--color-muted-foreground)]">
-            This pursuit is closed. Move it back to a prior stage to continue work.
-          </p>
-        )}
-      </section>
-
-      {card.stage === 'awarded' && (
-        <section className="mb-8 flex flex-wrap items-center gap-3 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30 p-4">
-          <div className="flex-1 min-w-[260px]">
-            <p className="text-sm font-medium">Congratulations — this pursuit was awarded.</p>
-            <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
-              Move the win into Contract to track obligations, deliverables, and period of
-              performance.
-            </p>
-          </div>
-          {existingContract ? (
-            <Link
-              href={`/contract/${existingContract.id}`}
-              className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-4 py-2 text-sm font-medium"
-            >
-              View contract →
-            </Link>
-          ) : (
-            <form action={createContractFromPursuitAction}>
-              <input type="hidden" name="pursuitId" value={card.id} />
-              <button
-                type="submit"
-                className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)]"
-              >
-                Create contract
-              </button>
-            </form>
+        <main className="min-w-0">
+          {tab === 'overview' && (
+            <PursuitOverviewTab
+              card={card}
+              rawAiSummary={oppRow?.aiSummary ?? null}
+              rawDescription={oppRow?.description ?? null}
+            />
           )}
-        </section>
-      )}
-
-      <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-          Quick edit
-        </h2>
-        <form
-          action={updatePursuitAction}
-          className="grid gap-3 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4 md:grid-cols-3"
-        >
-          <input type="hidden" name="pursuitId" value={card.id} />
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-[color:var(--color-muted-foreground)]">
-              P(Win) — 0.00 to 1.00
-            </span>
-            <input
-              name="pWin"
-              type="number"
-              step="0.05"
-              min="0"
-              max="1"
-              defaultValue={card.pWin ?? ''}
-              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm md:col-span-2">
-            <span className="text-xs text-[color:var(--color-muted-foreground)]">Notes</span>
-            <input
-              name="notes"
-              type="text"
-              defaultValue={card.notes ?? ''}
-              placeholder="Internal notes"
-              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1"
-            />
-          </label>
-          <div className="md:col-span-3">
-            <button
-              type="submit"
-              className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm text-[color:var(--color-background)]"
-            >
-              Save
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-          Capture questions
-          {!canAdvanceToProposal && (
-            <span className="ml-2 rounded-full bg-[color:var(--color-brand)]/10 px-2 py-0.5 text-xs font-normal text-[color:var(--color-brand)]">
-              Required before Proposal Development
-            </span>
-          )}
-        </h2>
-        <CaptureQuestionsForm pursuitId={card.id} initial={captureAnswers} />
-      </section>
-
-      <section className="mb-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-          Tasks ({openTasks.length} open)
-        </h2>
-
-        <form
-          action={addTaskAction}
-          className="mb-4 flex flex-wrap items-end gap-2 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4"
-        >
-          <input type="hidden" name="pursuitId" value={card.id} />
-          <label className="flex flex-1 flex-col gap-1 text-sm">
-            <span className="text-xs text-[color:var(--color-muted-foreground)]">
-              New task
-            </span>
-            <input
-              name="title"
-              required
-              placeholder="Meet with customer / Research incumbent / Draft past performance"
-              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-[color:var(--color-muted-foreground)]">Due</span>
-            <input
-              name="dueDate"
-              type="date"
-              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-[color:var(--color-muted-foreground)]">Category</span>
-            <select
-              name="category"
-              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
-            >
-              <option value="">—</option>
-              <option value="research">Research</option>
-              <option value="outreach">Outreach</option>
-              <option value="drafting">Drafting</option>
-              <option value="review">Review</option>
-              <option value="submission">Submission</option>
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-[color:var(--color-muted-foreground)]">Priority</span>
-            <select
-              name="priority"
-              defaultValue="medium"
-              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="urgent">Urgent</option>
-            </select>
-          </label>
-          <button
-            type="submit"
-            className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm text-[color:var(--color-background)]"
-          >
-            Add
-          </button>
-        </form>
-
-        <ul className="space-y-2">
-          {openTasks.map((t) => (
-            <li
-              key={t.id}
-              className="flex items-start justify-between rounded-[var(--radius-md)] border border-[color:var(--color-border)] p-3"
-            >
-              <div className="flex items-start gap-3">
-                <form action={toggleTaskAction} className="mt-0.5">
-                  <input type="hidden" name="taskId" value={t.id} />
-                  <input type="hidden" name="pursuitId" value={card.id} />
-                  <button
-                    type="submit"
-                    className="h-4 w-4 rounded border border-[color:var(--color-border)] bg-[color:var(--color-background)] hover:border-[color:var(--color-foreground)]"
-                    aria-label="Mark complete"
-                  />
-                </form>
-                <div>
-                  <p className="text-sm font-medium">{t.title}</p>
-                  <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-                    {t.dueDate && <>Due {t.dueDate} · </>}
-                    {t.category && <>{t.category} · </>}
-                    {t.priority}
-                  </p>
-                </div>
+          {tab === 'capture-questions' && (
+            <div className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-5">
+              <div className="mb-4 flex items-baseline justify-between">
+                <h2 className="text-sm font-semibold">
+                  Capture questions
+                  <span className="ml-2 text-xs font-normal text-[color:var(--color-muted-foreground)]">
+                    {answeredCount} of {CAPTURE_QUESTION_KEYS.length} answered
+                  </span>
+                </h2>
+                {!canAdvanceToProposal && (
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                    Required before Proposal Development
+                  </span>
+                )}
               </div>
-            </li>
-          ))}
-          {doneTasks.length > 0 && (
-            <>
-              <li className="pt-3 text-xs font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                Completed ({doneTasks.length})
-              </li>
-              {doneTasks.map((t) => (
-                <li
-                  key={t.id}
-                  className="flex items-start justify-between rounded-[var(--radius-md)] border border-[color:var(--color-border)] p-3 opacity-60"
-                >
-                  <div className="flex items-start gap-3">
-                    <form action={toggleTaskAction} className="mt-0.5">
-                      <input type="hidden" name="taskId" value={t.id} />
-                      <input type="hidden" name="pursuitId" value={card.id} />
-                      <button
-                        type="submit"
-                        className="h-4 w-4 rounded border border-[color:var(--color-foreground)] bg-[color:var(--color-foreground)] text-[color:var(--color-background)]"
-                        aria-label="Mark incomplete"
-                      >
-                        ✓
-                      </button>
-                    </form>
-                    <p className="text-sm line-through">{t.title}</p>
-                  </div>
-                </li>
-              ))}
-            </>
+              <CaptureQuestionsForm pursuitId={card.id} initial={captureAnswers} />
+            </div>
           )}
-          {tasks.length === 0 && (
-            <li className="rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] p-6 text-center text-sm text-[color:var(--color-muted-foreground)]">
-              No tasks yet — add the first one above.
-            </li>
+          {tab === 'tasks' && <PursuitTasksTab pursuitId={card.id} tasks={tasks} />}
+          {tab === 'documents' && (
+            <PursuitDocumentsTab
+              docs={docRows.map((d) => ({
+                id: d.id,
+                title: d.title,
+                documentType: d.documentType,
+                originalUrl: d.originalUrl,
+                r2Url: d.r2Url,
+                pageCount: d.pageCount,
+                fileSize: d.fileSize,
+                processingStatus: d.processingStatus,
+              }))}
+              discoverUrl={DISCOVER_URL}
+              opportunitySlug={card.opportunity.slug}
+            />
           )}
-        </ul>
-      </section>
+        </main>
+
+        <PursuitRightRail
+          card={card}
+          assignedUserName={card.assignedUserName}
+          linkedContractId={linkedContract?.id ?? null}
+        />
+      </div>
     </div>
   );
 }
 
-function Fact({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div>
-      <p className="text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-        {label}
-      </p>
-      <p className="mt-1 text-base font-semibold">{value}</p>
-      {sub && <p className="text-xs text-[color:var(--color-muted-foreground)]">{sub}</p>}
-    </div>
-  );
+function countAnsweredQuestions(a: Record<string, unknown>): number {
+  let n = 0;
+  for (const k of CAPTURE_QUESTION_KEYS) {
+    const v = a[k];
+    if (v == null) continue;
+    if (Array.isArray(v) && v.length === 0) continue;
+    if (typeof v === 'string' && v.trim().length === 0) continue;
+    n += 1;
+  }
+  return n;
 }
 
 function hasCoreCaptureAnswers(a: Record<string, unknown>): boolean {
