@@ -1,5 +1,5 @@
 import { schedules, tasks } from '@trigger.dev/sdk/v3';
-import { JamaicaGojepScraper } from '../jurisdictions/jamaica-gojep/scraper';
+import { JamaicaGojepScraper } from '../../jurisdictions/jamaica-gojep/scraper';
 
 export const scrapeJamaica = schedules.task({
   id: 'scrape-jamaica',
@@ -12,7 +12,7 @@ export const scrapeJamaica = schedules.task({
     if (result.insertedIds.length > 0) {
       await tasks.batchTrigger(
         'opportunity.enrich',
-        result.insertedIds.map((opportunityId) => ({ payload: { opportunityId } })),
+        result.insertedIds.map((opportunityId: string) => ({ payload: { opportunityId } })),
       );
     }
 

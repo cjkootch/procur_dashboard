@@ -1,7 +1,7 @@
 import { defineConfig } from '@trigger.dev/sdk/v3';
 
 export default defineConfig({
-  project: 'procur-scrapers',
+  project: 'proj_eigtroxsysxjbjgeyuql',
   runtime: 'node',
   logLevel: 'info',
   maxDuration: 3600,
@@ -15,5 +15,9 @@ export default defineConfig({
       randomize: true,
     },
   },
-  dirs: ['./src/trigger'],
+  // Only bundle cheerio-based scrapers (Jamaica + Guyana) for now.
+  // Trinidad uses Playwright which needs a build extension that isn't in
+  // this pinned trigger.dev version; we'll re-enable once the @trigger.dev
+  // packages can be upgraded.
+  dirs: ['./src/trigger/scheduled'],
 });

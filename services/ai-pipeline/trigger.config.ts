@@ -1,7 +1,7 @@
 import { defineConfig } from '@trigger.dev/sdk/v3';
 
 export default defineConfig({
-  project: 'procur-ai-pipeline',
+  project: 'proj_jfecvhrkzlltppanqzkv',
   runtime: 'node',
   logLevel: 'info',
   maxDuration: 900,

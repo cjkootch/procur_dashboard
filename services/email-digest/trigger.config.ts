@@ -1,7 +1,7 @@
 import { defineConfig } from '@trigger.dev/sdk/v3';
 
 export default defineConfig({
-  project: 'procur-email-digest',
+  project: 'proj_yhwcpgkdplxunhhcqfxb',
   runtime: 'node',
   logLevel: 'info',
   maxDuration: 900,

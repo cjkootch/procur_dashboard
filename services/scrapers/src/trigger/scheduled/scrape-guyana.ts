@@ -1,5 +1,5 @@
 import { schedules, tasks } from '@trigger.dev/sdk/v3';
-import { GuyanaNptabScraper } from '../jurisdictions/guyana-nptab/scraper';
+import { GuyanaNptabScraper } from '../../jurisdictions/guyana-nptab/scraper';
 
 export const scrapeGuyana = schedules.task({
   id: 'scrape-guyana',
@@ -12,7 +12,7 @@ export const scrapeGuyana = schedules.task({
     if (result.insertedIds.length > 0) {
       await tasks.batchTrigger(
         'opportunity.enrich',
-        result.insertedIds.map((opportunityId) => ({ payload: { opportunityId } })),
+        result.insertedIds.map((opportunityId: string) => ({ payload: { opportunityId } })),
       );
     }
 
