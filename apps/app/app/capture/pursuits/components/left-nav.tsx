@@ -1,16 +1,23 @@
 import Link from 'next/link';
 
-export type TabKey = 'overview' | 'capture-questions' | 'tasks' | 'documents';
+export type TabKey = 'overview' | 'activity' | 'capture-questions' | 'tasks' | 'documents';
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'overview', label: 'Overview' },
+  { key: 'activity', label: 'Activity' },
   { key: 'capture-questions', label: 'Capture Questions' },
   { key: 'tasks', label: 'Tasks' },
   { key: 'documents', label: 'Documents' },
 ];
 
 export function isTabKey(v: string | undefined): v is TabKey {
-  return v === 'overview' || v === 'capture-questions' || v === 'tasks' || v === 'documents';
+  return (
+    v === 'overview' ||
+    v === 'activity' ||
+    v === 'capture-questions' ||
+    v === 'tasks' ||
+    v === 'documents'
+  );
 }
 
 /**

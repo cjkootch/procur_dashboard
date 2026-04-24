@@ -18,6 +18,7 @@ import {
 import { PursuitHero } from '../../pursuits/components/pursuit-hero';
 import { PursuitRightRail } from '../../pursuits/components/right-rail';
 import { PursuitOverviewTab } from '../../pursuits/components/overview-tab';
+import { PursuitActivityTab } from '../../pursuits/components/activity-tab';
 import { PursuitTasksTab } from '../../pursuits/components/tasks-tab';
 import { PursuitDocumentsTab } from '../../pursuits/components/documents-tab';
 
@@ -149,6 +150,9 @@ export default async function PursuitDetailPage({
               rawAiSummary={oppRow?.aiSummary ?? null}
               rawDescription={oppRow?.description ?? null}
             />
+          )}
+          {tab === 'activity' && raw && (
+            <PursuitActivityTab pursuitId={card.id} pursuit={raw} tasks={tasks} />
           )}
           {tab === 'capture-questions' && (
             <div className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-5">
