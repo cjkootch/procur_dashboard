@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { requireCompany } from '@procur/auth';
+import { getBudgetStatus } from '@procur/ai';
 import type { PlanKey } from '../../lib/stripe';
 import { openCustomerPortalAction, startCheckoutAction } from './actions';
 
@@ -67,6 +68,7 @@ export default async function BillingPage({
 
   const { company } = await requireCompany();
   const currentTier = company.planTier;
+  const budget = await getBudgetStatus(company.id);
 
   return (
     <div className="mx-auto max-w-5xl px-8 py-10">
@@ -86,6 +88,47 @@ export default async function BillingPage({
           )}
         </p>
       </header>
+
+      <section className="mb-6 rounded-[var(--radius-md)] border border-[color:var(--color-border)] p-4">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold">AI usage this month</h2>
+          <div className="text-xs text-[color:var(--color-muted-foreground)]">
+            {budget.monthStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+          </div>
+        </div>
+        <div className="flex items-baseline justify-between text-sm">
+          <div>
+            <span className="font-medium">${(budget.usedCents / 100).toFixed(2)}</span>
+            {budget.limitCents !== null && (
+              <span className="text-[color:var(--color-muted-foreground)]">
+                {' '}of ${(budget.limitCents / 100).toFixed(2)} cap
+              </span>
+            )}
+            {budget.limitCents === null && (
+              <span className="text-[color:var(--color-muted-foreground)]"> (enterprise — no cap)</span>
+            )}
+          </div>
+          {budget.exceeded && (
+            <span className="rounded-[var(--radius-sm)] bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-700">
+              Budget exceeded
+            </span>
+          )}
+        </div>
+        {budget.limitCents !== null && (
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[color:var(--color-muted)]/50">
+            <div
+              className={`h-full ${budget.exceeded ? 'bg-red-600' : 'bg-[color:var(--color-foreground)]'}`}
+              style={{
+                width: `${Math.min(100, (budget.usedCents / budget.limitCents) * 100).toFixed(1)}%`,
+              }}
+            />
+          </div>
+        )}
+        <p className="mt-2 text-xs text-[color:var(--color-muted-foreground)]">
+          Covers the Procur Assistant, AI proposal drafting + review, compliance auto-mapping,
+          pricer extraction, and company-profile autofill. Embeddings included.
+        </p>
+      </section>
 
       {reason === 'pursuit-cap' && (
         <div className="mb-6 rounded-[var(--radius-md)] border border-[color:var(--color-brand)] bg-[color:var(--color-brand)]/5 p-4 text-sm">

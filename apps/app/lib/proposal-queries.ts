@@ -14,6 +14,7 @@ export type ProposalListRow = {
   pursuitId: string;
   opportunityId: string;
   opportunityTitle: string;
+  opportunityType: string | null;
   jurisdictionName: string;
   jurisdictionCountry: string;
   agencyName: string | null;
@@ -32,6 +33,7 @@ export async function listCompanyProposals(companyId: string): Promise<ProposalL
       pursuitId: pursuits.id,
       opportunityId: opportunities.id,
       opportunityTitle: opportunities.title,
+      opportunityType: opportunities.type,
       jurisdictionName: jurisdictions.name,
       jurisdictionCountry: jurisdictions.countryCode,
       agencyName: agencies.name,
@@ -67,6 +69,7 @@ export async function listCompanyProposals(companyId: string): Promise<ProposalL
       pursuitId: r.pursuitId,
       opportunityId: r.opportunityId,
       opportunityTitle: r.opportunityTitle,
+      opportunityType: r.opportunityType,
       jurisdictionName: r.jurisdictionName,
       jurisdictionCountry: r.jurisdictionCountry,
       agencyName: r.agencyName,

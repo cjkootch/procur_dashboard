@@ -9,14 +9,13 @@ import {
   summarize,
 } from '../../../lib/pricer-queries';
 import { flagFor, formatDate, formatMoney } from '../../../lib/format';
-import {
-  addLaborCategoryAction,
-  createPricingModelAction,
-  extractPricingStructureAction,
-  removeLaborCategoryAction,
-  updateLaborCategoryAction,
-  updatePricingModelAction,
-} from '../actions';
+import { createPricingModelAction, extractPricingStructureAction } from '../actions';
+import { isTabKey, PricerTabNav, type TabKey } from '../components/tab-nav';
+import { PricerHero } from '../components/pricer-hero';
+import { OverviewTab } from '../components/overview-tab';
+import { LaborTab } from '../components/labor-tab';
+import { IndirectTab } from '../components/indirect-tab';
+import { LineItemsTab } from '../components/line-items-tab';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,36 +26,27 @@ const STRATEGY_LABEL: Record<string, string> = {
   time_materials: 'Time & materials',
 };
 
+type Params = { pursuitId: string };
+type Search = { tab?: string };
+
 export default async function PricerDetailPage({
   params,
+  searchParams,
 }: {
-  params: Promise<{ pursuitId: string }>;
+  params: Promise<Params>;
+  searchParams: Promise<Search>;
 }) {
   const { pursuitId } = await params;
+  const { tab: tabParam } = await searchParams;
+  const tab: TabKey = isTabKey(tabParam) ? tabParam : 'overview';
+
   const { company } = await requireCompany();
   const detail = await getPricerByPursuitId(company.id, pursuitId);
   if (!detail) notFound();
 
   const { pricingModel, laborCategories, opportunity } = detail;
 
-  const [oppContext] = await db
-    .select({
-      category: opportunities.category,
-      jurisdictionId: opportunities.jurisdictionId,
-      agencyId: opportunities.agencyId,
-    })
-    .from(opportunities)
-    .where(eq(opportunities.id, opportunity.id))
-    .limit(1);
-
-  const benchmark = oppContext
-    ? await getHistoricalBenchmark(
-        oppContext.category,
-        oppContext.jurisdictionId,
-        oppContext.agencyId,
-      )
-    : null;
-
+  // Empty-state: no pricing model yet — keep the existing create flow.
   if (!pricingModel) {
     return (
       <div className="mx-auto max-w-3xl px-8 py-10">
@@ -97,411 +87,142 @@ export default async function PricerDetailPage({
 
   const summary = summarize(pricingModel, laborCategories);
   const currency = pricingModel.currency ?? 'USD';
+  const escalationPct = Number.parseFloat(pricingModel.escalationRate ?? '0') || 0;
+  const targetFeePct = Number.parseFloat(pricingModel.targetFeePct ?? '0') || 0;
+  const directLabor = summary.totalLaborCost / Math.max(summary.wrapRate, 0.0001);
+
+  // Historical benchmark only on the Overview tab.
+  const [oppContext] = await db
+    .select({
+      category: opportunities.category,
+      jurisdictionId: opportunities.jurisdictionId,
+      agencyId: opportunities.agencyId,
+    })
+    .from(opportunities)
+    .where(eq(opportunities.id, opportunity.id))
+    .limit(1);
+
+  const benchmark =
+    tab === 'overview' && oppContext
+      ? await getHistoricalBenchmark(
+          oppContext.category,
+          oppContext.jurisdictionId,
+          oppContext.agencyId,
+        )
+      : null;
 
   return (
-    <div className="mx-auto max-w-6xl px-8 py-10">
+    <div className="mx-auto max-w-6xl px-6 py-6">
       <Breadcrumbs title={opportunity.title} />
 
-      <header className="mb-6 flex items-start justify-between gap-4">
+      <header className="mb-4 flex items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 text-sm text-[color:var(--color-muted-foreground)]">
-            <span className="text-lg">{flagFor(opportunity.jurisdictionCountry)}</span>
+          <div className="flex items-center gap-2 text-xs text-[color:var(--color-muted-foreground)]">
+            <span className="text-base">{flagFor(opportunity.jurisdictionCountry)}</span>
             <span>
               {opportunity.jurisdictionName}
               {opportunity.agencyName && <> · {opportunity.agencyName}</>}
             </span>
           </div>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight">{opportunity.title}</h1>
+          <h1 className="mt-1 text-xl font-semibold tracking-tight">{opportunity.title}</h1>
+          <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+            Procur Pricer · Manage pricing strategy, labor categories, and cost estimates
+            {opportunity.deadlineAt && <> · Bid by {formatDate(opportunity.deadlineAt)}</>}
+          </p>
         </div>
-        <div className="flex flex-col items-end gap-2 text-sm">
+        <div className="flex flex-col items-end gap-2 text-xs">
           <Link href={`/capture/pursuits/${pursuitId}`} className="underline">
             Pursuit details →
           </Link>
           <a
             href={`/api/pricer/${pursuitId}/export`}
-            className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[color:var(--color-muted)]/40"
+            className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 font-medium hover:bg-[color:var(--color-muted)]/40"
           >
             Download .xlsx
           </a>
+          <form action={extractPricingStructureAction}>
+            <input type="hidden" name="pursuitId" value={pursuitId} />
+            <button
+              type="submit"
+              className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 font-medium hover:bg-[color:var(--color-muted)]/40"
+            >
+              Extract from Documents
+            </button>
+          </form>
         </div>
       </header>
 
-      <section className="mb-8 grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-6 md:grid-cols-5">
-        <Fact
-          label="Target value"
-          value={formatMoney(summary.totalValue, currency) ?? '—'}
-          sub={summary.totalValueUsd && currency !== 'USD' ? `≈ ${formatMoney(summary.totalValueUsd, 'USD')}` : undefined}
-        />
-        <Fact label="Labor cost" value={formatMoney(summary.totalLaborCost, currency) ?? '—'} />
-        <Fact label="Target fee" value={formatMoney(summary.targetFee, currency) ?? '—'} />
-        <Fact label="Wrap rate" value={`${summary.wrapRate.toFixed(4)}x`} />
-        <Fact
-          label="Period"
-          value={`${summary.periodYears} year${summary.periodYears === 1 ? '' : 's'}`}
-          sub={opportunity.deadlineAt ? `Bid by ${formatDate(opportunity.deadlineAt)}` : undefined}
-        />
-      </section>
-
-      <section className="mb-6 flex flex-wrap items-start gap-3 rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-4">
-        <div className="flex-1 min-w-[260px]">
-          <p className="text-sm font-medium">AI pricing extraction</p>
-          <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
-            Read the tender and suggest strategy, currency, option years, and a starter list of
-            labor categories. Existing values you&rsquo;ve set are preserved; suggestions append to
-            notes so you can review.
-          </p>
-        </div>
-        <form action={extractPricingStructureAction}>
-          <input type="hidden" name="pursuitId" value={pursuitId} />
-          <button
-            type="submit"
-            className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)]"
-          >
-            Extract from tender
-          </button>
-        </form>
-      </section>
-
-      {benchmark && (
-        <section className="mb-8">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-            Historical benchmark
-          </h2>
-          <div className="grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5 md:grid-cols-5">
-            <Fact
-              label="Sample"
-              value={`${benchmark.sampleSize} awards`}
-              sub={`${benchmark.sameJurisdictionCount} same jurisdiction · ${benchmark.byAgencyCount} same agency`}
-            />
-            <Fact label="Median" value={formatMoney(benchmark.medianUsd, 'USD') ?? '—'} />
-            <Fact label="Mean" value={formatMoney(benchmark.meanUsd, 'USD') ?? '—'} />
-            <Fact label="Min" value={formatMoney(benchmark.minUsd, 'USD') ?? '—'} />
-            <Fact label="Max" value={formatMoney(benchmark.maxUsd, 'USD') ?? '—'} />
-          </div>
-          <p className="mt-2 text-xs text-[color:var(--color-muted-foreground)]">
-            Past awarded opportunities in the same category. Use as an anchor — the actual target
-            depends on scope, performance period, and indirect rates.
-          </p>
-        </section>
-      )}
-
-      <section className="mb-10">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-          Contract settings
-        </h2>
-        <form
-          action={updatePricingModelAction}
-          className="grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5 md:grid-cols-3"
-        >
-          <input type="hidden" name="pursuitId" value={pursuitId} />
-          <NumField label="Base period (months)" name="basePeriodMonths" value={pricingModel.basePeriodMonths ?? 12} />
-          <NumField label="Option years" name="optionYears" value={pricingModel.optionYears ?? 0} />
-          <NumField label="Escalation %/yr" name="escalationRate" value={pricingModel.escalationRate ?? '0'} step="0.1" />
-          <div>
-            <label className="block text-xs text-[color:var(--color-muted-foreground)]">
-              Strategy
-            </label>
-            <select
-              name="pricingStrategy"
-              defaultValue={pricingModel.pricingStrategy}
-              className="mt-1 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
-            >
-              {Object.entries(STRATEGY_LABEL).map(([k, v]) => (
-                <option key={k} value={k}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </div>
-          <NumField label="Hours / FTE" name="hoursPerFte" value={pricingModel.hoursPerFte ?? 2080} />
-          <NumField
-            label="Target fee %"
-            name="targetFeePct"
-            value={pricingModel.targetFeePct ?? '0'}
-            step="0.1"
-          />
-          <NumField
-            label="Government estimate"
-            name="governmentEstimate"
-            value={pricingModel.governmentEstimate ?? ''}
-            step="0.01"
-          />
-          <NumField
-            label="Ceiling value"
-            name="ceilingValue"
-            value={pricingModel.ceilingValue ?? ''}
-            step="0.01"
-          />
-          <div>
-            <label className="block text-xs text-[color:var(--color-muted-foreground)]">Currency</label>
-            <input
-              name="currency"
-              defaultValue={pricingModel.currency ?? 'USD'}
-              maxLength={3}
-              className="mt-1 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
-            />
-          </div>
-          <NumField
-            label="FX to USD"
-            name="fxRateToUsd"
-            value={pricingModel.fxRateToUsd ?? ''}
-            step="0.0001"
-          />
-
-          <div className="md:col-span-3">
-            <h3 className="mt-4 mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-              Indirect rates
-            </h3>
-            <div className="grid gap-4 md:grid-cols-3">
-              <NumField label="Fringe %" name="fringeRate" value={pricingModel.fringeRate ?? '0'} step="0.1" />
-              <NumField label="Overhead %" name="overheadRate" value={pricingModel.overheadRate ?? '0'} step="0.1" />
-              <NumField label="G&A %" name="gaRate" value={pricingModel.gaRate ?? '0'} step="0.1" />
-            </div>
-          </div>
-
-          <div className="md:col-span-3">
-            <label className="block text-xs text-[color:var(--color-muted-foreground)]">Notes</label>
-            <textarea
-              name="notes"
-              rows={2}
-              defaultValue={pricingModel.notes ?? ''}
-              className="mt-1 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1.5 text-sm"
-            />
-          </div>
-
-          <div className="md:col-span-3">
-            <button
-              type="submit"
-              className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)]"
-            >
-              Save settings
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-          Labor categories ({summary.laborCategories.length})
-        </h2>
-
-        {summary.laborCategories.length > 0 && (
-          <div className="mb-4 overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)]">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-[color:var(--color-muted)]/40 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                <tr>
-                  <th className="px-3 py-2">Title</th>
-                  <th className="px-3 py-2">Type</th>
-                  <th className="px-3 py-2 text-right">Direct rate</th>
-                  <th className="px-3 py-2 text-right">Loaded rate</th>
-                  <th className="px-3 py-2 text-right">Hours/yr</th>
-                  <th className="px-3 py-2 text-right">Total ({summary.periodYears}y)</th>
-                  <th className="px-3 py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.laborCategories.map((calc) => {
-                  const lc = laborCategories.find((l) => l.id === calc.id);
-                  if (!lc) return null;
-                  return (
-                    <tr
-                      key={lc.id}
-                      className="border-t border-[color:var(--color-border)]"
-                    >
-                      <td className="px-3 py-2">
-                        <form action={updateLaborCategoryAction} className="flex gap-2">
-                          <input type="hidden" name="pursuitId" value={pursuitId} />
-                          <input type="hidden" name="laborCategoryId" value={lc.id} />
-                          <input
-                            name="title"
-                            defaultValue={lc.title}
-                            className="w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-transparent px-2 py-1 text-sm font-medium"
-                          />
-                          <input
-                            type="hidden"
-                            name="directRate"
-                            value={lc.directRate ?? '0'}
-                          />
-                          <input
-                            type="hidden"
-                            name="hoursPerYear"
-                            value={lc.hoursPerYear ?? 2080}
-                          />
-                          <input
-                            type="hidden"
-                            name="type"
-                            value={lc.type ?? ''}
-                          />
-                          <button type="submit" className="text-xs underline text-[color:var(--color-muted-foreground)]">
-                            Save
-                          </button>
-                        </form>
-                      </td>
-                      <td className="px-3 py-2">
-                        <form action={updateLaborCategoryAction}>
-                          <input type="hidden" name="pursuitId" value={pursuitId} />
-                          <input type="hidden" name="laborCategoryId" value={lc.id} />
-                          <input type="hidden" name="title" value={lc.title} />
-                          <input type="hidden" name="directRate" value={lc.directRate ?? '0'} />
-                          <input type="hidden" name="hoursPerYear" value={lc.hoursPerYear ?? 2080} />
-                          <select
-                            name="type"
-                            defaultValue={lc.type ?? ''}
-                            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5 text-xs"
-                            onChange={(e) => e.currentTarget.form?.requestSubmit()}
-                          >
-                            <option value="">—</option>
-                            <option value="key_personnel">Key personnel</option>
-                            <option value="standard">Standard</option>
-                          </select>
-                        </form>
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <form action={updateLaborCategoryAction} className="flex justify-end gap-1">
-                          <input type="hidden" name="pursuitId" value={pursuitId} />
-                          <input type="hidden" name="laborCategoryId" value={lc.id} />
-                          <input type="hidden" name="title" value={lc.title} />
-                          <input type="hidden" name="hoursPerYear" value={lc.hoursPerYear ?? 2080} />
-                          <input type="hidden" name="type" value={lc.type ?? ''} />
-                          <input
-                            name="directRate"
-                            type="number"
-                            step="0.01"
-                            defaultValue={lc.directRate ?? '0'}
-                            className="w-24 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-transparent px-2 py-1 text-right text-sm"
-                          />
-                          <button type="submit" className="text-xs underline text-[color:var(--color-muted-foreground)]">
-                            Save
-                          </button>
-                        </form>
-                      </td>
-                      <td className="px-3 py-2 text-right font-medium">
-                        {formatMoney(calc.loadedRate, currency) ?? '—'}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <form action={updateLaborCategoryAction} className="flex justify-end gap-1">
-                          <input type="hidden" name="pursuitId" value={pursuitId} />
-                          <input type="hidden" name="laborCategoryId" value={lc.id} />
-                          <input type="hidden" name="title" value={lc.title} />
-                          <input type="hidden" name="directRate" value={lc.directRate ?? '0'} />
-                          <input type="hidden" name="type" value={lc.type ?? ''} />
-                          <input
-                            name="hoursPerYear"
-                            type="number"
-                            defaultValue={lc.hoursPerYear ?? 2080}
-                            className="w-20 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-transparent px-2 py-1 text-right text-sm"
-                          />
-                          <button type="submit" className="text-xs underline text-[color:var(--color-muted-foreground)]">
-                            Save
-                          </button>
-                        </form>
-                      </td>
-                      <td className="px-3 py-2 text-right font-semibold">
-                        {formatMoney(calc.totalCost, currency) ?? '—'}
-                      </td>
-                      <td className="px-3 py-2">
-                        <form action={removeLaborCategoryAction}>
-                          <input type="hidden" name="pursuitId" value={pursuitId} />
-                          <input type="hidden" name="laborCategoryId" value={lc.id} />
-                          <button type="submit" className="text-xs text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-brand)]">
-                            ×
-                          </button>
-                        </form>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        <form
-          action={addLaborCategoryAction}
-          className="flex flex-wrap items-end gap-3 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4"
-        >
-          <input type="hidden" name="pursuitId" value={pursuitId} />
-          <label className="flex flex-1 flex-col gap-1 text-sm">
-            <span className="text-xs text-[color:var(--color-muted-foreground)]">
-              Add labor category
-            </span>
-            <input
-              name="title"
-              required
-              placeholder="e.g. Senior Engineer / Project Manager"
-              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-sm"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-[color:var(--color-muted-foreground)]">Direct rate</span>
-            <input
-              name="directRate"
-              type="number"
-              step="0.01"
-              placeholder="0.00"
-              className="w-28 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-sm"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-[color:var(--color-muted-foreground)]">Hours/yr</span>
-            <input
-              name="hoursPerYear"
-              type="number"
-              defaultValue={pricingModel.hoursPerFte ?? 2080}
-              className="w-20 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-sm"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-[color:var(--color-muted-foreground)]">Type</span>
-            <select
-              name="type"
-              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-sm"
-            >
-              <option value="">—</option>
-              <option value="key_personnel">Key personnel</option>
-              <option value="standard">Standard</option>
-            </select>
-          </label>
-          <button
-            type="submit"
-            className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
-          >
-            Add
-          </button>
-        </form>
-      </section>
-    </div>
-  );
-}
-
-function NumField({
-  label,
-  name,
-  value,
-  step = '1',
-}: {
-  label: string;
-  name: string;
-  value: string | number | null | undefined;
-  step?: string;
-}) {
-  return (
-    <label className="block">
-      <span className="text-xs text-[color:var(--color-muted-foreground)]">{label}</span>
-      <input
-        name={name}
-        type="number"
-        step={step}
-        defaultValue={value ?? ''}
-        className="mt-1 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
+      <PricerHero
+        pricingModel={pricingModel}
+        laborCategories={laborCategories}
+        summary={summary}
       />
-    </label>
+
+      <div className="mt-6">
+        <PricerTabNav active={tab} pursuitId={pursuitId} laborCount={laborCategories.length} />
+      </div>
+
+      <div className="mt-4">
+        {tab === 'overview' && (
+          <>
+            <OverviewTab pricingModel={pricingModel} summary={summary} pursuitId={pursuitId} />
+            {benchmark && (
+              <section className="mt-4 rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-5">
+                <h2 className="mb-2 text-sm font-semibold">Historical benchmark</h2>
+                <p className="mb-3 text-xs text-[color:var(--color-muted-foreground)]">
+                  Past awarded opportunities in the same category. Use as an anchor — actual
+                  target depends on scope, performance period, and indirect rates.
+                </p>
+                <div className="grid gap-3 md:grid-cols-5">
+                  <Bench
+                    label="Sample"
+                    value={`${benchmark.sampleSize} awards`}
+                    sub={`${benchmark.sameJurisdictionCount} same jurisdiction · ${benchmark.byAgencyCount} same agency`}
+                  />
+                  <Bench label="Median" value={formatMoney(benchmark.medianUsd, 'USD') ?? '—'} />
+                  <Bench label="Mean" value={formatMoney(benchmark.meanUsd, 'USD') ?? '—'} />
+                  <Bench label="Min" value={formatMoney(benchmark.minUsd, 'USD') ?? '—'} />
+                  <Bench label="Max" value={formatMoney(benchmark.maxUsd, 'USD') ?? '—'} />
+                </div>
+              </section>
+            )}
+          </>
+        )}
+        {tab === 'labor' && (
+          <LaborTab
+            laborCategories={laborCategories}
+            summary={summary}
+            pursuitId={pursuitId}
+            hoursPerFte={pricingModel.hoursPerFte ?? 2080}
+            escalationPct={escalationPct}
+            currency={currency}
+          />
+        )}
+        {tab === 'indirect' && (
+          <IndirectTab
+            pursuitId={pursuitId}
+            pricingModel={pricingModel}
+            directLabor={directLabor}
+            currency={currency}
+          />
+        )}
+        {tab === 'line-items' && (
+          <LineItemsTab
+            summary={summary}
+            basePeriodMonths={pricingModel.basePeriodMonths ?? 12}
+            optionYears={pricingModel.optionYears ?? 0}
+            currency={currency}
+            targetFeePct={targetFeePct}
+          />
+        )}
+      </div>
+    </div>
   );
 }
 
 function Breadcrumbs({ title }: { title: string }) {
   return (
-    <nav className="mb-6 text-sm text-[color:var(--color-muted-foreground)]">
+    <nav className="mb-4 text-xs text-[color:var(--color-muted-foreground)]">
       <Link href="/pricer" className="hover:underline">
         Pricer
       </Link>
@@ -511,22 +232,16 @@ function Breadcrumbs({ title }: { title: string }) {
   );
 }
 
-function Fact({
-  label,
-  value,
-  sub,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-}) {
+function Bench({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div>
-      <p className="text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+      <p className="text-[11px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
         {label}
       </p>
       <p className="mt-1 text-base font-semibold">{value}</p>
-      {sub && <p className="text-xs text-[color:var(--color-muted-foreground)]">{sub}</p>}
+      {sub && (
+        <p className="mt-0.5 text-[11px] text-[color:var(--color-muted-foreground)]">{sub}</p>
+      )}
     </div>
   );
 }

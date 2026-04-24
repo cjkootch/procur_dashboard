@@ -22,6 +22,7 @@ pnpm-debug.log*
 
 # Editor / OS
 .DS_Store
+__MACOSX/
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json

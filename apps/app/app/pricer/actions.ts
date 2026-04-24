@@ -15,7 +15,7 @@ import {
   type NewPricingModel,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
-import { extractPricingStructure } from '@procur/ai';
+import { extractPricingStructure, meter, MODELS } from '@procur/ai';
 import {
   calculateLaborCategory,
   wrapRateFor,
@@ -300,6 +300,12 @@ export async function extractPricingStructureAction(formData: FormData): Promise
     },
     extractedRequirements: reqs,
     mandatoryDocuments: mandatoryDocs,
+  });
+  await meter({
+    companyId: company.id,
+    source: 'extract_pricing',
+    model: MODELS.sonnet,
+    usage: result.usage,
   });
 
   // Apply suggestions, merging with existing values (user-set values win)

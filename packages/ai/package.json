@@ -15,6 +15,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
+    "@procur/db": "workspace:*",
+    "drizzle-orm": "^0.38.3",
     "openai": "^4.77.0",
     "zod": "^3.24.1"
   },

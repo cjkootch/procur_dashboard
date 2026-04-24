@@ -279,6 +279,89 @@ export function summarize(
   };
 }
 
+/**
+ * Aggregate per-year totals across all labor categories. Used by the
+ * Labor Cost Summary block on the Labor Categories tab to render a
+ * "Year-by-Year Costs" row (Base + Option Years 1-N).
+ */
+export type YearTotal = { year: number; cost: number };
+
+export function aggregateYearTotals(
+  calcs: LaborCategoryCalculation[],
+): YearTotal[] {
+  const byYear = new Map<number, number>();
+  for (const c of calcs) {
+    for (const yb of c.yearlyBreakdown) {
+      byYear.set(yb.year, (byYear.get(yb.year) ?? 0) + yb.cost);
+    }
+  }
+  return Array.from(byYear.entries())
+    .map(([year, cost]) => ({ year, cost: Number(cost.toFixed(2)) }))
+    .sort((a, b) => a.year - b.year);
+}
+
+/**
+ * Layered cost buildup used by the Indirect Rates tab's preview panel.
+ * Returns the running cost after each indirect rate is applied, in the
+ * order they're applied, so the UI can show the same step-by-step view
+ * GovDash uses.
+ *
+ * Mode = 'multiplicative' applies rates in series (the existing wrapRate
+ * formula). Mode = 'additive' sums the rate impacts on Direct Labor. We
+ * compute both so the UI can show them side-by-side.
+ */
+export type CostBuildupLayer = {
+  label: string;
+  amount: number;
+  appliedTo: string;
+  ratePct: number;
+};
+
+export type CostBuildup = {
+  mode: 'multiplicative' | 'additive';
+  layers: CostBuildupLayer[];
+  totalLoaded: number;
+};
+
+export function buildIndirectBuildup(input: {
+  directLabor: number;
+  fringePct: number;
+  overheadPct: number;
+  gaPct: number;
+  mode: 'multiplicative' | 'additive';
+}): CostBuildup {
+  const { directLabor, fringePct, overheadPct, gaPct, mode } = input;
+  const layers: CostBuildupLayer[] = [
+    { label: 'Direct Labor', amount: directLabor, appliedTo: 'Base', ratePct: 0 },
+  ];
+
+  if (mode === 'multiplicative') {
+    const fringe = directLabor * (fringePct / 100);
+    const afterFringe = directLabor + fringe;
+    layers.push({ label: 'Fringe Benefits', amount: fringe, appliedTo: 'Direct Labor', ratePct: fringePct });
+
+    const overhead = afterFringe * (overheadPct / 100);
+    const afterOverhead = afterFringe + overhead;
+    layers.push({ label: 'Overhead', amount: overhead, appliedTo: 'Direct Labor + Fringe', ratePct: overheadPct });
+
+    const ga = afterOverhead * (gaPct / 100);
+    const afterGa = afterOverhead + ga;
+    layers.push({ label: 'G&A', amount: ga, appliedTo: 'Total burdened', ratePct: gaPct });
+
+    return { mode, layers, totalLoaded: Number(afterGa.toFixed(2)) };
+  }
+
+  // Additive: each rate applied to Direct Labor independently and summed.
+  const fringe = directLabor * (fringePct / 100);
+  const overhead = directLabor * (overheadPct / 100);
+  const ga = directLabor * (gaPct / 100);
+  layers.push({ label: 'Fringe Benefits', amount: fringe, appliedTo: 'Direct Labor', ratePct: fringePct });
+  layers.push({ label: 'Overhead', amount: overhead, appliedTo: 'Direct Labor', ratePct: overheadPct });
+  layers.push({ label: 'G&A', amount: ga, appliedTo: 'Direct Labor', ratePct: gaPct });
+  const total = directLabor + fringe + overhead + ga;
+  return { mode, layers, totalLoaded: Number(total.toFixed(2)) };
+}
+
 export type HistoricalBenchmark = {
   sampleSize: number;
   minUsd: number;

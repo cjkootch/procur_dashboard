@@ -18,3 +18,6 @@ export * from './saved-opportunities';
 export * from './scraper-runs';
 export * from './audit-log';
 export * from './taxonomy-categories';
+export * from './assistant-threads';
+export * from './assistant-messages';
+export * from './ai-usage';

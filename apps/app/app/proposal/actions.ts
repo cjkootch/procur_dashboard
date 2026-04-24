@@ -14,7 +14,14 @@ import {
   type NewProposal,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
-import { draftSection, embedText, mapRequirementsToSections, reviewProposal } from '@procur/ai';
+import {
+  draftSection,
+  embedText,
+  mapRequirementsToSections,
+  meter,
+  MODELS,
+  reviewProposal,
+} from '@procur/ai';
 import { randomUUID } from 'node:crypto';
 import { semanticSearchLibrary } from '../../lib/library-queries';
 import { semanticSearchPastPerformance } from '../../lib/past-performance-queries';
@@ -395,6 +402,13 @@ export async function draftSectionAction(formData: FormData): Promise<void> {
     userInstruction: userInstruction || undefined,
   });
 
+  await meter({
+    companyId: company.id,
+    source: 'draft_section',
+    model: MODELS.sonnet,
+    usage: result.usage,
+  });
+
   const nextSections = sectionsArr.map((s) =>
     s.id === sectionId
       ? {
@@ -463,6 +477,12 @@ export async function regenerateComplianceAction(formData: FormData): Promise<vo
       mandatory: r.mandatory,
     })),
     sections: sectionInput,
+  });
+  await meter({
+    companyId: company.id,
+    source: 'map_requirements',
+    model: MODELS.sonnet,
+    usage: result.usage,
   });
 
   const existing = (proposal.complianceMatrix as ComplianceRow[] | null) ?? [];
@@ -567,6 +587,12 @@ export async function reviewProposalAction(formData: FormData): Promise<void> {
       partiallyAddressed,
       notAddressed,
     },
+  });
+  await meter({
+    companyId: company.id,
+    source: 'review_proposal',
+    model: MODELS.sonnet,
+    usage: result.usage,
   });
 
   const aiReview = {

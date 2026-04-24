@@ -10,6 +10,8 @@ import {
   type Contract,
 } from '@procur/db';
 
+export type ComplianceState = 'compliant' | 'attention' | 'overdue' | 'finalized' | 'unconfigured';
+
 export type ContractListRow = {
   id: string;
   awardTitle: string;
@@ -17,6 +19,9 @@ export type ContractListRow = {
   tier: string;
   status: string;
   contractNumber: string | null;
+  parentContractNumber: string | null;
+  taskOrderNumber: string | null;
+  subcontractNumber: string | null;
   startDate: string | null;
   endDate: string | null;
   totalValue: string | null;
@@ -24,8 +29,29 @@ export type ContractListRow = {
   totalValueUsd: string | null;
   obligationCount: number;
   openObligationCount: number;
+  overdueObligationCount: number;
+  compliance: ComplianceState;
   updatedAt: Date;
 };
+
+/**
+ * Derive a single-chip compliance state from a contract's obligations and
+ * status. Deliberately generous: a contract with no obligations configured
+ * shows 'unconfigured' rather than 'compliant' so empty-state doesn't mask
+ * real risk.
+ */
+function computeCompliance(
+  status: string,
+  obligationCount: number,
+  overdueCount: number,
+  openCount: number,
+): ComplianceState {
+  if (status === 'completed' || status === 'terminated') return 'finalized';
+  if (obligationCount === 0) return 'unconfigured';
+  if (overdueCount > 0) return 'overdue';
+  if (openCount > 0) return 'attention';
+  return 'compliant';
+}
 
 export async function listContracts(companyId: string): Promise<ContractListRow[]> {
   const rows = await db
@@ -34,9 +60,13 @@ export async function listContracts(companyId: string): Promise<ContractListRow[
     .where(eq(contracts.companyId, companyId))
     .orderBy(desc(contracts.updatedAt));
 
+  const todayIso = new Date().toISOString().slice(0, 10);
   return rows.map((c) => {
     const obls = c.obligations ?? [];
     const open = obls.filter((o) => o.status !== 'completed').length;
+    const overdue = obls.filter(
+      (o) => o.status !== 'completed' && o.dueDate != null && o.dueDate < todayIso,
+    ).length;
     return {
       id: c.id,
       awardTitle: c.awardTitle,
@@ -44,6 +74,9 @@ export async function listContracts(companyId: string): Promise<ContractListRow[
       tier: c.tier,
       status: c.status,
       contractNumber: c.contractNumber,
+      parentContractNumber: c.parentContractNumber,
+      taskOrderNumber: c.taskOrderNumber,
+      subcontractNumber: c.subcontractNumber,
       startDate: c.startDate,
       endDate: c.endDate,
       totalValue: c.totalValue,
@@ -51,6 +84,8 @@ export async function listContracts(companyId: string): Promise<ContractListRow[
       totalValueUsd: c.totalValueUsd,
       obligationCount: obls.length,
       openObligationCount: open,
+      overdueObligationCount: overdue,
+      compliance: computeCompliance(c.status, obls.length, overdue, open),
       updatedAt: c.updatedAt,
     };
   });
