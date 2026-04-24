@@ -36,11 +36,19 @@ export default async function PursuitsListPage({
 
   return (
     <div className="mx-auto max-w-6xl px-8 py-10">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">All pursuits</h1>
-        <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
-          {filtered.length} of {all.length} total
-        </p>
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">All pursuits</h1>
+          <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
+            {filtered.length} of {all.length} total
+          </p>
+        </div>
+        <a
+          href="/api/pipeline/export.csv"
+          className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[color:var(--color-muted)]/40"
+        >
+          Download .csv
+        </a>
       </header>
 
       <nav className="mb-6 flex flex-wrap gap-2 text-sm">

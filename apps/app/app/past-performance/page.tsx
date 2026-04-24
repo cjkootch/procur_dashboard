@@ -28,12 +28,20 @@ export default async function PastPerformancePage() {
             narratives. Generate entries from completed contracts in one click.
           </p>
         </div>
-        <Link
-          href="/past-performance/new"
-          className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)]"
-        >
-          New entry
-        </Link>
+        <div className="flex items-center gap-2">
+          <a
+            href="/api/past-performance/export.csv"
+            className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-sm font-medium hover:bg-[color:var(--color-muted)]/40"
+          >
+            Download .csv
+          </a>
+          <Link
+            href="/past-performance/new"
+            className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)]"
+          >
+            New entry
+          </Link>
+        </div>
       </header>
 
       {ready.length > 0 && (
