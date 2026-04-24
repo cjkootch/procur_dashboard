@@ -4,14 +4,18 @@ import { and, eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import {
+  agencies,
   db,
+  jurisdictions,
   laborCategories,
+  opportunities,
   pricingModels,
   pursuits,
   type NewLaborCategory,
   type NewPricingModel,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
+import { extractPricingStructure } from '@procur/ai';
 import {
   calculateLaborCategory,
   wrapRateFor,
@@ -252,4 +256,108 @@ async function recomputeWrapAndLaborTotals(pricingModelId: string): Promise<void
       updatedAt: new Date(),
     })
     .where(eq(pricingModels.id, pricingModelId));
+}
+
+type FinancialRequirement = {
+  type: string;
+  text: string;
+  mandatory: boolean;
+};
+
+export async function extractPricingStructureAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const { pricingModel } = await requirePricingModelForPursuit(company.id, pursuitId);
+
+  const [row] = await db
+    .select({
+      oppTitle: opportunities.title,
+      oppDescription: opportunities.description,
+      oppReferenceNumber: opportunities.referenceNumber,
+      jurisdictionName: jurisdictions.name,
+      agencyName: agencies.name,
+      extractedRequirements: opportunities.extractedRequirements,
+      mandatoryDocuments: opportunities.mandatoryDocuments,
+    })
+    .from(pursuits)
+    .innerJoin(opportunities, eq(opportunities.id, pursuits.opportunityId))
+    .innerJoin(jurisdictions, eq(jurisdictions.id, opportunities.jurisdictionId))
+    .leftJoin(agencies, eq(agencies.id, opportunities.agencyId))
+    .where(eq(pursuits.id, pursuitId))
+    .limit(1);
+  if (!row) throw new Error('opportunity not found');
+
+  const reqs = (row.extractedRequirements as FinancialRequirement[] | null) ?? [];
+  const mandatoryDocs = (row.mandatoryDocuments as string[] | null) ?? [];
+
+  const result = await extractPricingStructure({
+    opportunity: {
+      title: row.oppTitle,
+      jurisdictionName: row.jurisdictionName,
+      agencyName: row.agencyName,
+      description: row.oppDescription,
+      referenceNumber: row.oppReferenceNumber,
+    },
+    extractedRequirements: reqs,
+    mandatoryDocuments: mandatoryDocs,
+  });
+
+  // Apply suggestions, merging with existing values (user-set values win)
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (!pricingModel.pricingStrategy || pricingModel.pricingStrategy === 'labor_hours') {
+    updates.pricingStrategy = result.suggestedStrategy;
+  }
+  if (!pricingModel.currency || pricingModel.currency === 'USD') {
+    updates.currency = result.suggestedCurrency;
+  }
+  if (result.basePeriodMonths && pricingModel.basePeriodMonths === 12) {
+    updates.basePeriodMonths = result.basePeriodMonths;
+  }
+  if (result.optionYears != null && (pricingModel.optionYears ?? 0) === 0) {
+    updates.optionYears = result.optionYears;
+  }
+
+  // Persist the raw suggestions as notes appendage so user can review
+  const extractionNote = [
+    '',
+    '--- AI pricing suggestions ---',
+    `Strategy: ${result.suggestedStrategy} — ${result.reasoning}`,
+    `Currency: ${result.suggestedCurrency}`,
+    result.basePeriodMonths ? `Base period: ${result.basePeriodMonths} months` : null,
+    result.optionYears ? `Option years: ${result.optionYears}` : null,
+    result.requiredPricingDeliverables.length > 0
+      ? `Required pricing deliverables: ${result.requiredPricingDeliverables.join('; ')}`
+      : null,
+    result.indirectHints.notes ? `Indirect notes: ${result.indirectHints.notes}` : null,
+    `Confidence: ${Math.round(result.confidence * 100)}%`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  updates.notes = (pricingModel.notes ?? '') + extractionNote;
+
+  await db.update(pricingModels).set(updates).where(eq(pricingModels.id, pricingModel.id));
+
+  // Add suggested labor categories that don't already exist (by title)
+  if (result.suggestedLaborCategories.length > 0) {
+    const existing = await db
+      .select({ title: laborCategories.title })
+      .from(laborCategories)
+      .where(eq(laborCategories.pricingModelId, pricingModel.id));
+    const existingTitles = new Set(existing.map((e) => e.title.toLowerCase()));
+    const toInsert = result.suggestedLaborCategories
+      .filter((lc) => !existingTitles.has(lc.title.toLowerCase()))
+      .map((lc) => ({
+        pricingModelId: pricingModel.id,
+        title: lc.title,
+        type: lc.type,
+        directRate: '0',
+        hoursPerYear: 2080,
+      }));
+    if (toInsert.length > 0) {
+      await db.insert(laborCategories).values(toInsert);
+    }
+  }
+
+  await recomputeWrapAndLaborTotals(pricingModel.id);
+  revalidatePath(`/pricer/${pursuitId}`);
 }

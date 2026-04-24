@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
 import {
   agencies,
   db,
@@ -278,3 +278,77 @@ export function summarize(
     laborCategories: calculated,
   };
 }
+
+export type HistoricalBenchmark = {
+  sampleSize: number;
+  minUsd: number;
+  maxUsd: number;
+  medianUsd: number;
+  meanUsd: number;
+  byAgencyCount: number;
+  sameJurisdictionCount: number;
+};
+
+/**
+ * Summarize past awarded opportunities in the same category (and optionally
+ * same jurisdiction / agency) to help the user anchor the pricing model.
+ */
+export async function getHistoricalBenchmark(
+  category: string | null,
+  jurisdictionId: string | null,
+  agencyId: string | null,
+): Promise<HistoricalBenchmark | null> {
+  if (!category) return null;
+
+  const rows = await db
+    .select({
+      awardedAmount: opportunities.awardedAmount,
+      valueEstimateUsd: opportunities.valueEstimateUsd,
+      currency: opportunities.currency,
+      jurisdictionId: opportunities.jurisdictionId,
+      agencyId: opportunities.agencyId,
+    })
+    .from(opportunities)
+    .where(
+      and(
+        eq(opportunities.status, 'awarded'),
+        eq(opportunities.category, category),
+        isNotNull(opportunities.awardedAmount),
+      ),
+    )
+    .limit(500);
+
+  if (rows.length === 0) return null;
+
+  // Prefer awardedAmount; otherwise fall back to estimate in USD terms.
+  // Use valueEstimateUsd as the USD proxy; if neither present, skip.
+  const valuesUsd: number[] = [];
+  let byAgency = 0;
+  let sameJurisdiction = 0;
+  for (const r of rows) {
+    const usd = Number.parseFloat(r.valueEstimateUsd ?? '0');
+    if (Number.isFinite(usd) && usd > 0) valuesUsd.push(usd);
+    if (agencyId && r.agencyId === agencyId) byAgency += 1;
+    if (jurisdictionId && r.jurisdictionId === jurisdictionId) sameJurisdiction += 1;
+  }
+  if (valuesUsd.length === 0) return null;
+
+  const sorted = [...valuesUsd].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median =
+    sorted.length % 2 === 0
+      ? ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2
+      : sorted[mid] ?? 0;
+  const mean = valuesUsd.reduce((a, b) => a + b, 0) / valuesUsd.length;
+
+  return {
+    sampleSize: valuesUsd.length,
+    minUsd: Math.round(sorted[0] ?? 0),
+    maxUsd: Math.round(sorted[sorted.length - 1] ?? 0),
+    medianUsd: Math.round(median),
+    meanUsd: Math.round(mean),
+    byAgencyCount: byAgency,
+    sameJurisdictionCount: sameJurisdiction,
+  };
+}
+

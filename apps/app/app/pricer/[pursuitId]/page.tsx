@@ -1,11 +1,18 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { eq } from 'drizzle-orm';
+import { db, opportunities } from '@procur/db';
 import { requireCompany } from '@procur/auth';
-import { getPricerByPursuitId, summarize } from '../../../lib/pricer-queries';
+import {
+  getHistoricalBenchmark,
+  getPricerByPursuitId,
+  summarize,
+} from '../../../lib/pricer-queries';
 import { flagFor, formatDate, formatMoney } from '../../../lib/format';
 import {
   addLaborCategoryAction,
   createPricingModelAction,
+  extractPricingStructureAction,
   removeLaborCategoryAction,
   updateLaborCategoryAction,
   updatePricingModelAction,
@@ -31,6 +38,24 @@ export default async function PricerDetailPage({
   if (!detail) notFound();
 
   const { pricingModel, laborCategories, opportunity } = detail;
+
+  const [oppContext] = await db
+    .select({
+      category: opportunities.category,
+      jurisdictionId: opportunities.jurisdictionId,
+      agencyId: opportunities.agencyId,
+    })
+    .from(opportunities)
+    .where(eq(opportunities.id, opportunity.id))
+    .limit(1);
+
+  const benchmark = oppContext
+    ? await getHistoricalBenchmark(
+        oppContext.category,
+        oppContext.jurisdictionId,
+        oppContext.agencyId,
+      )
+    : null;
 
   if (!pricingModel) {
     return (
@@ -88,9 +113,17 @@ export default async function PricerDetailPage({
           </div>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight">{opportunity.title}</h1>
         </div>
-        <Link href={`/capture/pursuits/${pursuitId}`} className="text-sm underline">
-          Pursuit details →
-        </Link>
+        <div className="flex flex-col items-end gap-2 text-sm">
+          <Link href={`/capture/pursuits/${pursuitId}`} className="underline">
+            Pursuit details →
+          </Link>
+          <a
+            href={`/api/pricer/${pursuitId}/export`}
+            className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[color:var(--color-muted)]/40"
+          >
+            Download .xlsx
+          </a>
+        </div>
       </header>
 
       <section className="mb-8 grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-6 md:grid-cols-5">
@@ -108,6 +141,49 @@ export default async function PricerDetailPage({
           sub={opportunity.deadlineAt ? `Bid by ${formatDate(opportunity.deadlineAt)}` : undefined}
         />
       </section>
+
+      <section className="mb-6 flex flex-wrap items-start gap-3 rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-4">
+        <div className="flex-1 min-w-[260px]">
+          <p className="text-sm font-medium">AI pricing extraction</p>
+          <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+            Read the tender and suggest strategy, currency, option years, and a starter list of
+            labor categories. Existing values you&rsquo;ve set are preserved; suggestions append to
+            notes so you can review.
+          </p>
+        </div>
+        <form action={extractPricingStructureAction}>
+          <input type="hidden" name="pursuitId" value={pursuitId} />
+          <button
+            type="submit"
+            className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)]"
+          >
+            Extract from tender
+          </button>
+        </form>
+      </section>
+
+      {benchmark && (
+        <section className="mb-8">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Historical benchmark
+          </h2>
+          <div className="grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5 md:grid-cols-5">
+            <Fact
+              label="Sample"
+              value={`${benchmark.sampleSize} awards`}
+              sub={`${benchmark.sameJurisdictionCount} same jurisdiction · ${benchmark.byAgencyCount} same agency`}
+            />
+            <Fact label="Median" value={formatMoney(benchmark.medianUsd, 'USD') ?? '—'} />
+            <Fact label="Mean" value={formatMoney(benchmark.meanUsd, 'USD') ?? '—'} />
+            <Fact label="Min" value={formatMoney(benchmark.minUsd, 'USD') ?? '—'} />
+            <Fact label="Max" value={formatMoney(benchmark.maxUsd, 'USD') ?? '—'} />
+          </div>
+          <p className="mt-2 text-xs text-[color:var(--color-muted-foreground)]">
+            Past awarded opportunities in the same category. Use as an anchor — the actual target
+            depends on scope, performance period, and indirect rates.
+          </p>
+        </section>
+      )}
 
       <section className="mb-10">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
