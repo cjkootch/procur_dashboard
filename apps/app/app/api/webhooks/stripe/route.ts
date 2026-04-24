@@ -1,4 +1,4 @@
-import Stripe from 'stripe';
+import type Stripe from 'stripe';
 import { eq } from 'drizzle-orm';
 import { companies, db } from '@procur/db';
 import { getStripe } from '../../../../lib/stripe';

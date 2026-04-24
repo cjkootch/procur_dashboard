@@ -13,10 +13,10 @@ import { flagFor, formatDate, formatMoney, timeUntil } from '../../../../lib/for
 import {
   addTaskAction,
   moveStageAction,
-  saveCaptureAnswersAction,
   toggleTaskAction,
   updatePursuitAction,
 } from '../../actions';
+import { CaptureQuestionsForm } from '../../components/capture-questions-form';
 
 export const dynamic = 'force-dynamic';
 
@@ -201,34 +201,7 @@ export default async function PursuitDetailPage({
             </span>
           )}
         </h2>
-        <form
-          action={saveCaptureAnswersAction}
-          className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4"
-        >
-          <input type="hidden" name="pursuitId" value={card.id} />
-          <label className="block text-xs text-[color:var(--color-muted-foreground)]">
-            Answer the 7 capture questions as JSON. A UI form lands next week — this is the
-            temporary editor.
-          </label>
-          <textarea
-            name="answers"
-            defaultValue={JSON.stringify(captureAnswers, null, 2)}
-            className="mt-2 h-64 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-2 font-mono text-xs"
-          />
-          <div className="mt-3 flex items-center justify-between">
-            <p className="text-xs text-[color:var(--color-muted-foreground)]">
-              Expected keys: winThemes, customerBudget, customerPainPoints, incumbents,
-              competitors, differentiators, risksAndMitigations, teamPartners,
-              customerRelationships.
-            </p>
-            <button
-              type="submit"
-              className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm text-[color:var(--color-background)]"
-            >
-              Save answers
-            </button>
-          </div>
-        </form>
+        <CaptureQuestionsForm pursuitId={card.id} initial={captureAnswers} />
       </section>
 
       <section className="mb-8">
@@ -374,12 +347,12 @@ function Fact({ label, value, sub }: { label: string; value: string; sub?: strin
 }
 
 function hasCoreCaptureAnswers(a: Record<string, unknown>): boolean {
-  const winThemes = Array.isArray(a.winThemes) ? a.winThemes : [];
-  const differentiators = Array.isArray(a.differentiators) ? a.differentiators : [];
+  const winThemes = Array.isArray(a.winThemes)
+    ? (a.winThemes as string[]).filter((t) => t.trim().length > 0)
+    : [];
+  const differentiators = Array.isArray(a.differentiators)
+    ? (a.differentiators as string[]).filter((t) => t.trim().length > 0)
+    : [];
   const bid = a.bidDecision;
-  return (
-    winThemes.length > 0 &&
-    differentiators.length > 0 &&
-    (bid === 'bid' || bid === 'no_bid' || bid === undefined || bid === null)
-  );
+  return winThemes.length > 0 && differentiators.length > 0 && (bid === 'bid' || bid === 'no_bid');
 }
