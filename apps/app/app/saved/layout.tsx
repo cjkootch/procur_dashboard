@@ -4,7 +4,7 @@ import { UserButton } from '@clerk/nextjs';
 import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 import { redirect } from 'next/navigation';
 
-export default async function ProposalLayout({ children }: { children: ReactNode }) {
+export default async function SavedLayout({ children }: { children: ReactNode }) {
   const user = await getCurrentUser();
   if (!user) redirect('/sign-in');
   const company = await getCurrentCompany();
@@ -24,10 +24,10 @@ export default async function ProposalLayout({ children }: { children: ReactNode
         </div>
         <nav className="flex flex-col gap-1 px-2 text-sm">
           <div className="px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-            Proposal
+            Saved
           </div>
-          <Link href="/proposal" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
-            All proposals
+          <Link href="/saved" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
+            Bookmarks
           </Link>
           <div className="mt-4 px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Products
@@ -35,17 +35,20 @@ export default async function ProposalLayout({ children }: { children: ReactNode
           <Link href="/capture" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Capture
           </Link>
+          <Link href="/proposal" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
+            Proposal
+          </Link>
           <Link href="/pricer" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Pricer
-          </Link>
-          <Link href="/library" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
-            Content library
           </Link>
           <Link href="/contract" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Contract
           </Link>
           <Link href="/past-performance" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Past performance
+          </Link>
+          <Link href="/library" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
+            Content library
           </Link>
           <Link href="/alerts" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Alerts
@@ -55,9 +58,6 @@ export default async function ProposalLayout({ children }: { children: ReactNode
           </Link>
           <Link href="/search" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Search
-          </Link>
-          <Link href="/saved" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
-            Saved
           </Link>
           <div className="mt-4 px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Account
@@ -70,10 +70,9 @@ export default async function ProposalLayout({ children }: { children: ReactNode
           </Link>
         </nav>
       </aside>
-
       <div className="flex-1 flex flex-col">
         <header className="flex items-center justify-between border-b border-[color:var(--color-border)] px-6 py-3">
-          <div className="text-sm text-[color:var(--color-muted-foreground)]">Proposal</div>
+          <div className="text-sm text-[color:var(--color-muted-foreground)]">Saved</div>
           <UserButton afterSignOutUrl="/sign-in" />
         </header>
         <main className="flex-1 overflow-auto">{children}</main>

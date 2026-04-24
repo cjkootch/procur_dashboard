@@ -68,6 +68,9 @@ export default async function SettingsLayout({ children }: { children: ReactNode
           <Link href="/search" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Search
           </Link>
+          <Link href="/saved" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
+            Saved
+          </Link>
         </nav>
       </aside>
       <div className="flex-1 flex flex-col">

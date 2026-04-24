@@ -38,6 +38,7 @@ export default async function CaptureLayout({ children }: { children: ReactNode 
           <NavLink href="/alerts" label="Alerts" />
           <NavLink href="/insights" label="Insights" />
           <NavLink href="/search" label="Search" />
+          <NavLink href="/saved" label="Saved" />
           <div className="mt-4 px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Account
           </div>
