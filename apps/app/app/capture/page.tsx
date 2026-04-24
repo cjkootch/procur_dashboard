@@ -13,6 +13,7 @@ import {
   PipelineByValueWidget,
   TasksWidget,
 } from './components/widgets';
+import { CaptureViewSwitcher } from './components/view-switcher';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,19 +30,12 @@ export default async function CaptureDashboardPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
-      <header className="mb-6 flex items-start justify-between">
+      <header className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Capture</h1>
-          <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-            Dashboard ·{' '}
-            <Link href="/capture/pipeline" className="hover:underline">
-              Pipeline
-            </Link>{' '}
-            ·{' '}
-            <Link href="/capture/tasks" className="hover:underline">
-              Tasks
-            </Link>
-          </p>
+          <div className="mt-2">
+            <CaptureViewSwitcher active="dashboard" />
+          </div>
         </div>
         <Link
           href="/capture/new"
