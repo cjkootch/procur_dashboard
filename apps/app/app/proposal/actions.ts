@@ -758,3 +758,120 @@ export async function deleteProposalCommentAction(formData: FormData): Promise<v
 
   revalidatePath(`/proposal/${pursuitId}`);
 }
+
+async function loadOutlineAndSections(companyId: string, pursuitId: string) {
+  const pursuit = await db.query.pursuits.findFirst({
+    where: and(eq(pursuits.id, pursuitId), eq(pursuits.companyId, companyId)),
+    columns: { id: true },
+  });
+  if (!pursuit) throw new Error('pursuit not found');
+  const proposal = await db.query.proposals.findFirst({
+    where: eq(proposals.pursuitId, pursuitId),
+  });
+  if (!proposal) throw new Error('proposal not found');
+  const outline = (proposal.outline as OutlineSection[] | null) ?? [];
+  const sections = (proposal.sections as SectionDraft[] | null) ?? [];
+  return { proposal, outline, sections };
+}
+
+function renumberOutline(outline: OutlineSection[]): OutlineSection[] {
+  return outline.map((o, i) => ({ ...o, number: String(i + 1) }));
+}
+
+export async function addProposalSectionAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const title = String(formData.get('title') ?? '').trim();
+  const description = String(formData.get('description') ?? '').trim();
+  if (!title) throw new Error('title required');
+
+  const { proposal, outline, sections } = await loadOutlineAndSections(
+    company.id,
+    pursuitId,
+  );
+
+  const newOutlineId = randomUUID();
+  const newSectionId = randomUUID();
+
+  const nextOutline = renumberOutline([
+    ...outline,
+    {
+      id: newOutlineId,
+      number: String(outline.length + 1),
+      title,
+      description,
+      evaluationCriteria: [],
+      mandatoryContent: [],
+    },
+  ]);
+
+  const nextSections: SectionDraft[] = [
+    ...sections,
+    {
+      id: newSectionId,
+      outlineId: newOutlineId,
+      title,
+      content: '',
+      status: 'empty',
+      wordCount: 0,
+      lastEditedAt: new Date().toISOString(),
+    },
+  ];
+
+  await db
+    .update(proposals)
+    .set({ outline: nextOutline, sections: nextSections, updatedAt: new Date() })
+    .where(eq(proposals.id, proposal.id));
+
+  revalidatePath(`/proposal/${pursuitId}`);
+}
+
+export async function removeProposalSectionAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const outlineId = String(formData.get('outlineId') ?? '');
+  if (!outlineId) throw new Error('outlineId required');
+
+  const { proposal, outline, sections } = await loadOutlineAndSections(
+    company.id,
+    pursuitId,
+  );
+
+  const nextOutline = renumberOutline(outline.filter((o) => o.id !== outlineId));
+  const nextSections = sections.filter((s) => s.outlineId !== outlineId);
+
+  await db
+    .update(proposals)
+    .set({ outline: nextOutline, sections: nextSections, updatedAt: new Date() })
+    .where(eq(proposals.id, proposal.id));
+
+  revalidatePath(`/proposal/${pursuitId}`);
+}
+
+export async function moveProposalSectionAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const outlineId = String(formData.get('outlineId') ?? '');
+  const direction = String(formData.get('direction') ?? '');
+  if (!outlineId || (direction !== 'up' && direction !== 'down')) {
+    throw new Error('outlineId and direction=up|down required');
+  }
+
+  const { proposal, outline } = await loadOutlineAndSections(company.id, pursuitId);
+  const idx = outline.findIndex((o) => o.id === outlineId);
+  if (idx === -1) throw new Error('section not found in outline');
+  const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= outline.length) return;
+
+  const next = [...outline];
+  const tmp = next[idx]!;
+  next[idx] = next[swapIdx]!;
+  next[swapIdx] = tmp;
+
+  await db
+    .update(proposals)
+    .set({ outline: renumberOutline(next), updatedAt: new Date() })
+    .where(eq(proposals.id, proposal.id));
+
+  revalidatePath(`/proposal/${pursuitId}`);
+}
