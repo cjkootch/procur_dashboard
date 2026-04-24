@@ -1,5 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { and, eq } from 'drizzle-orm';
+import { db, pastPerformance } from '@procur/db';
 import { requireCompany } from '@procur/auth';
 import { getContractById } from '../../../lib/contract-queries';
 import { formatDate, formatMoney } from '../../../lib/format';
@@ -10,6 +12,7 @@ import {
   updateContractAction,
   updateObligationStatusAction,
 } from '../actions';
+import { generateFromContractAction } from '../../past-performance/actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +44,14 @@ export default async function ContractDetailPage({
   const totalValue = formatMoney(contract.totalValue, contract.currency);
   const totalUsd = formatMoney(contract.totalValueUsd, 'USD');
 
+  const existingPP = await db.query.pastPerformance.findFirst({
+    where: and(
+      eq(pastPerformance.companyId, company.id),
+      eq(pastPerformance.projectName, contract.awardTitle),
+    ),
+    columns: { id: true },
+  });
+
   return (
     <div className="mx-auto max-w-5xl px-8 py-10">
       <nav className="mb-6 text-sm text-[color:var(--color-muted-foreground)]">
@@ -69,6 +80,34 @@ export default async function ContractDetailPage({
           </Link>
         )}
       </header>
+
+      <section className="mb-6 flex flex-wrap items-center gap-3 rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-4">
+        <div className="flex-1 min-w-[260px]">
+          <p className="text-sm font-medium">Past performance</p>
+          <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+            Turn this contract into a reusable reference for future proposals. Carries over
+            customer, period, value, and any completed obligations as accomplishments.
+          </p>
+        </div>
+        {existingPP ? (
+          <Link
+            href={`/past-performance/${existingPP.id}`}
+            className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-3 py-1.5 text-xs font-medium"
+          >
+            View entry →
+          </Link>
+        ) : (
+          <form action={generateFromContractAction}>
+            <input type="hidden" name="contractId" value={contract.id} />
+            <button
+              type="submit"
+              className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-background)]"
+            >
+              Generate past performance
+            </button>
+          </form>
+        )}
+      </section>
 
       <section className="mb-8 grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-6 md:grid-cols-5">
         <Fact
