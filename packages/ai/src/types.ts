@@ -91,3 +91,17 @@ export const ExtractRequirementsOutput = z
   .strict();
 
 export type ExtractRequirementsOutputT = z.infer<typeof ExtractRequirementsOutput>;
+
+export const DraftSectionOutput = z
+  .object({
+    content: z
+      .string()
+      .describe('The drafted section content in plain text with paragraph breaks'),
+    wordCount: z.number().int().nonnegative(),
+    coverageNotes: z
+      .string()
+      .describe('One sentence on which requirements and criteria this draft addresses'),
+  })
+  .strict();
+
+export type DraftSectionOutputT = z.infer<typeof DraftSectionOutput>;

@@ -12,7 +12,9 @@ import {
   type NewPursuitTask,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
-import { STAGE_ORDER, type PursuitStageKey } from '../../lib/capture-queries';
+import { STAGE_ORDER, type PursuitStageKey, getActivePursuitCount } from '../../lib/capture-queries';
+
+const FREE_TIER_ACTIVE_PURSUIT_CAP = 5;
 
 async function resolveUserAndCompany() {
   const { user, company } = await requireCompany();
@@ -39,6 +41,13 @@ export async function createPursuitAction(formData: FormData): Promise<void> {
   });
   if (existing) {
     redirect(`/capture/pursuits/${existing.id}`);
+  }
+
+  if (company.planTier === 'free') {
+    const active = await getActivePursuitCount(company.id);
+    if (active >= FREE_TIER_ACTIVE_PURSUIT_CAP) {
+      redirect('/billing?reason=pursuit-cap');
+    }
   }
 
   const row: NewPursuit = {

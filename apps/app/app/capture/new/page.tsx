@@ -2,6 +2,9 @@ import { redirect } from 'next/navigation';
 import { eq, and } from 'drizzle-orm';
 import { requireCompany } from '@procur/auth';
 import { db, opportunities, pursuits, type NewPursuit } from '@procur/db';
+import { getActivePursuitCount } from '../../../lib/capture-queries';
+
+const FREE_TIER_ACTIVE_PURSUIT_CAP = 5;
 
 export const dynamic = 'force-dynamic';
 
@@ -39,6 +42,13 @@ export default async function NewPursuitPage({
   });
   if (existing) {
     redirect(`/capture/pursuits/${existing.id}`);
+  }
+
+  if (company.planTier === 'free') {
+    const active = await getActivePursuitCount(company.id);
+    if (active >= FREE_TIER_ACTIVE_PURSUIT_CAP) {
+      redirect(`/billing?reason=pursuit-cap&opportunity=${opportunityId}`);
+    }
   }
 
   const row: NewPursuit = {

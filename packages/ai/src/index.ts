@@ -20,6 +20,23 @@ export {
   type ExtractRequirementsInput,
   type ExtractRequirementsResult,
 } from './tasks/extract-requirements';
+export {
+  draftSection,
+  type DraftSectionInput,
+  type DraftSectionResult,
+  type LibraryExcerpt,
+} from './tasks/draft-section';
+export {
+  chunkContent,
+  type ChunkContentInput,
+  type ChunkContentResult,
+} from './tasks/chunk-content';
+export {
+  extractPricingStructure,
+  type ExtractPricingInput,
+  type ExtractPricingResult,
+} from './tasks/extract-pricing';
+export { embedText, embedMany, EMBEDDING_MODEL, EMBEDDING_DIMS } from './embeddings';
 export type { CacheUsage } from './prompt-blocks';
 export {
   ClassifyOutput,
