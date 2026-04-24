@@ -429,6 +429,34 @@ function auditToEvent(row: AuditRow, actor: string | null): ActivityEvent | null
       const title = (row.metadata as { title?: string } | null)?.title ?? 'Task';
       return { ...base, tone: 'warning', text: `Task reopened: ${title}` };
     }
+    case 'pursuit.gate_review_created': {
+      const stage = (row.metadata as { stage?: string } | null)?.stage ?? 'gate';
+      return { ...base, tone: 'info', text: `Gate review started: ${stage.replace(/_/g, ' ')}` };
+    }
+    case 'pursuit.gate_review_updated': {
+      const ch = row.changes as { after?: { decision?: string } } | null;
+      const stage = (row.metadata as { stage?: string } | null)?.stage ?? 'gate';
+      const decision = ch?.after?.decision;
+      const tone: ActivityEvent['tone'] =
+        decision === 'pass'
+          ? 'success'
+          : decision === 'fail'
+            ? 'danger'
+            : decision === 'conditional'
+              ? 'warning'
+              : 'info';
+      return {
+        ...base,
+        tone,
+        text: decision
+          ? `Gate review ${decision}: ${stage.replace(/_/g, ' ')}`
+          : `Gate review updated: ${stage.replace(/_/g, ' ')}`,
+      };
+    }
+    case 'pursuit.gate_review_deleted': {
+      const stage = (row.metadata as { stage?: string } | null)?.stage ?? 'gate';
+      return { ...base, tone: 'neutral', text: `Gate review deleted: ${stage.replace(/_/g, ' ')}` };
+    }
     default:
       // Unknown action (e.g. assistant.*) — render the raw action name
       // rather than hide it entirely.

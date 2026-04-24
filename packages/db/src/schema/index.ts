@@ -21,3 +21,4 @@ export * from './taxonomy-categories';
 export * from './assistant-threads';
 export * from './assistant-messages';
 export * from './ai-usage';
+export * from './gate-reviews';
