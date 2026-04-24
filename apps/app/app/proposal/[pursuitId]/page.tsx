@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
 import { getProposalByPursuitId } from '../../../lib/proposal-queries';
+import { getRelevantPastPerformance } from '../../../lib/past-performance-queries';
 import { flagFor, formatDate, timeUntil } from '../../../lib/format';
 import { templatesForJurisdiction } from '../../../lib/proposal-templates';
 import {
@@ -157,6 +158,12 @@ export default async function ProposalDetailPage({
   const compliancePct =
     compliance.length > 0 ? Math.round((addressedCount / compliance.length) * 100) : 0;
 
+  const relevantPP = await getRelevantPastPerformance(
+    company.id,
+    [opportunity.title, opportunity.description].filter(Boolean).join('\n\n'),
+    3,
+  );
+
   return (
     <div className="mx-auto max-w-6xl px-8 py-10">
       <Breadcrumbs title={opportunity.title} />
@@ -196,6 +203,35 @@ export default async function ProposalDetailPage({
         <Fact label="Requirements" value={compliance.length.toString()} />
         <Fact label="Addressed" value={`${compliancePct}%`} sub={`${addressedCount} of ${compliance.length}`} />
       </section>
+
+      {relevantPP && relevantPP.length > 0 && (
+        <section className="mb-10">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Relevant past performance ({relevantPP.length})
+          </h2>
+          <p className="mb-3 text-xs text-[color:var(--color-muted-foreground)]">
+            Top matches from your reference library for this opportunity. These are
+            automatically cited when drafting proposal sections.
+          </p>
+          <div className="space-y-2">
+            {relevantPP.map((p) => (
+              <Link
+                key={p.id}
+                href={`/past-performance/${p.id}`}
+                className="block rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4 transition hover:border-[color:var(--color-foreground)]"
+              >
+                <p className="text-sm font-medium">{p.projectName}</p>
+                <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
+                  {p.customerName}
+                </p>
+                <p className="mt-2 line-clamp-2 text-xs text-[color:var(--color-muted-foreground)]">
+                  {p.scopeDescription}
+                </p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="mb-10">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
