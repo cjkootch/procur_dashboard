@@ -1,2 +1,4 @@
-// @procur/email-digest — Trigger.dev project placeholder. Real jobs ship in Phase 2.
-export const __svc = 'email-digest' as const;
+export { dailyDigest } from './trigger/daily-digest';
+export { weeklyDigest } from './trigger/weekly-digest';
+export { welcomeTask } from './trigger/welcome';
+export type { WelcomePayload } from './trigger/welcome';
