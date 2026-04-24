@@ -87,6 +87,12 @@ export default async function ContractLayout({ children }: { children: ReactNode
             Account
           </div>
           <Link
+            href="/settings"
+            className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]"
+          >
+            Company profile
+          </Link>
+          <Link
             href="/billing"
             className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]"
           >
