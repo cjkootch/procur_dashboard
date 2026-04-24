@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { and, asc, eq } from 'drizzle-orm';
-import { contracts, db, documents, opportunities } from '@procur/db';
+import { and, asc, desc, eq } from 'drizzle-orm';
+import { auditLog, contracts, db, documents, opportunities, users } from '@procur/db';
 import { requireCompany } from '@procur/auth';
 import {
   getPursuitById,
@@ -94,6 +94,28 @@ export default async function PursuitDetailPage({
         })
       : null;
 
+  // Audit log for this pursuit. Only loaded when the Activity tab is
+  // active (1 indexed query by entity_type + entity_id, joined with
+  // users for the actor name).
+  const auditRows =
+    tab === 'activity'
+      ? await db
+          .select({
+            id: auditLog.id,
+            action: auditLog.action,
+            changes: auditLog.changes,
+            metadata: auditLog.metadata,
+            createdAt: auditLog.createdAt,
+            actorFirstName: users.firstName,
+            actorLastName: users.lastName,
+          })
+          .from(auditLog)
+          .leftJoin(users, eq(users.id, auditLog.userId))
+          .where(and(eq(auditLog.entityType, 'pursuit'), eq(auditLog.entityId, id)))
+          .orderBy(desc(auditLog.createdAt))
+          .limit(200)
+      : [];
+
   // Documents attached to the underlying opportunity. Loaded only when the
   // Documents tab is active to avoid an extra query on every page view.
   const docRows =
@@ -152,7 +174,12 @@ export default async function PursuitDetailPage({
             />
           )}
           {tab === 'activity' && raw && (
-            <PursuitActivityTab pursuitId={card.id} pursuit={raw} tasks={tasks} />
+            <PursuitActivityTab
+              pursuitId={card.id}
+              pursuit={raw}
+              tasks={tasks}
+              auditRows={auditRows}
+            />
           )}
           {tab === 'capture-questions' && (
             <div className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-5">

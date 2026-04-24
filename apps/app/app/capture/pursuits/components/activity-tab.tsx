@@ -1,9 +1,18 @@
-import type { PursuitStageKey } from '../../../../lib/capture-queries';
-import { STAGE_LABEL } from '../../../../lib/capture-queries';
+import { STAGE_LABEL, type PursuitStageKey } from '../../../../lib/capture-queries';
 import type { TaskRow } from './tasks-tab';
 import { addTaskAction, toggleTaskAction } from '../../actions';
 import { formatDate } from '../../../../lib/format';
 import type { Pursuit } from '@procur/db';
+
+export type AuditRow = {
+  id: string;
+  action: string;
+  changes: unknown;
+  metadata: unknown;
+  createdAt: Date;
+  actorFirstName: string | null;
+  actorLastName: string | null;
+};
 
 /**
  * Activity tab — split-pane layout:
@@ -23,12 +32,14 @@ export function PursuitActivityTab({
   pursuitId,
   pursuit,
   tasks,
+  auditRows,
 }: {
   pursuitId: string;
   pursuit: Pursuit;
   tasks: TaskRow[];
+  auditRows: AuditRow[];
 }) {
-  const events = deriveActivityEvents(pursuit, tasks);
+  const events = deriveActivityEvents(pursuit, tasks, auditRows);
 
   // Kanban columns: Pending / In Progress / Completed.
   // Same classification rule as the capture dashboard's Tasks widget so
@@ -72,6 +83,7 @@ export function PursuitActivityTab({
                   <p className="text-xs">{e.text}</p>
                   <p className="mt-0.5 text-[10px] text-[color:var(--color-muted-foreground)]">
                     {formatRelative(e.at)}
+                    {e.actor && <> · by {e.actor}</>}
                   </p>
                 </div>
               </li>
@@ -263,19 +275,61 @@ type ActivityEvent = {
   at: Date;
   tone: 'neutral' | 'info' | 'success' | 'danger' | 'warning';
   text: string;
+  actor?: string | null;
 };
 
-function deriveActivityEvents(pursuit: Pursuit, tasks: TaskRow[]): ActivityEvent[] {
+/**
+ * Build the unified activity feed from three sources:
+ *   1. pursuit lifecycle timestamps (submittedAt / wonAt / lostAt / bidDecisionAt)
+ *   2. audit_log rows written by action handlers (stage moves, updates,
+ *      capture answers, task created / completed / reopened)
+ *   3. fallback: the pursuit's createdAt, for pursuits that predate
+ *      audit writes
+ *
+ * Dedup: if the same logical event appears in both the pursuit row and
+ * an audit log entry (e.g. pursuit.stage_moved to 'awarded' also sets
+ * pursuit.wonAt), we prefer the audit entry because it carries the
+ * actor name.
+ */
+function deriveActivityEvents(
+  pursuit: Pursuit,
+  tasks: TaskRow[],
+  auditRows: AuditRow[],
+): ActivityEvent[] {
   const out: ActivityEvent[] = [];
+  const coveredByAudit = {
+    submitted: false,
+    won: false,
+    lost: false,
+    created: false,
+  };
 
-  // Pursuit lifecycle events — each present timestamp becomes a row.
-  out.push({
-    id: `pursuit-${pursuit.id}-created`,
-    at: pursuit.createdAt,
-    tone: 'neutral',
-    text: `Pursuit created — stage ${STAGE_LABEL[pursuit.stage as PursuitStageKey] ?? pursuit.stage}`,
-  });
+  for (const row of auditRows) {
+    const actor = [row.actorFirstName, row.actorLastName].filter(Boolean).join(' ') || null;
+    const ev = auditToEvent(row, actor);
+    if (ev) out.push(ev);
 
+    // Mark lifecycle events that audit already covers so we don't
+    // double-render them from pursuit timestamps below.
+    if (row.action === 'pursuit.created') coveredByAudit.created = true;
+    if (row.action === 'pursuit.stage_moved') {
+      const to = (row.changes as { after?: { stage?: string } } | null)?.after?.stage;
+      if (to === 'submitted') coveredByAudit.submitted = true;
+      if (to === 'awarded') coveredByAudit.won = true;
+      if (to === 'lost') coveredByAudit.lost = true;
+    }
+  }
+
+  // Pursuit lifecycle events — emit when audit doesn't already cover them
+  // (older pursuits have no audit trail).
+  if (!coveredByAudit.created) {
+    out.push({
+      id: `pursuit-${pursuit.id}-created`,
+      at: pursuit.createdAt,
+      tone: 'neutral',
+      text: `Pursuit created — stage ${STAGE_LABEL[pursuit.stage as PursuitStageKey] ?? pursuit.stage}`,
+    });
+  }
   if (pursuit.bidDecisionAt) {
     const decision = pursuit.bidDecision ?? 'pending';
     out.push({
@@ -285,47 +339,101 @@ function deriveActivityEvents(pursuit: Pursuit, tasks: TaskRow[]): ActivityEvent
       text: `Bid decision recorded: ${decision}`,
     });
   }
-  if (pursuit.submittedAt) {
-    out.push({
-      id: `pursuit-${pursuit.id}-submitted`,
-      at: pursuit.submittedAt,
-      tone: 'info',
-      text: `Proposal submitted`,
-    });
+  if (pursuit.submittedAt && !coveredByAudit.submitted) {
+    out.push({ id: `pursuit-${pursuit.id}-submitted`, at: pursuit.submittedAt, tone: 'info', text: 'Proposal submitted' });
   }
-  if (pursuit.wonAt) {
-    out.push({
-      id: `pursuit-${pursuit.id}-won`,
-      at: pursuit.wonAt,
-      tone: 'success',
-      text: `Awarded`,
-    });
+  if (pursuit.wonAt && !coveredByAudit.won) {
+    out.push({ id: `pursuit-${pursuit.id}-won`, at: pursuit.wonAt, tone: 'success', text: 'Awarded' });
   }
-  if (pursuit.lostAt) {
-    out.push({
-      id: `pursuit-${pursuit.id}-lost`,
-      at: pursuit.lostAt,
-      tone: 'danger',
-      text: `Lost`,
-    });
+  if (pursuit.lostAt && !coveredByAudit.lost) {
+    out.push({ id: `pursuit-${pursuit.id}-lost`, at: pursuit.lostAt, tone: 'danger', text: 'Lost' });
   }
 
-  // Task events — we only surface completions here because
-  // listPursuitTasks() doesn't return createdAt. When we plumb task
-  // createdAt through, add a `Task added` event alongside.
+  // Task completion timestamps are also covered by audit task.completed /
+  // task.reopened. For older tasks predating audit writes, fall back to
+  // the row timestamp — dedupe by inspecting whether a matching audit
+  // event exists.
+  const taskEventsInAudit = new Set<string>();
+  for (const r of auditRows) {
+    if (r.action === 'task.completed' || r.action === 'task.reopened') {
+      const taskId = (r.metadata as { taskId?: string } | null)?.taskId;
+      if (taskId) taskEventsInAudit.add(`${r.action}:${taskId}:${r.createdAt.toISOString()}`);
+    }
+  }
   for (const t of tasks) {
     if (t.completedAt) {
-      out.push({
-        id: `task-${t.id}-completed`,
-        at: t.completedAt,
-        tone: 'success',
-        text: `Task completed: ${t.title}`,
-      });
+      const key = `task.completed:${t.id}:${t.completedAt.toISOString()}`;
+      if (!taskEventsInAudit.has(key)) {
+        out.push({
+          id: `task-${t.id}-completed`,
+          at: t.completedAt,
+          tone: 'success',
+          text: `Task completed: ${t.title}`,
+        });
+      }
     }
   }
 
-  // Newest first
+  // Newest first.
   return out.sort((a, b) => b.at.getTime() - a.at.getTime());
+}
+
+/**
+ * Translate a single audit row into an activity event.
+ */
+function auditToEvent(row: AuditRow, actor: string | null): ActivityEvent | null {
+  const base = {
+    id: `audit-${row.id}`,
+    at: row.createdAt,
+    actor,
+  };
+  switch (row.action) {
+    case 'pursuit.created':
+      return { ...base, tone: 'neutral', text: 'Pursuit created' };
+    case 'pursuit.stage_moved': {
+      const ch = row.changes as { before?: { stage?: string }; after?: { stage?: string } } | null;
+      const from = ch?.before?.stage;
+      const to = ch?.after?.stage;
+      if (!to) return { ...base, tone: 'neutral', text: 'Stage moved' };
+      const fromLabel = from ? STAGE_LABEL[from as PursuitStageKey] ?? from : '?';
+      const toLabel = STAGE_LABEL[to as PursuitStageKey] ?? to;
+      const tone: ActivityEvent['tone'] =
+        to === 'awarded' ? 'success' : to === 'lost' ? 'danger' : to === 'submitted' ? 'info' : 'neutral';
+      return { ...base, tone, text: `Stage moved: ${fromLabel} → ${toLabel}` };
+    }
+    case 'pursuit.updated': {
+      const fields = (row.metadata as { fields?: string[] } | null)?.fields ?? [];
+      return {
+        ...base,
+        tone: 'neutral',
+        text: fields.length > 0 ? `Updated: ${fields.join(', ')}` : 'Pursuit updated',
+      };
+    }
+    case 'pursuit.capture_answers_saved': {
+      const keys = (row.metadata as { answeredKeys?: string[] } | null)?.answeredKeys ?? [];
+      return {
+        ...base,
+        tone: 'info',
+        text: `Capture answers saved${keys.length > 0 ? ` (${keys.length} answered)` : ''}`,
+      };
+    }
+    case 'task.created': {
+      const title = (row.metadata as { title?: string } | null)?.title ?? 'Task';
+      return { ...base, tone: 'neutral', text: `Task added: ${title}` };
+    }
+    case 'task.completed': {
+      const title = (row.metadata as { title?: string } | null)?.title ?? 'Task';
+      return { ...base, tone: 'success', text: `Task completed: ${title}` };
+    }
+    case 'task.reopened': {
+      const title = (row.metadata as { title?: string } | null)?.title ?? 'Task';
+      return { ...base, tone: 'warning', text: `Task reopened: ${title}` };
+    }
+    default:
+      // Unknown action (e.g. assistant.*) — render the raw action name
+      // rather than hide it entirely.
+      return { ...base, tone: 'neutral', text: row.action.replace(/\./g, ' · ') };
+  }
 }
 
 // -- Tiny helpers -----------------------------------------------------------
