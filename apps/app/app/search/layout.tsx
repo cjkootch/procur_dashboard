@@ -4,7 +4,7 @@ import { UserButton } from '@clerk/nextjs';
 import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 import { redirect } from 'next/navigation';
 
-export default async function SettingsLayout({ children }: { children: ReactNode }) {
+export default async function SearchLayout({ children }: { children: ReactNode }) {
   const user = await getCurrentUser();
   if (!user) redirect('/sign-in');
   const company = await getCurrentCompany();
@@ -24,19 +24,13 @@ export default async function SettingsLayout({ children }: { children: ReactNode
         </div>
         <nav className="flex flex-col gap-1 px-2 text-sm">
           <div className="px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-            Settings
+            Search
           </div>
           <Link
-            href="/settings"
+            href="/search"
             className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]"
           >
-            Company profile
-          </Link>
-          <Link
-            href="/billing"
-            className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]"
-          >
-            Billing &amp; plan
+            Global search
           </Link>
           <div className="mt-4 px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Products
@@ -65,14 +59,20 @@ export default async function SettingsLayout({ children }: { children: ReactNode
           <Link href="/insights" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Insights
           </Link>
-          <Link href="/search" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
-            Search
+          <div className="mt-4 px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Account
+          </div>
+          <Link href="/settings" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
+            Company profile
+          </Link>
+          <Link href="/billing" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
+            Billing
           </Link>
         </nav>
       </aside>
       <div className="flex-1 flex flex-col">
         <header className="flex items-center justify-between border-b border-[color:var(--color-border)] px-6 py-3">
-          <div className="text-sm text-[color:var(--color-muted-foreground)]">Settings</div>
+          <div className="text-sm text-[color:var(--color-muted-foreground)]">Search</div>
           <UserButton afterSignOutUrl="/sign-in" />
         </header>
         <main className="flex-1 overflow-auto">{children}</main>
