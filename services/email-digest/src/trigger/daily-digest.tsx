@@ -51,7 +51,7 @@ export const dailyDigest = schedules.task({
         }
 
         const opps = matches.map((m) => toEmailRow(m, DISCOVER_URL));
-        const unsubUrl = `${APP_URL}/settings/alerts?profile=${profile.id}`;
+        const unsubUrl = `${APP_URL}/alerts/${profile.id}`;
 
         const { id } = await sendEmail({
           to: email,

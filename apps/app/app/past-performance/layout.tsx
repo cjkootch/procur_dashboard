@@ -59,6 +59,9 @@ export default async function PastPerformanceLayout({ children }: { children: Re
           <Link href="/alerts" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Alerts
           </Link>
+          <Link href="/insights" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
+            Insights
+          </Link>
           <div className="mt-4 px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Account
           </div>
