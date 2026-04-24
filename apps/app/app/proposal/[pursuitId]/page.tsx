@@ -11,11 +11,14 @@ import { flagFor, formatDate, timeUntil } from '../../../lib/format';
 import { templatesForJurisdiction } from '../../../lib/proposal-templates';
 import {
   addProposalCommentAction,
+  addProposalSectionAction,
   createProposalAction,
   deleteProposalCommentAction,
   draftSectionAction,
   markProposalSubmittedAction,
+  moveProposalSectionAction,
   regenerateComplianceAction,
+  removeProposalSectionAction,
   reopenProposalCommentAction,
   resolveProposalCommentAction,
   reviewProposalAction,
@@ -428,9 +431,35 @@ export default async function ProposalDetailPage({
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
           Outline ({outline.length} sections)
         </h2>
+        <form
+          action={addProposalSectionAction}
+          className="mb-4 flex flex-wrap items-start gap-2 rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-4"
+        >
+          <input type="hidden" name="pursuitId" value={pursuitId} />
+          <input
+            name="title"
+            required
+            placeholder="New section title (e.g. Risk management)"
+            className="flex-1 min-w-[200px] rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
+          />
+          <input
+            name="description"
+            placeholder="Short description (optional)"
+            className="flex-1 min-w-[200px] rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
+          />
+          <button
+            type="submit"
+            className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
+          >
+            Add section
+          </button>
+        </form>
+
         <div className="space-y-3">
-          {outline.map((sec) => {
+          {outline.map((sec, idx) => {
             const draft = sections.find((s) => s.outlineId === sec.id);
+            const isFirst = idx === 0;
+            const isLast = idx === outline.length - 1;
             return (
               <article
                 key={sec.id}
@@ -473,11 +502,46 @@ export default async function ProposalDetailPage({
                       </button>
                     </form>
                   </div>
-                  {sec.pageLimit && (
-                    <span className="text-xs text-[color:var(--color-muted-foreground)]">
-                      {sec.pageLimit} pages
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2 text-xs text-[color:var(--color-muted-foreground)]">
+                    {sec.pageLimit && <span>{sec.pageLimit} pages</span>}
+                    <form action={moveProposalSectionAction}>
+                      <input type="hidden" name="pursuitId" value={pursuitId} />
+                      <input type="hidden" name="outlineId" value={sec.id} />
+                      <input type="hidden" name="direction" value="up" />
+                      <button
+                        type="submit"
+                        disabled={isFirst}
+                        className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1.5 py-0.5 disabled:opacity-30"
+                        title="Move up"
+                      >
+                        ↑
+                      </button>
+                    </form>
+                    <form action={moveProposalSectionAction}>
+                      <input type="hidden" name="pursuitId" value={pursuitId} />
+                      <input type="hidden" name="outlineId" value={sec.id} />
+                      <input type="hidden" name="direction" value="down" />
+                      <button
+                        type="submit"
+                        disabled={isLast}
+                        className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1.5 py-0.5 disabled:opacity-30"
+                        title="Move down"
+                      >
+                        ↓
+                      </button>
+                    </form>
+                    <form action={removeProposalSectionAction}>
+                      <input type="hidden" name="pursuitId" value={pursuitId} />
+                      <input type="hidden" name="outlineId" value={sec.id} />
+                      <button
+                        type="submit"
+                        className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1.5 py-0.5 hover:text-[color:var(--color-brand)]"
+                        title="Remove section"
+                      >
+                        ×
+                      </button>
+                    </form>
+                  </div>
                 </header>
                 <p className="text-sm text-[color:var(--color-muted-foreground)]">
                   {sec.description}
