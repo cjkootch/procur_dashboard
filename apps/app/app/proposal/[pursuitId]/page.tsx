@@ -5,6 +5,7 @@ import { getProposalByPursuitId } from '../../../lib/proposal-queries';
 import { flagFor, formatDate, timeUntil } from '../../../lib/format';
 import {
   createProposalAction,
+  draftSectionAction,
   updateComplianceMappingAction,
   updateSectionAction,
 } from '../actions';
@@ -243,10 +244,47 @@ export default async function ProposalDetailPage({
                     </ul>
                   </div>
                 )}
-                <div className="mt-4 rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] p-3 text-xs text-[color:var(--color-muted-foreground)]">
-                  AI drafting, rich-text editing, and content-library retrieval land in Phase 4
-                  Day 2+. For now, use this outline to plan offline.
-                </div>
+                {draft?.content ? (
+                  <div className="mt-4">
+                    <div className="mb-2 flex items-center gap-3 text-xs text-[color:var(--color-muted-foreground)]">
+                      <span>{draft.wordCount} words</span>
+                      <span>·</span>
+                      <span>Last edited {new Date(draft.lastEditedAt).toLocaleString()}</span>
+                    </div>
+                    <article className="max-h-96 overflow-auto whitespace-pre-line rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-4 text-sm leading-relaxed">
+                      {draft.content}
+                    </article>
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] p-3 text-xs text-[color:var(--color-muted-foreground)]">
+                    No draft yet. Use the AI drafter below to generate one from your content
+                    library.
+                  </div>
+                )}
+
+                <form
+                  action={draftSectionAction}
+                  className="mt-4 flex flex-wrap items-start gap-2 border-t border-[color:var(--color-border)] pt-4"
+                >
+                  <input type="hidden" name="pursuitId" value={pursuitId} />
+                  <input type="hidden" name="sectionId" value={draft?.id ?? ''} />
+                  <input
+                    name="instruction"
+                    type="text"
+                    placeholder={
+                      draft?.content
+                        ? 'Regenerate with guidance (optional)'
+                        : 'Any guidance (optional)'
+                    }
+                    className="flex-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-sm"
+                  />
+                  <button
+                    type="submit"
+                    className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
+                  >
+                    {draft?.content ? 'Regenerate with AI' : 'Draft with AI'}
+                  </button>
+                </form>
               </article>
             );
           })}

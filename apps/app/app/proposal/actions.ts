@@ -4,14 +4,18 @@ import { and, eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import {
+  agencies,
   db,
+  jurisdictions,
   opportunities,
   proposals,
   pursuits,
   type NewProposal,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
+import { draftSection, embedText } from '@procur/ai';
 import { randomUUID } from 'node:crypto';
+import { semanticSearchLibrary } from '../../lib/library-queries';
 
 type ExtractedRequirement = {
   id: string;
@@ -297,6 +301,111 @@ export async function updateSectionAction(formData: FormData): Promise<void> {
   await db
     .update(proposals)
     .set({ sections: nextSections, outline, updatedAt: new Date() })
+    .where(eq(proposals.id, proposal.id));
+
+  revalidatePath(`/proposal/${pursuitId}`);
+}
+
+export async function draftSectionAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const sectionId = String(formData.get('sectionId') ?? '');
+  const userInstruction = String(formData.get('instruction') ?? '').trim();
+
+  const pursuit = await db.query.pursuits.findFirst({
+    where: and(eq(pursuits.id, pursuitId), eq(pursuits.companyId, company.id)),
+    columns: { id: true, opportunityId: true },
+  });
+  if (!pursuit) throw new Error('pursuit not found');
+
+  const proposal = await db.query.proposals.findFirst({
+    where: eq(proposals.pursuitId, pursuitId),
+  });
+  if (!proposal) throw new Error('proposal not found');
+
+  const sectionsArr = (proposal.sections as SectionDraft[] | null) ?? [];
+  const outlineArr = (proposal.outline as OutlineSection[] | null) ?? [];
+  const section = sectionsArr.find((s) => s.id === sectionId);
+  const outlineEntry = outlineArr.find((o) => o.id === section?.outlineId);
+  if (!section || !outlineEntry) throw new Error('section not found');
+
+  const [oppRow] = await db
+    .select({
+      title: opportunities.title,
+      description: opportunities.description,
+      referenceNumber: opportunities.referenceNumber,
+      agencyName: agencies.name,
+      jurisdictionName: jurisdictions.name,
+    })
+    .from(opportunities)
+    .innerJoin(jurisdictions, eq(jurisdictions.id, opportunities.jurisdictionId))
+    .leftJoin(agencies, eq(agencies.id, opportunities.agencyId))
+    .where(eq(opportunities.id, pursuit.opportunityId))
+    .limit(1);
+  if (!oppRow) throw new Error('opportunity not found');
+
+  // Build retrieval query from section context + any existing content guidance
+  const retrievalQuery = [
+    outlineEntry.title,
+    outlineEntry.description,
+    ...outlineEntry.mandatoryContent.slice(0, 5),
+    ...outlineEntry.evaluationCriteria,
+    userInstruction,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  let libraryExcerpts: Array<{ title: string; type: string; content: string }> = [];
+  try {
+    const queryEmb = await embedText(retrievalQuery);
+    const hits = await semanticSearchLibrary(company.id, queryEmb, 5);
+    libraryExcerpts = hits.map((h) => ({ title: h.title, type: h.type, content: h.content }));
+  } catch (err) {
+    // If embeddings aren't set up yet (no OPENAI_API_KEY), proceed without retrieval.
+    console.warn('library retrieval skipped:', err);
+  }
+
+  const result = await draftSection({
+    opportunity: {
+      title: oppRow.title,
+      agency: oppRow.agencyName,
+      jurisdiction: oppRow.jurisdictionName,
+      referenceNumber: oppRow.referenceNumber,
+      description: oppRow.description,
+    },
+    company: {
+      name: company.name,
+      country: company.country,
+      capabilities: company.capabilities ?? undefined,
+    },
+    section: {
+      number: outlineEntry.number,
+      title: outlineEntry.title,
+      description: outlineEntry.description,
+      evaluationCriteria: outlineEntry.evaluationCriteria,
+      mandatoryContent: outlineEntry.mandatoryContent,
+      pageLimit: outlineEntry.pageLimit,
+    },
+    libraryExcerpts,
+    existingContent: section.content || undefined,
+    userInstruction: userInstruction || undefined,
+  });
+
+  const nextSections = sectionsArr.map((s) =>
+    s.id === sectionId
+      ? {
+          ...s,
+          content: result.content,
+          status: 'ai_drafted' as const,
+          wordCount: result.wordCount,
+          lastEditedAt: new Date().toISOString(),
+        }
+      : s,
+  );
+
+  await db
+    .update(proposals)
+    .set({ sections: nextSections, updatedAt: new Date() })
     .where(eq(proposals.id, proposal.id));
 
   revalidatePath(`/proposal/${pursuitId}`);
