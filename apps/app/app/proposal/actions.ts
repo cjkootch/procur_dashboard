@@ -13,7 +13,7 @@ import {
   type NewProposal,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
-import { draftSection, embedText } from '@procur/ai';
+import { draftSection, embedText, mapRequirementsToSections } from '@procur/ai';
 import { randomUUID } from 'node:crypto';
 import { semanticSearchLibrary } from '../../lib/library-queries';
 import { semanticSearchPastPerformance } from '../../lib/past-performance-queries';
@@ -409,6 +409,85 @@ export async function draftSectionAction(formData: FormData): Promise<void> {
   await db
     .update(proposals)
     .set({ sections: nextSections, updatedAt: new Date() })
+    .where(eq(proposals.id, proposal.id));
+
+  revalidatePath(`/proposal/${pursuitId}`);
+}
+
+/**
+ * Re-runs the compliance matrix by asking Sonnet to map every extracted
+ * requirement to the drafted section that addresses it, with confidence and
+ * a one-sentence note. User-confirmed rows are preserved.
+ */
+export async function regenerateComplianceAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+
+  const pursuit = await db.query.pursuits.findFirst({
+    where: and(eq(pursuits.id, pursuitId), eq(pursuits.companyId, company.id)),
+    columns: { id: true, opportunityId: true },
+  });
+  if (!pursuit) throw new Error('pursuit not found');
+
+  const proposal = await db.query.proposals.findFirst({
+    where: eq(proposals.pursuitId, pursuitId),
+  });
+  if (!proposal) throw new Error('proposal not found');
+
+  const opp = await db.query.opportunities.findFirst({
+    where: eq(opportunities.id, pursuit.opportunityId),
+    columns: { extractedRequirements: true },
+  });
+  const requirements =
+    (opp?.extractedRequirements as ExtractedRequirement[] | null) ?? [];
+  if (requirements.length === 0) throw new Error('no extracted requirements to map');
+
+  const outline = (proposal.outline as OutlineSection[] | null) ?? [];
+  const sections = (proposal.sections as SectionDraft[] | null) ?? [];
+  const sectionInput = outline.map((o) => {
+    const draft = sections.find((s) => s.outlineId === o.id);
+    return {
+      id: o.id,
+      number: o.number,
+      title: o.title,
+      content: draft?.content ?? '',
+    };
+  });
+
+  const result = await mapRequirementsToSections({
+    requirements: requirements.map((r) => ({
+      id: r.id,
+      text: r.text,
+      type: r.type,
+      mandatory: r.mandatory,
+    })),
+    sections: sectionInput,
+  });
+
+  const existing = (proposal.complianceMatrix as ComplianceRow[] | null) ?? [];
+  const confirmedByReqId = new Map(
+    existing.filter((r) => r.status === 'confirmed').map((r) => [r.requirementId, r]),
+  );
+  const sourceByReqId = new Map(requirements.map((r) => [r.id, r.sourceSection]));
+
+  const updated: ComplianceRow[] = result.mappings.map((m) => {
+    const confirmed = confirmedByReqId.get(m.requirementId);
+    if (confirmed) return confirmed;
+    const req = requirements.find((r) => r.id === m.requirementId);
+    return {
+      requirementId: m.requirementId,
+      requirementText: req?.text ?? '',
+      sourceSection: sourceByReqId.get(m.requirementId) ?? '',
+      addressedInSection: m.addressedInSection ?? undefined,
+      status: m.status,
+      confidence: m.confidence,
+      notes: m.notes,
+    };
+  });
+
+  await db
+    .update(proposals)
+    .set({ complianceMatrix: updated, updatedAt: new Date() })
     .where(eq(proposals.id, proposal.id));
 
   revalidatePath(`/proposal/${pursuitId}`);
