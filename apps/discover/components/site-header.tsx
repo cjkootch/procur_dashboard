@@ -12,7 +12,7 @@ export function SiteHeader() {
             width={96}
             height={40}
             priority
-            className="h-7 w-auto"
+            className="h-9 w-auto"
           />
           <span className="text-sm text-[color:var(--color-muted-foreground)]">Discover</span>
         </Link>
