@@ -48,6 +48,11 @@ export {
   type ReviewProposalInput,
   type ReviewProposalResult,
 } from './tasks/review-proposal';
+export {
+  extractCompanyProfile,
+  type ExtractCompanyProfileInput,
+  type ExtractCompanyProfileResult,
+} from './tasks/extract-company-profile';
 export { embedText, embedMany, EMBEDDING_MODEL, EMBEDDING_DIMS } from './embeddings';
 export type { CacheUsage } from './prompt-blocks';
 export {
