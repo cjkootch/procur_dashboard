@@ -43,6 +43,11 @@ export {
   type RequirementInput,
   type SectionInput,
 } from './tasks/map-requirements';
+export {
+  reviewProposal,
+  type ReviewProposalInput,
+  type ReviewProposalResult,
+} from './tasks/review-proposal';
 export { embedText, embedMany, EMBEDDING_MODEL, EMBEDDING_DIMS } from './embeddings';
 export type { CacheUsage } from './prompt-blocks';
 export {

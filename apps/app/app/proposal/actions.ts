@@ -13,7 +13,7 @@ import {
   type NewProposal,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
-import { draftSection, embedText, mapRequirementsToSections } from '@procur/ai';
+import { draftSection, embedText, mapRequirementsToSections, reviewProposal } from '@procur/ai';
 import { randomUUID } from 'node:crypto';
 import { semanticSearchLibrary } from '../../lib/library-queries';
 import { semanticSearchPastPerformance } from '../../lib/past-performance-queries';
@@ -488,6 +488,99 @@ export async function regenerateComplianceAction(formData: FormData): Promise<vo
   await db
     .update(proposals)
     .set({ complianceMatrix: updated, updatedAt: new Date() })
+    .where(eq(proposals.id, proposal.id));
+
+  revalidatePath(`/proposal/${pursuitId}`);
+}
+
+/**
+ * Runs a final AI review of the full proposal. Persists an aiReview blob with
+ * overall score, verdict, strengths, risks, and per-section feedback.
+ */
+export async function reviewProposalAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+
+  const pursuit = await db.query.pursuits.findFirst({
+    where: and(eq(pursuits.id, pursuitId), eq(pursuits.companyId, company.id)),
+    columns: { id: true, opportunityId: true },
+  });
+  if (!pursuit) throw new Error('pursuit not found');
+
+  const proposal = await db.query.proposals.findFirst({
+    where: eq(proposals.pursuitId, pursuitId),
+  });
+  if (!proposal) throw new Error('proposal not found');
+
+  const [oppRow] = await db
+    .select({
+      title: opportunities.title,
+      description: opportunities.description,
+      agencyName: agencies.name,
+      jurisdictionName: jurisdictions.name,
+    })
+    .from(opportunities)
+    .innerJoin(jurisdictions, eq(jurisdictions.id, opportunities.jurisdictionId))
+    .leftJoin(agencies, eq(agencies.id, opportunities.agencyId))
+    .where(eq(opportunities.id, pursuit.opportunityId))
+    .limit(1);
+  if (!oppRow) throw new Error('opportunity not found');
+
+  const outline = (proposal.outline as OutlineSection[] | null) ?? [];
+  const sections = (proposal.sections as SectionDraft[] | null) ?? [];
+  const compliance = (proposal.complianceMatrix as ComplianceRow[] | null) ?? [];
+
+  const sectionInput = outline.map((o) => {
+    const draft = sections.find((s) => s.outlineId === o.id);
+    return {
+      id: o.id,
+      number: o.number,
+      title: o.title,
+      content: draft?.content ?? '',
+      pageLimit: o.pageLimit,
+    };
+  });
+
+  const fullyAddressed = compliance.filter(
+    (c) => c.status === 'fully_addressed' || c.status === 'confirmed',
+  ).length;
+  const partiallyAddressed = compliance.filter((c) => c.status === 'partially_addressed').length;
+  const notAddressed = compliance.filter((c) => c.status === 'not_addressed').length;
+
+  const result = await reviewProposal({
+    opportunity: {
+      title: oppRow.title,
+      agency: oppRow.agencyName,
+      jurisdiction: oppRow.jurisdictionName,
+      description: oppRow.description,
+    },
+    company: {
+      name: company.name,
+      country: company.country,
+      capabilities: company.capabilities ?? undefined,
+    },
+    sections: sectionInput,
+    complianceSummary: {
+      total: compliance.length,
+      fullyAddressed,
+      partiallyAddressed,
+      notAddressed,
+    },
+  });
+
+  const aiReview = {
+    overallScore: result.overallScore,
+    overallVerdict: result.overallVerdict,
+    summary: result.summary,
+    strengths: result.strengths,
+    risks: result.risks,
+    sectionFeedback: result.sectionFeedback,
+    generatedAt: new Date().toISOString(),
+  };
+
+  await db
+    .update(proposals)
+    .set({ aiReview, updatedAt: new Date() })
     .where(eq(proposals.id, proposal.id));
 
   revalidatePath(`/proposal/${pursuitId}`);
