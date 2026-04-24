@@ -14,13 +14,11 @@ import type {
 export function LineItemsTab({
   summary,
   basePeriodMonths,
-  optionYears,
   currency,
   targetFeePct,
 }: {
   summary: PricingSummary & { laborCategories: LaborCategoryCalculation[] };
   basePeriodMonths: number;
-  optionYears: number;
   currency: string;
   targetFeePct: number;
 }) {

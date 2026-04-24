@@ -8,6 +8,7 @@ import {
 } from '../../../lib/capture-queries';
 import { formatMoney } from '../../../lib/format';
 import { PursuitCard } from '../components/pursuit-card';
+import { CaptureViewSwitcher } from '../components/view-switcher';
 import { moveStageAction } from '../actions';
 
 export const dynamic = 'force-dynamic';
@@ -50,13 +51,16 @@ export default async function PipelinePage({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-[color:var(--color-border)] bg-[color:var(--color-background)] px-6 py-4">
+      <header className="flex items-start justify-between border-b border-[color:var(--color-border)] bg-[color:var(--color-background)] px-6 py-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Pipeline</h1>
-          <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-            Hover a card to advance its stage. Filter and sort with the toolbar below.
-          </p>
+          <div className="mt-2">
+            <CaptureViewSwitcher active="pipeline" />
+          </div>
         </div>
+        <p className="mt-1 max-w-xs text-right text-[11px] text-[color:var(--color-muted-foreground)]">
+          Hover a card to advance its stage.
+        </p>
       </header>
 
       {/* Filter / sort toolbar */}

@@ -210,7 +210,6 @@ export default async function PricerDetailPage({
           <LineItemsTab
             summary={summary}
             basePeriodMonths={pricingModel.basePeriodMonths ?? 12}
-            optionYears={pricingModel.optionYears ?? 0}
             currency={currency}
             targetFeePct={targetFeePct}
           />

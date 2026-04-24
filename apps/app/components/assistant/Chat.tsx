@@ -231,7 +231,7 @@ export function Chat({
             <p className="mb-2 text-base font-medium text-[color:var(--color-foreground)]">
               Ask anything about your pipeline
             </p>
-            <p>Try: "which pursuits are past deadline?", "show me IT tenders in Guyana", or "draft a differentiator section for pursuit X".</p>
+            <p>Try: &ldquo;which pursuits are past deadline?&rdquo;, &ldquo;show me IT tenders in Guyana&rdquo;, or &ldquo;draft a differentiator section for pursuit X&rdquo;.</p>
           </div>
         )}
         <div className="mx-auto flex max-w-2xl flex-col gap-4">

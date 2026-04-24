@@ -3,6 +3,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import { requireCompany } from '@procur/auth';
 import { db, opportunities, pursuits, pursuitTasks, users } from '@procur/db';
 import { toggleTaskAction } from '../actions';
+import { CaptureViewSwitcher } from '../components/view-switcher';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,9 +59,12 @@ export default async function AllTasksPage() {
     <div className="mx-auto max-w-4xl px-8 py-10">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
-        <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
-          {open.length} open · {done.length} completed
-        </p>
+        <div className="mt-2 flex items-center justify-between">
+          <CaptureViewSwitcher active="tasks" />
+          <p className="text-xs text-[color:var(--color-muted-foreground)]">
+            {open.length} open · {done.length} completed
+          </p>
+        </div>
       </header>
 
       <ul className="space-y-2">
