@@ -38,6 +38,16 @@ export type UpcomingObligation = {
   status: string;
 };
 
+export type RecentWin = {
+  pursuitId: string;
+  opportunityTitle: string;
+  agencyName: string | null;
+  jurisdictionName: string;
+  jurisdictionCountry: string;
+  awardedValueUsd: string | null;
+  updatedAt: Date;
+};
+
 export type HomeData = {
   totalPursuits: number;
   openPursuits: number;
@@ -46,6 +56,7 @@ export type HomeData = {
   upcomingDeadlines: DeadlinePursuit[];
   draftingProposals: DraftingProposal[];
   upcomingObligations: UpcomingObligation[];
+  recentWins: RecentWin[];
 };
 
 type ComplianceRow = {
@@ -56,7 +67,9 @@ export async function getHomeData(companyId: string): Promise<HomeData> {
   const now = new Date();
   const in30 = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-  const [totals, openCounts, deadlineRows, draftingRows, contractRows] = await Promise.all([
+  const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+
+  const [totals, openCounts, deadlineRows, draftingRows, contractRows, winRows] = await Promise.all([
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(pursuits)
@@ -129,6 +142,30 @@ export async function getHomeData(companyId: string): Promise<HomeData> {
       })
       .from(contracts)
       .where(eq(contracts.companyId, companyId)),
+
+    db
+      .select({
+        pursuitId: pursuits.id,
+        opportunityTitle: opportunities.title,
+        agencyName: agencies.name,
+        jurisdictionName: jurisdictions.name,
+        jurisdictionCountry: jurisdictions.countryCode,
+        awardedValueUsd: opportunities.awardedAmount,
+        updatedAt: pursuits.updatedAt,
+      })
+      .from(pursuits)
+      .innerJoin(opportunities, eq(opportunities.id, pursuits.opportunityId))
+      .innerJoin(jurisdictions, eq(jurisdictions.id, opportunities.jurisdictionId))
+      .leftJoin(agencies, eq(agencies.id, opportunities.agencyId))
+      .where(
+        and(
+          eq(pursuits.companyId, companyId),
+          eq(pursuits.stage, 'awarded'),
+          gt(pursuits.updatedAt, ninetyDaysAgo),
+        ),
+      )
+      .orderBy(desc(pursuits.updatedAt))
+      .limit(5),
   ]);
 
   const totalPursuits = totals[0]?.n ?? 0;
@@ -191,6 +228,16 @@ export async function getHomeData(companyId: string): Promise<HomeData> {
   }
   upcomingObligations.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
+  const recentWins: RecentWin[] = winRows.map((r) => ({
+    pursuitId: r.pursuitId,
+    opportunityTitle: r.opportunityTitle,
+    agencyName: r.agencyName,
+    jurisdictionName: r.jurisdictionName,
+    jurisdictionCountry: r.jurisdictionCountry,
+    awardedValueUsd: r.awardedValueUsd,
+    updatedAt: r.updatedAt,
+  }));
+
   return {
     totalPursuits,
     openPursuits,
@@ -199,5 +246,6 @@ export async function getHomeData(companyId: string): Promise<HomeData> {
     upcomingDeadlines,
     draftingProposals,
     upcomingObligations: upcomingObligations.slice(0, 6),
+    recentWins,
   };
 }
