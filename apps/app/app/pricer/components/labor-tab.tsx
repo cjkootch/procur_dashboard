@@ -1,4 +1,4 @@
-import type { LaborCategory } from '@procur/db';
+import { LABOR_RATE_SOURCES, type LaborCategory } from '@procur/db';
 import { formatMoney } from '../../../lib/format';
 import {
   aggregateYearTotals,
@@ -10,6 +10,7 @@ import {
   removeLaborCategoryAction,
   updateLaborCategoryAction,
 } from '../actions';
+import { RATE_SOURCE_LABEL, RateSourceChip } from './rate-source';
 
 /**
  * Labor Categories tab. Three sections, top-to-bottom:
@@ -139,6 +140,7 @@ export function LaborTab({
                 <tr>
                   <th className="px-4 py-2">Title</th>
                   <th className="px-4 py-2">Type</th>
+                  <th className="px-4 py-2">Rate source</th>
                   <th className="px-4 py-2 text-right">Direct rate</th>
                   <th className="px-4 py-2 text-right">Loaded rate</th>
                   <th className="px-4 py-2 text-right">Hours/yr</th>
@@ -192,6 +194,50 @@ export function LaborTab({
                             Save
                           </button>
                         </form>
+                      </td>
+                      <td className="px-4 py-2">
+                        {/* Display the current rate-source chip, with an
+                            expandable inline form (details/summary) to
+                            change source + reference in-place without
+                            introducing a modal. */}
+                        <details className="inline-block">
+                          <summary className="cursor-pointer list-none">
+                            <RateSourceChip
+                              source={lc.rateSource}
+                              reference={lc.rateSourceReference}
+                            />
+                          </summary>
+                          <form
+                            action={updateLaborCategoryAction}
+                            className="mt-1.5 flex flex-col gap-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-2 shadow-sm"
+                          >
+                            <input type="hidden" name="pursuitId" value={pursuitId} />
+                            <input type="hidden" name="laborCategoryId" value={lc.id} />
+                            <select
+                              name="rateSource"
+                              defaultValue={lc.rateSource ?? 'manual'}
+                              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5 text-[11px]"
+                            >
+                              {LABOR_RATE_SOURCES.map((s) => (
+                                <option key={s} value={s}>
+                                  {RATE_SOURCE_LABEL[s]}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              name="rateSourceReference"
+                              defaultValue={lc.rateSourceReference ?? ''}
+                              placeholder="Reference (e.g. GSA #, CBA 2024)"
+                              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1.5 py-0.5 text-[11px]"
+                            />
+                            <button
+                              type="submit"
+                              className="self-end text-[10px] underline text-[color:var(--color-muted-foreground)]"
+                            >
+                              Save
+                            </button>
+                          </form>
+                        </details>
                       </td>
                       <td className="px-4 py-2 text-right">
                         <form action={updateLaborCategoryAction} className="flex justify-end gap-1">
@@ -308,6 +354,32 @@ export function LaborTab({
               <option value="key_personnel">Key personnel</option>
               <option value="standard">Standard</option>
             </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-[11px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+              Rate source
+            </span>
+            <select
+              name="rateSource"
+              defaultValue="manual"
+              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-sm"
+            >
+              {LABOR_RATE_SOURCES.map((s) => (
+                <option key={s} value={s}>
+                  {RATE_SOURCE_LABEL[s]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-1 min-w-[160px] flex-col gap-1 text-sm">
+            <span className="text-[11px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+              Reference (optional)
+            </span>
+            <input
+              name="rateSourceReference"
+              placeholder="GSA #, CBA 2024, IDB Loan 45/24…"
+              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-sm"
+            />
           </label>
           <button
             type="submit"

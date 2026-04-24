@@ -33,6 +33,29 @@ export const pricingModels = pgTable('pricing_models', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+/**
+ * Where the labor rate came from — tracked per-category for audit
+ * traceability. Stored as a text column (not a PG enum) so new sources
+ * can be added by the application layer without a migration. The
+ * canonical list for v1:
+ *
+ *   manual                       — user entered, no reference document
+ *   published_rate_card          — e.g. GSA Schedule, published govt rate card
+ *   collective_agreement         — CBA / union agreement
+ *   prior_contract               — rate from a prior similar contract
+ *   multilateral_rate_schedule   — CDB / IDB / World Bank / AfDB rate tables
+ *   other                        — anything else; use with a reference
+ */
+export const LABOR_RATE_SOURCES = [
+  'manual',
+  'published_rate_card',
+  'collective_agreement',
+  'prior_contract',
+  'multilateral_rate_schedule',
+  'other',
+] as const;
+export type LaborRateSource = (typeof LABOR_RATE_SOURCES)[number];
+
 export const laborCategories = pgTable('labor_categories', {
   id: uuid('id').primaryKey().defaultRandom(),
   pricingModelId: uuid('pricing_model_id')
@@ -44,6 +67,11 @@ export const laborCategories = pgTable('labor_categories', {
   directRate: numeric('direct_rate', { precision: 10, scale: 2 }),
   loadedRate: numeric('loaded_rate', { precision: 10, scale: 2 }),
   hoursPerYear: integer('hours_per_year'),
+
+  // Provenance for the rate. Nullable — existing rows predating this
+  // column default to `manual` in application code.
+  rateSource: text('rate_source').$type<LaborRateSource>(),
+  rateSourceReference: text('rate_source_reference'),
 
   yearlyBreakdown: jsonb('yearly_breakdown').$type<
     Array<{
