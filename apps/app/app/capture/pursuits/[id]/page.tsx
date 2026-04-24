@@ -1,5 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import { and, eq } from 'drizzle-orm';
+import { contracts, db } from '@procur/db';
 import { requireCompany } from '@procur/auth';
 import {
   getPursuitById,
@@ -16,6 +18,7 @@ import {
   toggleTaskAction,
   updatePursuitAction,
 } from '../../actions';
+import { createContractFromPursuitAction } from '../../../contract/actions';
 import { CaptureQuestionsForm } from '../../components/capture-questions-form';
 
 export const dynamic = 'force-dynamic';
@@ -57,6 +60,14 @@ export default async function PursuitDetailPage({
 
   const openTasks = tasks.filter((t) => !t.completedAt);
   const doneTasks = tasks.filter((t) => t.completedAt);
+
+  const existingContract =
+    card.stage === 'awarded'
+      ? await db.query.contracts.findFirst({
+          where: and(eq(contracts.pursuitId, id), eq(contracts.companyId, company.id)),
+          columns: { id: true },
+        })
+      : null;
 
   return (
     <div className="mx-auto max-w-5xl px-8 py-10">
@@ -147,6 +158,36 @@ export default async function PursuitDetailPage({
           </p>
         )}
       </section>
+
+      {card.stage === 'awarded' && (
+        <section className="mb-8 flex flex-wrap items-center gap-3 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30 p-4">
+          <div className="flex-1 min-w-[260px]">
+            <p className="text-sm font-medium">Congratulations — this pursuit was awarded.</p>
+            <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+              Move the win into Contract to track obligations, deliverables, and period of
+              performance.
+            </p>
+          </div>
+          {existingContract ? (
+            <Link
+              href={`/contract/${existingContract.id}`}
+              className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-4 py-2 text-sm font-medium"
+            >
+              View contract →
+            </Link>
+          ) : (
+            <form action={createContractFromPursuitAction}>
+              <input type="hidden" name="pursuitId" value={card.id} />
+              <button
+                type="submit"
+                className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)]"
+              >
+                Create contract
+              </button>
+            </form>
+          )}
+        </section>
+      )}
 
       <section className="mb-8">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">

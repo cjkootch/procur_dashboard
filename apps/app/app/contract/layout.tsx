@@ -4,7 +4,7 @@ import { UserButton } from '@clerk/nextjs';
 import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 import { redirect } from 'next/navigation';
 
-export default async function LibraryLayout({ children }: { children: ReactNode }) {
+export default async function ContractLayout({ children }: { children: ReactNode }) {
   const user = await getCurrentUser();
   if (!user) redirect('/sign-in');
   const company = await getCurrentCompany();
@@ -24,25 +24,19 @@ export default async function LibraryLayout({ children }: { children: ReactNode 
         </div>
         <nav className="flex flex-col gap-1 px-2 text-sm">
           <div className="px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-            Content library
+            Contract
           </div>
           <Link
-            href="/library"
+            href="/contract"
             className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]"
           >
-            All entries
+            All contracts
           </Link>
           <Link
-            href="/library/new"
+            href="/contract/new"
             className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]"
           >
-            Add entry
-          </Link>
-          <Link
-            href="/library/upload"
-            className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]"
-          >
-            Upload file
+            New contract
           </Link>
           <div className="mt-4 px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Products
@@ -66,10 +60,10 @@ export default async function LibraryLayout({ children }: { children: ReactNode 
             Pricer
           </Link>
           <Link
-            href="/contract"
+            href="/library"
             className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]"
           >
-            Contract
+            Content library
           </Link>
           <div className="mt-4 px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Account
@@ -84,7 +78,7 @@ export default async function LibraryLayout({ children }: { children: ReactNode 
       </aside>
       <div className="flex-1 flex flex-col">
         <header className="flex items-center justify-between border-b border-[color:var(--color-border)] px-6 py-3">
-          <div className="text-sm text-[color:var(--color-muted-foreground)]">Content library</div>
+          <div className="text-sm text-[color:var(--color-muted-foreground)]">Contract</div>
           <UserButton afterSignOutUrl="/sign-in" />
         </header>
         <main className="flex-1 overflow-auto">{children}</main>
