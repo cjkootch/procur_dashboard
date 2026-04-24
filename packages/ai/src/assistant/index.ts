@@ -17,5 +17,6 @@ export type {
   AssistantContext,
   PageContext,
   ToolDefinition,
+  AnyToolDefinition,
   ToolRegistry,
 } from './types';

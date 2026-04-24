@@ -12,9 +12,9 @@ describe('zodToJsonSchema', () => {
     const json = zodToJsonSchema(schema);
     assert.equal(json.type, 'object');
     assert.deepEqual(json.required, ['query']);
-    const props = (json as { properties: Record<string, { type: string }> }).properties;
-    assert.equal(props.query.type, 'string');
-    assert.equal(props.limit.type, 'number');
+    const props = (json as { properties: Record<string, { type: string } | undefined> }).properties;
+    assert.equal(props.query?.type, 'string');
+    assert.equal(props.limit?.type, 'number');
   });
 
   it('handles enums and arrays', () => {
@@ -23,11 +23,14 @@ describe('zodToJsonSchema', () => {
       ids: z.array(z.string()),
     });
     const json = zodToJsonSchema(schema) as {
-      properties: Record<string, { type: string; enum?: string[]; items?: { type: string } }>;
+      properties: Record<
+        string,
+        { type: string; enum?: string[]; items?: { type: string } } | undefined
+      >;
     };
-    assert.deepEqual(json.properties.stage.enum, ['identification', 'qualification']);
-    assert.equal(json.properties.ids.type, 'array');
-    assert.equal(json.properties.ids.items?.type, 'string');
+    assert.deepEqual(json.properties.stage?.enum, ['identification', 'qualification']);
+    assert.equal(json.properties.ids?.type, 'array');
+    assert.equal(json.properties.ids?.items?.type, 'string');
   });
 
   it('wraps non-object schemas under value', () => {
@@ -51,7 +54,9 @@ describe('defineTool + buildToolsParam', () => {
       handler: async () => ({ results: [] }),
     });
 
-    const [param] = buildToolsParam({ [tool.name]: tool });
+    const params = buildToolsParam({ [tool.name]: tool });
+    const param = params[0];
+    assert.ok(param, 'expected at least one tool param');
     assert.equal(param.name, 'search_opportunities');
     assert.equal(param.description, 'Search tender opportunities');
     assert.equal((param.input_schema as { type: string }).type, 'object');

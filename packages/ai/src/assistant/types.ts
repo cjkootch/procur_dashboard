@@ -32,4 +32,12 @@ export type ToolDefinition<I extends z.ZodTypeAny = z.ZodTypeAny, O = unknown> =
   handler: (ctx: AssistantContext, input: z.infer<I>) => Promise<O>;
 };
 
-export type ToolRegistry = Record<string, ToolDefinition>;
+/**
+ * Runtime-shaped tool registry. We deliberately use `any` for the schema
+ * generic so concrete tools with narrow zod types stay assignable. All
+ * consumer-facing invariants (name/description/kind/jsonSchema) remain
+ * strictly typed.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AnyToolDefinition = ToolDefinition<any, any>;
+export type ToolRegistry = Record<string, AnyToolDefinition>;
