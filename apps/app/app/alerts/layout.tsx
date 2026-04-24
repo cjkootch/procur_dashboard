@@ -65,6 +65,9 @@ export default async function AlertsLayout({ children }: { children: ReactNode }
           <div className="mt-4 px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Account
           </div>
+          <Link href="/settings" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
+            Company profile
+          </Link>
           <Link href="/billing" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Billing
           </Link>
