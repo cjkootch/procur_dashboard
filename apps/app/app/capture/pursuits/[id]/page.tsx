@@ -20,7 +20,9 @@ import { PursuitRightRail } from '../../pursuits/components/right-rail';
 import { PursuitOverviewTab } from '../../pursuits/components/overview-tab';
 import { PursuitActivityTab } from '../../pursuits/components/activity-tab';
 import { PursuitTasksTab } from '../../pursuits/components/tasks-tab';
+import { GateReviewsTab } from '../../pursuits/components/gate-reviews-tab';
 import { PursuitDocumentsTab } from '../../pursuits/components/documents-tab';
+import { listGateReviewsForPursuit } from '../../../../lib/gate-review-queries';
 
 export const dynamic = 'force-dynamic';
 
@@ -116,6 +118,9 @@ export default async function PursuitDetailPage({
           .limit(200)
       : [];
 
+  // Gate reviews — loaded only when the Gate Reviews tab is active.
+  const gateReviews = tab === 'gate-reviews' ? await listGateReviewsForPursuit(id) : [];
+
   // Documents attached to the underlying opportunity. Loaded only when the
   // Documents tab is active to avoid an extra query on every page view.
   const docRows =
@@ -200,6 +205,9 @@ export default async function PursuitDetailPage({
             </div>
           )}
           {tab === 'tasks' && <PursuitTasksTab pursuitId={card.id} tasks={tasks} />}
+          {tab === 'gate-reviews' && (
+            <GateReviewsTab pursuitId={card.id} reviews={gateReviews} />
+          )}
           {tab === 'documents' && (
             <PursuitDocumentsTab
               docs={docRows.map((d) => ({

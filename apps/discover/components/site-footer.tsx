@@ -11,7 +11,7 @@ export function SiteFooter() {
             alt="Procur"
             width={96}
             height={40}
-            className="h-7 w-auto"
+            className="h-9 w-auto"
           />
           <p className="mt-2 text-[color:var(--color-muted-foreground)]">
             Win government contracts in emerging markets.
