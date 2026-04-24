@@ -34,6 +34,10 @@ export default async function CaptureLayout({ children }: { children: ReactNode 
           <NavLink href="/proposal" label="Proposal" disabled />
           <NavLink href="/pricer" label="Pricer" disabled />
           <NavLink href="/contract" label="Contract" disabled />
+          <div className="mt-4 px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Account
+          </div>
+          <NavLink href="/billing" label="Billing" />
         </nav>
       </aside>
 

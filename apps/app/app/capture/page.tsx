@@ -33,6 +33,10 @@ export default async function CaptureDashboardPage() {
 
   const recent = pursuits.slice(0, 6);
 
+  const onFreeTier = company.planTier === 'free';
+  const FREE_CAP = 5;
+  const approaching = onFreeTier && active.length >= FREE_CAP - 1;
+
   return (
     <div className="mx-auto max-w-6xl px-8 py-10">
       <header className="mb-8 flex items-start justify-between">
@@ -40,15 +44,23 @@ export default async function CaptureDashboardPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Capture</h1>
           <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
             {active.length} active pursuit{active.length === 1 ? '' : 's'}
+            {onFreeTier && <> · {Math.max(0, FREE_CAP - active.length)} free-tier slots left</>}
           </p>
         </div>
-        <Link
-          href="/capture/pursuits"
-          className="text-sm underline"
-        >
+        <Link href="/capture/pursuits" className="text-sm underline">
           All pursuits →
         </Link>
       </header>
+
+      {approaching && (
+        <div className="mb-6 rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40 p-3 text-sm">
+          You&rsquo;re at {active.length}/{FREE_CAP} pursuits on the free plan.{' '}
+          <Link className="underline" href="/billing">
+            Upgrade to Pro
+          </Link>{' '}
+          for unlimited pursuits.
+        </div>
+      )}
 
       <section className="mb-10 grid grid-cols-2 gap-4 md:grid-cols-4">
         <Stat label="Active" value={active.length.toString()} />
