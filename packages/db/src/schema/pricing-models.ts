@@ -68,6 +68,13 @@ export const laborCategories = pgTable('labor_categories', {
   loadedRate: numeric('loaded_rate', { precision: 10, scale: 2 }),
   hoursPerYear: integer('hours_per_year'),
 
+  // Role description + required certifications. Shown in the expandable
+  // row on the Labor Categories tab and available to feed into AI
+  // proposal drafting (personnel section) so the narrative matches the
+  // priced role.
+  description: text('description'),
+  requirementsCertifications: text('requirements_certifications'),
+
   // Provenance for the rate. Nullable — existing rows predating this
   // column default to `manual` in application code.
   rateSource: text('rate_source').$type<LaborRateSource>(),

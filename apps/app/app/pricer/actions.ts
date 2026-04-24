@@ -165,6 +165,9 @@ export async function addLaborCategoryAction(formData: FormData): Promise<void> 
     hoursPerYear: toInt(formData.get('hoursPerYear')) ?? 2080,
     rateSource: toRateSource(formData.get('rateSource')),
     rateSourceReference: String(formData.get('rateSourceReference') ?? '').trim() || null,
+    description: String(formData.get('description') ?? '').trim() || null,
+    requirementsCertifications:
+      String(formData.get('requirementsCertifications') ?? '').trim() || null,
   };
   await db.insert(laborCategories).values(row);
 
@@ -187,12 +190,15 @@ export async function updateLaborCategoryAction(formData: FormData): Promise<voi
   });
   if (!lc) throw new Error('labor category not found');
 
-  // For fields that may be intentionally cleared (rate source reference),
-  // we need to distinguish "field absent from form" from "field cleared".
-  // Each edit form we ship re-submits the existing values as hidden inputs,
-  // so "absent" means: keep existing; "empty string" means: clear.
+  // For fields that may be intentionally cleared (rate source reference,
+  // description, requirements), we need to distinguish "field absent from
+  // form" from "field cleared". Each inline edit form we ship omits the
+  // fields it doesn't touch, so "absent" → keep existing; "present but
+  // empty" → clear.
   const hasRateSource = formData.has('rateSource');
   const hasRateSourceRef = formData.has('rateSourceReference');
+  const hasDescription = formData.has('description');
+  const hasReqs = formData.has('requirementsCertifications');
 
   await db
     .update(laborCategories)
@@ -205,6 +211,12 @@ export async function updateLaborCategoryAction(formData: FormData): Promise<voi
       rateSourceReference: hasRateSourceRef
         ? String(formData.get('rateSourceReference') ?? '').trim() || null
         : lc.rateSourceReference,
+      description: hasDescription
+        ? String(formData.get('description') ?? '').trim() || null
+        : lc.description,
+      requirementsCertifications: hasReqs
+        ? String(formData.get('requirementsCertifications') ?? '').trim() || null
+        : lc.requirementsCertifications,
       updatedAt: new Date(),
     })
     .where(eq(laborCategories.id, lcId));
