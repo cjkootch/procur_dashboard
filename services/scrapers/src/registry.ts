@@ -1,4 +1,5 @@
 import type { TenderScraper } from '@procur/scrapers-core';
+import { BarbadosGisScraper } from './jurisdictions/barbados-gis/scraper';
 import { DrDgcpScraper } from './jurisdictions/dr-dgcp/scraper';
 import { GuyanaNptabScraper } from './jurisdictions/guyana-nptab/scraper';
 import { JamaicaGojepScraper } from './jurisdictions/jamaica-gojep/scraper';
@@ -11,6 +12,7 @@ export const scrapers: Record<string, ScraperFactory> = {
   guyana: () => new GuyanaNptabScraper(),
   'trinidad-and-tobago': () => new TrinidadEgpScraper(),
   'dominican-republic': () => new DrDgcpScraper(),
+  barbados: () => new BarbadosGisScraper(),
 };
 
 export function getScraper(slug: string): TenderScraper {
