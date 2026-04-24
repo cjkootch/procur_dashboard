@@ -35,9 +35,12 @@ export default async function ProposalLayout({ children }: { children: ReactNode
           <Link href="/capture" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Capture
           </Link>
-          <span className="rounded-[var(--radius-sm)] px-2 py-1 text-[color:var(--color-muted-foreground)] opacity-60">
+          <Link href="/pricer" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Pricer
-          </span>
+          </Link>
+          <Link href="/library" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
+            Content library
+          </Link>
           <span className="rounded-[var(--radius-sm)] px-2 py-1 text-[color:var(--color-muted-foreground)] opacity-60">
             Contract
           </span>
