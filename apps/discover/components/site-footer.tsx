@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import Link from 'next/link';
 
 export function SiteFooter() {
@@ -5,7 +6,13 @@ export function SiteFooter() {
     <footer className="mt-24 border-t border-[color:var(--color-border)]">
       <div className="mx-auto grid max-w-6xl gap-8 px-6 py-10 text-sm md:grid-cols-4">
         <div>
-          <p className="font-semibold">Procur</p>
+          <Image
+            src="/brand/procur-logo-dark.svg"
+            alt="Procur"
+            width={96}
+            height={40}
+            className="h-7 w-auto"
+          />
           <p className="mt-2 text-[color:var(--color-muted-foreground)]">
             Win government contracts in emerging markets.
           </p>

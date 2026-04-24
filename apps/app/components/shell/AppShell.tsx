@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 import { UserButton } from '@clerk/nextjs';
@@ -83,11 +84,18 @@ export async function AppShell({
     <div className="flex min-h-screen">
       <aside className="flex w-60 shrink-0 flex-col border-r border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40">
         <div className="p-3">
-          <Link href="/" className="block text-lg font-semibold tracking-tight">
-            Procur
+          <Link href="/" aria-label="Procur home" className="block">
+            <Image
+              src="/brand/procur-logo-dark.svg"
+              alt="Procur"
+              width={96}
+              height={40}
+              priority
+              className="h-7 w-auto"
+            />
           </Link>
           {company && (
-            <p className="mt-1 truncate text-xs text-[color:var(--color-muted-foreground)]">
+            <p className="mt-2 truncate text-xs text-[color:var(--color-muted-foreground)]">
               {company.name} · {company.planTier}
             </p>
           )}

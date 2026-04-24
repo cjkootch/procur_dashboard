@@ -1,11 +1,19 @@
+import Image from 'next/image';
 import Link from 'next/link';
 
 export function SiteHeader() {
   return (
     <header className="border-b border-[color:var(--color-border)] bg-[color:var(--color-background)]">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <Link href="/" className="flex items-baseline gap-2 font-semibold tracking-tight">
-          <span className="text-lg">Procur</span>
+        <Link href="/" aria-label="Procur Discover home" className="flex items-center gap-2">
+          <Image
+            src="/brand/procur-logo-dark.svg"
+            alt="Procur"
+            width={96}
+            height={40}
+            priority
+            className="h-7 w-auto"
+          />
           <span className="text-sm text-[color:var(--color-muted-foreground)]">Discover</span>
         </Link>
         <nav className="flex items-center gap-6 text-sm">
