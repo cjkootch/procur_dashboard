@@ -1,8 +1,8 @@
 import Link from 'next/link';
 import { requireCompany } from '@procur/auth';
 import { Chat } from '../../components/assistant/Chat';
+import { ThreadListItem } from '../../components/assistant/ThreadListItem';
 import { listThreads } from '../../lib/assistant/threads';
-import { formatDate } from '../../lib/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,17 +29,13 @@ export default async function AssistantHomePage() {
         ) : (
           <ul className="flex flex-col gap-1">
             {threads.map((t) => (
-              <li key={t.id}>
-                <Link
-                  href={`/assistant/${t.id}`}
-                  className="block rounded-[var(--radius-sm)] px-2 py-1.5 text-xs hover:bg-[color:var(--color-background)]"
-                >
-                  <div className="truncate font-medium">{t.title}</div>
-                  <div className="text-[10px] text-[color:var(--color-muted-foreground)]">
-                    {formatDate(t.lastMessageAt)}
-                  </div>
-                </Link>
-              </li>
+              <ThreadListItem
+                key={t.id}
+                id={t.id}
+                title={t.title}
+                lastMessageAtIso={t.lastMessageAt.toISOString()}
+                active={false}
+              />
             ))}
           </ul>
         )}

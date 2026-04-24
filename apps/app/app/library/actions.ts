@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { contentLibrary, db, type NewContentLibraryEntry } from '@procur/db';
 import { requireCompany } from '@procur/auth';
-import { chunkContent, embedMany, embedText } from '@procur/ai';
+import { chunkContent, embedMany, embedText, meter, meterEmbedding, MODELS } from '@procur/ai';
 import { LIBRARY_TYPES, type LibraryType } from '../../lib/library-queries';
 import { extractTextFromFile } from '../../lib/extract-text';
 
@@ -129,6 +129,12 @@ export async function ingestFileAction(formData: FormData): Promise<void> {
   let chunks: Array<{ title: string; type: LibraryType; content: string; tags: string[] }>;
   try {
     const result = await chunkContent({ sourceName: file.name, text: trimmed });
+    await meter({
+      companyId: company.id,
+      source: 'other',
+      model: MODELS.haiku,
+      usage: result.usage,
+    });
     chunks = result.chunks.map((c) => ({
       title: c.title,
       type: c.type as LibraryType,
@@ -151,8 +157,14 @@ export async function ingestFileAction(formData: FormData): Promise<void> {
   let embeddings: (number[] | null)[] = chunks.map(() => null);
   if (process.env.OPENAI_API_KEY) {
     try {
-      const vectors = await embedMany(chunks.map((c) => `${c.title}\n\n${c.content}`));
+      const inputs = chunks.map((c) => `${c.title}\n\n${c.content}`);
+      const vectors = await embedMany(inputs);
       embeddings = vectors;
+      const totalChars = inputs.reduce((s, t) => s + t.length, 0);
+      await meterEmbedding({
+        companyId: company.id,
+        tokens: Math.ceil(totalChars / 4),
+      });
     } catch (err) {
       console.warn('embedding failed, chunks saved without index', err);
     }

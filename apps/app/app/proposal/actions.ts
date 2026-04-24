@@ -478,6 +478,12 @@ export async function regenerateComplianceAction(formData: FormData): Promise<vo
     })),
     sections: sectionInput,
   });
+  await meter({
+    companyId: company.id,
+    source: 'map_requirements',
+    model: MODELS.sonnet,
+    usage: result.usage,
+  });
 
   const existing = (proposal.complianceMatrix as ComplianceRow[] | null) ?? [];
   const confirmedByReqId = new Map(
@@ -581,6 +587,12 @@ export async function reviewProposalAction(formData: FormData): Promise<void> {
       partiallyAddressed,
       notAddressed,
     },
+  });
+  await meter({
+    companyId: company.id,
+    source: 'review_proposal',
+    model: MODELS.sonnet,
+    usage: result.usage,
   });
 
   const aiReview = {

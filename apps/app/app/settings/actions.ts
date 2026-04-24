@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { companies, db } from '@procur/db';
 import { requireCompany } from '@procur/auth';
-import { extractCompanyProfile } from '@procur/ai';
+import { extractCompanyProfile, meter, MODELS } from '@procur/ai';
 
 function str(formData: FormData, key: string): string | null {
   const v = formData.get(key);
@@ -96,6 +96,12 @@ export async function autofillCompanyProfileAction(formData: FormData): Promise<
   const suggestion = await extractCompanyProfile({
     websiteUrl: normalizedUrl,
     websiteText: text,
+  });
+  await meter({
+    companyId: company.id,
+    source: 'extract_company_profile',
+    model: MODELS.sonnet,
+    usage: suggestion.usage,
   });
 
   const existing = new Set(

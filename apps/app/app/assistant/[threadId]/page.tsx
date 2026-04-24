@@ -7,6 +7,7 @@ import type {
   AnthropicToolResultBlockParam,
 } from '@procur/ai';
 import { Chat } from '../../../components/assistant/Chat';
+import { ThreadListItem } from '../../../components/assistant/ThreadListItem';
 import type {
   PageContextInput,
   RenderedMessage,
@@ -56,17 +57,13 @@ export default async function AssistantThreadPage({ params, searchParams }: Prop
         </div>
         <ul className="flex flex-col gap-1">
           {threads.map((t) => (
-            <li key={t.id}>
-              <Link
-                href={`/assistant/${t.id}`}
-                className={`block rounded-[var(--radius-sm)] px-2 py-1.5 text-xs hover:bg-[color:var(--color-background)] ${t.id === threadId ? 'bg-[color:var(--color-background)] font-medium' : ''}`}
-              >
-                <div className="truncate">{t.title}</div>
-                <div className="text-[10px] text-[color:var(--color-muted-foreground)]">
-                  {formatDate(t.lastMessageAt)}
-                </div>
-              </Link>
-            </li>
+            <ThreadListItem
+              key={t.id}
+              id={t.id}
+              title={t.title}
+              lastMessageAtIso={t.lastMessageAt.toISOString()}
+              active={t.id === threadId}
+            />
           ))}
         </ul>
       </aside>
