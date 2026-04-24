@@ -26,6 +26,11 @@ export {
   type DraftSectionResult,
   type LibraryExcerpt,
 } from './tasks/draft-section';
+export {
+  chunkContent,
+  type ChunkContentInput,
+  type ChunkContentResult,
+} from './tasks/chunk-content';
 export { embedText, embedMany, EMBEDDING_MODEL, EMBEDDING_DIMS } from './embeddings';
 export type { CacheUsage } from './prompt-blocks';
 export {
