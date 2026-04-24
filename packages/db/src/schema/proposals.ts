@@ -49,6 +49,20 @@ export const proposals = pgTable('proposals', {
     }>
   >(),
 
+  aiReview: jsonb('ai_review').$type<{
+    overallScore: number;
+    overallVerdict: 'red' | 'yellow' | 'green';
+    summary: string;
+    strengths: string[];
+    risks: Array<{ severity: 'low' | 'medium' | 'high'; text: string }>;
+    sectionFeedback: Array<{
+      sectionId: string;
+      score: number;
+      suggestions: string[];
+    }>;
+    generatedAt: string;
+  } | null>(),
+
   latestWordExportR2Key: text('latest_word_export_r2_key'),
   latestWordExportUrl: text('latest_word_export_url'),
   latestPdfExportR2Key: text('latest_pdf_export_r2_key'),

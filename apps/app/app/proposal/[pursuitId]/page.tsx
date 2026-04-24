@@ -9,9 +9,24 @@ import {
   createProposalAction,
   draftSectionAction,
   regenerateComplianceAction,
+  reviewProposalAction,
   updateComplianceMappingAction,
   updateSectionAction,
 } from '../actions';
+
+type AiReview = {
+  overallScore: number;
+  overallVerdict: 'red' | 'yellow' | 'green';
+  summary: string;
+  strengths: string[];
+  risks: Array<{ severity: 'low' | 'medium' | 'high'; text: string }>;
+  sectionFeedback: Array<{
+    sectionId: string;
+    score: number;
+    suggestions: string[];
+  }>;
+  generatedAt: string;
+};
 
 export const dynamic = 'force-dynamic';
 
@@ -182,6 +197,15 @@ export default async function ProposalDetailPage({
           <h1 className="mt-2 text-2xl font-semibold tracking-tight">{opportunity.title}</h1>
         </div>
         <div className="flex flex-col items-end gap-2 whitespace-nowrap text-sm">
+          <form action={reviewProposalAction}>
+            <input type="hidden" name="pursuitId" value={pursuitId} />
+            <button
+              type="submit"
+              className="inline-flex items-center rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[color:var(--color-muted)]/40"
+            >
+              Review with AI
+            </button>
+          </form>
           <a
             href={`/api/proposal/${pursuitId}/export`}
             className="inline-flex items-center rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-background)]"
@@ -204,6 +228,83 @@ export default async function ProposalDetailPage({
         <Fact label="Requirements" value={compliance.length.toString()} />
         <Fact label="Addressed" value={`${compliancePct}%`} sub={`${addressedCount} of ${compliance.length}`} />
       </section>
+
+      {proposal.aiReview && (() => {
+        const review = proposal.aiReview as AiReview;
+        const verdictStyle = {
+          red: 'border-red-200 bg-red-50/40 text-red-900',
+          yellow: 'border-amber-200 bg-amber-50/40 text-amber-900',
+          green: 'border-emerald-200 bg-emerald-50/40 text-emerald-900',
+        }[review.overallVerdict];
+        const severityStyle = {
+          high: 'bg-red-100 text-red-900',
+          medium: 'bg-amber-100 text-amber-900',
+          low: 'bg-[color:var(--color-muted)]/60',
+        };
+        return (
+          <section className={`mb-10 rounded-[var(--radius-lg)] border p-6 ${verdictStyle}`}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="flex items-baseline gap-3">
+                  <p className="text-xs uppercase tracking-wide opacity-70">AI review</p>
+                  <p className="text-2xl font-semibold">{review.overallScore}/100</p>
+                  <span className="rounded-full border border-current px-2 py-0.5 text-xs capitalize">
+                    {review.overallVerdict}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm">{review.summary}</p>
+              </div>
+              <form action={reviewProposalAction}>
+                <input type="hidden" name="pursuitId" value={pursuitId} />
+                <button
+                  type="submit"
+                  className="rounded-[var(--radius-md)] border border-current/30 bg-white/70 px-3 py-1.5 text-xs font-medium hover:bg-white"
+                >
+                  Re-run
+                </button>
+              </form>
+            </div>
+
+            <div className="mt-5 grid gap-5 md:grid-cols-2">
+              {review.strengths.length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide opacity-70">
+                    Strengths
+                  </p>
+                  <ul className="list-disc space-y-1 pl-5 text-sm">
+                    {review.strengths.map((s, i) => (
+                      <li key={i}>{s}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {review.risks.length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide opacity-70">
+                    Risks
+                  </p>
+                  <ul className="space-y-1 text-sm">
+                    {review.risks.map((r, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <span
+                          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${severityStyle[r.severity]}`}
+                        >
+                          {r.severity}
+                        </span>
+                        <span>{r.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            <p className="mt-4 text-xs opacity-60">
+              Generated {formatDate(new Date(review.generatedAt))}
+            </p>
+          </section>
+        );
+      })()}
 
       {relevantPP && relevantPP.length > 0 && (
         <section className="mb-10">
