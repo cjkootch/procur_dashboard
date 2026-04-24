@@ -10,12 +10,18 @@ import {
   pursuits,
   pursuitGateReviews,
   pursuitTasks,
+  pursuitTeamMembers,
+  TEAM_ROLES,
+  TEAMING_STATUSES,
   type GateReviewCriterion,
   type GateReviewCriterionStatus,
   type GateReviewDecision,
   type NewPursuit,
   type NewPursuitGateReview,
   type NewPursuitTask,
+  type NewPursuitTeamMember,
+  type TeamingStatus,
+  type TeamRole,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
 import { STAGE_ORDER, type PursuitStageKey, getActivePursuitCount } from '../../lib/capture-queries';
@@ -493,6 +499,146 @@ export async function deleteGateReviewAction(formData: FormData): Promise<void> 
     action: 'pursuit.gate_review_deleted',
     pursuitId: existing.pursuitId,
     metadata: { gateReviewId, stage: existing.stage },
+  });
+
+  revalidatePath(`/capture/pursuits/${existing.pursuitId}`);
+}
+
+// ===========================================================================
+// Teaming
+// ===========================================================================
+
+function toRole(v: FormDataEntryValue | null): TeamRole {
+  const s = v == null ? '' : String(v);
+  return (TEAM_ROLES as string[]).includes(s) ? (s as TeamRole) : 'subcontractor';
+}
+
+function toStatus(v: FormDataEntryValue | null): TeamingStatus {
+  const s = v == null ? '' : String(v);
+  return (TEAMING_STATUSES as string[]).includes(s) ? (s as TeamingStatus) : 'engaging';
+}
+
+function toAllocation(v: FormDataEntryValue | null): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (s.length === 0) return null;
+  const n = Number.parseFloat(s);
+  if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+  return n.toFixed(2);
+}
+
+async function requireTeamMember(companyId: string, memberId: string) {
+  const rows = await db
+    .select({ member: pursuitTeamMembers, companyId: pursuits.companyId })
+    .from(pursuitTeamMembers)
+    .innerJoin(pursuits, eq(pursuits.id, pursuitTeamMembers.pursuitId))
+    .where(eq(pursuitTeamMembers.id, memberId))
+    .limit(1);
+  const first = rows[0];
+  if (!first || first.companyId !== companyId) throw new Error('team member not found');
+  return first.member;
+}
+
+export async function addTeamMemberAction(formData: FormData): Promise<void> {
+  const { user, company } = await resolveUserAndCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const partnerName = String(formData.get('partnerName') ?? '').trim();
+  if (!pursuitId || !partnerName) throw new Error('pursuitId + partnerName required');
+  if (partnerName.length > 200) throw new Error('partnerName too long');
+
+  await requirePursuitOwnedByCompany(company.id, pursuitId);
+
+  const role = toRole(formData.get('role'));
+  const status = toStatus(formData.get('status'));
+  const allocationPct = toAllocation(formData.get('allocationPct'));
+  const capabilities = String(formData.get('capabilities') ?? '').trim() || null;
+  const contactName = String(formData.get('contactName') ?? '').trim() || null;
+  const contactEmail = String(formData.get('contactEmail') ?? '').trim() || null;
+  const notes = String(formData.get('notes') ?? '').trim() || null;
+
+  const row: NewPursuitTeamMember = {
+    pursuitId,
+    partnerName,
+    role,
+    status,
+    allocationPct,
+    capabilities,
+    contactName,
+    contactEmail,
+    notes,
+  };
+
+  const [created] = await db
+    .insert(pursuitTeamMembers)
+    .values(row)
+    .returning({ id: pursuitTeamMembers.id });
+
+  await recordPursuitAudit({
+    companyId: company.id,
+    userId: user.id,
+    action: 'pursuit.team_member_added',
+    pursuitId,
+    metadata: { teamMemberId: created?.id, partnerName, role },
+  });
+
+  revalidatePath(`/capture/pursuits/${pursuitId}`);
+}
+
+export async function updateTeamMemberAction(formData: FormData): Promise<void> {
+  const { user, company } = await resolveUserAndCompany();
+  const memberId = String(formData.get('teamMemberId') ?? '');
+  if (!memberId) throw new Error('teamMemberId required');
+
+  const existing = await requireTeamMember(company.id, memberId);
+
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (formData.has('partnerName')) {
+    const v = String(formData.get('partnerName') ?? '').trim();
+    if (v.length > 0) updates.partnerName = v;
+  }
+  if (formData.has('role')) updates.role = toRole(formData.get('role'));
+  if (formData.has('status')) updates.status = toStatus(formData.get('status'));
+  if (formData.has('allocationPct')) updates.allocationPct = toAllocation(formData.get('allocationPct'));
+  if (formData.has('capabilities'))
+    updates.capabilities = String(formData.get('capabilities') ?? '').trim() || null;
+  if (formData.has('contactName'))
+    updates.contactName = String(formData.get('contactName') ?? '').trim() || null;
+  if (formData.has('contactEmail'))
+    updates.contactEmail = String(formData.get('contactEmail') ?? '').trim() || null;
+  if (formData.has('notes'))
+    updates.notes = String(formData.get('notes') ?? '').trim() || null;
+
+  await db
+    .update(pursuitTeamMembers)
+    .set(updates)
+    .where(eq(pursuitTeamMembers.id, memberId));
+
+  await recordPursuitAudit({
+    companyId: company.id,
+    userId: user.id,
+    action: 'pursuit.team_member_updated',
+    pursuitId: existing.pursuitId,
+    metadata: { teamMemberId: memberId, fields: Object.keys(updates).filter((k) => k !== 'updatedAt') },
+  });
+
+  revalidatePath(`/capture/pursuits/${existing.pursuitId}`);
+}
+
+export async function removeTeamMemberAction(formData: FormData): Promise<void> {
+  const { user, company } = await resolveUserAndCompany();
+  const memberId = String(formData.get('teamMemberId') ?? '');
+  if (!memberId) throw new Error('teamMemberId required');
+
+  const existing = await requireTeamMember(company.id, memberId);
+
+  await db.delete(pursuitTeamMembers).where(eq(pursuitTeamMembers.id, memberId));
+
+  await recordPursuitAudit({
+    companyId: company.id,
+    userId: user.id,
+    action: 'pursuit.team_member_removed',
+    pursuitId: existing.pursuitId,
+    metadata: { teamMemberId: memberId, partnerName: existing.partnerName },
   });
 
   revalidatePath(`/capture/pursuits/${existing.pursuitId}`);

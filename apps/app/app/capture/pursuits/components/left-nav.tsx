@@ -6,6 +6,7 @@ export type TabKey =
   | 'capture-questions'
   | 'tasks'
   | 'gate-reviews'
+  | 'teaming'
   | 'documents';
 
 const TABS: Array<{ key: TabKey; label: string }> = [
@@ -14,6 +15,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'capture-questions', label: 'Capture Questions' },
   { key: 'tasks', label: 'Tasks' },
   { key: 'gate-reviews', label: 'Gate Reviews' },
+  { key: 'teaming', label: 'Teaming' },
   { key: 'documents', label: 'Documents' },
 ];
 
@@ -24,6 +26,7 @@ export function isTabKey(v: string | undefined): v is TabKey {
     v === 'capture-questions' ||
     v === 'tasks' ||
     v === 'gate-reviews' ||
+    v === 'teaming' ||
     v === 'documents'
   );
 }
