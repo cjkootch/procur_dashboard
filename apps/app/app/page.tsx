@@ -3,6 +3,7 @@ import { UserButton } from '@clerk/nextjs';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getHomeData } from '../lib/home-queries';
+import { getRecommendedOpportunities } from '../lib/recommended-queries';
 import { flagFor, formatDate, formatMoney, timeUntil } from '../lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -38,7 +39,12 @@ export default async function DashboardPage() {
     );
   }
 
-  const data = await getHomeData(company.id);
+  const [data, recommended] = await Promise.all([
+    getHomeData(company.id),
+    getRecommendedOpportunities(company, user.id, 6),
+  ]);
+  const discoverBase =
+    process.env.NEXT_PUBLIC_DISCOVER_URL ?? 'https://discover.procur.app';
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-10">
@@ -60,6 +66,79 @@ export default async function DashboardPage() {
         <Fact label="Active contracts" value={data.activeContracts} linkHref="/contract" />
         <Fact label="Total pursuits" value={data.totalPursuits} linkHref="/capture/pursuits" />
       </section>
+
+      {recommended.length > 0 && (
+        <section className="mb-8">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+              Recommended for you
+            </h2>
+            <Link
+              href="/settings"
+              className="text-xs underline text-[color:var(--color-muted-foreground)]"
+            >
+              Tune capabilities →
+            </Link>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {recommended.map((r) => {
+              const href = r.slug
+                ? `${discoverBase}/opportunities/${r.slug}`
+                : `/capture/new?opportunityId=${r.id}`;
+              const isExternal = href.startsWith('http');
+              const body = (
+                <>
+                  <div className="flex items-start gap-2">
+                    <span className="text-lg">{flagFor(r.jurisdictionCountry)}</span>
+                    <div className="flex-1">
+                      <p className="line-clamp-2 text-sm font-medium">{r.title}</p>
+                      <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
+                        {r.agencyName ?? r.jurisdictionName}
+                        {r.category && <> · {r.category}</>}
+                      </p>
+                    </div>
+                  </div>
+                  {r.matchReasons.length > 0 && (
+                    <p className="mt-2 flex flex-wrap gap-1">
+                      {r.matchReasons.map((reason) => (
+                        <span
+                          key={reason}
+                          className="rounded-full bg-[color:var(--color-muted)]/60 px-2 py-0.5 text-[10px] tracking-wide"
+                        >
+                          {reason}
+                        </span>
+                      ))}
+                    </p>
+                  )}
+                  <div className="mt-2 flex items-center justify-between text-xs text-[color:var(--color-muted-foreground)]">
+                    <span>
+                      {formatMoney(r.valueEstimate, r.currency) ?? '—'}
+                    </span>
+                    {r.deadlineAt && <span>closes {formatDate(r.deadlineAt)}</span>}
+                  </div>
+                </>
+              );
+              const className =
+                'block rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4 transition hover:border-[color:var(--color-foreground)]';
+              return isExternal ? (
+                <a
+                  key={r.id}
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={className}
+                >
+                  {body}
+                </a>
+              ) : (
+                <Link key={r.id} href={href} className={className}>
+                  {body}
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <div className="grid gap-6 md:grid-cols-2">
         <section>
