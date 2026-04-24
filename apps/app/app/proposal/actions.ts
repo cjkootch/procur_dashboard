@@ -8,6 +8,7 @@ import {
   db,
   jurisdictions,
   opportunities,
+  proposalComments,
   proposals,
   pursuits,
   type NewProposal,
@@ -669,6 +670,91 @@ export async function unmarkProposalSubmittedAction(formData: FormData): Promise
       updatedAt: new Date(),
     })
     .where(eq(proposals.id, proposal.id));
+
+  revalidatePath(`/proposal/${pursuitId}`);
+}
+
+async function requireOwnedProposal(companyId: string, pursuitId: string) {
+  const pursuit = await db.query.pursuits.findFirst({
+    where: and(eq(pursuits.id, pursuitId), eq(pursuits.companyId, companyId)),
+    columns: { id: true },
+  });
+  if (!pursuit) throw new Error('pursuit not found');
+  const proposal = await db.query.proposals.findFirst({
+    where: eq(proposals.pursuitId, pursuitId),
+    columns: { id: true },
+  });
+  if (!proposal) throw new Error('proposal not found');
+  return proposal;
+}
+
+export async function addProposalCommentAction(formData: FormData): Promise<void> {
+  const { user, company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const body = String(formData.get('body') ?? '').trim();
+  if (!body) throw new Error('comment body required');
+  const sectionIdRaw = formData.get('sectionId');
+  const sectionId =
+    typeof sectionIdRaw === 'string' && sectionIdRaw.length > 0 ? sectionIdRaw : null;
+
+  const proposal = await requireOwnedProposal(company.id, pursuitId);
+
+  await db.insert(proposalComments).values({
+    proposalId: proposal.id,
+    sectionId,
+    body,
+    createdBy: user.id,
+  });
+
+  revalidatePath(`/proposal/${pursuitId}`);
+}
+
+export async function resolveProposalCommentAction(formData: FormData): Promise<void> {
+  const { user, company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const commentId = String(formData.get('commentId') ?? '');
+  if (!commentId) throw new Error('commentId required');
+  const proposal = await requireOwnedProposal(company.id, pursuitId);
+
+  await db
+    .update(proposalComments)
+    .set({ resolvedAt: new Date(), resolvedBy: user.id, updatedAt: new Date() })
+    .where(
+      and(eq(proposalComments.id, commentId), eq(proposalComments.proposalId, proposal.id)),
+    );
+
+  revalidatePath(`/proposal/${pursuitId}`);
+}
+
+export async function reopenProposalCommentAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const commentId = String(formData.get('commentId') ?? '');
+  if (!commentId) throw new Error('commentId required');
+  const proposal = await requireOwnedProposal(company.id, pursuitId);
+
+  await db
+    .update(proposalComments)
+    .set({ resolvedAt: null, resolvedBy: null, updatedAt: new Date() })
+    .where(
+      and(eq(proposalComments.id, commentId), eq(proposalComments.proposalId, proposal.id)),
+    );
+
+  revalidatePath(`/proposal/${pursuitId}`);
+}
+
+export async function deleteProposalCommentAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const commentId = String(formData.get('commentId') ?? '');
+  if (!commentId) throw new Error('commentId required');
+  const proposal = await requireOwnedProposal(company.id, pursuitId);
+
+  await db
+    .delete(proposalComments)
+    .where(
+      and(eq(proposalComments.id, commentId), eq(proposalComments.proposalId, proposal.id)),
+    );
 
   revalidatePath(`/proposal/${pursuitId}`);
 }

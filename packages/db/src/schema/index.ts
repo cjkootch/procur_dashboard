@@ -8,6 +8,7 @@ export * from './documents';
 export * from './pursuits';
 export * from './pursuit-tasks';
 export * from './proposals';
+export * from './proposal-comments';
 export * from './pricing-models';
 export * from './contracts';
 export * from './content-library';

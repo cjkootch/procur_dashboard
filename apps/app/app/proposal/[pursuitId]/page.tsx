@@ -3,13 +3,21 @@ import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
 import { getProposalByPursuitId } from '../../../lib/proposal-queries';
 import { getRelevantPastPerformance } from '../../../lib/past-performance-queries';
+import {
+  listProposalComments,
+  type CommentWithAuthor,
+} from '../../../lib/proposal-comment-queries';
 import { flagFor, formatDate, timeUntil } from '../../../lib/format';
 import { templatesForJurisdiction } from '../../../lib/proposal-templates';
 import {
+  addProposalCommentAction,
   createProposalAction,
+  deleteProposalCommentAction,
   draftSectionAction,
   markProposalSubmittedAction,
   regenerateComplianceAction,
+  reopenProposalCommentAction,
+  resolveProposalCommentAction,
   reviewProposalAction,
   unmarkProposalSubmittedAction,
   updateComplianceMappingAction,
@@ -176,11 +184,24 @@ export default async function ProposalDetailPage({
   const compliancePct =
     compliance.length > 0 ? Math.round((addressedCount / compliance.length) * 100) : 0;
 
-  const relevantPP = await getRelevantPastPerformance(
-    company.id,
-    [opportunity.title, opportunity.description].filter(Boolean).join('\n\n'),
-    3,
-  );
+  const [relevantPP, allComments] = await Promise.all([
+    getRelevantPastPerformance(
+      company.id,
+      [opportunity.title, opportunity.description].filter(Boolean).join('\n\n'),
+      3,
+    ),
+    listProposalComments(proposal.id),
+  ]);
+  const proposalLevelComments = allComments.filter((c) => c.sectionId === null);
+  const commentsBySection = new Map<string, CommentWithAuthor[]>();
+  for (const c of allComments) {
+    if (c.sectionId) {
+      const arr = commentsBySection.get(c.sectionId) ?? [];
+      arr.push(c);
+      commentsBySection.set(c.sectionId, arr);
+    }
+  }
+  const openCommentCount = allComments.filter((c) => c.resolvedAt === null).length;
 
   return (
     <div className="mx-auto max-w-6xl px-8 py-10">
@@ -390,6 +411,19 @@ export default async function ProposalDetailPage({
         </section>
       )}
 
+      <section className="mb-8">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          Discussion{openCommentCount > 0 ? ` (${openCommentCount} open)` : ''}
+        </h2>
+        <div className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4">
+          <CommentThread
+            pursuitId={pursuitId}
+            sectionId={null}
+            comments={proposalLevelComments}
+          />
+        </div>
+      </section>
+
       <section className="mb-10">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
           Outline ({outline.length} sections)
@@ -493,6 +527,12 @@ export default async function ProposalDetailPage({
                     library.
                   </div>
                 )}
+
+                <CommentThread
+                  pursuitId={pursuitId}
+                  sectionId={sec.id}
+                  comments={commentsBySection.get(sec.id) ?? []}
+                />
 
                 <form
                   action={draftSectionAction}
@@ -729,6 +769,118 @@ function Fact({
       </p>
       <p className="mt-1 text-base font-semibold">{value}</p>
       {sub && <p className="text-xs text-[color:var(--color-muted-foreground)]">{sub}</p>}
+    </div>
+  );
+}
+
+function CommentThread({
+  pursuitId,
+  sectionId,
+  comments,
+}: {
+  pursuitId: string;
+  sectionId: string | null;
+  comments: CommentWithAuthor[];
+}) {
+  const open = comments.filter((c) => c.resolvedAt === null);
+  const resolved = comments.filter((c) => c.resolvedAt !== null);
+
+  return (
+    <div className={sectionId ? 'mt-4 border-t border-[color:var(--color-border)] pt-3' : ''}>
+      {sectionId && (
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          Comments ({open.length}
+          {resolved.length > 0 ? ` · ${resolved.length} resolved` : ''})
+        </p>
+      )}
+
+      {open.length === 0 && resolved.length === 0 ? (
+        <p className="text-xs text-[color:var(--color-muted-foreground)]">
+          {sectionId ? 'No comments on this section yet.' : 'No proposal-wide discussion yet.'}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {open.map((c) => (
+            <CommentRow key={c.id} pursuitId={pursuitId} comment={c} />
+          ))}
+          {resolved.length > 0 && (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-xs text-[color:var(--color-muted-foreground)] hover:underline">
+                Show {resolved.length} resolved
+              </summary>
+              <div className="mt-2 space-y-2 opacity-70">
+                {resolved.map((c) => (
+                  <CommentRow key={c.id} pursuitId={pursuitId} comment={c} />
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
+
+      <form action={addProposalCommentAction} className="mt-3 flex items-start gap-2">
+        <input type="hidden" name="pursuitId" value={pursuitId} />
+        {sectionId && <input type="hidden" name="sectionId" value={sectionId} />}
+        <textarea
+          name="body"
+          rows={1}
+          required
+          placeholder={sectionId ? 'Leave a comment on this section…' : 'Start a discussion…'}
+          className="flex-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
+        />
+        <button
+          type="submit"
+          className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
+        >
+          Post
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function CommentRow({
+  pursuitId,
+  comment,
+}: {
+  pursuitId: string;
+  comment: CommentWithAuthor;
+}) {
+  const author = comment.authorName ?? comment.authorEmail ?? 'Someone';
+  const isResolved = comment.resolvedAt !== null;
+  return (
+    <div className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-3 text-sm">
+      <div className="mb-1 flex items-center justify-between gap-2 text-xs text-[color:var(--color-muted-foreground)]">
+        <span className="font-medium text-[color:var(--color-foreground)]">{author}</span>
+        <span>{new Date(comment.createdAt).toLocaleString()}</span>
+      </div>
+      <p className="whitespace-pre-wrap">{comment.body}</p>
+      <div className="mt-2 flex items-center gap-3 text-xs">
+        <form
+          action={
+            isResolved ? reopenProposalCommentAction : resolveProposalCommentAction
+          }
+        >
+          <input type="hidden" name="pursuitId" value={pursuitId} />
+          <input type="hidden" name="commentId" value={comment.id} />
+          <button
+            type="submit"
+            className="text-[color:var(--color-muted-foreground)] underline hover:text-[color:var(--color-foreground)]"
+          >
+            {isResolved ? 'Reopen' : 'Resolve'}
+          </button>
+        </form>
+        <form action={deleteProposalCommentAction}>
+          <input type="hidden" name="pursuitId" value={pursuitId} />
+          <input type="hidden" name="commentId" value={comment.id} />
+          <button
+            type="submit"
+            className="text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-brand)]"
+          >
+            Delete
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
