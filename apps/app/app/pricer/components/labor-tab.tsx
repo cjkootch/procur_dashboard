@@ -1,4 +1,4 @@
-import type { LaborCategory } from '@procur/db';
+import { LABOR_RATE_SOURCES, type LaborCategory } from '@procur/db';
 import { formatMoney } from '../../../lib/format';
 import {
   aggregateYearTotals,
@@ -10,6 +10,8 @@ import {
   removeLaborCategoryAction,
   updateLaborCategoryAction,
 } from '../actions';
+import { RATE_SOURCE_LABEL, RateSourceChip } from './rate-source';
+import { ExpanderChevron, LcatRowExpander } from './lcat-row-expander';
 
 /**
  * Labor Categories tab. Three sections, top-to-bottom:
@@ -139,6 +141,7 @@ export function LaborTab({
                 <tr>
                   <th className="px-4 py-2">Title</th>
                   <th className="px-4 py-2">Type</th>
+                  <th className="px-4 py-2">Rate source</th>
                   <th className="px-4 py-2 text-right">Direct rate</th>
                   <th className="px-4 py-2 text-right">Loaded rate</th>
                   <th className="px-4 py-2 text-right">Hours/yr</th>
@@ -151,27 +154,42 @@ export function LaborTab({
                   const lc = laborCategories.find((l) => l.id === calc.id);
                   if (!lc) return null;
                   return (
-                    <tr key={lc.id} className="border-t border-[color:var(--color-border)]">
-                      <td className="px-4 py-2">
-                        <form action={updateLaborCategoryAction} className="flex gap-2">
-                          <input type="hidden" name="pursuitId" value={pursuitId} />
-                          <input type="hidden" name="laborCategoryId" value={lc.id} />
-                          <input type="hidden" name="directRate" value={lc.directRate ?? '0'} />
-                          <input type="hidden" name="hoursPerYear" value={lc.hoursPerYear ?? hoursPerFte} />
-                          <input type="hidden" name="type" value={lc.type ?? ''} />
-                          <input
-                            name="title"
-                            defaultValue={lc.title}
-                            className="w-full rounded-[var(--radius-sm)] border border-transparent bg-transparent px-2 py-1 text-sm font-medium hover:border-[color:var(--color-border)]"
-                          />
-                          <button
-                            type="submit"
-                            className="text-[10px] underline text-[color:var(--color-muted-foreground)]"
-                          >
-                            Save
-                          </button>
-                        </form>
-                      </td>
+                    <LcatRowExpander
+                      key={lc.id}
+                      colSpan={8}
+                      renderSummary={({ open, toggle }) => (
+                        <tr className="border-t border-[color:var(--color-border)]">
+                          <td className="px-4 py-2">
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={toggle}
+                                aria-label={open ? 'Collapse' : 'Expand'}
+                                aria-expanded={open}
+                                className="shrink-0 px-1"
+                              >
+                                <ExpanderChevron open={open} />
+                              </button>
+                              <form action={updateLaborCategoryAction} className="flex flex-1 gap-2">
+                                <input type="hidden" name="pursuitId" value={pursuitId} />
+                                <input type="hidden" name="laborCategoryId" value={lc.id} />
+                                <input type="hidden" name="directRate" value={lc.directRate ?? '0'} />
+                                <input type="hidden" name="hoursPerYear" value={lc.hoursPerYear ?? hoursPerFte} />
+                                <input type="hidden" name="type" value={lc.type ?? ''} />
+                                <input
+                                  name="title"
+                                  defaultValue={lc.title}
+                                  className="w-full rounded-[var(--radius-sm)] border border-transparent bg-transparent px-2 py-1 text-sm font-medium hover:border-[color:var(--color-border)]"
+                                />
+                                <button
+                                  type="submit"
+                                  className="text-[10px] underline text-[color:var(--color-muted-foreground)]"
+                                >
+                                  Save
+                                </button>
+                              </form>
+                            </div>
+                          </td>
                       <td className="px-4 py-2">
                         <form action={updateLaborCategoryAction}>
                           <input type="hidden" name="pursuitId" value={pursuitId} />
@@ -192,6 +210,50 @@ export function LaborTab({
                             Save
                           </button>
                         </form>
+                      </td>
+                      <td className="px-4 py-2">
+                        {/* Display the current rate-source chip, with an
+                            expandable inline form (details/summary) to
+                            change source + reference in-place without
+                            introducing a modal. */}
+                        <details className="inline-block">
+                          <summary className="cursor-pointer list-none">
+                            <RateSourceChip
+                              source={lc.rateSource}
+                              reference={lc.rateSourceReference}
+                            />
+                          </summary>
+                          <form
+                            action={updateLaborCategoryAction}
+                            className="mt-1.5 flex flex-col gap-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-2 shadow-sm"
+                          >
+                            <input type="hidden" name="pursuitId" value={pursuitId} />
+                            <input type="hidden" name="laborCategoryId" value={lc.id} />
+                            <select
+                              name="rateSource"
+                              defaultValue={lc.rateSource ?? 'manual'}
+                              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5 text-[11px]"
+                            >
+                              {LABOR_RATE_SOURCES.map((s) => (
+                                <option key={s} value={s}>
+                                  {RATE_SOURCE_LABEL[s]}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              name="rateSourceReference"
+                              defaultValue={lc.rateSourceReference ?? ''}
+                              placeholder="Reference (e.g. GSA #, CBA 2024)"
+                              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1.5 py-0.5 text-[11px]"
+                            />
+                            <button
+                              type="submit"
+                              className="self-end text-[10px] underline text-[color:var(--color-muted-foreground)]"
+                            >
+                              Save
+                            </button>
+                          </form>
+                        </details>
                       </td>
                       <td className="px-4 py-2 text-right">
                         <form action={updateLaborCategoryAction} className="flex justify-end gap-1">
@@ -236,20 +298,110 @@ export function LaborTab({
                       <td className="px-4 py-2 text-right font-semibold">
                         {formatMoney(calc.totalCost, currency) ?? '—'}
                       </td>
-                      <td className="px-4 py-2">
-                        <form action={removeLaborCategoryAction}>
-                          <input type="hidden" name="pursuitId" value={pursuitId} />
-                          <input type="hidden" name="laborCategoryId" value={lc.id} />
-                          <button
-                            type="submit"
-                            className="text-xs text-[color:var(--color-muted-foreground)] hover:text-red-600"
-                            title="Remove"
-                          >
-                            ×
-                          </button>
-                        </form>
-                      </td>
-                    </tr>
+                          <td className="px-4 py-2">
+                            <form action={removeLaborCategoryAction}>
+                              <input type="hidden" name="pursuitId" value={pursuitId} />
+                              <input type="hidden" name="laborCategoryId" value={lc.id} />
+                              <button
+                                type="submit"
+                                className="text-xs text-[color:var(--color-muted-foreground)] hover:text-red-600"
+                                title="Remove"
+                              >
+                                ×
+                              </button>
+                            </form>
+                          </td>
+                        </tr>
+                      )}
+                      renderExpanded={() => (
+                        <div className="grid gap-3 text-xs md:grid-cols-2">
+                          <form action={updateLaborCategoryAction} className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-3">
+                            <input type="hidden" name="pursuitId" value={pursuitId} />
+                            <input type="hidden" name="laborCategoryId" value={lc.id} />
+                            <label className="block">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                                Description
+                              </span>
+                              <textarea
+                                name="description"
+                                rows={4}
+                                defaultValue={lc.description ?? ''}
+                                placeholder="Supports content editing, strategy, and architecture to deliver in a marketable way to audiences…"
+                                className="mt-1 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-xs"
+                              />
+                            </label>
+                            <div className="mt-2 flex justify-end">
+                              <button
+                                type="submit"
+                                className="text-[10px] underline text-[color:var(--color-muted-foreground)]"
+                              >
+                                Save description
+                              </button>
+                            </div>
+                          </form>
+
+                          <form action={updateLaborCategoryAction} className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-3">
+                            <input type="hidden" name="pursuitId" value={pursuitId} />
+                            <input type="hidden" name="laborCategoryId" value={lc.id} />
+                            <label className="block">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                                Requirements &amp; Certifications
+                              </span>
+                              <textarea
+                                name="requirementsCertifications"
+                                rows={4}
+                                defaultValue={lc.requirementsCertifications ?? ''}
+                                placeholder="Experience with X · certification Y · cleared to Z · 10+ years in…"
+                                className="mt-1 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-xs"
+                              />
+                            </label>
+                            <div className="mt-2 flex justify-end">
+                              <button
+                                type="submit"
+                                className="text-[10px] underline text-[color:var(--color-muted-foreground)]"
+                              >
+                                Save requirements
+                              </button>
+                            </div>
+                          </form>
+
+                          {/* Rate detail summary panel — read-only recap of
+                              rate source + reference since both are edited
+                              from the main row's rate-source chip popover. */}
+                          <div className="md:col-span-2 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30 p-3">
+                            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                              Rate information
+                            </p>
+                            <div className="grid gap-2 sm:grid-cols-4">
+                              <div>
+                                <p className="text-[10px] text-[color:var(--color-muted-foreground)]">Base rate</p>
+                                <p className="font-medium">
+                                  {formatMoney(calc.directRate, currency) ?? '—'}/hr
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-[color:var(--color-muted-foreground)]">Burdened rate</p>
+                                <p className="font-medium">
+                                  {formatMoney(calc.loadedRate, currency) ?? '—'}/hr
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-[color:var(--color-muted-foreground)]">Source</p>
+                                <p className="font-medium">
+                                  {RATE_SOURCE_LABEL[lc.rateSource ?? 'manual']}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-[color:var(--color-muted-foreground)]">Reference</p>
+                                <p className="truncate font-medium" title={lc.rateSourceReference ?? ''}>
+                                  {lc.rateSourceReference ?? '—'}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    />
                   );
                 })}
               </tbody>
@@ -309,12 +461,70 @@ export function LaborTab({
               <option value="standard">Standard</option>
             </select>
           </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-[11px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+              Rate source
+            </span>
+            <select
+              name="rateSource"
+              defaultValue="manual"
+              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-sm"
+            >
+              {LABOR_RATE_SOURCES.map((s) => (
+                <option key={s} value={s}>
+                  {RATE_SOURCE_LABEL[s]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-1 min-w-[160px] flex-col gap-1 text-sm">
+            <span className="text-[11px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+              Reference (optional)
+            </span>
+            <input
+              name="rateSourceReference"
+              placeholder="GSA #, CBA 2024, IDB Loan 45/24…"
+              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-sm"
+            />
+          </label>
           <button
             type="submit"
             className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
           >
             + Add
           </button>
+          {/* Optional detail fields collapsed by default so the add form
+              stays one line on wide screens. Description and requirements
+              can also be edited post-creation from the expanded row. */}
+          <details className="w-full">
+            <summary className="cursor-pointer text-[11px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]">
+              + description &amp; requirements (optional)
+            </summary>
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+              <label className="block text-sm">
+                <span className="text-[11px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                  Description
+                </span>
+                <textarea
+                  name="description"
+                  rows={3}
+                  placeholder="Role narrative — shown on the expanded row and available to AI drafting."
+                  className="mt-1 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1.5 text-xs"
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="text-[11px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                  Requirements &amp; certifications
+                </span>
+                <textarea
+                  name="requirementsCertifications"
+                  rows={3}
+                  placeholder="Experience · certification · clearance · years in role…"
+                  className="mt-1 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1.5 text-xs"
+                />
+              </label>
+            </div>
+          </details>
         </form>
       </section>
     </div>

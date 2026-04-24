@@ -8,9 +8,11 @@ import {
   db,
   jurisdictions,
   laborCategories,
+  LABOR_RATE_SOURCES,
   opportunities,
   pricingModels,
   pursuits,
+  type LaborRateSource,
   type NewLaborCategory,
   type NewPricingModel,
 } from '@procur/db';
@@ -43,6 +45,20 @@ function toInt(v: FormDataEntryValue | null): number | null {
   if (!s) return null;
   const n = Number.parseInt(s, 10);
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Validate user-supplied rate-source strings against the canonical
+ * LABOR_RATE_SOURCES set. Empty/invalid → null (fallback rendered as
+ * "manual" by the UI so existing rows don't suddenly lose a value).
+ */
+function toRateSource(v: FormDataEntryValue | null): LaborRateSource | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  return (LABOR_RATE_SOURCES as readonly string[]).includes(s)
+    ? (s as LaborRateSource)
+    : null;
 }
 
 async function requirePricingModelForPursuit(
@@ -147,6 +163,11 @@ export async function addLaborCategoryAction(formData: FormData): Promise<void> 
     type: String(formData.get('type') ?? '') || null,
     directRate: toNumeric(formData.get('directRate')) ?? '0',
     hoursPerYear: toInt(formData.get('hoursPerYear')) ?? 2080,
+    rateSource: toRateSource(formData.get('rateSource')),
+    rateSourceReference: String(formData.get('rateSourceReference') ?? '').trim() || null,
+    description: String(formData.get('description') ?? '').trim() || null,
+    requirementsCertifications:
+      String(formData.get('requirementsCertifications') ?? '').trim() || null,
   };
   await db.insert(laborCategories).values(row);
 
@@ -169,6 +190,16 @@ export async function updateLaborCategoryAction(formData: FormData): Promise<voi
   });
   if (!lc) throw new Error('labor category not found');
 
+  // For fields that may be intentionally cleared (rate source reference,
+  // description, requirements), we need to distinguish "field absent from
+  // form" from "field cleared". Each inline edit form we ship omits the
+  // fields it doesn't touch, so "absent" → keep existing; "present but
+  // empty" → clear.
+  const hasRateSource = formData.has('rateSource');
+  const hasRateSourceRef = formData.has('rateSourceReference');
+  const hasDescription = formData.has('description');
+  const hasReqs = formData.has('requirementsCertifications');
+
   await db
     .update(laborCategories)
     .set({
@@ -176,6 +207,16 @@ export async function updateLaborCategoryAction(formData: FormData): Promise<voi
       type: String(formData.get('type') ?? lc.type ?? '') || null,
       directRate: toNumeric(formData.get('directRate')) ?? lc.directRate,
       hoursPerYear: toInt(formData.get('hoursPerYear')) ?? lc.hoursPerYear,
+      rateSource: hasRateSource ? toRateSource(formData.get('rateSource')) : lc.rateSource,
+      rateSourceReference: hasRateSourceRef
+        ? String(formData.get('rateSourceReference') ?? '').trim() || null
+        : lc.rateSourceReference,
+      description: hasDescription
+        ? String(formData.get('description') ?? '').trim() || null
+        : lc.description,
+      requirementsCertifications: hasReqs
+        ? String(formData.get('requirementsCertifications') ?? '').trim() || null
+        : lc.requirementsCertifications,
       updatedAt: new Date(),
     })
     .where(eq(laborCategories.id, lcId));
