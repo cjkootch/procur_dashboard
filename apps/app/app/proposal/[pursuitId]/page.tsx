@@ -8,6 +8,7 @@ import { templatesForJurisdiction } from '../../../lib/proposal-templates';
 import {
   createProposalAction,
   draftSectionAction,
+  regenerateComplianceAction,
   updateComplianceMappingAction,
   updateSectionAction,
 } from '../actions';
@@ -367,9 +368,52 @@ export default async function ProposalDetailPage({
       </section>
 
       <section className="mb-10">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-          Compliance matrix ({compliance.length} requirements · {compliancePct}% addressed)
-        </h2>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Compliance matrix ({compliance.length} requirements · {compliancePct}% addressed)
+          </h2>
+          {compliance.length > 0 && (
+            <form action={regenerateComplianceAction}>
+              <input type="hidden" name="pursuitId" value={pursuitId} />
+              <button
+                type="submit"
+                className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[color:var(--color-muted)]/40"
+                title="Re-run AI mapping of every requirement to the best-fit section. User-confirmed rows are preserved."
+              >
+                Auto-map with AI
+              </button>
+            </form>
+          )}
+        </div>
+
+        {(() => {
+          const unaddressed = compliance.filter(
+            (c) => c.status === 'not_addressed' || c.status === 'partially_addressed',
+          );
+          if (unaddressed.length === 0 || compliance.length === 0) return null;
+          return (
+            <div className="mb-4 rounded-[var(--radius-lg)] border border-red-200 bg-red-50/40 p-4">
+              <p className="text-sm font-medium text-red-900">
+                {unaddressed.length} requirement{unaddressed.length === 1 ? '' : 's'} still need
+                {unaddressed.length === 1 ? 's' : ''} coverage
+              </p>
+              <ul className="mt-2 list-disc pl-5 text-xs text-red-900/90">
+                {unaddressed.slice(0, 5).map((c) => (
+                  <li key={c.requirementId} className="mb-0.5 line-clamp-2">
+                    {c.requirementText}
+                    {c.notes && (
+                      <span className="text-red-900/60"> — {c.notes}</span>
+                    )}
+                  </li>
+                ))}
+                {unaddressed.length > 5 && (
+                  <li className="text-red-900/70">…and {unaddressed.length - 5} more below</li>
+                )}
+              </ul>
+            </div>
+          );
+        })()}
+
         {compliance.length === 0 ? (
           <p className="text-sm text-[color:var(--color-muted-foreground)]">
             No requirements to map yet.
@@ -463,7 +507,14 @@ export default async function ProposalDetailPage({
                       </form>
                     </td>
                     <td className="px-3 py-2 text-xs text-[color:var(--color-muted-foreground)]">
-                      {row.confidence ? `${Math.round(row.confidence * 100)}%` : '—'}
+                      <div>
+                        {row.confidence ? `${Math.round(row.confidence * 100)}%` : '—'}
+                      </div>
+                      {row.notes && (
+                        <div className="mt-0.5 text-[color:var(--color-muted-foreground)]/70">
+                          {row.notes}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}

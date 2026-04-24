@@ -36,6 +36,13 @@ export {
   type ExtractPricingInput,
   type ExtractPricingResult,
 } from './tasks/extract-pricing';
+export {
+  mapRequirementsToSections,
+  type MapRequirementsInput,
+  type MapRequirementsResult,
+  type RequirementInput,
+  type SectionInput,
+} from './tasks/map-requirements';
 export { embedText, embedMany, EMBEDDING_MODEL, EMBEDDING_DIMS } from './embeddings';
 export type { CacheUsage } from './prompt-blocks';
 export {
