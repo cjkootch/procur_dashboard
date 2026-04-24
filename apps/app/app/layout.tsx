@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { ClerkProvider } from '@clerk/nextjs';
 import { PostHogProvider } from '@procur/analytics/client';
+import { AssistantDrawerMount } from '../components/assistant/AssistantDrawerMount';
 import './globals.css';
 
 // The authenticated app is 100% user-dependent — nothing should be
@@ -24,6 +25,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             apiHost={process.env.NEXT_PUBLIC_POSTHOG_HOST}
           >
             {children}
+            <AssistantDrawerMount />
           </PostHogProvider>
         </body>
       </html>

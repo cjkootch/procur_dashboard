@@ -1,4 +1,5 @@
 export { runAgentTurn, type TurnInput, type TurnResult, type TurnStep } from './loop';
+export { streamAgentTurn, type StreamEvent, type StreamTurnInput } from './stream';
 export {
   getBudgetStatus,
   recordUsage,
@@ -13,6 +14,15 @@ export { costUsdCentsForTurn, costUsdCentsForEmbedding } from './pricing';
 export { meter, meterEmbedding } from './meter';
 export { buildAssistantSystem } from './system-prompt';
 export { defineTool, buildToolsParam, zodToJsonSchema } from './tools/registry';
+
+// Re-export commonly-needed Anthropic types so downstream packages can stay
+// on a single SDK version without adding a direct dependency.
+import type Anthropic from '@anthropic-ai/sdk';
+export type AnthropicMessageParam = Anthropic.MessageParam;
+export type AnthropicContentBlock = Anthropic.ContentBlock;
+export type AnthropicTextBlockParam = Anthropic.TextBlockParam;
+export type AnthropicToolUseBlock = Anthropic.ToolUseBlock;
+export type AnthropicToolResultBlockParam = Anthropic.ToolResultBlockParam;
 export type {
   AssistantContext,
   PageContext,

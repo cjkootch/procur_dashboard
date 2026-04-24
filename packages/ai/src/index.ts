@@ -77,6 +77,14 @@ export {
   type TurnInput,
   type TurnResult,
   type TurnStep,
+  streamAgentTurn,
+  type StreamEvent,
+  type StreamTurnInput,
+  type AnthropicMessageParam,
+  type AnthropicContentBlock,
+  type AnthropicTextBlockParam,
+  type AnthropicToolUseBlock,
+  type AnthropicToolResultBlockParam,
 } from './assistant';
 export type { CacheUsage } from './prompt-blocks';
 export {
