@@ -54,6 +54,30 @@ export {
   type ExtractCompanyProfileResult,
 } from './tasks/extract-company-profile';
 export { embedText, embedMany, EMBEDDING_MODEL, EMBEDDING_DIMS } from './embeddings';
+export * as assistant from './assistant';
+export {
+  runAgentTurn,
+  getBudgetStatus,
+  recordUsage,
+  MONTHLY_BUDGET_CENTS,
+  BudgetExceededError,
+  costUsdCentsForTurn,
+  costUsdCentsForEmbedding,
+  meter,
+  meterEmbedding,
+  defineTool,
+  buildAssistantSystem,
+  type BudgetStatus,
+  type UsageSource,
+  type PlanTier,
+  type AssistantContext,
+  type PageContext,
+  type ToolDefinition,
+  type ToolRegistry,
+  type TurnInput,
+  type TurnResult,
+  type TurnStep,
+} from './assistant';
 export type { CacheUsage } from './prompt-blocks';
 export {
   ClassifyOutput,

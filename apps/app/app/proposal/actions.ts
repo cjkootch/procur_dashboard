@@ -14,7 +14,14 @@ import {
   type NewProposal,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
-import { draftSection, embedText, mapRequirementsToSections, reviewProposal } from '@procur/ai';
+import {
+  draftSection,
+  embedText,
+  mapRequirementsToSections,
+  meter,
+  MODELS,
+  reviewProposal,
+} from '@procur/ai';
 import { randomUUID } from 'node:crypto';
 import { semanticSearchLibrary } from '../../lib/library-queries';
 import { semanticSearchPastPerformance } from '../../lib/past-performance-queries';
@@ -393,6 +400,13 @@ export async function draftSectionAction(formData: FormData): Promise<void> {
     libraryExcerpts,
     existingContent: section.content || undefined,
     userInstruction: userInstruction || undefined,
+  });
+
+  await meter({
+    companyId: company.id,
+    source: 'draft_section',
+    model: MODELS.sonnet,
+    usage: result.usage,
   });
 
   const nextSections = sectionsArr.map((s) =>
