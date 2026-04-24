@@ -25,6 +25,7 @@ import {
   pursuits,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
+import { getRelevantPastPerformance } from '../../../../../lib/past-performance-queries';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -91,6 +92,7 @@ export async function GET(
       companyId: pursuits.companyId,
       oppTitle: opportunities.title,
       oppReferenceNumber: opportunities.referenceNumber,
+      oppDescription: opportunities.description,
       agencyName: agencies.name,
       jurisdictionName: jurisdictions.name,
       deadlineAt: opportunities.deadlineAt,
@@ -112,6 +114,12 @@ export async function GET(
   const outline = (proposal.outline as OutlineSection[] | null) ?? [];
   const sections = (proposal.sections as SectionDraft[] | null) ?? [];
   const compliance = (proposal.complianceMatrix as ComplianceRow[] | null) ?? [];
+
+  const pastPerformance = await getRelevantPastPerformance(
+    company.id,
+    [row.oppTitle, row.oppDescription].filter(Boolean).join('\n\n'),
+    5,
+  );
 
   const doc = new Document({
     creator: 'Procur',
@@ -287,6 +295,77 @@ export async function GET(
                     }),
                   ],
                 }),
+              ]
+            : []),
+
+          // Past performance appendix
+          ...(pastPerformance && pastPerformance.length > 0
+            ? [
+                new Paragraph({ children: [new PageBreak()] }),
+                new Paragraph({
+                  heading: HeadingLevel.HEADING_1,
+                  children: [
+                    new TextRun({ text: 'Appendix B: Relevant Past Performance', bold: true }),
+                  ],
+                  spacing: { before: 400, after: 200 },
+                }),
+                new Paragraph({
+                  spacing: { after: 200 },
+                  children: [
+                    new TextRun({
+                      text: 'Prior projects from our reference library that demonstrate directly relevant experience for this tender.',
+                      italics: true,
+                      color: '555555',
+                    }),
+                  ],
+                }),
+                ...pastPerformance.flatMap((p) => [
+                  new Paragraph({
+                    heading: HeadingLevel.HEADING_2,
+                    spacing: { before: 300, after: 100 },
+                    children: [new TextRun({ text: p.projectName, bold: true })],
+                  }),
+                  new Paragraph({
+                    spacing: { after: 120 },
+                    children: [
+                      new TextRun({ text: 'Customer: ', bold: true }),
+                      new TextRun({ text: p.customerName }),
+                    ],
+                  }),
+                  new Paragraph({
+                    spacing: { after: 120 },
+                    children: [
+                      new TextRun({ text: 'Scope: ', bold: true }),
+                      new TextRun({ text: p.scopeDescription }),
+                    ],
+                  }),
+                  ...((p.keyAccomplishments ?? []).length > 0
+                    ? [
+                        new Paragraph({
+                          spacing: { after: 80 },
+                          children: [new TextRun({ text: 'Key accomplishments:', bold: true })],
+                        }),
+                        ...(p.keyAccomplishments ?? []).map(
+                          (a) =>
+                            new Paragraph({
+                              spacing: { after: 60 },
+                              children: [new TextRun({ text: `• ${a}` })],
+                            }),
+                        ),
+                      ]
+                    : []),
+                  ...(p.outcomes
+                    ? [
+                        new Paragraph({
+                          spacing: { after: 120 },
+                          children: [
+                            new TextRun({ text: 'Outcomes: ', bold: true }),
+                            new TextRun({ text: p.outcomes }),
+                          ],
+                        }),
+                      ]
+                    : []),
+                ]),
               ]
             : []),
         ],

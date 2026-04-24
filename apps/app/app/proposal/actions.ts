@@ -16,6 +16,7 @@ import { requireCompany } from '@procur/auth';
 import { draftSection, embedText } from '@procur/ai';
 import { randomUUID } from 'node:crypto';
 import { semanticSearchLibrary } from '../../lib/library-queries';
+import { semanticSearchPastPerformance } from '../../lib/past-performance-queries';
 import {
   getTemplateById,
   GENERIC_TEMPLATE,
@@ -342,8 +343,26 @@ export async function draftSectionAction(formData: FormData): Promise<void> {
   let libraryExcerpts: Array<{ title: string; type: string; content: string }> = [];
   try {
     const queryEmb = await embedText(retrievalQuery);
-    const hits = await semanticSearchLibrary(company.id, queryEmb, 5);
-    libraryExcerpts = hits.map((h) => ({ title: h.title, type: h.type, content: h.content }));
+    const [libHits, ppHits] = await Promise.all([
+      semanticSearchLibrary(company.id, queryEmb, 5),
+      semanticSearchPastPerformance(company.id, queryEmb, 3),
+    ]);
+    libraryExcerpts = [
+      ...libHits.map((h) => ({ title: h.title, type: h.type, content: h.content })),
+      ...ppHits.map((p) => ({
+        title: `${p.projectName} — ${p.customerName}`,
+        type: 'past_performance',
+        content: [
+          p.scopeDescription,
+          (p.keyAccomplishments ?? []).length > 0
+            ? `Accomplishments: ${(p.keyAccomplishments ?? []).join('; ')}`
+            : null,
+          p.outcomes ? `Outcomes: ${p.outcomes}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+      })),
+    ];
   } catch (err) {
     // If embeddings aren't set up yet (no OPENAI_API_KEY), proceed without retrieval.
     console.warn('library retrieval skipped:', err);

@@ -5,6 +5,45 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { contracts, db, pastPerformance, type NewPastPerformance } from '@procur/db';
 import { requireCompany } from '@procur/auth';
+import { embedText } from '@procur/ai';
+
+async function safeEmbed(text: string): Promise<number[] | null> {
+  try {
+    if (!process.env.OPENAI_API_KEY) return null;
+    return await embedText(text);
+  } catch (err) {
+    console.error('past-performance embed failed', err);
+    return null;
+  }
+}
+
+function buildEmbeddingText(fields: {
+  projectName: string;
+  customerName: string;
+  scopeDescription: string;
+  keyAccomplishments?: string[] | null;
+  outcomes?: string | null;
+  categories?: string[] | null;
+  keywords?: string[] | null;
+}): string {
+  return [
+    fields.projectName,
+    `Customer: ${fields.customerName}`,
+    `Scope: ${fields.scopeDescription}`,
+    fields.outcomes ? `Outcomes: ${fields.outcomes}` : '',
+    (fields.keyAccomplishments ?? []).length > 0
+      ? `Accomplishments: ${(fields.keyAccomplishments ?? []).join(' | ')}`
+      : '',
+    (fields.categories ?? []).length > 0
+      ? `Categories: ${(fields.categories ?? []).join(', ')}`
+      : '',
+    (fields.keywords ?? []).length > 0
+      ? `Keywords: ${(fields.keywords ?? []).join(', ')}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
 
 function str(formData: FormData, key: string): string | null {
   const v = formData.get(key);
@@ -44,6 +83,23 @@ export async function createPastPerformanceAction(formData: FormData): Promise<v
     throw new Error('projectName, customerName, and scopeDescription required');
   }
 
+  const keyAccomplishments = arr(formData, 'keyAccomplishments');
+  const outcomes = str(formData, 'outcomes');
+  const categories = arr(formData, 'categories');
+  const keywords = arr(formData, 'keywords');
+
+  const embedding = await safeEmbed(
+    buildEmbeddingText({
+      projectName,
+      customerName,
+      scopeDescription,
+      keyAccomplishments,
+      outcomes,
+      categories,
+      keywords,
+    }),
+  );
+
   const values: NewPastPerformance = {
     companyId: company.id,
     projectName,
@@ -54,16 +110,17 @@ export async function createPastPerformanceAction(formData: FormData): Promise<v
     totalValue: num(formData, 'totalValue'),
     currency: str(formData, 'currency')?.slice(0, 3).toUpperCase() ?? 'USD',
     scopeDescription,
-    keyAccomplishments: arr(formData, 'keyAccomplishments'),
+    keyAccomplishments,
     challenges: str(formData, 'challenges'),
-    outcomes: str(formData, 'outcomes'),
+    outcomes,
     referenceName: str(formData, 'referenceName'),
     referenceTitle: str(formData, 'referenceTitle'),
     referenceEmail: str(formData, 'referenceEmail'),
     referencePhone: str(formData, 'referencePhone'),
     naicsCodes: arr(formData, 'naicsCodes'),
-    categories: arr(formData, 'categories'),
-    keywords: arr(formData, 'keywords'),
+    categories,
+    keywords,
+    embedding,
   };
 
   const [inserted] = await db
@@ -80,27 +137,48 @@ export async function updatePastPerformanceAction(formData: FormData): Promise<v
   if (!id) throw new Error('id required');
   await requireOwned(company.id, id);
 
+  const projectName = str(formData, 'projectName') ?? 'Untitled';
+  const customerName = str(formData, 'customerName') ?? 'Unknown customer';
+  const scopeDescription = str(formData, 'scopeDescription') ?? '';
+  const keyAccomplishments = arr(formData, 'keyAccomplishments');
+  const outcomes = str(formData, 'outcomes');
+  const categories = arr(formData, 'categories');
+  const keywords = arr(formData, 'keywords');
+
+  const embedding = await safeEmbed(
+    buildEmbeddingText({
+      projectName,
+      customerName,
+      scopeDescription,
+      keyAccomplishments,
+      outcomes,
+      categories,
+      keywords,
+    }),
+  );
+
   await db
     .update(pastPerformance)
     .set({
-      projectName: str(formData, 'projectName') ?? 'Untitled',
-      customerName: str(formData, 'customerName') ?? 'Unknown customer',
+      projectName,
+      customerName,
       customerType: str(formData, 'customerType'),
       periodStart: str(formData, 'periodStart'),
       periodEnd: str(formData, 'periodEnd'),
       totalValue: num(formData, 'totalValue'),
       currency: str(formData, 'currency')?.slice(0, 3).toUpperCase() ?? 'USD',
-      scopeDescription: str(formData, 'scopeDescription') ?? '',
-      keyAccomplishments: arr(formData, 'keyAccomplishments'),
+      scopeDescription,
+      keyAccomplishments,
       challenges: str(formData, 'challenges'),
-      outcomes: str(formData, 'outcomes'),
+      outcomes,
       referenceName: str(formData, 'referenceName'),
       referenceTitle: str(formData, 'referenceTitle'),
       referenceEmail: str(formData, 'referenceEmail'),
       referencePhone: str(formData, 'referencePhone'),
       naicsCodes: arr(formData, 'naicsCodes'),
-      categories: arr(formData, 'categories'),
-      keywords: arr(formData, 'keywords'),
+      categories,
+      keywords,
+      ...(embedding !== null ? { embedding } : {}),
       updatedAt: new Date(),
     })
     .where(eq(pastPerformance.id, id));
@@ -146,19 +224,33 @@ export async function generateFromContractAction(formData: FormData): Promise<vo
       ? completedObligations.map((o) => o.description)
       : null;
 
+  const projectName = contract.awardTitle;
+  const customerName = contract.awardingAgency ?? 'Unknown customer';
+  const scopeDescription = contract.notes ?? contract.awardTitle;
+
+  const embedding = await safeEmbed(
+    buildEmbeddingText({
+      projectName,
+      customerName,
+      scopeDescription,
+      keyAccomplishments: accomplishments,
+    }),
+  );
+
   const [inserted] = await db
     .insert(pastPerformance)
     .values({
       companyId: company.id,
-      projectName: contract.awardTitle,
-      customerName: contract.awardingAgency ?? 'Unknown customer',
+      projectName,
+      customerName,
       customerType: contract.awardingAgency ? 'government' : null,
       periodStart: contract.startDate,
       periodEnd: contract.endDate,
       totalValue: contract.totalValue,
       currency: contract.currency ?? 'USD',
-      scopeDescription: contract.notes ?? contract.awardTitle,
+      scopeDescription,
       keyAccomplishments: accomplishments,
+      embedding,
     })
     .returning({ id: pastPerformance.id });
 
