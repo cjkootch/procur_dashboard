@@ -1,14 +1,16 @@
 import 'server-only';
-import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull } from 'drizzle-orm';
 import {
   agencies,
   db,
   jurisdictions,
   laborCategories,
   opportunities,
+  pricingLineItems,
   pricingModels,
   pursuits,
   type LaborCategory,
+  type PricingLineItem,
   type PricingModel,
 } from '@procur/db';
 
@@ -189,6 +191,8 @@ export {
   summarize,
   aggregateYearTotals,
   buildIndirectBuildup,
+  lineItemAmount,
+  summarizeLineItems,
 } from './pricer-math';
 
 export type {
@@ -198,7 +202,20 @@ export type {
   YearTotal,
   CostBuildupLayer,
   CostBuildup,
+  LineItemCategoryTotal,
 } from './pricer-math';
+
+/**
+ * Non-labor line items for a given pricing model, ordered for stable
+ * rendering. Labor lines are computed from labor_categories elsewhere.
+ */
+export async function listLineItemsFor(pricingModelId: string): Promise<PricingLineItem[]> {
+  return db
+    .select()
+    .from(pricingLineItems)
+    .where(eq(pricingLineItems.pricingModelId, pricingModelId))
+    .orderBy(asc(pricingLineItems.sortOrder), asc(pricingLineItems.createdAt));
+}
 
 export type HistoricalBenchmark = {
   sampleSize: number;

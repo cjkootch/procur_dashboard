@@ -9,11 +9,15 @@ import {
   jurisdictions,
   laborCategories,
   LABOR_RATE_SOURCES,
+  LINE_ITEM_CATEGORIES,
   opportunities,
+  pricingLineItems,
   pricingModels,
   pursuits,
   type LaborRateSource,
+  type LineItemCategory,
   type NewLaborCategory,
+  type NewPricingLineItem,
   type NewPricingModel,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
@@ -406,5 +410,103 @@ export async function extractPricingStructureAction(formData: FormData): Promise
   }
 
   await recomputeWrapAndLaborTotals(pricingModel.id);
+  revalidatePath(`/pricer/${pursuitId}`);
+}
+
+// ===========================================================================
+// Non-labor line items (ODC / travel / materials / subcontract / other)
+// ===========================================================================
+
+function toCategory(v: FormDataEntryValue | null): LineItemCategory {
+  const s = v == null ? '' : String(v).trim();
+  return (LINE_ITEM_CATEGORIES as readonly string[]).includes(s)
+    ? (s as LineItemCategory)
+    : 'other';
+}
+
+async function requireLineItemForPursuit(
+  companyId: string,
+  pursuitId: string,
+  lineItemId: string,
+) {
+  const { pricingModel } = await requirePricingModelForPursuit(companyId, pursuitId);
+  const li = await db.query.pricingLineItems.findFirst({
+    where: and(
+      eq(pricingLineItems.id, lineItemId),
+      eq(pricingLineItems.pricingModelId, pricingModel.id),
+    ),
+  });
+  if (!li) throw new Error('line item not found');
+  return { li, pricingModel };
+}
+
+export async function addLineItemAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const { pricingModel } = await requirePricingModelForPursuit(company.id, pursuitId);
+
+  const title = String(formData.get('title') ?? '').trim();
+  if (!title) throw new Error('title required');
+
+  const row: NewPricingLineItem = {
+    pricingModelId: pricingModel.id,
+    title,
+    category: toCategory(formData.get('category')),
+    clinNumber: String(formData.get('clinNumber') ?? '').trim() || null,
+    quantity: toNumeric(formData.get('quantity')),
+    unitOfMeasure: String(formData.get('unitOfMeasure') ?? '').trim() || null,
+    unitPrice: toNumeric(formData.get('unitPrice')),
+    amount: toNumeric(formData.get('amount')),
+    startDate: String(formData.get('startDate') ?? '').trim() || null,
+    endDate: String(formData.get('endDate') ?? '').trim() || null,
+    notes: String(formData.get('notes') ?? '').trim() || null,
+  };
+  await db.insert(pricingLineItems).values(row);
+
+  revalidatePath(`/pricer/${pursuitId}`);
+}
+
+export async function updateLineItemAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const lineItemId = String(formData.get('lineItemId') ?? '');
+  if (!lineItemId) throw new Error('lineItemId required');
+
+  const { li } = await requireLineItemForPursuit(company.id, pursuitId, lineItemId);
+
+  // Use formData.has() so per-field inline edits don't blank unrelated
+  // columns — same pattern as the labor-category action.
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  if (formData.has('title')) patch.title = String(formData.get('title') ?? li.title).trim() || li.title;
+  if (formData.has('category')) patch.category = toCategory(formData.get('category'));
+  if (formData.has('clinNumber'))
+    patch.clinNumber = String(formData.get('clinNumber') ?? '').trim() || null;
+  if (formData.has('quantity')) patch.quantity = toNumeric(formData.get('quantity'));
+  if (formData.has('unitOfMeasure'))
+    patch.unitOfMeasure = String(formData.get('unitOfMeasure') ?? '').trim() || null;
+  if (formData.has('unitPrice')) patch.unitPrice = toNumeric(formData.get('unitPrice'));
+  if (formData.has('amount')) patch.amount = toNumeric(formData.get('amount'));
+  if (formData.has('startDate'))
+    patch.startDate = String(formData.get('startDate') ?? '').trim() || null;
+  if (formData.has('endDate'))
+    patch.endDate = String(formData.get('endDate') ?? '').trim() || null;
+  if (formData.has('notes')) patch.notes = String(formData.get('notes') ?? '').trim() || null;
+
+  await db.update(pricingLineItems).set(patch).where(eq(pricingLineItems.id, lineItemId));
+
+  revalidatePath(`/pricer/${pursuitId}`);
+}
+
+export async function removeLineItemAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const lineItemId = String(formData.get('lineItemId') ?? '');
+  if (!lineItemId) throw new Error('lineItemId required');
+
+  // Ownership check before delete.
+  await requireLineItemForPursuit(company.id, pursuitId, lineItemId);
+
+  await db.delete(pricingLineItems).where(eq(pricingLineItems.id, lineItemId));
+
   revalidatePath(`/pricer/${pursuitId}`);
 }

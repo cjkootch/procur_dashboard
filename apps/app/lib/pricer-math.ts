@@ -6,7 +6,7 @@
  * Re-exported from `pricer-queries.ts` so existing server imports keep
  * working unchanged.
  */
-import type { LaborCategory, PricingModel } from '@procur/db';
+import type { LaborCategory, LineItemCategory, PricingLineItem, PricingModel } from '@procur/db';
 
 export type YearBreakdown = {
   year: number;
@@ -186,3 +186,59 @@ export function buildIndirectBuildup(input: {
   const total = directLabor + fringe + overhead + ga;
   return { mode, layers, totalLoaded: Number(total.toFixed(2)) };
 }
+
+
+// -- Non-labor line items ----------------------------------------------------
+
+/**
+ * Compute the effective amount for a manual line item:
+ *   - prefer explicit `amount` when set (manual entry wins)
+ *   - otherwise derive quantity × unit_price
+ *   - otherwise 0
+ */
+export function lineItemAmount(li: Pick<PricingLineItem, "amount" | "quantity" | "unitPrice">): number {
+  const manual = li.amount != null ? Number.parseFloat(li.amount) : NaN;
+  if (Number.isFinite(manual) && manual > 0) return manual;
+  const qty = li.quantity != null ? Number.parseFloat(li.quantity) : NaN;
+  const price = li.unitPrice != null ? Number.parseFloat(li.unitPrice) : NaN;
+  if (Number.isFinite(qty) && Number.isFinite(price)) return Number((qty * price).toFixed(2));
+  return 0;
+}
+
+export type LineItemCategoryTotal = {
+  category: LineItemCategory;
+  count: number;
+  total: number;
+};
+
+/**
+ * Group line items by category and sum each bucket. Categories absent
+ * from the input are omitted — the UI renders rows only for what exists.
+ */
+export function summarizeLineItems(items: PricingLineItem[]): {
+  byCategory: LineItemCategoryTotal[];
+  nonLaborTotal: number;
+} {
+  const byKey = new Map<LineItemCategory, LineItemCategoryTotal>();
+  let total = 0;
+  for (const li of items) {
+    const amount = lineItemAmount(li);
+    total += amount;
+    const bucket = byKey.get(li.category) ?? {
+      category: li.category,
+      count: 0,
+      total: 0,
+    };
+    bucket.count += 1;
+    bucket.total += amount;
+    byKey.set(li.category, bucket);
+  }
+  return {
+    byCategory: Array.from(byKey.values()).map((b) => ({
+      ...b,
+      total: Number(b.total.toFixed(2)),
+    })),
+    nonLaborTotal: Number(total.toFixed(2)),
+  };
+}
+
