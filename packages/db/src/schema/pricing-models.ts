@@ -99,3 +99,53 @@ export type PricingModel = typeof pricingModels.$inferSelect;
 export type NewPricingModel = typeof pricingModels.$inferInsert;
 export type LaborCategory = typeof laborCategories.$inferSelect;
 export type NewLaborCategory = typeof laborCategories.$inferInsert;
+
+/**
+ * Non-labor line items: ODCs, travel, materials, subcontracts, misc.
+ * Labor lives in the laborCategories table because it needs per-year
+ * escalation math + wrap-rate loading; putting both in one table would
+ * muddle the math.
+ *
+ * The Line Items tab combines both views: the auto-calculated labor
+ * CLINs (computed from labor_categories × wrap rate × escalation) on
+ * top, then this table's rows below for everything else.
+ */
+export const LINE_ITEM_CATEGORIES = [
+  'odc',
+  'travel',
+  'materials',
+  'subcontract',
+  'other',
+] as const;
+export type LineItemCategory = (typeof LINE_ITEM_CATEGORIES)[number];
+
+export const pricingLineItems = pgTable('pricing_line_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  pricingModelId: uuid('pricing_model_id')
+    .references(() => pricingModels.id, { onDelete: 'cascade' })
+    .notNull(),
+
+  clinNumber: text('clin_number'),
+  title: text('title').notNull(),
+  category: text('category').$type<LineItemCategory>().notNull().default('other'),
+
+  // Line amount. quantity × unitPrice when both set, otherwise the
+  // manually entered amount wins. Math lives in the app layer — the
+  // column stays authoritative so sort/aggregate queries work.
+  quantity: numeric('quantity', { precision: 14, scale: 4 }),
+  unitOfMeasure: text('unit_of_measure'),
+  unitPrice: numeric('unit_price', { precision: 14, scale: 4 }),
+  amount: numeric('amount', { precision: 20, scale: 2 }),
+
+  startDate: text('start_date'), // ISO YYYY-MM-DD; kept as text for date-only handling
+  endDate: text('end_date'),
+  notes: text('notes'),
+
+  sortOrder: integer('sort_order').notNull().default(0),
+
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export type PricingLineItem = typeof pricingLineItems.$inferSelect;
+export type NewPricingLineItem = typeof pricingLineItems.$inferInsert;

@@ -6,6 +6,7 @@ import { requireCompany } from '@procur/auth';
 import {
   getHistoricalBenchmark,
   getPricerByPursuitId,
+  listLineItemsFor,
   summarize,
 } from '../../../lib/pricer-queries';
 import { flagFor, formatDate, formatMoney } from '../../../lib/format';
@@ -90,6 +91,10 @@ export default async function PricerDetailPage({
   const escalationPct = Number.parseFloat(pricingModel.escalationRate ?? '0') || 0;
   const targetFeePct = Number.parseFloat(pricingModel.targetFeePct ?? '0') || 0;
   const directLabor = summary.totalLaborCost / Math.max(summary.wrapRate, 0.0001);
+
+  // Non-labor line items — only loaded when the Line Items tab is active
+  // to avoid a wasted query on every pricer view.
+  const lineItems = tab === 'line-items' ? await listLineItemsFor(pricingModel.id) : [];
 
   // Historical benchmark only on the Overview tab.
   const [oppContext] = await db
@@ -212,6 +217,8 @@ export default async function PricerDetailPage({
             basePeriodMonths={pricingModel.basePeriodMonths ?? 12}
             currency={currency}
             targetFeePct={targetFeePct}
+            pursuitId={pursuitId}
+            lineItems={lineItems}
           />
         )}
       </div>

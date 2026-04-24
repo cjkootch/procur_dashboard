@@ -43,6 +43,13 @@
       "when": 1777063226003,
       "tag": "0005_lcat_description",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777070452271,
+      "tag": "0006_pricing_line_items",
+      "breakpoints": true
     }
   ]
 }
