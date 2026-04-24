@@ -236,7 +236,7 @@ export function Chat({
         )}
         <div className="mx-auto flex max-w-2xl flex-col gap-4">
           {messages.map((m) => (
-            <MessageView key={m.id} message={m} />
+            <MessageView key={m.id} message={m} threadId={threadId} />
           ))}
           {error && (
             <div className="rounded-[var(--radius-sm)] border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600">
@@ -274,7 +274,34 @@ export function Chat({
   );
 }
 
-function MessageView({ message }: { message: RenderedMessage }) {
+type ProposalShape = {
+  proposalId: string;
+  toolName: string;
+  title: string;
+  description: string;
+  preview: Record<string, unknown>;
+  applyPayload: Record<string, unknown>;
+};
+
+function isProposalOutput(output: unknown): output is ProposalShape {
+  if (!output || typeof output !== 'object') return false;
+  const o = output as Record<string, unknown>;
+  return (
+    typeof o.proposalId === 'string' &&
+    typeof o.toolName === 'string' &&
+    typeof o.title === 'string' &&
+    typeof o.applyPayload === 'object' &&
+    o.applyPayload !== null
+  );
+}
+
+function MessageView({
+  message,
+  threadId,
+}: {
+  message: RenderedMessage;
+  threadId?: string;
+}) {
   if (message.kind === 'user') {
     return (
       <div className="flex justify-end">
@@ -287,10 +314,14 @@ function MessageView({ message }: { message: RenderedMessage }) {
   return (
     <div className="flex flex-col gap-2">
       {message.toolUses.length > 0 && (
-        <div className="flex flex-col gap-1">
-          {message.toolUses.map((t) => (
-            <ToolCard key={t.id} toolUse={t} />
-          ))}
+        <div className="flex flex-col gap-2">
+          {message.toolUses.map((t) =>
+            t.result && !t.result.isError && isProposalOutput(t.result.output) ? (
+              <ProposalCard key={t.id} proposal={t.result.output} threadId={threadId} />
+            ) : (
+              <ToolCard key={t.id} toolUse={t} />
+            ),
+          )}
         </div>
       )}
       {message.text && (
@@ -301,6 +332,112 @@ function MessageView({ message }: { message: RenderedMessage }) {
       {message.streaming && !message.text && message.toolUses.length === 0 && (
         <div className="text-xs italic text-[color:var(--color-muted-foreground)]">Thinking…</div>
       )}
+    </div>
+  );
+}
+
+type ApplyState =
+  | { status: 'idle' }
+  | { status: 'applying' }
+  | { status: 'applied'; result: { redirectTo?: string } }
+  | { status: 'dismissed' }
+  | { status: 'error'; message: string };
+
+function ProposalCard({
+  proposal,
+  threadId,
+}: {
+  proposal: ProposalShape;
+  threadId?: string;
+}) {
+  const [state, setState] = useState<ApplyState>({ status: 'idle' });
+
+  const apply = async () => {
+    if (!threadId) {
+      setState({ status: 'error', message: 'No active thread' });
+      return;
+    }
+    setState({ status: 'applying' });
+    try {
+      const res = await fetch('/api/assistant/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          threadId,
+          toolName: proposal.toolName,
+          applyPayload: proposal.applyPayload,
+        }),
+      });
+      const body = (await res.json()) as
+        | { ok: true; result: { redirectTo?: string } }
+        | { ok: false; error: string; message?: string };
+      if (res.ok && 'ok' in body && body.ok) {
+        setState({ status: 'applied', result: body.result });
+      } else if ('error' in body) {
+        setState({ status: 'error', message: body.message ?? body.error });
+      } else {
+        setState({ status: 'error', message: `HTTP ${res.status}` });
+      }
+    } catch (err) {
+      setState({
+        status: 'error',
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
+  return (
+    <div className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-3 text-sm shadow-sm">
+      <div className="mb-1 flex items-center gap-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+        <span>Proposed action</span>
+        <span className="font-mono">{proposal.toolName}</span>
+      </div>
+      <div className="font-medium">{proposal.title}</div>
+      <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+        {proposal.description}
+      </p>
+      <pre className="mt-2 max-h-40 overflow-auto rounded-[var(--radius-sm)] bg-[color:var(--color-muted)]/40 p-2 text-[11px]">
+        {JSON.stringify(proposal.preview, null, 2)}
+      </pre>
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <div className="text-xs">
+          {state.status === 'applied' && (
+            <span className="text-green-700">
+              Applied
+              {state.result.redirectTo && (
+                <>
+                  {' · '}
+                  <a href={state.result.redirectTo} className="underline">
+                    Open
+                  </a>
+                </>
+              )}
+            </span>
+          )}
+          {state.status === 'dismissed' && (
+            <span className="text-[color:var(--color-muted-foreground)]">Dismissed</span>
+          )}
+          {state.status === 'error' && <span className="text-red-600">{state.message}</span>}
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setState({ status: 'dismissed' })}
+            disabled={state.status === 'applying' || state.status === 'applied'}
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-3 py-1 text-xs disabled:opacity-40"
+          >
+            Dismiss
+          </button>
+          <button
+            type="button"
+            onClick={() => void apply()}
+            disabled={state.status === 'applying' || state.status === 'applied'}
+            className="rounded-[var(--radius-sm)] bg-[color:var(--color-foreground)] px-3 py-1 text-xs font-medium text-[color:var(--color-background)] disabled:opacity-40"
+          >
+            {state.status === 'applying' ? 'Applying…' : 'Apply'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

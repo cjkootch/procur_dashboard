@@ -11,11 +11,12 @@ import { searchPastPerformanceTool } from './tools/search-past-performance';
 import { listRecommendedOpportunitiesTool } from './tools/list-recommended-opportunities';
 import { getCompanyProfileTool } from './tools/get-company-profile';
 import { listContractsTool } from './tools/list-contracts';
+import { proposeCreatePursuitTool } from './tools/propose-create-pursuit';
+import { proposeAdvanceStageTool } from './tools/propose-advance-stage';
+import { proposeCreateTaskTool } from './tools/propose-create-task';
+import { proposeDraftProposalSectionTool } from './tools/propose-draft-proposal-section';
+import { proposeCreateAlertTool } from './tools/propose-create-alert';
 
-/**
- * All read tools available to the assistant, keyed by tool name.
- * Write tools land on Day 4 under ./write-tools/.
- */
 export const readTools = {
   [searchOpportunitiesTool.name]: searchOpportunitiesTool,
   [globalSearchTool.name]: globalSearchTool,
@@ -30,8 +31,16 @@ export const readTools = {
   [listContractsTool.name]: listContractsTool,
 } satisfies ToolRegistry;
 
+export const writeTools = {
+  [proposeCreatePursuitTool.name]: proposeCreatePursuitTool,
+  [proposeAdvanceStageTool.name]: proposeAdvanceStageTool,
+  [proposeCreateTaskTool.name]: proposeCreateTaskTool,
+  [proposeDraftProposalSectionTool.name]: proposeDraftProposalSectionTool,
+  [proposeCreateAlertTool.name]: proposeCreateAlertTool,
+} satisfies ToolRegistry;
+
 export function buildAssistantTools(): ToolRegistry {
-  return { ...readTools };
+  return { ...readTools, ...writeTools };
 }
 
 export type { AssistantContext };
