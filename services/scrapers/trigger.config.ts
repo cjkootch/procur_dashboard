@@ -1,7 +1,7 @@
 import { defineConfig } from '@trigger.dev/sdk/v3';
 
 export default defineConfig({
-  project: 'procur-scrapers',
+  project: 'proj_eigtroxsysxjbjgeyuql',
   runtime: 'node',
   logLevel: 'info',
   maxDuration: 3600,
