@@ -18,6 +18,7 @@ export type OpportunitySummary = {
   type: string | null;
   category: string | null;
   aiSummary: string | null;
+  sourceUrl: string;
   valueEstimate: string | null;
   currency: string | null;
   valueEstimateUsd: string | null;
@@ -112,6 +113,7 @@ export async function listOpportunities(
       type: opportunities.type,
       category: opportunities.category,
       aiSummary: opportunities.aiSummary,
+      sourceUrl: opportunities.sourceUrl,
       valueEstimate: opportunities.valueEstimate,
       currency: opportunities.currency,
       valueEstimateUsd: opportunities.valueEstimateUsd,
@@ -157,6 +159,7 @@ export async function getOpportunityBySlug(
       type: opportunities.type,
       category: opportunities.category,
       aiSummary: opportunities.aiSummary,
+      sourceUrl: opportunities.sourceUrl,
       valueEstimate: opportunities.valueEstimate,
       currency: opportunities.currency,
       valueEstimateUsd: opportunities.valueEstimateUsd,

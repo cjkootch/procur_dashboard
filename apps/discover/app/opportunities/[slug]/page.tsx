@@ -157,6 +157,23 @@ export default async function OpportunityDetailPage({
         </section>
       )}
 
+      <section className="mt-8 flex flex-wrap gap-3">
+        <a
+          href={`${appUrl}/capture/new?opportunity=${op.id}`}
+          className="inline-flex items-center rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)] hover:opacity-90"
+        >
+          Track this opportunity →
+        </a>
+        <a
+          href={op.sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-4 py-2 text-sm font-medium hover:border-[color:var(--color-foreground)]"
+        >
+          View on source portal ↗
+        </a>
+      </section>
+
       <section className="mt-10 rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-6">
         <p className="text-sm font-medium">Want the full picture?</p>
         <p className="mt-2 text-sm text-[color:var(--color-muted-foreground)]">

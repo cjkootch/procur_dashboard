@@ -10,10 +10,17 @@
   },
   "scripts": {
     "type-check": "tsc --noEmit",
+    "preview": "email dev --dir src",
     "clean": "rm -rf dist .turbo node_modules"
+  },
+  "dependencies": {
+    "@react-email/components": "^0.0.32",
+    "react": "^19.0.0"
   },
   "devDependencies": {
     "@procur/config": "workspace:*",
+    "@types/react": "^19.0.2",
+    "react-email": "^3.0.4",
     "typescript": "^5.7.2"
   }
 }

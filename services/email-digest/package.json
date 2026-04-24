@@ -7,9 +7,24 @@
     "type-check": "tsc --noEmit",
     "clean": "rm -rf dist .turbo node_modules"
   },
+  "dependencies": {
+    "@procur/analytics": "workspace:*",
+    "@procur/db": "workspace:*",
+    "@procur/email-templates": "workspace:*",
+    "@procur/utils": "workspace:*",
+    "@react-email/components": "^0.0.32",
+    "@react-email/render": "^1.0.3",
+    "@trigger.dev/sdk": "^3.3.9",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.38.3",
+    "react": "^19.0.0",
+    "resend": "^4.0.1"
+  },
   "devDependencies": {
     "@procur/config": "workspace:*",
     "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
 }
