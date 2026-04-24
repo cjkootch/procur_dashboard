@@ -8,12 +8,18 @@ import {
   db,
   opportunities,
   pursuits,
+  pursuitGateReviews,
   pursuitTasks,
+  type GateReviewCriterion,
+  type GateReviewCriterionStatus,
+  type GateReviewDecision,
   type NewPursuit,
+  type NewPursuitGateReview,
   type NewPursuitTask,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
 import { STAGE_ORDER, type PursuitStageKey, getActivePursuitCount } from '../../lib/capture-queries';
+import { seedCriteria } from '../../lib/gate-review-queries';
 
 const FREE_TIER_ACTIVE_PURSUIT_CAP = 5;
 
@@ -314,5 +320,181 @@ export async function toggleTaskAction(formData: FormData): Promise<void> {
 
   if (pursuitId) revalidatePath(`/capture/pursuits/${pursuitId}`);
   revalidatePath('/capture/tasks');
+}
+
+// ===========================================================================
+// Gate reviews
+// ===========================================================================
+
+const DECISIONS: GateReviewDecision[] = ['pending', 'pass', 'conditional', 'fail'];
+const CRITERION_STATUSES: GateReviewCriterionStatus[] = [
+  'not_assessed',
+  'met',
+  'partially_met',
+  'not_met',
+  'na',
+];
+
+function toDecision(v: FormDataEntryValue | null): GateReviewDecision {
+  const s = v == null ? '' : String(v);
+  return (DECISIONS as string[]).includes(s) ? (s as GateReviewDecision) : 'pending';
+}
+
+function toCriterionStatus(v: FormDataEntryValue | null): GateReviewCriterionStatus {
+  const s = v == null ? '' : String(v);
+  return (CRITERION_STATUSES as string[]).includes(s)
+    ? (s as GateReviewCriterionStatus)
+    : 'not_assessed';
+}
+
+async function requirePursuitOwnedByCompany(
+  companyId: string,
+  pursuitId: string,
+): Promise<void> {
+  const row = await db.query.pursuits.findFirst({
+    where: and(eq(pursuits.id, pursuitId), eq(pursuits.companyId, companyId)),
+    columns: { id: true },
+  });
+  if (!row) throw new Error('pursuit not found');
+}
+
+/**
+ * Ownership-checked fetch for a gate review. Throws if not found OR if
+ * the parent pursuit isn't owned by the given company.
+ */
+async function requireGateReview(companyId: string, gateReviewId: string) {
+  const rows = await db
+    .select({ review: pursuitGateReviews, companyId: pursuits.companyId })
+    .from(pursuitGateReviews)
+    .innerJoin(pursuits, eq(pursuits.id, pursuitGateReviews.pursuitId))
+    .where(eq(pursuitGateReviews.id, gateReviewId))
+    .limit(1);
+  const first = rows[0];
+  if (!first || first.companyId !== companyId) throw new Error('gate review not found');
+  return first.review;
+}
+
+export async function createGateReviewAction(formData: FormData): Promise<void> {
+  const { user, company } = await resolveUserAndCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const stage = String(formData.get('stage') ?? '').trim();
+  if (!pursuitId || !stage) throw new Error('pursuitId + stage required');
+  if (stage.length > 64) throw new Error('stage too long');
+
+  await requirePursuitOwnedByCompany(company.id, pursuitId);
+
+  const row: NewPursuitGateReview = {
+    pursuitId,
+    stage,
+    decision: 'pending',
+    reviewerUserId: user.id,
+    criteria: seedCriteria(stage),
+  };
+  const [created] = await db
+    .insert(pursuitGateReviews)
+    .values(row)
+    .returning({ id: pursuitGateReviews.id });
+
+  await recordPursuitAudit({
+    companyId: company.id,
+    userId: user.id,
+    action: 'pursuit.gate_review_created',
+    pursuitId,
+    metadata: { gateReviewId: created?.id, stage },
+  });
+
+  revalidatePath(`/capture/pursuits/${pursuitId}`);
+}
+
+export async function updateGateReviewAction(formData: FormData): Promise<void> {
+  const { user, company } = await resolveUserAndCompany();
+  const gateReviewId = String(formData.get('gateReviewId') ?? '');
+  if (!gateReviewId) throw new Error('gateReviewId required');
+
+  const existing = await requireGateReview(company.id, gateReviewId);
+
+  const decision = formData.has('decision') ? toDecision(formData.get('decision')) : existing.decision;
+  const summary = formData.has('summary')
+    ? String(formData.get('summary') ?? '').trim() || null
+    : existing.summary;
+  const completed = decision !== 'pending';
+
+  await db
+    .update(pursuitGateReviews)
+    .set({
+      decision,
+      summary,
+      // Decision transition to non-pending stamps completedAt; going back
+      // to pending clears it so the review is "in progress" again.
+      completedAt: completed ? (existing.completedAt ?? new Date()) : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(pursuitGateReviews.id, gateReviewId));
+
+  await recordPursuitAudit({
+    companyId: company.id,
+    userId: user.id,
+    action: 'pursuit.gate_review_updated',
+    pursuitId: existing.pursuitId,
+    changes: { before: { decision: existing.decision }, after: { decision } },
+    metadata: { gateReviewId, stage: existing.stage },
+  });
+
+  revalidatePath(`/capture/pursuits/${existing.pursuitId}`);
+}
+
+/**
+ * Toggle a single criterion's status + comment on a gate review.
+ * Doesn't change the review's overall decision — that stays on the
+ * updateGateReviewAction flow so the reviewer explicitly signs off.
+ */
+export async function toggleGateCriterionAction(formData: FormData): Promise<void> {
+  const { company } = await resolveUserAndCompany();
+  const gateReviewId = String(formData.get('gateReviewId') ?? '');
+  const criterionId = String(formData.get('criterionId') ?? '');
+  if (!gateReviewId || !criterionId) throw new Error('gateReviewId + criterionId required');
+
+  const existing = await requireGateReview(company.id, gateReviewId);
+  const status = toCriterionStatus(formData.get('status'));
+  const comment = formData.has('comment')
+    ? String(formData.get('comment') ?? '').trim() || undefined
+    : undefined;
+
+  const next: GateReviewCriterion[] = (existing.criteria ?? []).map((c) =>
+    c.id === criterionId
+      ? {
+          ...c,
+          status,
+          ...(comment !== undefined ? { comment } : {}),
+        }
+      : c,
+  );
+
+  await db
+    .update(pursuitGateReviews)
+    .set({ criteria: next, updatedAt: new Date() })
+    .where(eq(pursuitGateReviews.id, gateReviewId));
+
+  revalidatePath(`/capture/pursuits/${existing.pursuitId}`);
+}
+
+export async function deleteGateReviewAction(formData: FormData): Promise<void> {
+  const { user, company } = await resolveUserAndCompany();
+  const gateReviewId = String(formData.get('gateReviewId') ?? '');
+  if (!gateReviewId) throw new Error('gateReviewId required');
+
+  const existing = await requireGateReview(company.id, gateReviewId);
+
+  await db.delete(pursuitGateReviews).where(eq(pursuitGateReviews.id, gateReviewId));
+
+  await recordPursuitAudit({
+    companyId: company.id,
+    userId: user.id,
+    action: 'pursuit.gate_review_deleted',
+    pursuitId: existing.pursuitId,
+    metadata: { gateReviewId, stage: existing.stage },
+  });
+
+  revalidatePath(`/capture/pursuits/${existing.pursuitId}`);
 }
 
