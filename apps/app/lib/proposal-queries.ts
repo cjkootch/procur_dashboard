@@ -94,6 +94,7 @@ export type ProposalDetail = {
     description: string | null;
     referenceNumber: string | null;
     deadlineAt: Date | null;
+    jurisdictionSlug: string;
     jurisdictionName: string;
     jurisdictionCountry: string;
     agencyName: string | null;
@@ -117,6 +118,7 @@ export async function getProposalByPursuitId(
       oppDescription: opportunities.description,
       oppReferenceNumber: opportunities.referenceNumber,
       oppDeadlineAt: opportunities.deadlineAt,
+      jurisdictionSlug: jurisdictions.slug,
       jurisdictionName: jurisdictions.name,
       jurisdictionCountry: jurisdictions.countryCode,
       agencyName: agencies.name,
@@ -150,6 +152,7 @@ export async function getProposalByPursuitId(
       description: row.oppDescription,
       referenceNumber: row.oppReferenceNumber,
       deadlineAt: row.oppDeadlineAt,
+      jurisdictionSlug: row.jurisdictionSlug,
       jurisdictionName: row.jurisdictionName,
       jurisdictionCountry: row.jurisdictionCountry,
       agencyName: row.agencyName,

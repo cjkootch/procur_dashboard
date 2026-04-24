@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
 import { getProposalByPursuitId } from '../../../lib/proposal-queries';
 import { flagFor, formatDate, timeUntil } from '../../../lib/format';
+import { templatesForJurisdiction } from '../../../lib/proposal-templates';
 import {
   createProposalAction,
   draftSectionAction,
@@ -97,8 +98,41 @@ export default async function ProposalDetailPage({
               </p>
             </div>
           ) : (
-            <form action={createProposalAction} className="mt-4">
+            <form action={createProposalAction} className="mt-4 space-y-4">
               <input type="hidden" name="pursuitId" value={pursuitId} />
+              <fieldset>
+                <legend className="text-sm font-medium">Template</legend>
+                <p className="mb-2 text-xs text-[color:var(--color-muted-foreground)]">
+                  Pick the response format. Jurisdiction-specific templates include the exact
+                  section structure and required documents for that portal.
+                </p>
+                <div className="space-y-2">
+                  {templatesForJurisdiction(opportunity.jurisdictionSlug).map((t, i) => (
+                    <label
+                      key={t.id}
+                      className="flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border border-[color:var(--color-border)] p-3 hover:border-[color:var(--color-foreground)]"
+                    >
+                      <input
+                        type="radio"
+                        name="templateId"
+                        value={t.id}
+                        defaultChecked={i === 0}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <p className="text-sm font-medium">{t.name}</p>
+                        <p className="text-xs text-[color:var(--color-muted-foreground)]">
+                          {t.description}
+                        </p>
+                        <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+                          {t.sections.length} sections ·{' '}
+                          {t.sections.map((s) => s.title).join(' → ')}
+                        </p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
               <button
                 type="submit"
                 className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)]"
@@ -139,12 +173,17 @@ export default async function ProposalDetailPage({
           </div>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight">{opportunity.title}</h1>
         </div>
-        <Link
-          href={`/capture/pursuits/${pursuitId}`}
-          className="whitespace-nowrap text-sm underline"
-        >
-          Pursuit details →
-        </Link>
+        <div className="flex flex-col items-end gap-2 whitespace-nowrap text-sm">
+          <a
+            href={`/api/proposal/${pursuitId}/export`}
+            className="inline-flex items-center rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-background)]"
+          >
+            Download .docx
+          </a>
+          <Link href={`/capture/pursuits/${pursuitId}`} className="underline">
+            Pursuit details →
+          </Link>
+        </div>
       </header>
 
       <section className="mb-8 grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-6 md:grid-cols-4">

@@ -16,6 +16,11 @@ import { requireCompany } from '@procur/auth';
 import { draftSection, embedText } from '@procur/ai';
 import { randomUUID } from 'node:crypto';
 import { semanticSearchLibrary } from '../../lib/library-queries';
+import {
+  getTemplateById,
+  GENERIC_TEMPLATE,
+  type ProposalTemplate,
+} from '../../lib/proposal-templates';
 
 type ExtractedRequirement = {
   id: string;
@@ -67,89 +72,66 @@ type SectionDraft = {
  * This is a deterministic baseline — Day 2+ will add AI-generated outlines
  * tailored to the specific jurisdiction + tender structure.
  */
-function deriveInitialOutline(
+function keywordMatch(haystack: string, keywords: RegExp): boolean {
+  return keywords.test(haystack);
+}
+
+/**
+ * Match requirements + criteria into a template's sections by section title
+ * keyword. Templates own the structure; we just decorate with the content
+ * AI extracted from the tender.
+ */
+function deriveOutlineFromTemplate(
+  template: ProposalTemplate,
   requirements: ExtractedRequirement[],
   criteria: EvaluationCriterion[],
 ): OutlineSection[] {
   const mkId = () => randomUUID();
 
-  const sections: OutlineSection[] = [
-    {
-      id: mkId(),
-      number: '1',
-      title: 'Executive Summary',
-      description: 'High-level win themes, company fit, and commitment to the buyer.',
-      evaluationCriteria: [],
-      mandatoryContent: ['Win themes', 'Company overview', 'Commitment statement'],
-    },
-    {
-      id: mkId(),
-      number: '2',
-      title: 'Technical Approach',
-      description: 'How we will deliver against the technical requirements.',
-      evaluationCriteria: criteria
-        .filter((c) => /technical|approach|method/i.test(c.name))
-        .map((c) => c.name),
-      mandatoryContent: requirements
-        .filter((r) => r.type === 'technical' && r.mandatory)
-        .map((r) => r.text)
-        .slice(0, 12),
-    },
-    {
-      id: mkId(),
-      number: '3',
-      title: 'Past Performance',
-      description: 'Relevant prior contracts demonstrating capacity to deliver.',
-      evaluationCriteria: criteria
-        .filter((c) => /experience|past|performance|reference/i.test(c.name))
-        .map((c) => c.name),
-      mandatoryContent: requirements
-        .filter((r) => r.type === 'experience')
-        .map((r) => r.text)
-        .slice(0, 8),
-    },
-    {
-      id: mkId(),
-      number: '4',
-      title: 'Management Plan',
-      description: 'Team, governance, and compliance with legal and regulatory requirements.',
-      evaluationCriteria: criteria
-        .filter((c) => /management|team|governance|quality/i.test(c.name))
-        .map((c) => c.name),
-      mandatoryContent: requirements
-        .filter((r) => r.type === 'legal' || r.type === 'compliance')
-        .map((r) => r.text)
-        .slice(0, 10),
-    },
-    {
-      id: mkId(),
-      number: '5',
-      title: 'Pricing',
-      description: 'Firm fixed price, labor rates, or schedule of values per solicitation.',
-      evaluationCriteria: criteria
-        .filter((c) => /price|cost|value/i.test(c.name))
-        .map((c) => c.name),
-      mandatoryContent: requirements
-        .filter((r) => r.type === 'financial')
-        .map((r) => r.text)
-        .slice(0, 8),
-    },
+  const typeMap: Array<{ re: RegExp; types: ExtractedRequirement['type'][] }> = [
+    { re: /technical|approach|method|scope/i, types: ['technical'] },
+    { re: /experience|past|performance|reference/i, types: ['experience'] },
+    { re: /management|team|governance|personnel/i, types: [] },
+    { re: /compliance|eligibilit|credent|legal|qualifi/i, types: ['legal', 'compliance'] },
+    { re: /price|cost|financ|bill|schedule|economic|propuesta económica/i, types: ['financial'] },
   ];
 
-  return sections;
+  return template.sections.map((s) => {
+    const matched = typeMap.find((m) => m.re.test(s.title));
+    const matchedRequirements = matched
+      ? requirements.filter((r) => matched.types.includes(r.type) && r.mandatory)
+      : [];
+    const matchedCriteria = criteria.filter((c) => keywordMatch(c.name, new RegExp(s.title.split(' ')[0] ?? '', 'i'))).map((c) => c.name);
+
+    const mandatoryContent = [
+      ...s.mandatoryContent,
+      ...matchedRequirements.map((r) => r.text).slice(0, 12 - s.mandatoryContent.length),
+    ];
+
+    return {
+      id: mkId(),
+      number: s.number,
+      title: s.title,
+      description: s.description,
+      evaluationCriteria: matchedCriteria,
+      pageLimit: s.pageLimit,
+      mandatoryContent,
+    };
+  });
 }
 
 function deriveInitialCompliance(
   requirements: ExtractedRequirement[],
   outline: OutlineSection[],
 ): ComplianceRow[] {
-  // Best-guess assignment by requirement type → likely section.
+  // Best-guess assignment by requirement type → likely section in the outline.
+  const findByKeyword = (re: RegExp) => outline.find((s) => re.test(s.title))?.id;
   const sectionByType: Record<ExtractedRequirement['type'], string | undefined> = {
-    technical: outline.find((s) => s.title === 'Technical Approach')?.id,
-    experience: outline.find((s) => s.title === 'Past Performance')?.id,
-    legal: outline.find((s) => s.title === 'Management Plan')?.id,
-    compliance: outline.find((s) => s.title === 'Management Plan')?.id,
-    financial: outline.find((s) => s.title === 'Pricing')?.id,
+    technical: findByKeyword(/technical|approach|scope/i),
+    experience: findByKeyword(/experience|past|performance/i),
+    legal: findByKeyword(/compliance|eligibilit|credent|legal|qualifi|corporate/i),
+    compliance: findByKeyword(/compliance|eligibilit|credent|legal|qualifi|corporate/i),
+    financial: findByKeyword(/price|cost|financ|bill|schedule|economic|propuesta económica/i),
   };
   return requirements.map((r) => ({
     requirementId: r.id,
@@ -176,6 +158,7 @@ function deriveInitialSections(outline: OutlineSection[]): SectionDraft[] {
 export async function createProposalAction(formData: FormData): Promise<void> {
   const { company } = await requireCompany();
   const pursuitId = String(formData.get('pursuitId') ?? '');
+  const templateId = String(formData.get('templateId') ?? 'generic');
   if (!pursuitId) throw new Error('pursuitId required');
 
   const pursuit = await db.query.pursuits.findFirst({
@@ -199,7 +182,8 @@ export async function createProposalAction(formData: FormData): Promise<void> {
     (opp?.extractedRequirements as ExtractedRequirement[] | null) ?? [];
   const criteria = (opp?.extractedCriteria as EvaluationCriterion[] | null) ?? [];
 
-  const outline = deriveInitialOutline(requirements, criteria);
+  const template = getTemplateById(templateId) ?? GENERIC_TEMPLATE;
+  const outline = deriveOutlineFromTemplate(template, requirements, criteria);
   const compliance = deriveInitialCompliance(requirements, outline);
   const sections = deriveInitialSections(outline);
 
