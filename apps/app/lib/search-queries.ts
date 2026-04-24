@@ -10,6 +10,9 @@ import {
   pastPerformance,
   pursuits,
 } from '@procur/db';
+import { embedText } from '@procur/ai';
+import { semanticSearchLibrary } from './library-queries';
+import { semanticSearchPastPerformance } from './past-performance-queries';
 
 export type SearchHitKind =
   | 'opportunity'
@@ -230,6 +233,51 @@ export async function runGlobalSearch(
     updatedAt: r.updatedAt,
   }));
 
+  // Blend semantic hits for past performance + library when embeddings are
+  // configured. Deduped by id so a row found by both ILIKE and semantic
+  // search keeps its ILIKE position. Gracefully no-ops without OpenAI.
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const emb = await embedText(query);
+      const [semanticPP, semanticLib] = await Promise.all([
+        semanticSearchPastPerformance(companyId, emb, 5),
+        semanticSearchLibrary(companyId, emb, 5),
+      ]);
+
+      const ppIds = new Set(ppHits.map((h) => h.id));
+      for (const p of semanticPP) {
+        if (ppIds.has(p.id)) continue;
+        if (ppHits.length >= PER_GROUP_LIMIT) break;
+        ppHits.push({
+          kind: 'past_performance',
+          id: p.id,
+          title: p.projectName,
+          subtitle: p.customerName,
+          meta: p.scopeDescription?.slice(0, 120) ?? null,
+          href: `/past-performance/${p.id}`,
+          updatedAt: new Date(),
+        });
+      }
+
+      const libIds = new Set(libHits.map((h) => h.id));
+      for (const l of semanticLib) {
+        if (libIds.has(l.id)) continue;
+        if (libHits.length >= PER_GROUP_LIMIT) break;
+        libHits.push({
+          kind: 'library',
+          id: l.id,
+          title: l.title,
+          subtitle: l.type,
+          meta: l.content.slice(0, 140),
+          href: `/library/${l.id}`,
+          updatedAt: new Date(),
+        });
+      }
+    } catch (err) {
+      console.warn('semantic search blend skipped:', err);
+    }
+  }
+
   return {
     opportunities: oppHits,
     pursuits: pursuitsHits,
@@ -244,6 +292,8 @@ export async function runGlobalSearch(
       libHits.length,
   };
 }
+
+
 
 function emptyResults(): SearchResults {
   return {

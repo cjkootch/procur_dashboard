@@ -3,7 +3,7 @@ import { UserButton } from '@clerk/nextjs';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getHomeData } from '../lib/home-queries';
-import { flagFor, formatDate, timeUntil } from '../lib/format';
+import { flagFor, formatDate, formatMoney, timeUntil } from '../lib/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -192,6 +192,44 @@ export default async function DashboardPage() {
           </div>
         )}
       </section>
+
+      {data.recentWins.length > 0 && (
+        <section className="mt-8">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+              Recent wins
+            </h2>
+            <Link href="/contract" className="text-xs underline text-[color:var(--color-muted-foreground)]">
+              Contracts →
+            </Link>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {data.recentWins.map((w) => (
+              <Link
+                key={w.pursuitId}
+                href={`/capture/pursuits/${w.pursuitId}`}
+                className="flex items-start gap-3 rounded-[var(--radius-lg)] border border-emerald-200 bg-emerald-50/30 p-4 text-sm transition hover:border-emerald-500"
+              >
+                <span className="text-lg">{flagFor(w.jurisdictionCountry)}</span>
+                <div className="flex-1">
+                  <p className="line-clamp-2 font-medium text-emerald-900">
+                    {w.opportunityTitle}
+                  </p>
+                  <p className="mt-0.5 text-xs text-emerald-900/70">
+                    {w.agencyName ?? w.jurisdictionName}
+                    {w.awardedValueUsd && (
+                      <> · {formatMoney(w.awardedValueUsd, 'USD') ?? ''}</>
+                    )}
+                  </p>
+                  <p className="mt-1 text-[11px] text-emerald-900/60">
+                    Awarded {formatDate(w.updatedAt)}
+                  </p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="mt-10">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
