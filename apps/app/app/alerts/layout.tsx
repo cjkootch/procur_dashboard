@@ -4,7 +4,7 @@ import { UserButton } from '@clerk/nextjs';
 import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 import { redirect } from 'next/navigation';
 
-export default async function PastPerformanceLayout({ children }: { children: ReactNode }) {
+export default async function AlertsLayout({ children }: { children: ReactNode }) {
   const user = await getCurrentUser();
   if (!user) redirect('/sign-in');
   const company = await getCurrentCompany();
@@ -24,19 +24,19 @@ export default async function PastPerformanceLayout({ children }: { children: Re
         </div>
         <nav className="flex flex-col gap-1 px-2 text-sm">
           <div className="px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-            Past performance
+            Alerts
           </div>
           <Link
-            href="/past-performance"
+            href="/alerts"
             className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]"
           >
-            All entries
+            All alerts
           </Link>
           <Link
-            href="/past-performance/new"
+            href="/alerts/new"
             className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]"
           >
-            New entry
+            New alert
           </Link>
           <div className="mt-4 px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Products
@@ -53,11 +53,11 @@ export default async function PastPerformanceLayout({ children }: { children: Re
           <Link href="/contract" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Contract
           </Link>
+          <Link href="/past-performance" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
+            Past performance
+          </Link>
           <Link href="/library" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
             Content library
-          </Link>
-          <Link href="/alerts" className="rounded-[var(--radius-sm)] px-2 py-1 hover:bg-[color:var(--color-background)]">
-            Alerts
           </Link>
           <div className="mt-4 px-2 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Account
@@ -69,7 +69,7 @@ export default async function PastPerformanceLayout({ children }: { children: Re
       </aside>
       <div className="flex-1 flex flex-col">
         <header className="flex items-center justify-between border-b border-[color:var(--color-border)] px-6 py-3">
-          <div className="text-sm text-[color:var(--color-muted-foreground)]">Past performance</div>
+          <div className="text-sm text-[color:var(--color-muted-foreground)]">Alerts</div>
           <UserButton afterSignOutUrl="/sign-in" />
         </header>
         <main className="flex-1 overflow-auto">{children}</main>
