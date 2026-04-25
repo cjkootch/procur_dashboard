@@ -58,7 +58,7 @@ export default async function LibraryListPage({
 
   return (
     <div className="mx-auto max-w-4xl px-8 py-10">
-      <header className="mb-6 flex items-start justify-between">
+      <header className="mb-6 flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Content library</h1>
           <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
@@ -70,12 +70,20 @@ export default async function LibraryListPage({
             )}
           </p>
         </div>
-        <Link
-          href="/library/new"
-          className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
-        >
-          + Add entry
-        </Link>
+        <div className="flex items-center gap-2">
+          <a
+            href="/api/library/export.csv"
+            className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-sm font-medium hover:bg-[color:var(--color-muted)]/40"
+          >
+            Download .csv
+          </a>
+          <Link
+            href="/library/new"
+            className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
+          >
+            + Add entry
+          </Link>
+        </div>
       </header>
 
       {all.length > 0 && (
