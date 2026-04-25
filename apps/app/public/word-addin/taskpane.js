@@ -17,12 +17,12 @@
 (function () {
   'use strict';
 
-  var API_BASE = 'https://app.procur.app';
-  // For local development a dev override can switch to localhost; keeping
-  // it inline here so the static file has zero build pipeline.
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    API_BASE = window.location.origin;
-  }
+  // The taskpane is hosted under the same origin as the API. Always
+  // call back to the page's own origin — works for prod (app.procur.app),
+  // staging previews (vercel.app), and local dev (localhost) without
+  // any build pipeline. Previously this was hardcoded to prod, which
+  // forced devs to edit the file and broke staging entirely.
+  var API_BASE = window.location.origin;
 
   var TOKEN_SETTING_KEY = 'procurAccessToken';
 

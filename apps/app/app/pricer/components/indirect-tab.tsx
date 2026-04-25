@@ -274,7 +274,10 @@ function RateSlider({
 }
 
 function fmt(amount: number, currency: string): string {
-  return new Intl.NumberFormat('en-US', {
+  // Locale undefined → browser picks; currency comes from the pricing
+  // model. This was 'en-US' previously, which forced 1,234.56 grouping
+  // even for users in pt-BR / es-CO / etc. tenants.
+  return new Intl.NumberFormat(undefined, {
     style: 'currency',
     currency,
     maximumFractionDigits: 0,

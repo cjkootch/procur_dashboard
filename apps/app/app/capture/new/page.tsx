@@ -3,8 +3,7 @@ import { eq, and } from 'drizzle-orm';
 import { requireCompany } from '@procur/auth';
 import { db, opportunities, pursuits, type NewPursuit } from '@procur/db';
 import { getActivePursuitCount } from '../../../lib/capture-queries';
-
-const FREE_TIER_ACTIVE_PURSUIT_CAP = 5;
+import { FREE_TIER_ACTIVE_PURSUIT_CAP } from '../../../lib/plan-limits';
 
 export const dynamic = 'force-dynamic';
 

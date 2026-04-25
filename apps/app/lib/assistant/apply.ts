@@ -19,8 +19,7 @@ import type { AssistantContext } from '@procur/ai';
 import { getActivePursuitCount } from '../capture-queries';
 import { semanticSearchLibrary } from '../library-queries';
 import { semanticSearchPastPerformance } from '../past-performance-queries';
-
-const FREE_TIER_ACTIVE_PURSUIT_CAP = 5;
+import { FREE_TIER_ACTIVE_PURSUIT_CAP } from '../plan-limits';
 
 /**
  * Result of an apply. ok=true with result (entity id + redirectTo), or

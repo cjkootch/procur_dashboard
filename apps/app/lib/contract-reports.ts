@@ -1,6 +1,10 @@
 import 'server-only';
 import { eq } from 'drizzle-orm';
 import { contracts, db } from '@procur/db';
+// Bucket boundaries live in @procur/utils so /contract/reports and
+// /discover/opportunities share the exact same tiers — previously they
+// drifted (4 buckets vs 5, slightly different labels).
+import { bucketLabel as valueBucket } from '@procur/utils';
 
 /**
  * Contract reporting — pure SQL-side aggregation against the contracts
@@ -46,22 +50,6 @@ export const SLICE_BY_LABEL: Record<SliceBy, string> = {
   value_bucket: 'Value bucket',
   currency: 'Currency',
 };
-
-const VALUE_BUCKETS: Array<{ label: string; min: number; max: number }> = [
-  { label: '< $100k', min: 0, max: 100_000 },
-  { label: '$100k – $1M', min: 100_000, max: 1_000_000 },
-  { label: '$1M – $10M', min: 1_000_000, max: 10_000_000 },
-  { label: '$10M – $100M', min: 10_000_000, max: 100_000_000 },
-  { label: '$100M+', min: 100_000_000, max: Number.POSITIVE_INFINITY },
-];
-
-function valueBucket(usd: number | null): string {
-  if (usd == null) return 'No value set';
-  for (const b of VALUE_BUCKETS) {
-    if (usd >= b.min && usd < b.max) return b.label;
-  }
-  return 'No value set';
-}
 
 function dimensionValue(
   row: typeof contracts.$inferSelect,

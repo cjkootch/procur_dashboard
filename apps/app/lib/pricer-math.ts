@@ -104,21 +104,31 @@ export function summarize(
   const basePeriodMonths = pricingModel.basePeriodMonths ?? 12;
   const optionYears = pricingModel.optionYears ?? 0;
   const periodYears = Math.max(1, Math.ceil(basePeriodMonths / 12) + optionYears);
-  const fxRate = Number.parseFloat(pricingModel.fxRateToUsd ?? '1') || 1;
+  const rawFx = Number.parseFloat(pricingModel.fxRateToUsd ?? '');
+  const fxRate = Number.isFinite(rawFx) && rawFx > 0 ? rawFx : null;
 
   const wrap = wrapRateFor(fringe, overhead, ga);
   const calculated = lcs.map((lc) => calculateLaborCategory(lc, wrap, escalation, periodYears));
   const totalLaborCost = calculated.reduce((sum, c) => sum + c.totalCost, 0);
   const targetFee = totalLaborCost * (targetFeePct / 100);
   const totalValue = totalLaborCost + targetFee;
-  const totalValueUsd = pricingModel.currency === 'USD' ? totalValue : totalValue * fxRate;
+  // USD currency: 1:1, no fx needed.
+  // Non-USD with explicit fx: convert.
+  // Non-USD without fx: NaN — surfaces in callers as "unknown" rather than
+  // silently storing the foreign-currency value as if it were USD.
+  const totalValueUsd =
+    pricingModel.currency === 'USD'
+      ? totalValue
+      : fxRate != null
+        ? totalValue * fxRate
+        : Number.NaN;
 
   return {
     wrapRate: Number(wrap.toFixed(4)),
     totalLaborCost: Number(totalLaborCost.toFixed(2)),
     targetFee: Number(targetFee.toFixed(2)),
     totalValue: Number(totalValue.toFixed(2)),
-    totalValueUsd: totalValueUsd ? Number(totalValueUsd.toFixed(2)) : null,
+    totalValueUsd: Number.isFinite(totalValueUsd) ? Number(totalValueUsd.toFixed(2)) : null,
     periodYears,
     laborCategories: calculated,
   };

@@ -310,8 +310,18 @@ function fmtMeasure(n: number, isCount: boolean): string {
   return fmtUsd(n);
 }
 
+/**
+ * Formats a USD-normalized amount. The values come from
+ * `contracts.totalValueUsd` which is canonical USD, so this helper is
+ * deliberately USD-only — but we leave the locale `undefined` so the
+ * browser uses the user's locale for the thousands separator and digit
+ * grouping.
+ *
+ * Mixed-currency display (showing original-currency totals alongside
+ * the USD roll-up) is a separate report mode — see follow-up.
+ */
 function fmtUsd(n: number): string {
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat(undefined, {
     style: 'currency',
     currency: 'USD',
     maximumFractionDigits: 0,
