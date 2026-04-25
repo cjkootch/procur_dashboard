@@ -1,10 +1,10 @@
 -- External supplier directory: organisations registered on public
--- procurement portals. Distinct from `companies` (Procur tenants).
+-- procurement portals. Distinct from companies (Procur tenants).
 -- Shared market data, scoped by jurisdictionId; scraper-driven.
 --
--- Migration runner splits on `--> statement-breakpoint` and submits
--- each chunk as a separate Neon HTTP call (the driver rejects
--- multi-statement prepared queries with 42601).
+-- Note: each DDL is separated by the runner's chunk marker below.
+-- Do not put backticked tokens or the literal marker text inside
+-- comments here, or the naive splitter will cut comments in half.
 
 CREATE TABLE IF NOT EXISTS "external_suppliers" (
   "id"                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
