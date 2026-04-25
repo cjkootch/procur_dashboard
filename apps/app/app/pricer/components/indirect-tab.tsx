@@ -39,7 +39,13 @@ export function IndirectTab({
   const [fringe, setFringe] = useState(initial.fringe);
   const [overhead, setOverhead] = useState(initial.overhead);
   const [ga, setGa] = useState(initial.ga);
-  const [mode, setMode] = useState<'multiplicative' | 'additive'>('multiplicative');
+  // Mode is persisted on the pricing model row (column added in
+  // migration 0017). Initial state mirrors the saved value, so flipping
+  // the toggle marks the form dirty and the saved column reflects what
+  // the user last clicked Save with.
+  const [mode, setMode] = useState<'multiplicative' | 'additive'>(
+    pricingModel.indirectRateMode,
+  );
 
   const buildup = useMemo(
     () =>
@@ -67,7 +73,10 @@ export function IndirectTab({
 
   const wrap = directLabor > 0 ? buildup.totalLoaded / directLabor : 1;
   const dirty =
-    fringe !== initial.fringe || overhead !== initial.overhead || ga !== initial.ga;
+    fringe !== initial.fringe ||
+    overhead !== initial.overhead ||
+    ga !== initial.ga ||
+    mode !== pricingModel.indirectRateMode;
 
   return (
     <div className="grid gap-4 md:grid-cols-[3fr_2fr]">
@@ -111,6 +120,7 @@ export function IndirectTab({
           <input type="hidden" name="fringeRate" value={fringe} />
           <input type="hidden" name="overheadRate" value={overhead} />
           <input type="hidden" name="gaRate" value={ga} />
+          <input type="hidden" name="indirectRateMode" value={mode} />
           {/* Preserve other fields the action expects so we don't blank them */}
           <input type="hidden" name="basePeriodMonths" value={pricingModel.basePeriodMonths ?? 12} />
           <input type="hidden" name="optionYears" value={pricingModel.optionYears ?? 0} />

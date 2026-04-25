@@ -120,6 +120,13 @@
       "when": 1777135000000,
       "tag": "0016_webhook_events",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1777140000000,
+      "tag": "0017_pricing_indirect_mode",
+      "breakpoints": true
     }
   ]
 }

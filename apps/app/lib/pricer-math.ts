@@ -49,11 +49,24 @@ export type CostBuildup = {
   totalLoaded: number;
 };
 
+/**
+ * Compose a single wrap multiplier from fringe / overhead / G&A. Mode
+ * determines stacking:
+ *   multiplicative — (1 + f) × (1 + o) × (1 + g): each layer compounds
+ *                    over the loaded subtotal beneath it.
+ *   additive       — 1 + f + o + g: each rate hits direct labor flat.
+ *
+ * Default kept as multiplicative for callers that haven't been updated.
+ */
 export function wrapRateFor(
   fringePct: number,
   overheadPct: number,
   gaPct: number,
+  mode: 'multiplicative' | 'additive' = 'multiplicative',
 ): number {
+  if (mode === 'additive') {
+    return 1 + (fringePct + overheadPct + gaPct) / 100;
+  }
   return (1 + fringePct / 100) * (1 + overheadPct / 100) * (1 + gaPct / 100);
 }
 
@@ -107,7 +120,7 @@ export function summarize(
   const rawFx = Number.parseFloat(pricingModel.fxRateToUsd ?? '');
   const fxRate = Number.isFinite(rawFx) && rawFx > 0 ? rawFx : null;
 
-  const wrap = wrapRateFor(fringe, overhead, ga);
+  const wrap = wrapRateFor(fringe, overhead, ga, pricingModel.indirectRateMode);
   const calculated = lcs.map((lc) => calculateLaborCategory(lc, wrap, escalation, periodYears));
   const totalLaborCost = calculated.reduce((sum, c) => sum + c.totalCost, 0);
   const targetFee = totalLaborCost * (targetFeePct / 100);
