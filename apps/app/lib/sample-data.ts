@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, like, sql } from 'drizzle-orm';
 import {
   agencies,
   contentLibrary,
@@ -35,6 +35,24 @@ export type SeedResult = {
   pastPerformanceCreated: number;
   alreadyHadData: boolean;
 };
+
+/**
+ * Cheap-ish probe to tell whether a company currently has any sample
+ * rows present. Used to decide whether to render the "Clear sample
+ * data" button on settings.
+ *
+ * Checks the most identifiable marker (sample opportunities) — if any
+ * exist, the seed ran. We don't probe every table; the opportunities
+ * are the entry point and they always seed first.
+ */
+export async function hasSampleData(companyId: string): Promise<boolean> {
+  const [hit] = await db
+    .select({ id: opportunities.id })
+    .from(opportunities)
+    .where(like(opportunities.sourceReferenceId, `sample-${companyId}-%`))
+    .limit(1);
+  return Boolean(hit);
+}
 
 export async function seedSampleDataForCompany(
   company: Company,
