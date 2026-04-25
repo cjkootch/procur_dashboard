@@ -36,8 +36,7 @@ import {
 import { requireCompany } from '@procur/auth';
 import { STAGE_ORDER, type PursuitStageKey, getActivePursuitCount } from '../../lib/capture-queries';
 import { seedCriteria } from '../../lib/gate-review-queries';
-
-const FREE_TIER_ACTIVE_PURSUIT_CAP = 5;
+import { FREE_TIER_ACTIVE_PURSUIT_CAP } from '../../lib/plan-limits';
 
 async function resolveUserAndCompany() {
   const { user, company } = await requireCompany();

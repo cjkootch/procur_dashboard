@@ -5,9 +5,9 @@ import { costUsdCentsForTurn } from './pricing';
 import { buildAssistantSystem } from './system-prompt';
 import { buildToolsParam } from './tools/registry';
 import type { AssistantContext, ToolRegistry } from './types';
+import { DEFAULT_ASSISTANT_MAX_TOKENS } from './types';
 
 const DEFAULT_MAX_STEPS = 8;
-const DEFAULT_MAX_TOKENS = 4096;
 
 export type TurnInput = {
   ctx: AssistantContext;
@@ -62,7 +62,7 @@ export async function runAgentTurn(input: TurnInput): Promise<TurnResult> {
   for (let step = 0; step < maxSteps; step += 1) {
     const response = await client.messages.create({
       model: MODELS.sonnet,
-      max_tokens: DEFAULT_MAX_TOKENS,
+      max_tokens: DEFAULT_ASSISTANT_MAX_TOKENS,
       system,
       tools: toolParams,
       messages,

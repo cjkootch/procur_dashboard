@@ -5,9 +5,9 @@ import { costUsdCentsForTurn } from './pricing';
 import { buildAssistantSystem } from './system-prompt';
 import { buildToolsParam } from './tools/registry';
 import type { AssistantContext, ToolRegistry } from './types';
+import { DEFAULT_ASSISTANT_MAX_TOKENS } from './types';
 
 const DEFAULT_MAX_STEPS = 8;
-const DEFAULT_MAX_TOKENS = 4096;
 
 export type StreamEvent =
   | { type: 'text_delta'; text: string }
@@ -77,7 +77,7 @@ export async function* streamAgentTurn(
     for (let step = 0; step < maxSteps; step += 1) {
       const stream = client.messages.stream({
         model: MODELS.sonnet,
-        max_tokens: DEFAULT_MAX_TOKENS,
+        max_tokens: DEFAULT_ASSISTANT_MAX_TOKENS,
         system,
         tools: toolParams,
         messages,

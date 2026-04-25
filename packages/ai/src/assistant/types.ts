@@ -1,6 +1,12 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { z } from 'zod';
 
+/**
+ * Default max_tokens for the assistant streaming + tool-loop runs.
+ * Single source so stream.ts and loop.ts can't drift.
+ */
+export const DEFAULT_ASSISTANT_MAX_TOKENS = 4096;
+
 /** Invariant context every tool handler receives. Never populated from user input. */
 export type AssistantContext = {
   companyId: string;

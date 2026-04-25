@@ -55,16 +55,41 @@ function str(formData: FormData, key: string): string | null {
  * delta = obligation +/- de-obligation), use signedNum.
  */
 /**
- * FX-rate coercion. Must be strictly positive — a negative rate would
- * silently flip the sign of totalValueUsd and bucket the row under
- * "No value set" in the contract reports. Falls back to 1.0 when the
- * input is missing, NaN, zero, or negative.
+ * FX-rate coercion. Returns the parsed positive number, or null if the
+ * input is missing, NaN, zero, or negative. Callers decide whether
+ * "no fx" means "use 1.0" (USD-already) or "leave totalValueUsd null"
+ * (non-USD without an explicit conversion — see deriveTotalValueUsd).
  */
-function positiveFxRate(raw: string | null): number {
-  if (!raw) return 1;
+function positiveFxRate(raw: string | null): number | null {
+  if (!raw) return null;
   const n = Number.parseFloat(raw);
-  if (!Number.isFinite(n) || n <= 0) return 1;
+  if (!Number.isFinite(n) || n <= 0) return null;
   return n;
+}
+
+/**
+ * Derive totalValueUsd from a base value + currency + (optional) fx.
+ *
+ *   USD currency      → totalValueUsd = totalValue (1:1, no fx needed)
+ *   Non-USD + fx>0    → totalValueUsd = totalValue × fx
+ *   Non-USD + no fx   → null (we don't make one up — the reports view
+ *                       and any USD roll-ups will treat it as "unknown")
+ *
+ * Previously the code used `fx ?? 1` even for non-USD currencies, which
+ * silently stored the foreign-currency value AS the USD value when the
+ * user didn't supply an fx rate, corrupting reports and indices.
+ */
+function deriveTotalValueUsd(
+  totalValue: string | null,
+  currency: string,
+  fx: number | null,
+): string | null {
+  if (!totalValue) return null;
+  const n = Number.parseFloat(totalValue);
+  if (!Number.isFinite(n)) return null;
+  if (currency === 'USD') return n.toFixed(2);
+  if (fx == null) return null;
+  return (n * fx).toFixed(2);
 }
 
 function num(formData: FormData, key: string): string | null {
@@ -107,12 +132,7 @@ export async function createContractAction(formData: FormData): Promise<void> {
     endDate: str(formData, 'endDate'),
     totalValue,
     currency,
-    totalValueUsd:
-      totalValue && currency === 'USD'
-        ? totalValue
-        : totalValue
-          ? (Number.parseFloat(totalValue) * fx).toFixed(2)
-          : null,
+    totalValueUsd: deriveTotalValueUsd(totalValue, currency, fx),
     status: 'active',
     obligations: [],
     notes: str(formData, 'notes'),
@@ -204,12 +224,7 @@ export async function updateContractAction(formData: FormData): Promise<void> {
       endDate: str(formData, 'endDate'),
       totalValue,
       currency,
-      totalValueUsd:
-        totalValue && currency === 'USD'
-          ? totalValue
-          : totalValue
-            ? (Number.parseFloat(totalValue) * fx).toFixed(2)
-            : null,
+      totalValueUsd: deriveTotalValueUsd(totalValue, currency, fx),
       status:
         (str(formData, 'status') as 'active' | 'completed' | 'terminated' | null) ?? 'active',
       notes: str(formData, 'notes'),

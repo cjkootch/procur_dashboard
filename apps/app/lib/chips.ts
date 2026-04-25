@@ -54,6 +54,8 @@ export function chipClass(tone: ChipTone): string {
 
 // -- Lifecycle chips (derived from deadline) ---------------------------------
 
+import { LIFECYCLE_DAYS, P_WIN_BANDS } from './thresholds';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function lifecycleChip(deadlineAt: Date | null): Chip | null {
@@ -61,8 +63,20 @@ export function lifecycleChip(deadlineAt: Date | null): Chip | null {
   const diff = deadlineAt.getTime() - Date.now();
   if (diff < 0) return { label: 'Past Due', tone: 'danger', title: 'Submission deadline has passed' };
   const days = diff / DAY_MS;
-  if (days <= 3) return { label: 'Due Soon', tone: 'warning', title: 'Closing within 3 days' };
-  if (days <= 14) return { label: 'Closing Soon', tone: 'warning', title: 'Closing within 2 weeks' };
+  if (days <= LIFECYCLE_DAYS.dueSoon) {
+    return {
+      label: 'Due Soon',
+      tone: 'warning',
+      title: `Closing within ${LIFECYCLE_DAYS.dueSoon} days`,
+    };
+  }
+  if (days <= LIFECYCLE_DAYS.closingSoon) {
+    return {
+      label: 'Closing Soon',
+      tone: 'warning',
+      title: `Closing within ${LIFECYCLE_DAYS.closingSoon} days`,
+    };
+  }
   return null;
 }
 
@@ -206,8 +220,8 @@ export function matchChip(pWin: number | null): Chip | null {
   if (pWin == null) return null;
   const pct = Math.round(pWin * 100);
   let tone: ChipTone = 'neutral';
-  if (pWin >= 0.75) tone = 'success';
-  else if (pWin >= 0.5) tone = 'info';
-  else if (pWin >= 0.25) tone = 'warning';
+  if (pWin >= P_WIN_BANDS.high) tone = 'success';
+  else if (pWin >= P_WIN_BANDS.medium) tone = 'info';
+  else if (pWin >= P_WIN_BANDS.low) tone = 'warning';
   return { label: `${pct}% match`, tone, title: 'Win probability (P(Win))' };
 }
