@@ -38,12 +38,20 @@ export default async function TenantDetailPage({
               <span className="font-mono">{company.clerkOrgId ?? '—'}</span>
             </p>
           </div>
-          <Link
-            href={`/audit?companyId=${company.id}`}
-            className="shrink-0 rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-muted)]/40"
-          >
-            View audit log →
-          </Link>
+          <div className="flex shrink-0 gap-2">
+            <Link
+              href={`/audit?companyId=${company.id}`}
+              className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-muted)]/40"
+            >
+              Audit log →
+            </Link>
+            <Link
+              href={`/webhooks?companyId=${company.id}`}
+              className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-muted)]/40"
+            >
+              Webhooks →
+            </Link>
+          </div>
         </header>
 
         <section className="mb-6 grid gap-3 sm:grid-cols-4">
