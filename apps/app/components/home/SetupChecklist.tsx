@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { seedSampleDataAction } from '../../app/onboarding/sample-data-action';
 import type { OnboardingProgress } from '../../lib/onboarding-progress';
 
 /**
@@ -82,6 +83,28 @@ export function SetupChecklist({ progress }: { progress: OnboardingProgress }) {
           </li>
         ))}
       </ol>
+
+      {/* Try-with-sample-data shortcut for the empty-state cliff. We
+          gate this on first_pursuit being undone — once the user has
+          a real pursuit, sample data would just clutter their pipeline. */}
+      {progress.steps.find((s) => s.id === 'first_pursuit' && !s.done) && (
+        <div className="mt-4 flex flex-wrap items-baseline justify-between gap-2 rounded-[var(--radius-sm)] border border-dashed border-[color:var(--color-border)] p-3">
+          <p className="text-xs text-[color:var(--color-muted-foreground)]">
+            No tenders in your jurisdictions yet?{' '}
+            <span className="text-[color:var(--color-foreground)]">Try Procur with sample data</span>
+            {' '}— two pursuits, a contract, a library doc, and a past performance entry, all
+            tagged <span className="font-mono">[Sample]</span> so you can clear them later.
+          </p>
+          <form action={seedSampleDataAction}>
+            <button
+              type="submit"
+              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-3 py-1 text-xs font-medium hover:bg-[color:var(--color-muted)]/40"
+            >
+              Seed sample data
+            </button>
+          </form>
+        </div>
+      )}
     </section>
   );
 }
