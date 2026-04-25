@@ -16,6 +16,7 @@ import {
   type NewPursuitTask,
 } from '@procur/db';
 import type { AssistantContext } from '@procur/ai';
+import { getActorUserId } from '@procur/auth';
 import { getActivePursuitCount } from '../capture-queries';
 import { semanticSearchLibrary } from '../library-queries';
 import { semanticSearchPastPerformance } from '../past-performance-queries';
@@ -379,6 +380,7 @@ export async function applyProposal(
   const handler = HANDLERS[toolName];
   if (!handler) return { ok: false, error: 'unknown_tool' };
 
+  const actorUserId = await getActorUserId();
   try {
     const result = await handler(ctx, applyPayload);
     // Audit every application regardless of outcome so we have a record of
@@ -386,6 +388,7 @@ export async function applyProposal(
     await db.insert(auditLog).values({
       companyId: ctx.companyId,
       userId: ctx.userId,
+      actorUserId,
       action: `assistant.${toolName}`,
       entityType: 'assistant_thread',
       entityId: ctx.threadId,
@@ -398,6 +401,7 @@ export async function applyProposal(
     await db.insert(auditLog).values({
       companyId: ctx.companyId,
       userId: ctx.userId,
+      actorUserId,
       action: `assistant.${toolName}.error`,
       entityType: 'assistant_thread',
       entityId: ctx.threadId,

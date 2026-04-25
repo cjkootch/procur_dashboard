@@ -102,6 +102,31 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
   return hydrateUserFromClerk(userId);
 }
 
+/**
+ * The staff user driving an impersonated session, or null when the
+ * request isn't impersonated.
+ *
+ * Pulls `act.sub` from the Clerk session claims (set when the staff
+ * user redeemed an actor token from the admin app), then resolves to a
+ * row in our `users` table. Returns the row's id — used as
+ * `audit_log.actor_user_id` so every write made during impersonation is
+ * attributable to the real human.
+ *
+ * Soft-fails to null on lookup miss: the audit row will still record
+ * the customer as `userId`, and the impersonation banner is the
+ * defense-in-depth signal that something staff-driven is happening.
+ */
+export async function getActorUserId(): Promise<string | null> {
+  const { sessionClaims } = await auth();
+  const actor = sessionClaims?.act as { sub?: string } | undefined;
+  if (!actor?.sub) return null;
+  const row = await db.query.users.findFirst({
+    where: eq(users.clerkId, actor.sub),
+    columns: { id: true },
+  });
+  return row?.id ?? null;
+}
+
 export async function getCurrentCompany(): Promise<CurrentCompany | null> {
   const { userId, orgId } = await auth();
   if (!orgId) return null;

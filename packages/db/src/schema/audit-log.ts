@@ -9,6 +9,12 @@ export const auditLog = pgTable(
     companyId: uuid('company_id').references(() => companies.id),
     userId: uuid('user_id').references(() => users.id),
 
+    // The staff user who initiated this action via Clerk impersonation,
+    // when set. `userId` is who the action *appeared* as (the customer);
+    // `actorUserId` is who actually drove the request (the staff member,
+    // pulled from sessionClaims.act.sub). Null in normal sessions.
+    actorUserId: uuid('actor_user_id').references(() => users.id),
+
     action: text('action').notNull(),
     entityType: text('entity_type'),
     entityId: uuid('entity_id'),
@@ -25,6 +31,7 @@ export const auditLog = pgTable(
     companyIdx: index('audit_company_idx').on(table.companyId),
     entityIdx: index('audit_entity_idx').on(table.entityType, table.entityId),
     createdIdx: index('audit_created_idx').on(table.createdAt),
+    actorIdx: index('audit_actor_idx').on(table.actorUserId),
   }),
 );
 
