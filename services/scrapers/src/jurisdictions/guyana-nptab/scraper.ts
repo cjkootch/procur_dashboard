@@ -1,22 +1,29 @@
 /**
- * Guyana — National Procurement and Tender Administration Board (NPTAB).
+ * Guyana — National Procurement and Tender Administration (NPTA).
  *
- * Portal:       https://nptab.gov.gy
- * Platform:     WordPress + custom post type for tenders
- * Listing URL:  /invitations-for-bids/
- * Detail URL:   /?p=<postId>   or /invitations-for-bids/<slug>/
+ * Portal:       https://npta.gov.gy
+ * Platform:     WordPress + Ninja Tables plugin (Procurement Opportunities table)
+ * Listing URL:  /procurement-opportunities/
  *
- * NPTAB publishes tenders as news-style posts. Structure varies per
- * ministry; some include tables, others plain paragraphs. Parsing is
- * tolerant: if a labelled table exists we use it, otherwise we fall
- * back to regex extraction on paragraph text, and leave the rest for
- * the AI pipeline to refine post-ingest.
+ * NPTA publishes every active and recent tender as a row in a single
+ * Ninja Tables instance. Six columns: title, procuring entity,
+ * bids-submission deadline, procurement method (NCB/ICB/Open), status
+ * (Published/Closed/etc.), and a "Notice" cell containing the PDF
+ * advert link.
  *
- * Selector notes (validate against live fetch):
- *  - Listing: article.type-tender, article.post, li.tender-item
- *  - Post title: h2.entry-title a, h1.entry-title
- *  - Post body: div.entry-content
- *  - Date: time.entry-date, span.posted-on time
+ * The detail document is the linked PDF — there's no per-tender HTML
+ * detail page to fetch. We stop at the listing row and let the AI
+ * pipeline pull the PDF for full extraction.
+ *
+ * Selector notes:
+ *  - Each row: tr.ninja_table_row_N (data-row_id is the stable id)
+ *  - Six <td>s in column order — see comment block in parseListingRow.
+ *  - PDF link: cell[5] > a[href$=".pdf"]
+ *
+ * History note: the prior implementation pointed at nptab.gov.gy
+ * (which doesn't resolve) and assumed a WordPress blog-post layout.
+ * That domain typo + structural mismatch is why Trigger.dev cron
+ * runs were silently 0-row before this rewrite.
  */
 import {
   TenderScraper,
@@ -29,43 +36,33 @@ import {
   type RawOpportunity,
 } from '@procur/scrapers-core';
 
-const PORTAL = 'https://nptab.gov.gy';
-const LISTING_PATH = '/invitations-for-bids/';
+const PORTAL = 'https://npta.gov.gy';
+const LISTING_PATH = '/procurement-opportunities/';
 
 export type GuyanaRawData = {
+  rowId: string;
   title: string;
-  detailUrl: string;
-  publishedText?: string;
-  bodyText: string;
-  bodyHtml: string;
-  agencyGuess?: string;
-  deadlineText?: string;
-  valueText?: string;
-  referenceHint?: string;
-  documents?: Array<{ title: string; url: string }>;
+  agency: string;
+  deadlineText: string;
+  method: string;
+  status: string;
+  pdfUrl?: string;
+  pdfTitle?: string;
 };
 
 type ScraperInput = {
-  fixtureHtml?: {
-    listing?: string;
-    posts?: Record<string, string>;
-  };
-  maxPosts?: number;
+  fixtureHtml?: { listing?: string };
+  /** Cap rows ingested per run; 0 = no cap. Default 500 — generous since
+   *  the listing typically holds ~250 active rows. */
+  maxRows?: number;
 };
 
-const DEADLINE_REGEX =
-  /(?:closing|deadline|must\s+be\s+(?:submitted|received)|bids\s+due|submission(?:\s+of\s+bids)?)[^\n]{0,80}?([0-9]{1,2}[-/ ][A-Za-z0-9]{2,9}[-/ ][0-9]{2,4})/i;
-
-const AGENCY_REGEX =
-  /(?:Ministry of [A-Z][A-Za-z& ,]+|Regional Democratic Council[^,.;]*|Guyana [A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*|National [A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)/;
-
-const VALUE_REGEX = /(?:G\$|GYD|GY\$)\s*([\d,]+(?:\.\d+)?)/;
-
-const REFERENCE_REGEX = /\b([A-Z]{2,8}[-/][A-Z0-9]{1,6}[-/][A-Z0-9]{1,6}[-/]?[A-Z0-9]{0,8})\b/;
+const REFERENCE_REGEX = /\b([A-Z]{2,8}[-/][A-Z0-9-]{3,30})\b/;
+const VALUE_REGEX = /(?:G\$|GYD|GY\$|EE\$-)\s*([\d,]+(?:\.\d+)?)/;
 
 export class GuyanaNptabScraper extends TenderScraper {
   readonly jurisdictionSlug = 'guyana';
-  readonly sourceName = 'guyana-nptab';
+  readonly sourceName = 'guyana-npta';
   readonly portalUrl = PORTAL;
 
   constructor(private readonly input: ScraperInput = {}) {
@@ -73,127 +70,120 @@ export class GuyanaNptabScraper extends TenderScraper {
   }
 
   async fetch(): Promise<RawOpportunity[]> {
-    const listingHtml = this.input.fixtureHtml?.listing ?? (await this.fetchPath(LISTING_PATH));
-    const postUrls = this.parseListing(listingHtml);
-
-    const limit = this.input.maxPosts ?? 50;
-    const results: RawOpportunity[] = [];
-
-    for (const url of postUrls.slice(0, limit)) {
-      const html =
-        this.input.fixtureHtml?.posts?.[url] ?? (await this.fetchPath(new URL(url).pathname));
-      const raw = this.parsePost(html, url);
-      if (!raw) continue;
-
-      const referenceId = raw.referenceHint ?? this.derivedReferenceId(url);
-      results.push({
-        sourceReferenceId: referenceId,
-        sourceUrl: url,
-        rawData: raw as unknown as Record<string, unknown>,
-      });
-    }
-    return results;
+    const html = this.input.fixtureHtml?.listing ?? (await this.fetchListing());
+    return this.parseListing(html);
   }
 
   async parse(raw: RawOpportunity): Promise<NormalizedOpportunity | null> {
     const d = raw.rawData as unknown as GuyanaRawData;
     if (!d.title) return null;
 
-    const valueMatch = d.valueText ?? d.bodyText.match(VALUE_REGEX)?.[0];
-    const value = valueMatch ? this.parseGyd(valueMatch) : undefined;
+    const valueMatch = d.title.match(VALUE_REGEX);
+    const value = valueMatch?.[1] ? this.parseGyd(valueMatch[1]) : undefined;
+
+    const referenceFromPdf = d.pdfUrl
+      ? this.deriveReferenceFromPdf(d.pdfUrl)
+      : undefined;
+    const referenceFromTitle = d.title.match(REFERENCE_REGEX)?.[1];
+    const referenceNumber = referenceFromPdf ?? referenceFromTitle;
+
+    const documents = d.pdfUrl
+      ? [
+          {
+            documentType: 'tender_document',
+            title: d.pdfTitle ?? 'Notice of Bid',
+            originalUrl: absoluteUrl(d.pdfUrl, PORTAL) ?? d.pdfUrl,
+          },
+        ]
+      : undefined;
 
     return {
       sourceReferenceId: raw.sourceReferenceId,
       sourceUrl: raw.sourceUrl,
-      title: d.title,
-      description: d.bodyText.slice(0, 2000),
-      referenceNumber: d.referenceHint,
-      agencyName: d.agencyGuess,
+      title: d.title.slice(0, 500),
+      description: d.title,
+      referenceNumber,
+      agencyName: d.agency,
       currency: 'GYD',
       valueEstimate: value,
-      publishedAt: parseTenderDate(d.publishedText, 'America/Guyana') ?? undefined,
       deadlineAt: parseTenderDate(d.deadlineText, 'America/Guyana') ?? undefined,
       deadlineTimezone: 'America/Guyana',
       language: 'en',
       rawContent: d as unknown as Record<string, unknown>,
-      documents: d.documents?.map((doc) => ({
-        documentType: 'tender_document',
-        title: doc.title,
-        originalUrl: absoluteUrl(doc.url, PORTAL) ?? doc.url,
-      })),
+      documents,
     };
   }
 
-  private async fetchPath(path: string): Promise<string> {
-    const res = await fetchWithRetry(`${PORTAL}${path}`);
+  private async fetchListing(): Promise<string> {
+    const res = await fetchWithRetry(`${PORTAL}${LISTING_PATH}`);
     return res.text();
   }
 
-  private parseListing(html: string): string[] {
+  /**
+   * Each row of the Ninja Tables instance becomes one RawOpportunity.
+   * Cell order on the live portal (validated 2026-04-25):
+   *   [0] Title — free text, sometimes packs multiple sub-projects with
+   *       per-line G$ values; we keep the full cell text and let
+   *       downstream AI tease apart sub-tenders.
+   *   [1] Procuring Entity — multi-line agency name.
+   *   [2] Bids Submission Deadline — date string, format varies
+   *       (e.g. "02/19/26", "12/23/25 12:0:0", " ").
+   *   [3] Procurement Method — NCB / ICB / Open Tender / RFQ.
+   *   [4] Status — Published / Closed / etc. We surface all and let
+   *       upserts mark already-closed rows with status.
+   *   [5] Notice — anchor with the PDF advert; required for usefulness.
+   */
+  private parseListing(html: string): RawOpportunity[] {
     const $ = loadHtml(html);
-    const urls = new Set<string>();
+    const limit = this.input.maxRows ?? 500;
+    const out: RawOpportunity[] = [];
 
-    $('article.type-tender a, article.post h2.entry-title a, li.tender-item a').each(
-      (_i, el) => {
-        const href = $(el).attr('href');
-        const abs = absoluteUrl(href ?? null, PORTAL);
-        if (abs && abs.includes(PORTAL)) urls.add(abs);
-      },
-    );
+    $('tr[class*="nt_row_id_"]').each((_i, el) => {
+      if (limit > 0 && out.length >= limit) return false;
+      const $tr = $(el);
+      const rowId = ($tr.attr('class') ?? '').match(/nt_row_id_(\d+)/)?.[1];
+      if (!rowId) return;
 
-    return Array.from(urls);
-  }
+      const $cells = $tr.find('td');
+      if ($cells.length < 6) return;
 
-  private parsePost(html: string, url: string): GuyanaRawData | null {
-    const $ = loadHtml(html);
-    const title =
-      textOf($('h1.entry-title').first()) ||
-      textOf($('h2.entry-title').first()) ||
-      textOf($('h1').first());
-    if (!title) return null;
+      const title = textOf($cells.eq(0));
+      const agency = textOf($cells.eq(1));
+      const deadlineText = textOf($cells.eq(2));
+      const method = textOf($cells.eq(3));
+      const status = textOf($cells.eq(4));
+      const $pdfLink = $cells.eq(5).find('a[href$=".pdf"], a[href*=".pdf"]').first();
+      const pdfUrl = $pdfLink.attr('href');
+      const pdfTitle = $pdfLink.attr('title') ?? textOf($pdfLink) ?? undefined;
 
-    const publishedText =
-      $('time.entry-date').attr('datetime') ??
-      $('time').attr('datetime') ??
-      textOf($('time').first()) ??
-      undefined;
+      if (!title) return;
 
-    const $body = $('div.entry-content, article .entry-content').first();
-    const bodyText = textOf($body);
-    const bodyHtml = $body.html() ?? '';
+      const data: GuyanaRawData = {
+        rowId,
+        title,
+        agency,
+        deadlineText,
+        method,
+        status,
+        pdfUrl: pdfUrl ?? undefined,
+        pdfTitle: pdfTitle && pdfTitle.length > 0 ? pdfTitle : undefined,
+      };
 
-    const documents: Array<{ title: string; url: string }> = [];
-    $body.find('a[href$=".pdf"], a[href$=".docx"], a[href$=".doc"]').each((_i, el) => {
-      const $a = $(el);
-      const docTitle = textOf($a) || 'Attachment';
-      const href = $a.attr('href');
-      if (href) documents.push({ title: docTitle, url: href });
+      out.push({
+        sourceReferenceId: `NPTA-${rowId}`,
+        sourceUrl: `${PORTAL}${LISTING_PATH}#row-${rowId}`,
+        rawData: data as unknown as Record<string, unknown>,
+      });
+      return;
     });
 
-    const deadlineText = bodyText.match(DEADLINE_REGEX)?.[1];
-    const valueText = bodyText.match(VALUE_REGEX)?.[0];
-    const agencyGuess = bodyText.match(AGENCY_REGEX)?.[0];
-    const referenceHint = bodyText.match(REFERENCE_REGEX)?.[1];
-
-    return {
-      title,
-      detailUrl: url,
-      publishedText,
-      bodyText,
-      bodyHtml,
-      agencyGuess,
-      deadlineText,
-      valueText,
-      referenceHint,
-      documents: documents.length > 0 ? documents : undefined,
-    };
+    return out;
   }
 
-  private derivedReferenceId(url: string): string {
-    const parsed = new URL(url);
-    if (parsed.searchParams.has('p')) return `NPTAB-p${parsed.searchParams.get('p')}`;
-    const slug = parsed.pathname.replace(/\/$/, '').split('/').pop() ?? url;
-    return `NPTAB-${slug.slice(0, 40)}`;
+  private deriveReferenceFromPdf(pdfUrl: string): string | undefined {
+    const filename = pdfUrl.split('/').pop()?.replace(/\.pdf$/i, '');
+    if (!filename) return undefined;
+    return filename.replace(/[^A-Za-z0-9-]+/g, '-').slice(0, 80);
   }
 
   private parseGyd(value: string): number | undefined {
