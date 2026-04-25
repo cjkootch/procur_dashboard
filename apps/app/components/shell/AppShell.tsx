@@ -81,9 +81,71 @@ export async function AppShell({
   if (!user) redirect('/sign-in');
   const company = await getCurrentCompany();
 
+  const navContent = (
+    <>
+      {NAV.map((group, i) => (
+        <div key={group.heading ?? `g-${i}`} className={i === 0 ? '' : 'mt-4'}>
+          {group.heading && (
+            <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+              {group.heading}
+            </div>
+          )}
+          <div className="flex flex-col gap-0.5">
+            {group.items.map((item) => (
+              <SidebarNavLink
+                key={item.href}
+                href={item.href}
+                label={item.label}
+                external={item.external}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+
   return (
-    <div className="flex min-h-screen">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40">
+    <div className="flex min-h-screen flex-col md:flex-row">
+      {/* Mobile top bar: collapsed nav as <details> so it works without JS.
+          The desktop <aside> below is hidden under md. */}
+      <header className="flex items-center justify-between border-b border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40 px-4 py-2 md:hidden">
+        <Link href="/" aria-label="Procur home" className="block">
+          <Image
+            src="/brand/procur-logo-dark.svg"
+            alt="Procur"
+            width={80}
+            height={32}
+            priority
+            className="h-8 w-auto"
+          />
+        </Link>
+        <div className="flex items-center gap-3 text-xs">
+          <NotificationsBell />
+          <UserButton afterSignOutUrl="/sign-in" />
+        </div>
+      </header>
+      <details className="border-b border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40 md:hidden">
+        <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2 text-sm">
+          <span className="text-[color:var(--color-muted-foreground)]">{title}</span>
+          <span aria-hidden className="text-[color:var(--color-muted-foreground)]">
+            Menu ▾
+          </span>
+        </summary>
+        <div className="border-t border-[color:var(--color-border)] px-2 py-3">
+          {company && (
+            <p className="mb-2 px-2 truncate text-xs text-[color:var(--color-muted-foreground)]">
+              {company.name} · {company.planTier}
+            </p>
+          )}
+          <div className="mb-3 px-2">
+            <QuickCreate />
+          </div>
+          <nav>{navContent}</nav>
+        </div>
+      </details>
+
+      <aside className="hidden w-60 shrink-0 flex-col border-r border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40 md:flex">
         <div className="p-3">
           <Link href="/" aria-label="Procur home" className="block">
             <Image
@@ -104,34 +166,14 @@ export async function AppShell({
             <QuickCreate />
           </div>
         </div>
-        <nav className="flex-1 overflow-y-auto px-2 pb-4">
-          {NAV.map((group, i) => (
-            <div key={group.heading ?? `g-${i}`} className={i === 0 ? '' : 'mt-4'}>
-              {group.heading && (
-                <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
-                  {group.heading}
-                </div>
-              )}
-              <div className="flex flex-col gap-0.5">
-                {group.items.map((item) => (
-                  <SidebarNavLink
-                    key={item.href}
-                    href={item.href}
-                    label={item.label}
-                    external={item.external}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </nav>
+        <nav className="flex-1 overflow-y-auto px-2 pb-4">{navContent}</nav>
         <div className="border-t border-[color:var(--color-border)] p-3 text-[10px] text-[color:var(--color-muted-foreground)]">
           Press <kbd className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1">⌘K</kbd> to ask the assistant
         </div>
       </aside>
 
       <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-[color:var(--color-border)] bg-[color:var(--color-background)] px-6 py-3">
+        <header className="hidden items-center justify-between border-b border-[color:var(--color-border)] bg-[color:var(--color-background)] px-6 py-3 md:flex">
           <div className="text-sm text-[color:var(--color-muted-foreground)]">{title}</div>
           <div className="flex items-center gap-3 text-xs">
             <a
