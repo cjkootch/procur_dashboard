@@ -66,11 +66,19 @@ export async function resolveWordAddinToken(
   });
   if (!row) return null;
 
-  // Touch lastUsedAt — fire-and-forget.
-  db.update(wordAddinTokens)
-    .set({ lastUsedAt: new Date() })
-    .where(eq(wordAddinTokens.id, row.id))
-    .catch((e) => console.error('[word-addin] lastUsedAt update failed', e));
+  // Bump lastUsedAt so the management UI can show "last used X ago" and
+  // spot dead tokens. Awaited intentionally — Vercel's serverless runtime
+  // can shut the function down before a floating promise resolves, which
+  // was silently swallowing every update under the prior fire-and-forget
+  // pattern.
+  try {
+    await db
+      .update(wordAddinTokens)
+      .set({ lastUsedAt: new Date() })
+      .where(eq(wordAddinTokens.id, row.id));
+  } catch (e) {
+    console.error('[word-addin] lastUsedAt update failed', e);
+  }
 
   return { companyId: row.companyId, userId: row.userId, tokenId: row.id };
 }

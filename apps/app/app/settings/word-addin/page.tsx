@@ -9,6 +9,7 @@ import {
   mintWordAddinTokenAction,
   revokeWordAddinTokenAction,
 } from './actions';
+import { FreshTokenCard } from './fresh-token-card';
 
 export const dynamic = 'force-dynamic';
 
@@ -125,24 +126,6 @@ export default async function WordAddinSettingsPage() {
         </details>
       )}
     </div>
-  );
-}
-
-function FreshTokenCard({ token }: { token: string }) {
-  return (
-    <section className="mb-6 rounded-[var(--radius-lg)] border border-emerald-300 bg-emerald-50/50 p-5">
-      <h2 className="text-sm font-semibold text-emerald-900">Token created</h2>
-      <p className="mt-1 mb-3 text-xs text-emerald-900/80">
-        Copy this token now — it will never be shown again. Paste it into the Procur
-        task pane in Word to pair this device.
-      </p>
-      <div className="rounded-[var(--radius-sm)] bg-white border border-emerald-300 px-3 py-2 font-mono text-xs break-all">
-        {token}
-      </div>
-      <p className="mt-2 text-[11px] text-emerald-900/70">
-        This banner disappears in 60 seconds.
-      </p>
-    </section>
   );
 }
 

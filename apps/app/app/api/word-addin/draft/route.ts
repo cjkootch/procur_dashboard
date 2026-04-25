@@ -78,10 +78,22 @@ export async function POST(req: Request): Promise<Response> {
   if (!row) return jsonResponse({ error: 'proposal not found' }, { status: 404 });
 
   const outline = (row.proposal.outline as OutlineSection[] | null) ?? [];
-  // If a section is specified, draft for that section. Otherwise pick the
-  // first section in the outline as a fallback so single-shot "give me a
-  // draft" requests still work without configuring a section.
-  const section = sectionId ? outline.find((s) => s.id === sectionId) : outline[0];
+  // Strict resolution. If a sectionId is supplied it MUST belong to this
+  // proposal's outline — otherwise we 400. Falling back to outline[0]
+  // when the id is unknown would mask client bugs and let stale picker
+  // values silently draft against the wrong section.
+  let section: OutlineSection | undefined;
+  if (sectionId) {
+    section = outline.find((s) => s.id === sectionId);
+    if (!section) {
+      return jsonResponse(
+        { error: 'sectionId not found in this proposal outline' },
+        { status: 400 },
+      );
+    }
+  } else {
+    section = outline[0];
+  }
   if (!section) {
     return jsonResponse(
       { error: 'no outline section available — open the proposal in app first' },
