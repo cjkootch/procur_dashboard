@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { requireCompany } from '@procur/auth';
 import { db, opportunities, pursuits, pursuitTasks, users } from '@procur/db';
-import { toggleTaskAction } from '../actions';
+import { bulkCompleteTasksAction, toggleTaskAction } from '../actions';
 import { CaptureViewSwitcher } from '../components/view-switcher';
 
 export const dynamic = 'force-dynamic';
@@ -127,12 +127,27 @@ export default async function AllTasksPage({
     <div className="mx-auto max-w-4xl px-8 py-10">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
-        <div className="mt-2 flex items-center justify-between">
+        <div className="mt-2 flex items-center justify-between gap-3">
           <CaptureViewSwitcher active="tasks" />
-          <p className="text-xs text-[color:var(--color-muted-foreground)]">
-            {open.length} open · {done.length} completed
-            {hasActiveFilter && ` · ${tasks.length} of ${allTasks.length} matching filters`}
-          </p>
+          <div className="flex items-center gap-3">
+            {visibleOpen.length > 0 && (
+              <form action={bulkCompleteTasksAction}>
+                {visibleOpen.map((t) => (
+                  <input key={t.id} type="hidden" name="taskId" value={t.id} />
+                ))}
+                <button
+                  type="submit"
+                  className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-xs hover:bg-[color:var(--color-muted)]/40"
+                >
+                  Mark {visibleOpen.length} complete
+                </button>
+              </form>
+            )}
+            <p className="text-xs text-[color:var(--color-muted-foreground)]">
+              {open.length} open · {done.length} completed
+              {hasActiveFilter && ` · ${tasks.length} of ${allTasks.length} matching filters`}
+            </p>
+          </div>
         </div>
       </header>
 
