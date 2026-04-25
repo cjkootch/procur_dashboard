@@ -6,7 +6,7 @@ import { companies } from './companies';
 export const alertProfiles = pgTable('alert_profiles', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id')
-    .references(() => users.id)
+    .references(() => users.id, { onDelete: 'cascade' })
     .notNull(),
   companyId: uuid('company_id').references(() => companies.id),
 

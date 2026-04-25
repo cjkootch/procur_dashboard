@@ -7,7 +7,7 @@ export const auditLog = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     companyId: uuid('company_id').references(() => companies.id),
-    userId: uuid('user_id').references(() => users.id),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
 
     action: text('action').notNull(),
     entityType: text('entity_type'),

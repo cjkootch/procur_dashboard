@@ -10,7 +10,7 @@ export const assistantThreads = pgTable(
       .references(() => companies.id, { onDelete: 'cascade' })
       .notNull(),
     userId: uuid('user_id')
-      .references(() => users.id)
+      .references(() => users.id, { onDelete: 'cascade' })
       .notNull(),
     title: text('title').notNull().default('New conversation'),
     lastMessageAt: timestamp('last_message_at').defaultNow().notNull(),
