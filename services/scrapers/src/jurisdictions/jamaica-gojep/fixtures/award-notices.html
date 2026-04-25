@@ -31,7 +31,7 @@
     
 
     <head>
-        <title>ePPS - Competitions of opened bids</title>
+        <title>ePPS - Contract Award Notices</title>
 
         <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
         
@@ -382,7 +382,7 @@ function openPopup(url) {
 
 <div id="Search">
     <p class="Time"> 
-        17:38:56 COT
+        17:38:57 COT
     </p>
     
        
@@ -677,7 +677,7 @@ $j('document').ready(function(ev){
 
 
 	
-	<h2>Competitions of opened bids</h2>
+	<h2>Contract Award Notices</h2>
 
 
 
@@ -709,6 +709,93 @@ $j('document').ready(function(ev){
 
 
 
+    
+
+
+
+
+
+
+
+
+<script type="text/javascript">
+	//<![CDATA[
+	$j('document').ready(function(ev){
+		var defaults = {showOn: 'both', buttonText: 'Calendar', buttonImage: '/epps/images/action_calendar.gif', buttonImageOnly: true,
+			firstDay: 1, dateFormat: 'dd/mm/yy', mandatory: false};
+		$j('#PublicationDateFrom,#PublicationDateTo').datepicker(defaults);
+		$j('.dateRange').datepicker($j.extend(defaults, {beforeShow: customRange})) ;
+		function customRange(input) {
+			return {minDate: (input.id == 'DateTo' ? $j('#DateFrom').datepicker('getDate') : null),
+				maxDate: (input.id == 'DateFrom' ? $j('#DateTo').datepicker('getDate') : null)};
+		}
+		$j('#Description').css("height", "auto");
+
+	});
+	//]]>
+</script>
+
+<form name="searchNoticeForm" method="post" action="/epps/viewCaNotices.do" target="_self">
+	
+	<fieldset>
+		<div id="Notice">
+			<p>
+				<label for="Procedure" class="w33">
+					Procurement Method
+				</label>
+				<select name="procedureType" id="Procedure" style="float:none;" class="w50"><option value="">-Select procurement method-</option>
+					
+						<option value="cft.procedure.type.icb">Open - ICB</option>
+					
+						<option value="cft.procedure.type.ncb">Open - NCB</option>
+					
+						<option value="cft.procedure.type.rb">Restricted Bidding (RB)</option>
+					
+						<option value="cft.procedure.type.ss">Single Source (SS)</option>
+					
+					<option value="cft.procedure.type.em">Emergency Procedure</option></select>
+				<input type="hidden" name="procedureType" value="">
+			</p>
+			<p>
+				<label class="w33" for="CaName">
+					Name of procuring entity
+				</label>
+				<input type="text" name="caName" value="" id="ContractAuth" class="w50">
+			</p>
+			<p>
+				<label class="w33" for="PublicationDateFrom">
+					Publication Date
+				</label>
+				<label for="PublicationDateFrom" class="w05">From:</label>
+				<input type="text" name="publicationFromDate" size="10" value="" readonly="readonly" id="PublicationDateFrom" class="w12">
+				<label for="PublicationDateTo" class="w05">To:</label>
+				<input type="text" name="publicationUntilDate" size="10" value="" readonly="readonly" id="PublicationDateTo" class="w12">
+			</p>
+			<p>
+				<label for="Title" class="w33">
+					Title
+				</label>
+				<input type="text" name="cftTitle" value="" id="Title" class="w50">
+			</p>
+			<p>
+				<label class="w33" for="ContractValueMin">
+					Contract Value
+				</label>
+				<label for="ContractValueMin" class="w05">Min:</label>
+				<input type="text" name="contractValueMin" value="" id="ContractValueMin" class="w15">
+				<label for="ContractValueMax" class="w05">Max:</label>
+				<input type="text" name="contractValueMax" value="" id="ContractValueMax" class="w15">
+			</p>
+			<input type="hidden" name="checkCaptcha" value="false">
+		</div>
+	</fieldset>
+
+    <div id="button_line">
+	    <p class="Buttons">
+            <input type="submit" value="Search" class="BTN" />
+	    </p>
+    </div>
+</form>
 
 
 
@@ -718,425 +805,302 @@ $j('document').ready(function(ev){
 
 
 
-<div class="SearchResults">
-	<div class="Tabular Hscroll" id="OTDResults">
+
+
+
+
+
+
+
+
+
+<div>
+	<h3>
+		Search results
+	</h3>
+	    
+	<input type="hidden" name="searchCriteria" value="null" />
+	
+	<div class="Tabular Hscroll" id="SearchResults">
 		
-			
 <table id="T01">
 <thead>
 <tr>
 <th>#</th>
-<th>CfT Title
-	<a href="?d-3680181-s=title.keyword&amp;d-3680181-o=2&amp;d-3680181-p=1&amp;d-3680181-n=1">
-		<div class="THSort">
-			<img src="/epps/images/ascending.gif" alt="Sort ascending" />
-			<img src="/epps/images/descending.gif" alt="Sort descending" class="Descending" />
-		</div>
-	</a>
-</th>
-<th>Reference number
-	<a href="?d-3680181-s=caUniqueCfTNumber.keyword&amp;d-3680181-o=2&amp;d-3680181-p=1&amp;d-3680181-n=1">
-		<div class="THSort">
-			<img src="/epps/images/ascending.gif" alt="Sort ascending" />
-			<img src="/epps/images/descending.gif" alt="Sort descending" class="Descending" />
-		</div>
-	</a>
-</th>
-<th>PE
-	<a href="?d-3680181-s=caName.keyword&amp;d-3680181-o=2&amp;d-3680181-p=1&amp;d-3680181-n=1">
-		<div class="THSort">
-			<img src="/epps/images/ascending.gif" alt="Sort ascending" />
-			<img src="/epps/images/descending.gif" alt="Sort descending" class="Descending" />
-		</div>
-	</a>
-</th>
-<th>Bids submission deadline
-	<a href="?d-3680181-s=submissionDeadline&amp;d-3680181-o=2&amp;d-3680181-p=1&amp;d-3680181-n=1">
-		<div class="THSort">
-			<img src="/epps/images/ascending.gif" alt="Sort ascending" />
-			<img src="/epps/images/descending.gif" alt="Sort descending" class="Descending" />
-		</div>
-	</a>
-</th>
-<th>Procurement Method
-	<a href="?d-3680181-s=procedure&amp;d-3680181-o=2&amp;d-3680181-p=1&amp;d-3680181-n=1">
-		<div class="THSort">
-			<img src="/epps/images/ascending.gif" alt="Sort ascending" />
-			<img src="/epps/images/descending.gif" alt="Sort descending" class="Descending" />
-		</div>
-	</a>
-</th>
-<th>Opened bids</th>
-<th>Award date
-	<a href="?d-3680181-s=awardDate&amp;d-3680181-o=2&amp;d-3680181-p=1&amp;d-3680181-n=1">
-		<div class="THSort">
-			<img src="/epps/images/ascending.gif" alt="Sort ascending" />
-			<img src="/epps/images/descending.gif" alt="Sort descending" class="Descending" />
-		</div>
-	</a>
-</th>
-<th>Status
-	<a href="?d-3680181-s=status&amp;d-3680181-o=2&amp;d-3680181-p=1&amp;d-3680181-n=1">
-		<div class="THSort">
-			<img src="/epps/images/ascending.gif" alt="Sort ascending" />
-			<img src="/epps/images/descending.gif" alt="Sort descending" class="Descending" />
-		</div>
-	</a>
-</th></tr></thead>
+<th>Procurement Method<a href="?d-16531-p=1&amp;d-16531-s=procedure&amp;d-16531-o=2&amp;d-16531-n=1"><a href="?d-16531-p=1&amp;d-16531-s=procedure&amp;d-16531-o=2&amp;d-16531-n=1"><div class="THSort"><img src="/epps/images/ascending.gif" alt="Sort ascending"><img src="/epps//images/descending.gif" alt="Sort descending" class="Descending"></div></a></th>
+<th>PE<a href="?d-16531-p=1&amp;d-16531-s=caName.keyword&amp;d-16531-o=2&amp;d-16531-n=1"><a href="?d-16531-p=1&amp;d-16531-s=caName.keyword&amp;d-16531-o=2&amp;d-16531-n=1"><div class="THSort"><img src="/epps/images/ascending.gif" alt="Sort ascending"><img src="/epps//images/descending.gif" alt="Sort descending" class="Descending"></div></a></th>
+<th>Title<a href="?d-16531-p=1&amp;d-16531-s=cftTitle.keyword&amp;d-16531-o=2&amp;d-16531-n=1"><a href="?d-16531-p=1&amp;d-16531-s=cftTitle.keyword&amp;d-16531-o=2&amp;d-16531-n=1"><div class="THSort"><img src="/epps/images/ascending.gif" alt="Sort ascending"><img src="/epps//images/descending.gif" alt="Sort descending" class="Descending"></div></a></th>
+<th>Contract amount<a href="?d-16531-p=1&amp;d-16531-s=contractValue&amp;d-16531-o=2&amp;d-16531-n=1"><a href="?d-16531-p=1&amp;d-16531-s=contractValue&amp;d-16531-o=2&amp;d-16531-n=1"><div class="THSort"><img src="/epps/images/ascending.gif" alt="Sort ascending"><img src="/epps//images/descending.gif" alt="Sort descending" class="Descending"></div></a></th>
+<th>Date<a href="?d-16531-p=1&amp;d-16531-s=datePublished&amp;d-16531-o=2&amp;d-16531-n=1"><a href="?d-16531-p=1&amp;d-16531-s=datePublished&amp;d-16531-o=2&amp;d-16531-n=1"><div class="THSort"><img src="/epps/images/ascending.gif" alt="Sort ascending"><img src="/epps//images/descending.gif" alt="Sort descending" class="Descending"></div></a></th>
+<th>Notice PDF  </th></tr></thead>
 <tbody>
 <tr>
 <td>1</td>
 <td>
-					
-						<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9349227">To remove and replace defective tyres for the Princess Margaret Hospital</a>
-					
-					
-				</td>
+				
+					Emergency Procedure
+				
+			</td>
 <td>
-					2337/3209
-				</td>
+    			National Water Commission 
+			</td>
 <td>
-					Princess Margaret Hospital
-				</td>
+				<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9355546">Emergency Rehabilitation of the Santa Cruz #2 (Content) Well, St. Elizabeth</a>
+			</td>
 <td>
-					
-						Fri Apr 24 13:00:00 COT 2026				
-					
-				</td>
+				
+					1.0759032E7
+				
+			</td>
 <td>
-					
-						
-						Single Source (SS)
-					
-				</td>
+                
+                    Fri Apr 24 23:46:03 COT 2026              
+                
+			</td>
 <td>
-					<a href="/epps/eawarding/showDetailsOpenedTender.do?resourceId=9349227">View opened bids</a>
-				</td>
-<td>
-									
-				</td>
-<td>	
-					
-					Evaluation
-				</td></tr>
+				<a href="/epps/notices/downloadNoticeForES.do?resourceId=9355626&amp;lang=EN&amp;noticeType=prompt.f306.contract"><img src="/epps/images/acrobat.gif" alt="Contract Award Notice PDF" title="Contract Award Notice PDF" /></a>
+			</td></tr>
 <tr>
 <td>2</td>
 <td>
-					
-						<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9341043">Repairs to Falmouth Health Centre Drug Serv</a>
-					
-					
-				</td>
+				
+					Single Source (SS)
+				
+			</td>
 <td>
-					1021/1207
-				</td>
+    			Western Regional Health Authority
+			</td>
 <td>
-					National Health Fund
-				</td>
+				<a href="/epps/cft/prepareViewCfTWS.do?resourceId=8968900">To Supply and Deliver Disposable Cups and Poly Bags THSPROC-777D</a>
+			</td>
 <td>
-					
-						Thu Apr 23 15:00:00 COT 2026				
-					
-				</td>
+				
+					286086.42
+				
+			</td>
 <td>
-					
-						
-						Single Source (SS)
-					
-				</td>
+                
+                    Fri Apr 24 21:49:47 COT 2026              
+                
+			</td>
 <td>
-					<a href="/epps/eawarding/showDetailsOpenedTender.do?resourceId=9341043">View opened bids</a>
-				</td>
-<td>
-									
-				</td>
-<td>	
-					
-					Evaluation
-				</td></tr>
+				<a href="/epps/notices/downloadNoticeForES.do?resourceId=9355138&amp;lang=EN&amp;noticeType=prompt.f306.contract"><img src="/epps/images/acrobat.gif" alt="Contract Award Notice PDF" title="Contract Award Notice PDF" /></a>
+			</td></tr>
 <tr>
 <td>3</td>
 <td>
-					
-						<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9331189">SR#27018-NTEI-INDUSTRIALEQUIPMENT-14-04-2026</a>
-					
-					
-				</td>
+				
+					Single Source (SS)
+				
+			</td>
 <td>
-					1098/4316
-				</td>
+    			Western Regional Health Authority
+			</td>
 <td>
-					HEART NSTA/Trust
-				</td>
+				<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9212724">The Printing of Food Handlings Establishment Health Certificate THSPROC-763</a>
+			</td>
 <td>
-					
-						Fri Apr 24 10:00:00 COT 2026				
-					
-				</td>
+				
+					282900.0
+				
+			</td>
 <td>
-					
-						
-						Restricted Bidding (RB)
-					
-				</td>
+                
+                    Fri Apr 24 21:46:39 COT 2026              
+                
+			</td>
 <td>
-					<a href="/epps/eawarding/showDetailsOpenedTender.do?resourceId=9331189">View opened bids</a>
-				</td>
-<td>
-									
-				</td>
-<td>	
-					
-					Evaluation
-				</td></tr>
+				<a href="/epps/notices/downloadNoticeForES.do?resourceId=9355091&amp;lang=EN&amp;noticeType=prompt.f306.contract"><img src="/epps/images/acrobat.gif" alt="Contract Award Notice PDF" title="Contract Award Notice PDF" /></a>
+			</td></tr>
 <tr>
 <td>4</td>
 <td>
-					
-						<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9328400">SR#26999-JUNCTIONVTC-CONCESSIONAIRE-14.04.2026</a>
-					
-					
-				</td>
+				
+					Single Source (SS)
+				
+			</td>
 <td>
-					1098/4314
-				</td>
+    			Western Regional Health Authority
+			</td>
 <td>
-					HEART NSTA/Trust
-				</td>
+				<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9173771">To Perform Diagnosis and Repairs to Central Air Condition Units for CRH Operating Theatres at Falmouth Hospital THSPROC-821</a>
+			</td>
 <td>
-					
-						Fri Apr 24 10:00:00 COT 2026				
-					
-				</td>
+				
+					1710050.0
+				
+			</td>
 <td>
-					
-						
-						Single Source (SS)
-					
-				</td>
+                
+                    Fri Apr 24 21:41:15 COT 2026              
+                
+			</td>
 <td>
-					<a href="/epps/eawarding/showDetailsOpenedTender.do?resourceId=9328400">View opened bids</a>
-				</td>
-<td>
-									
-				</td>
-<td>	
-					
-					Evaluation
-				</td></tr>
+				<a href="/epps/notices/downloadNoticeForES.do?resourceId=9355070&amp;lang=EN&amp;noticeType=prompt.f306.contract"><img src="/epps/images/acrobat.gif" alt="Contract Award Notice PDF" title="Contract Award Notice PDF" /></a>
+			</td></tr>
 <tr>
 <td>5</td>
 <td>
-					
-						<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9325173">SR#26895-LLUIDASVALEVTC-CONCESSIONIARE-09.04.2026</a>
-					
-					
-				</td>
+				
+					Emergency Procedure
+				
+			</td>
 <td>
-					1098/4313
-				</td>
+    			National Works Agency
+			</td>
 <td>
-					HEART NSTA/Trust
-				</td>
+				<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9354809">Emergency Works Hurricane Melissa Reopening of Roads Bath to Hordley, St. Thomas</a>
+			</td>
 <td>
-					
-						Fri Apr 24 10:00:00 COT 2026				
-					
-				</td>
+				
+					2710891.36
+				
+			</td>
 <td>
-					
-						
-						Single Source (SS)
-					
-				</td>
+                
+                    Fri Apr 24 21:20:13 COT 2026              
+                
+			</td>
 <td>
-					<a href="/epps/eawarding/showDetailsOpenedTender.do?resourceId=9325173">View opened bids</a>
-				</td>
-<td>
-									
-				</td>
-<td>	
-					
-					Evaluation
-				</td></tr>
+				<a href="/epps/notices/downloadNoticeForES.do?resourceId=9354862&amp;lang=EN&amp;noticeType=prompt.f306.contract"><img src="/epps/images/acrobat.gif" alt="Contract Award Notice PDF" title="Contract Award Notice PDF" /></a>
+			</td></tr>
 <tr>
 <td>6</td>
 <td>
-					
-						<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9324995">SR#26896-EbonyParkACADEMY-CONCESSIONAIRE-09.04.2026</a>
-					
-					
-				</td>
+				
+					Emergency Procedure
+				
+			</td>
 <td>
-					1098/4312
-				</td>
+    			National Works Agency
+			</td>
 <td>
-					HEART NSTA/Trust
-				</td>
+				<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9353868">Emergency Works Hurricane Melissa Reopening of Roads Post Hurricane Melissa Rowlandsfield,Bowden to Old Pera, Johnson Mountain, Hayfield,Morant Bay to Wilmington, Sunning Hill to Thornton (Thornnton to White Hall St. Thomas</a>
+			</td>
 <td>
-					
-						Wed Apr 22 14:00:00 COT 2026				
-					
-				</td>
+				
+					2089519.6
+				
+			</td>
 <td>
-					
-						
-						Single Source (SS)
-					
-				</td>
+                
+                    Fri Apr 24 21:11:37 COT 2026              
+                
+			</td>
 <td>
-					<a href="/epps/eawarding/showDetailsOpenedTender.do?resourceId=9324995">View opened bids</a>
-				</td>
-<td>
-									
-				</td>
-<td>	
-					
-					Evaluation
-				</td></tr>
+				<a href="/epps/notices/downloadNoticeForES.do?resourceId=9354743&amp;lang=EN&amp;noticeType=prompt.f306.contract"><img src="/epps/images/acrobat.gif" alt="Contract Award Notice PDF" title="Contract Award Notice PDF" /></a>
+			</td></tr>
 <tr>
 <td>7</td>
 <td>
-					
-						<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9324780">Supply and Delivery of Paints for Kingston and St. Andrew Health Department-Red Hills Health Centre</a>
-					
-					
-				</td>
+				
+					Restricted Bidding (RB)
+				
+			</td>
 <td>
-					2328/2566
-				</td>
+    			Ministry of National Security
+			</td>
 <td>
-					Kingston and St. Andrew Health Services
-				</td>
+				<a href="/epps/cft/prepareViewCfTWS.do?resourceId=8437972">Procurement for the Rental and Maintenance of Office Plants</a>
+			</td>
 <td>
-					
-						Fri Apr 24 11:00:00 COT 2026				
-					
-				</td>
+				
+					3436200.0
+				
+			</td>
 <td>
-					
-						
-						Single Source (SS)
-					
-				</td>
+                
+                    Fri Apr 24 19:33:15 COT 2026              
+                
+			</td>
 <td>
-					<a href="/epps/eawarding/showDetailsOpenedTender.do?resourceId=9324780">View opened bids</a>
-				</td>
-<td>
-									
-				</td>
-<td>	
-					
-					Evaluation
-				</td></tr>
+				<a href="/epps/notices/downloadNoticeForES.do?resourceId=9353102&amp;lang=EN&amp;noticeType=prompt.f306.contract"><img src="/epps/images/acrobat.gif" alt="Contract Award Notice PDF" title="Contract Award Notice PDF" /></a>
+			</td></tr>
 <tr>
 <td>8</td>
 <td>
-					
-						<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9324675">SR#26989-JUNCTIONVTC-RENOVATION-14.04.2026</a>
-					
-					
-				</td>
+				
+					Restricted Bidding (RB)
+				
+			</td>
 <td>
-					1098/4311
-				</td>
+    			St. Catherine Health Services
+			</td>
 <td>
-					HEART NSTA/Trust
-				</td>
+				<a href="/epps/cft/prepareViewCfTWS.do?resourceId=8641556">Procurement of UPS Batteries</a>
+			</td>
 <td>
-					
-						Fri Apr 24 10:00:00 COT 2026				
-					
-				</td>
+				
+					221536.0
+				
+			</td>
 <td>
-					
-						
-						Restricted Bidding (RB)
-					
-				</td>
+                
+                    Fri Apr 24 19:28:05 COT 2026              
+                
+			</td>
 <td>
-					<a href="/epps/eawarding/showDetailsOpenedTender.do?resourceId=9324675">View opened bids</a>
-				</td>
-<td>
-									
-				</td>
-<td>	
-					
-					Evaluation
-				</td></tr>
+				<a href="/epps/notices/downloadNoticeForES.do?resourceId=9353029&amp;lang=EN&amp;noticeType=prompt.f306.contract"><img src="/epps/images/acrobat.gif" alt="Contract Award Notice PDF" title="Contract Award Notice PDF" /></a>
+			</td></tr>
 <tr>
 <td>9</td>
 <td>
-					
-						<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9324580">To Supply and Deliver Lunches 1210020268530</a>
-					
-					
-				</td>
+				
+					Single Source (SS)
+				
+			</td>
 <td>
-					2331/6573
-				</td>
+    			St. Catherine Health Services
+			</td>
 <td>
-					Kingston Public Hospital
-				</td>
+				<a href="/epps/cft/prepareViewCfTWS.do?resourceId=8637866">Procurement of Office Supplies (Stamps)</a>
+			</td>
 <td>
-					
-						Thu Apr 23 16:00:00 COT 2026				
-					
-				</td>
+				
+					256162.5
+				
+			</td>
 <td>
-					
-						
-						Single Source (SS)
-					
-				</td>
+                
+                    Fri Apr 24 19:21:30 COT 2026              
+                
+			</td>
 <td>
-					<a href="/epps/eawarding/showDetailsOpenedTender.do?resourceId=9324580">View opened bids</a>
-				</td>
-<td>
-									
-				</td>
-<td>	
-					
-					Evaluation
-				</td></tr>
+				<a href="/epps/notices/downloadNoticeForES.do?resourceId=9352829&amp;lang=EN&amp;noticeType=prompt.f306.contract"><img src="/epps/images/acrobat.gif" alt="Contract Award Notice PDF" title="Contract Award Notice PDF" /></a>
+			</td></tr>
 <tr>
 <td>10</td>
 <td>
-					
-						<a href="/epps/cft/prepareViewCfTWS.do?resourceId=9324080">Procurement of Catering Services</a>
-					
-					
-				</td>
+				
+					Single Source (SS)
+				
+			</td>
 <td>
-					2324/1746
-				</td>
+    			Ministry of Agriculture Fisheries and Mining
+			</td>
 <td>
-					St. Catherine Health Services
-				</td>
+				<a href="/epps/cft/prepareViewCfTWS.do?resourceId=5357685">Procurement of Consulting Services   for the   Facilitation of the Completion of the Divestment Process for the Agricultural Marketing Corporation (AMC) Complex</a>
+			</td>
 <td>
-					
-						Fri Apr 24 13:00:00 COT 2026				
-					
-				</td>
+				
+					4.070317677E7
+				
+			</td>
 <td>
-					
-						
-						Single Source (SS)
-					
-				</td>
+                
+                    Fri Apr 24 17:07:59 COT 2026              
+                
+			</td>
 <td>
-					<a href="/epps/eawarding/showDetailsOpenedTender.do?resourceId=9324080">View opened bids</a>
-				</td>
-<td>
-									
-				</td>
-<td>	
-					
-					Evaluation
-				</td></tr></tbody></table><input type="hidden" name="tableUid" value="searchOTD"><div class="Pagination"><p class="Results">74,568 results in total.    Displaying: <strong>1-10</strong></p><p class="PageNav">Page <strong>1</strong> of <strong>7,457</strong><button type="button" class="SearchBtn Disabled" title="First">&laquo;</button><button type="button" class="SearchBtn Disabled" title="Previous">&lsaquo;</button><button type="button" class="SearchBtn" title="Next" onclick=window.location.href=this.getAttribute("href") href="?d-3680181-p=2">&rsaquo;</button><button type="button" class="SearchBtn" title="Last" onclick=window.location.href=this.getAttribute("href") href="?d-3680181-p=7457">&raquo;</button></p><p class="PageNav"><script type="text/javascript">writePageSelection("7,457","?d-3680181-p=",this);</script></p></div>
-		
+				<a href="/epps/notices/downloadNoticeForES.do?resourceId=9350985&amp;lang=EN&amp;noticeType=prompt.f306.contract"><img src="/epps/images/acrobat.gif" alt="Contract Award Notice PDF" title="Contract Award Notice PDF" /></a>
+			</td></tr></tbody></table><input type="hidden" name="tableUid" value="snd"><div class="Pagination"><p class="Results">11,198 results in total.    Displaying: <strong>1-10</strong></p><p class="PageNav">Page <strong>1</strong> of <strong>1,120</strong><button type="button" class="SearchBtn Disabled" title="First">&laquo;</button><button type="button" class="SearchBtn Disabled" title="Previous">&lsaquo;</button><button type="button" class="SearchBtn" title="Next" onclick=window.location.href=this.getAttribute("href") href="?d-16531-p=2">&rsaquo;</button><button type="button" class="SearchBtn" title="Last" onclick=window.location.href=this.getAttribute("href") href="?d-16531-p=1120">&raquo;</button></p><p class="PageNav"><script type="text/javascript">writePageSelection("1,120","?d-16531-p=",this);</script></p></div>
 	</div>
 </div>
+
+
+
+
+
                 </div><!-- Content -->
                 <div class="clear"></div>
             </div><!-- Main -->
