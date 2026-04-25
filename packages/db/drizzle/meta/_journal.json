@@ -78,6 +78,13 @@
       "when": 1777105000000,
       "tag": "0010_proposal_shreds",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1777110000000,
+      "tag": "0011_contract_extras",
+      "breakpoints": true
     }
   ]
 }

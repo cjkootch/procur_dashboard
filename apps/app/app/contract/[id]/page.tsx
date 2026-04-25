@@ -4,10 +4,20 @@ import { and, eq } from 'drizzle-orm';
 import { db, pastPerformance } from '@procur/db';
 import { requireCompany } from '@procur/auth';
 import { getContractById } from '../../../lib/contract-queries';
+import {
+  listClinsForContract,
+  listModificationsForContract,
+  listTaskAreasForContract,
+  summarizeClins,
+  summarizeModifications,
+} from '../../../lib/contract-extras-queries';
 import { ContractHero } from '../components/contract-hero';
 import { ContractTabNav, isTabKey, type TabKey } from '../components/tab-nav';
 import { OverviewTab } from '../components/overview-tab';
 import { ObligationsTab } from '../components/obligations-tab';
+import { ModificationsTab } from '../components/modifications-tab';
+import { ClinsTab } from '../components/clins-tab';
+import { TaskAreasTab } from '../components/task-areas-tab';
 import { DocumentsTab } from '../components/documents-tab';
 import { PastPerformanceTab } from '../components/past-performance-tab';
 import type { ComplianceState } from '../../../lib/contract-queries';
@@ -28,6 +38,16 @@ export default async function ContractDetailPage({
   const { company } = await requireCompany();
   const contract = await getContractById(company.id, id);
   if (!contract) notFound();
+
+  // Always load counts for the tab nav badges (cheap pursuit-scoped queries).
+  const [modifications, clins, taskAreas] = await Promise.all([
+    listModificationsForContract(id),
+    listClinsForContract(id),
+    listTaskAreasForContract(id),
+  ]);
+
+  const modificationsSummary = summarizeModifications(modifications);
+  const clinsSummary = summarizeClins(clins);
 
   // Find an existing past-performance entry generated from this contract so
   // we can show a deep-link instead of the generate CTA on the PP tab.
@@ -77,10 +97,30 @@ export default async function ContractDetailPage({
         active={tab}
         contractId={id}
         obligationCount={obligations.length}
+        modificationCount={modifications.length}
+        clinCount={clins.length}
+        taskAreaCount={taskAreas.length}
       />
 
       <div className="mt-4">
         {tab === 'overview' && <OverviewTab contract={contract} />}
+        {tab === 'modifications' && (
+          <ModificationsTab
+            contractId={id}
+            modifications={modifications}
+            summary={modificationsSummary}
+            currency={contract.currency}
+          />
+        )}
+        {tab === 'clins' && (
+          <ClinsTab
+            contractId={id}
+            clins={clins}
+            summary={clinsSummary}
+            currency={contract.currency}
+          />
+        )}
+        {tab === 'task-areas' && <TaskAreasTab contractId={id} taskAreas={taskAreas} />}
         {tab === 'obligations' && <ObligationsTab contract={contract} />}
         {tab === 'documents' && <DocumentsTab contract={contract} />}
         {tab === 'past-performance' && (

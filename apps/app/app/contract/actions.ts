@@ -6,12 +6,25 @@ import { redirect } from 'next/navigation';
 import { randomUUID } from 'crypto';
 import {
   agencies,
+  CLIN_TYPES,
   contracts,
+  contractClins,
+  contractModifications,
+  contractTaskAreas,
   db,
   jurisdictions,
+  MODIFICATION_ACTION_TYPES,
   opportunities,
   pursuits,
+  type ClinType,
+  type ContractClin,
+  type ContractModification,
+  type ContractTaskArea,
+  type ModificationActionType,
   type NewContract,
+  type NewContractClin,
+  type NewContractModification,
+  type NewContractTaskArea,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
 
@@ -247,4 +260,275 @@ export async function removeObligationAction(formData: FormData): Promise<void> 
 
   const obligations = (contract.obligations ?? []).filter((o) => o.id !== obligationId);
   await setObligations(contractId, obligations);
+}
+
+// ===========================================================================
+// Modifications
+// ===========================================================================
+
+function toModActionType(v: FormDataEntryValue | null): ModificationActionType {
+  const s = v == null ? '' : String(v);
+  return (MODIFICATION_ACTION_TYPES as string[]).includes(s)
+    ? (s as ModificationActionType)
+    : 'other';
+}
+
+function toClinType(v: FormDataEntryValue | null): ClinType {
+  const s = v == null ? '' : String(v);
+  return (CLIN_TYPES as string[]).includes(s) ? (s as ClinType) : 'fixed_price';
+}
+
+function dateOrNull(formData: FormData, key: string): string | null {
+  const v = str(formData, key);
+  if (!v) return null;
+  // HTML <input type="date"> emits YYYY-MM-DD which is what postgres date columns accept.
+  return v;
+}
+
+function signedNum(formData: FormData, key: string): string | null {
+  const v = str(formData, key);
+  if (!v) return null;
+  const n = Number.parseFloat(v);
+  return Number.isFinite(n) ? n.toFixed(2) : null;
+}
+
+function decimal4(formData: FormData, key: string): string | null {
+  const v = str(formData, key);
+  if (!v) return null;
+  const n = Number.parseFloat(v);
+  return Number.isFinite(n) ? n.toFixed(4) : null;
+}
+
+export async function addModificationAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const contractId = str(formData, 'contractId');
+  const modNumber = str(formData, 'modNumber');
+  if (!contractId || !modNumber) throw new Error('contractId + modNumber required');
+
+  await requireOwnedContract(company.id, contractId);
+
+  const row: NewContractModification = {
+    contractId,
+    modNumber,
+    actionDate: dateOrNull(formData, 'actionDate'),
+    actionType: toModActionType(formData.get('actionType')),
+    description: str(formData, 'description'),
+    fundingChange: signedNum(formData, 'fundingChange'),
+    documentUrl: str(formData, 'documentUrl'),
+    source: str(formData, 'source'),
+  };
+
+  await db.insert(contractModifications).values(row);
+  revalidatePath(`/contract/${contractId}`);
+}
+
+async function requireOwnedModification(
+  companyId: string,
+  modificationId: string,
+): Promise<ContractModification> {
+  const rows = await db
+    .select({ mod: contractModifications, companyId: contracts.companyId })
+    .from(contractModifications)
+    .innerJoin(contracts, eq(contracts.id, contractModifications.contractId))
+    .where(eq(contractModifications.id, modificationId))
+    .limit(1);
+  const first = rows[0];
+  if (!first || first.companyId !== companyId) throw new Error('modification not found');
+  return first.mod;
+}
+
+export async function updateModificationAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const modificationId = str(formData, 'modificationId');
+  if (!modificationId) throw new Error('modificationId required');
+
+  const existing = await requireOwnedModification(company.id, modificationId);
+
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (formData.has('modNumber')) {
+    const v = str(formData, 'modNumber');
+    if (v) updates.modNumber = v;
+  }
+  if (formData.has('actionDate')) updates.actionDate = dateOrNull(formData, 'actionDate');
+  if (formData.has('actionType')) updates.actionType = toModActionType(formData.get('actionType'));
+  if (formData.has('description')) updates.description = str(formData, 'description');
+  if (formData.has('fundingChange')) updates.fundingChange = signedNum(formData, 'fundingChange');
+  if (formData.has('documentUrl')) updates.documentUrl = str(formData, 'documentUrl');
+  if (formData.has('source')) updates.source = str(formData, 'source');
+
+  await db
+    .update(contractModifications)
+    .set(updates)
+    .where(eq(contractModifications.id, modificationId));
+
+  revalidatePath(`/contract/${existing.contractId}`);
+}
+
+export async function removeModificationAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const modificationId = str(formData, 'modificationId');
+  if (!modificationId) throw new Error('modificationId required');
+
+  const existing = await requireOwnedModification(company.id, modificationId);
+
+  await db.delete(contractModifications).where(eq(contractModifications.id, modificationId));
+
+  revalidatePath(`/contract/${existing.contractId}`);
+}
+
+// ===========================================================================
+// CLINs
+// ===========================================================================
+
+async function requireOwnedClin(companyId: string, clinId: string): Promise<ContractClin> {
+  const rows = await db
+    .select({ clin: contractClins, companyId: contracts.companyId })
+    .from(contractClins)
+    .innerJoin(contracts, eq(contracts.id, contractClins.contractId))
+    .where(eq(contractClins.id, clinId))
+    .limit(1);
+  const first = rows[0];
+  if (!first || first.companyId !== companyId) throw new Error('clin not found');
+  return first.clin;
+}
+
+export async function addClinAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const contractId = str(formData, 'contractId');
+  const clinNumber = str(formData, 'clinNumber');
+  const title = str(formData, 'title');
+  if (!contractId || !clinNumber || !title) throw new Error('contractId + clinNumber + title required');
+
+  await requireOwnedContract(company.id, contractId);
+
+  const row: NewContractClin = {
+    contractId,
+    clinNumber,
+    title,
+    clinType: toClinType(formData.get('clinType')),
+    quantity: decimal4(formData, 'quantity'),
+    unitOfMeasure: str(formData, 'unitOfMeasure'),
+    unitPrice: decimal4(formData, 'unitPrice'),
+    amount: signedNum(formData, 'amount'),
+    periodStart: dateOrNull(formData, 'periodStart'),
+    periodEnd: dateOrNull(formData, 'periodEnd'),
+    notes: str(formData, 'notes'),
+  };
+
+  await db.insert(contractClins).values(row);
+  revalidatePath(`/contract/${contractId}`);
+}
+
+export async function updateClinAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const clinId = str(formData, 'clinId');
+  if (!clinId) throw new Error('clinId required');
+
+  const existing = await requireOwnedClin(company.id, clinId);
+
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (formData.has('clinNumber')) {
+    const v = str(formData, 'clinNumber');
+    if (v) updates.clinNumber = v;
+  }
+  if (formData.has('title')) {
+    const v = str(formData, 'title');
+    if (v) updates.title = v;
+  }
+  if (formData.has('clinType')) updates.clinType = toClinType(formData.get('clinType'));
+  if (formData.has('quantity')) updates.quantity = decimal4(formData, 'quantity');
+  if (formData.has('unitOfMeasure')) updates.unitOfMeasure = str(formData, 'unitOfMeasure');
+  if (formData.has('unitPrice')) updates.unitPrice = decimal4(formData, 'unitPrice');
+  if (formData.has('amount')) updates.amount = signedNum(formData, 'amount');
+  if (formData.has('periodStart')) updates.periodStart = dateOrNull(formData, 'periodStart');
+  if (formData.has('periodEnd')) updates.periodEnd = dateOrNull(formData, 'periodEnd');
+  if (formData.has('notes')) updates.notes = str(formData, 'notes');
+
+  await db.update(contractClins).set(updates).where(eq(contractClins.id, clinId));
+
+  revalidatePath(`/contract/${existing.contractId}`);
+}
+
+export async function removeClinAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const clinId = str(formData, 'clinId');
+  if (!clinId) throw new Error('clinId required');
+
+  const existing = await requireOwnedClin(company.id, clinId);
+  await db.delete(contractClins).where(eq(contractClins.id, clinId));
+  revalidatePath(`/contract/${existing.contractId}`);
+}
+
+// ===========================================================================
+// Task Areas
+// ===========================================================================
+
+async function requireOwnedTaskArea(
+  companyId: string,
+  taskAreaId: string,
+): Promise<ContractTaskArea> {
+  const rows = await db
+    .select({ ta: contractTaskAreas, companyId: contracts.companyId })
+    .from(contractTaskAreas)
+    .innerJoin(contracts, eq(contracts.id, contractTaskAreas.contractId))
+    .where(eq(contractTaskAreas.id, taskAreaId))
+    .limit(1);
+  const first = rows[0];
+  if (!first || first.companyId !== companyId) throw new Error('task area not found');
+  return first.ta;
+}
+
+export async function addTaskAreaAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const contractId = str(formData, 'contractId');
+  const name = str(formData, 'name');
+  if (!contractId || !name) throw new Error('contractId + name required');
+
+  await requireOwnedContract(company.id, contractId);
+
+  const row: NewContractTaskArea = {
+    contractId,
+    name,
+    description: str(formData, 'description'),
+    scope: str(formData, 'scope'),
+    periodStart: dateOrNull(formData, 'periodStart'),
+    periodEnd: dateOrNull(formData, 'periodEnd'),
+    notes: str(formData, 'notes'),
+  };
+
+  await db.insert(contractTaskAreas).values(row);
+  revalidatePath(`/contract/${contractId}`);
+}
+
+export async function updateTaskAreaAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const taskAreaId = str(formData, 'taskAreaId');
+  if (!taskAreaId) throw new Error('taskAreaId required');
+
+  const existing = await requireOwnedTaskArea(company.id, taskAreaId);
+
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (formData.has('name')) {
+    const v = str(formData, 'name');
+    if (v) updates.name = v;
+  }
+  if (formData.has('description')) updates.description = str(formData, 'description');
+  if (formData.has('scope')) updates.scope = str(formData, 'scope');
+  if (formData.has('periodStart')) updates.periodStart = dateOrNull(formData, 'periodStart');
+  if (formData.has('periodEnd')) updates.periodEnd = dateOrNull(formData, 'periodEnd');
+  if (formData.has('notes')) updates.notes = str(formData, 'notes');
+
+  await db.update(contractTaskAreas).set(updates).where(eq(contractTaskAreas.id, taskAreaId));
+
+  revalidatePath(`/contract/${existing.contractId}`);
+}
+
+export async function removeTaskAreaAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const taskAreaId = str(formData, 'taskAreaId');
+  if (!taskAreaId) throw new Error('taskAreaId required');
+
+  const existing = await requireOwnedTaskArea(company.id, taskAreaId);
+  await db.delete(contractTaskAreas).where(eq(contractTaskAreas.id, taskAreaId));
+  revalidatePath(`/contract/${existing.contractId}`);
 }
