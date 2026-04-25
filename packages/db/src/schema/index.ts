@@ -23,3 +23,4 @@ export * from './assistant-messages';
 export * from './ai-usage';
 export * from './gate-reviews';
 export * from './pursuit-team-members';
+export * from './capabilities';
