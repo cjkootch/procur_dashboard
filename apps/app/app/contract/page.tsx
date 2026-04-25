@@ -58,6 +58,12 @@ export default async function ContractListPage({
         </div>
         <div className="flex items-center gap-2">
           <LayoutToggle current={layout} sp={sp} />
+          <Link
+            href="/contract/reports"
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-muted)]/40"
+          >
+            Reports
+          </Link>
           <a
             href={`/api/contract/export.csv`}
             className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-muted)]/40"
