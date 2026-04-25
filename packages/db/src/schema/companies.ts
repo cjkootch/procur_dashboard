@@ -27,6 +27,16 @@ export const companies = pgTable('companies', {
   subscriptionStatus: text('subscription_status'),
   trialEndsAt: timestamp('trial_ends_at'),
 
+  /**
+   * Per-tenant monthly AI budget override in USD cents. NULL means
+   * "use the plan-tier default in @procur/ai assistant/budget.ts".
+   * Set by Procur staff via /tenants/[id] when a customer needs more
+   * (or less) than their tier allows. Enterprise tenants typically
+   * pass a number here so they get a real cap rather than the
+   * default-null = unlimited behavior of the enterprise tier.
+   */
+  monthlyAiBudgetCents: integer('monthly_ai_budget_cents'),
+
   onboardingCompletedAt: timestamp('onboarding_completed_at'),
 
   createdAt: timestamp('created_at').defaultNow().notNull(),
