@@ -7,7 +7,33 @@ import { CaptureViewSwitcher } from '../components/view-switcher';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AllTasksPage() {
+const PRIORITIES = ['urgent', 'high', 'medium', 'low'] as const;
+const CATEGORIES = ['research', 'outreach', 'drafting', 'review', 'submission'] as const;
+
+type SearchParams = {
+  q?: string;
+  priority?: string;
+  category?: string;
+  show?: string; // 'open' (default) | 'all' | 'completed'
+};
+
+export default async function AllTasksPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
+  const sp = await searchParams;
+  const q = (sp.q ?? '').trim();
+  const priorityFilter =
+    sp.priority && (PRIORITIES as readonly string[]).includes(sp.priority)
+      ? sp.priority
+      : null;
+  const categoryFilter =
+    sp.category && (CATEGORIES as readonly string[]).includes(sp.category)
+      ? sp.category
+      : null;
+  const show = sp.show === 'all' || sp.show === 'completed' ? sp.show : 'open';
+
   const { company } = await requireCompany();
 
   const companyPursuits = await db
@@ -45,7 +71,7 @@ export default async function AllTasksPage() {
     );
   }
 
-  const tasks = await db
+  const allTasks = await db
     .select({
       id: pursuitTasks.id,
       title: pursuitTasks.title,
@@ -71,8 +97,31 @@ export default async function AllTasksPage() {
     )
     .orderBy(asc(pursuitTasks.completedAt), asc(pursuitTasks.dueDate));
 
+  const needle = q.toLowerCase();
+  const tasks = allTasks.filter((t) => {
+    if (priorityFilter && t.priority !== priorityFilter) return false;
+    if (categoryFilter && t.category !== categoryFilter) return false;
+    if (needle.length > 0) {
+      const haystack = [t.title, t.opportunityTitle, t.assignedUserFirstName]
+        .filter(Boolean)
+        .join('  ')
+        .toLowerCase();
+      if (!haystack.includes(needle)) return false;
+    }
+    return true;
+  });
+
   const open = tasks.filter((t) => !t.completedAt);
   const done = tasks.filter((t) => t.completedAt);
+
+  const hasActiveFilter = q || priorityFilter || categoryFilter || show !== 'open';
+
+  // Render policy: by default we show open tasks, with completed in a
+  // collapsed footer if any exist. ?show=all puts both inline at the
+  // top; ?show=completed shows only the completed list (useful when
+  // looking back at finished work).
+  const visibleOpen = show === 'completed' ? [] : open;
+  const visibleDone = show === 'open' ? [] : done;
 
   return (
     <div className="mx-auto max-w-4xl px-8 py-10">
@@ -82,12 +131,62 @@ export default async function AllTasksPage() {
           <CaptureViewSwitcher active="tasks" />
           <p className="text-xs text-[color:var(--color-muted-foreground)]">
             {open.length} open · {done.length} completed
+            {hasActiveFilter && ` · ${tasks.length} of ${allTasks.length} matching filters`}
           </p>
         </div>
       </header>
 
+      <form
+        method="GET"
+        className="mb-4 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-[color:var(--color-border)] p-2 text-xs"
+      >
+        <input
+          type="search"
+          name="q"
+          defaultValue={q}
+          placeholder="Search title, pursuit, assignee…"
+          className="min-w-[12rem] flex-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 focus:border-[color:var(--color-foreground)] focus:outline-none"
+        />
+        <FilterSelect
+          name="priority"
+          label="Priority"
+          current={priorityFilter ?? ''}
+          options={[{ value: '', label: 'Any' }, ...PRIORITIES.map((p) => ({ value: p, label: p }))]}
+        />
+        <FilterSelect
+          name="category"
+          label="Category"
+          current={categoryFilter ?? ''}
+          options={[{ value: '', label: 'Any' }, ...CATEGORIES.map((c) => ({ value: c, label: c }))]}
+        />
+        <FilterSelect
+          name="show"
+          label="Show"
+          current={show}
+          options={[
+            { value: 'open', label: 'Open' },
+            { value: 'all', label: 'All' },
+            { value: 'completed', label: 'Completed' },
+          ]}
+        />
+        <button
+          type="submit"
+          className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1"
+        >
+          Apply
+        </button>
+        {hasActiveFilter && (
+          <Link
+            href="/capture/tasks"
+            className="text-[color:var(--color-muted-foreground)] hover:underline"
+          >
+            Clear
+          </Link>
+        )}
+      </form>
+
       <ul className="space-y-2">
-        {open.map((t) => (
+        {visibleOpen.map((t) => (
           <li
             key={t.id}
             className="flex items-start justify-between rounded-[var(--radius-md)] border border-[color:var(--color-border)] p-3"
@@ -119,12 +218,14 @@ export default async function AllTasksPage() {
             </div>
           </li>
         ))}
-        {done.length > 0 && (
+        {visibleDone.length > 0 && (
           <>
-            <li className="pt-4 text-xs font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-              Completed
-            </li>
-            {done.map((t) => (
+            {show !== 'completed' && (
+              <li className="pt-4 text-xs font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                Completed
+              </li>
+            )}
+            {visibleDone.map((t) => (
               <li
                 key={t.id}
                 className="flex items-start justify-between rounded-[var(--radius-md)] border border-[color:var(--color-border)] p-3 opacity-60"
@@ -149,10 +250,48 @@ export default async function AllTasksPage() {
         )}
         {tasks.length === 0 && (
           <li className="rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] p-10 text-center text-sm text-[color:var(--color-muted-foreground)]">
-            No tasks yet. Add them from a pursuit detail page.
+            {hasActiveFilter ? (
+              <>
+                No tasks match these filters.{' '}
+                <Link href="/capture/tasks" className="underline">
+                  Clear
+                </Link>
+              </>
+            ) : (
+              <>No tasks yet. Add them from a pursuit detail page.</>
+            )}
           </li>
         )}
       </ul>
     </div>
+  );
+}
+
+function FilterSelect({
+  name,
+  label,
+  current,
+  options,
+}: {
+  name: string;
+  label: string;
+  current: string;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <label className="flex items-center gap-1">
+      <span className="text-[color:var(--color-muted-foreground)]">{label}:</span>
+      <select
+        name={name}
+        defaultValue={current}
+        className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 capitalize"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
