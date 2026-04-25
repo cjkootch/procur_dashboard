@@ -23,8 +23,8 @@ export function TaskAreasTab({
       <section className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-4">
         <h2 className="mb-1 text-sm font-semibold">Add task area</h2>
         <p className="mb-3 text-xs text-[color:var(--color-muted-foreground)]">
-          One row per SOW area / domain (e.g. "Software Engineering",
-          "Cybersecurity Operations", "Logistics Support").
+          One row per SOW area / domain (e.g. &ldquo;Software Engineering&rdquo;,
+          &ldquo;Cybersecurity Operations&rdquo;, &ldquo;Logistics Support&rdquo;).
         </p>
         <form
           action={addTaskAreaAction}
