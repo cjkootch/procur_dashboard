@@ -1,6 +1,6 @@
 'use server';
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import {
@@ -352,6 +352,62 @@ export async function toggleTaskAction(formData: FormData): Promise<void> {
 
   if (pursuitId) revalidatePath(`/capture/pursuits/${pursuitId}`);
   revalidatePath('/capture/tasks');
+}
+
+/**
+ * Bulk-complete every task whose id is in the submitted form. Each
+ * task is verified to belong to the caller's company before any write
+ * happens, so a tampered formData with foreign task IDs can't escape
+ * tenant isolation.
+ *
+ * Audit fans out: one `task.completed` row per task. Skipping
+ * already-completed tasks keeps re-submits idempotent.
+ */
+export async function bulkCompleteTasksAction(formData: FormData): Promise<void> {
+  const { user, company } = await resolveUserAndCompany();
+  const ids = formData.getAll('taskId').map((v) => String(v)).filter(Boolean);
+  if (ids.length === 0) return;
+
+  const owned = await db
+    .select({
+      id: pursuitTasks.id,
+      title: pursuitTasks.title,
+      completedAt: pursuitTasks.completedAt,
+      pursuitId: pursuitTasks.pursuitId,
+      companyId: pursuits.companyId,
+    })
+    .from(pursuitTasks)
+    .innerJoin(pursuits, eq(pursuits.id, pursuitTasks.pursuitId))
+    .where(inArray(pursuitTasks.id, ids))
+    .then((r) => r.filter((t) => t.companyId === company.id && !t.completedAt));
+
+  if (owned.length === 0) return;
+
+  const now = new Date();
+  await db
+    .update(pursuitTasks)
+    .set({ completedAt: now, updatedAt: now })
+    .where(inArray(pursuitTasks.id, owned.map((t) => t.id)));
+
+  // Fan out audit rows so the activity feed for each pursuit reflects
+  // the completion. Failures here don't roll back the update — same
+  // policy as the single-task action.
+  await Promise.all(
+    owned.map((t) =>
+      recordPursuitAudit({
+        companyId: company.id,
+        userId: user.id,
+        action: 'task.completed',
+        pursuitId: t.pursuitId,
+        metadata: { taskId: t.id, title: t.title, source: 'bulk' },
+      }),
+    ),
+  );
+
+  revalidatePath('/capture/tasks');
+  for (const t of owned) {
+    revalidatePath(`/capture/pursuits/${t.pursuitId}`);
+  }
 }
 
 // ===========================================================================
