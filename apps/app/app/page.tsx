@@ -2,10 +2,12 @@ import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 import { UserButton } from '@clerk/nextjs';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { listCompanyActivity } from '../lib/activity-feed';
 import { getHomeData } from '../lib/home-queries';
 import { computeOnboardingProgress } from '../lib/onboarding-progress';
 import { getRecommendedOpportunities } from '../lib/recommended-queries';
 import { flagFor, formatDate, formatMoney, timeUntil } from '../lib/format';
+import { ActivityFeed } from '../components/home/ActivityFeed';
 import { SetupChecklist } from '../components/home/SetupChecklist';
 import { db, users } from '@procur/db';
 import { eq, sql } from 'drizzle-orm';
@@ -43,13 +45,14 @@ export default async function DashboardPage() {
     );
   }
 
-  const [data, recommended, teammateRow] = await Promise.all([
+  const [data, recommended, teammateRow, activity] = await Promise.all([
     getHomeData(company.id),
     getRecommendedOpportunities(company, user.id, 6),
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(users)
       .where(eq(users.companyId, company.id)),
+    listCompanyActivity(company.id, 12),
   ]);
   const teammateCount = teammateRow[0]?.n ?? 1;
   const onboarding = await computeOnboardingProgress(company, user.id, teammateCount);
@@ -151,6 +154,8 @@ export default async function DashboardPage() {
           </div>
         </section>
       )}
+
+      <ActivityFeed entries={activity} />
 
       <div className="grid gap-6 md:grid-cols-2">
         <section>
