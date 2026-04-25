@@ -3,8 +3,12 @@ import { UserButton } from '@clerk/nextjs';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getHomeData } from '../lib/home-queries';
+import { computeOnboardingProgress } from '../lib/onboarding-progress';
 import { getRecommendedOpportunities } from '../lib/recommended-queries';
 import { flagFor, formatDate, formatMoney, timeUntil } from '../lib/format';
+import { SetupChecklist } from '../components/home/SetupChecklist';
+import { db, users } from '@procur/db';
+import { eq, sql } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,10 +43,16 @@ export default async function DashboardPage() {
     );
   }
 
-  const [data, recommended] = await Promise.all([
+  const [data, recommended, teammateRow] = await Promise.all([
     getHomeData(company.id),
     getRecommendedOpportunities(company, user.id, 6),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(users)
+      .where(eq(users.companyId, company.id)),
   ]);
+  const teammateCount = teammateRow[0]?.n ?? 1;
+  const onboarding = await computeOnboardingProgress(company, user.id, teammateCount);
   const discoverBase =
     process.env.NEXT_PUBLIC_DISCOVER_URL ?? 'https://discover.procur.app';
 
@@ -59,6 +69,8 @@ export default async function DashboardPage() {
         </div>
         <UserButton afterSignOutUrl="/sign-in" />
       </header>
+
+      <SetupChecklist progress={onboarding} />
 
       <section className="mb-8 grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-6 md:grid-cols-4">
         <Fact label="Open pursuits" value={data.openPursuits} linkHref="/capture/pipeline" />
