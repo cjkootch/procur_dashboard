@@ -34,6 +34,7 @@ import {
   type TeamRole,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
+import { meter, MODELS, suggestRequirements } from '@procur/ai';
 import { STAGE_ORDER, STAGE_LABEL, type PursuitStageKey, getActivePursuitCount } from '../../lib/capture-queries';
 import { seedCriteria } from '../../lib/gate-review-queries';
 import { insertNotification } from '../../lib/notification-queries';
@@ -922,5 +923,128 @@ export async function removeRequirementAction(formData: FormData): Promise<void>
   });
 
   revalidatePath(`/capture/pursuits/${existing.pursuitId}`);
+}
+
+/**
+ * AI: read the pursuit's opportunity title + description, propose
+ * capability-matrix requirements mapped to the company's existing
+ * capability bank. Inserts each suggestion as a new requirement row,
+ * skipping exact-text duplicates so re-runs are idempotent.
+ *
+ * Caps: 4000 chars on requirement text (matches the manual flow), 50
+ * suggestions per call (above this we'd flood the matrix; users
+ * should refine manually after the first pass).
+ */
+export async function suggestRequirementsForPursuitAction(
+  formData: FormData,
+): Promise<void> {
+  const { user, company } = await resolveUserAndCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  if (!pursuitId) throw new Error('pursuitId required');
+
+  await requirePursuitOwnedByCompany(company.id, pursuitId);
+
+  // Load the pursuit's opportunity (title + description).
+  const [opp] = await db
+    .select({
+      title: opportunities.title,
+      description: opportunities.description,
+    })
+    .from(pursuits)
+    .innerJoin(opportunities, eq(opportunities.id, pursuits.opportunityId))
+    .where(and(eq(pursuits.id, pursuitId), eq(pursuits.companyId, company.id)))
+    .limit(1);
+  if (!opp) throw new Error('opportunity not found');
+
+  // Load the capability bank for the company so AI can map suggestions.
+  const bank = await db
+    .select({
+      id: companyCapabilities.id,
+      name: companyCapabilities.name,
+      category: companyCapabilities.category,
+      description: companyCapabilities.description,
+    })
+    .from(companyCapabilities)
+    .where(eq(companyCapabilities.companyId, company.id));
+
+  const validBankIds = new Set(bank.map((b) => b.id));
+
+  let result;
+  try {
+    result = await suggestRequirements({
+      opportunityTitle: opp.title,
+      opportunityDescription: opp.description,
+      capabilities: bank.map((b) => ({
+        id: b.id,
+        name: b.name,
+        category: b.category ?? 'service',
+        description: b.description,
+      })),
+    });
+  } catch (err) {
+    console.error('[suggest_requirements] AI call failed', err);
+    throw new Error(
+      'Could not generate requirement suggestions. Try again or add requirements manually.',
+    );
+  }
+
+  await meter({
+    companyId: company.id,
+    source: 'suggest_requirements',
+    model: MODELS.sonnet,
+    usage: result.usage,
+  });
+
+  if (result.requirements.length === 0) {
+    revalidatePath(`/capture/pursuits/${pursuitId}`);
+    return;
+  }
+
+  // Idempotency: skip suggestions whose text already exists on this
+  // pursuit so re-running doesn't create duplicates.
+  const existing = await db
+    .select({ requirement: pursuitCapabilityRequirements.requirement })
+    .from(pursuitCapabilityRequirements)
+    .where(eq(pursuitCapabilityRequirements.pursuitId, pursuitId));
+  const existingSet = new Set(
+    existing.map((r) => r.requirement.trim().toLowerCase()),
+  );
+
+  const rowsToInsert = result.requirements
+    .filter((r) => !existingSet.has(r.requirement.trim().toLowerCase()))
+    .slice(0, 50)
+    .map((r) => ({
+      pursuitId,
+      requirement: r.requirement.slice(0, 4000),
+      priority: r.priority,
+      coverage: r.coverage,
+      capabilityId:
+        r.suggestedCapabilityId && validBankIds.has(r.suggestedCapabilityId)
+          ? r.suggestedCapabilityId
+          : null,
+      notes: r.rationale ?? null,
+    }));
+
+  if (rowsToInsert.length === 0) {
+    revalidatePath(`/capture/pursuits/${pursuitId}`);
+    return;
+  }
+
+  await db.insert(pursuitCapabilityRequirements).values(rowsToInsert);
+
+  await recordPursuitAudit({
+    companyId: company.id,
+    userId: user.id,
+    action: 'pursuit.requirements_ai_suggested',
+    pursuitId,
+    metadata: {
+      proposed: result.requirements.length,
+      inserted: rowsToInsert.length,
+      bankSize: bank.length,
+      confidence: result.confidence,
+    },
+  });
+
+  revalidatePath(`/capture/pursuits/${pursuitId}`);
 }
 

@@ -26,6 +26,11 @@ export {
   type ShredRfpResult,
 } from './tasks/shred-rfp';
 export {
+  suggestRequirements,
+  type SuggestRequirementsInput,
+  type SuggestRequirementsResult,
+} from './tasks/suggest-requirements';
+export {
   draftSection,
   type DraftSectionInput,
   type DraftSectionResult,
@@ -99,10 +104,12 @@ export {
   TranslationOutput,
   ExtractRequirementsOutput,
   ShredRfpOutput,
+  SuggestRequirementsOutput,
   type ClassifyOutputT,
   type SummaryOutputT,
   type LanguageOutputT,
   type TranslationOutputT,
   type ExtractRequirementsOutputT,
   type ShredRfpOutputT,
+  type SuggestRequirementsOutputT,
 } from './types';

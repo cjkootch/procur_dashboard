@@ -140,3 +140,46 @@ export const ShredRfpOutput = z
   .strict();
 
 export type ShredRfpOutputT = z.infer<typeof ShredRfpOutput>;
+
+/** Capability-matrix requirement suggestion. */
+export const SuggestedRequirement = z
+  .object({
+    requirement: z
+      .string()
+      .describe(
+        'A concrete requirement the bidder must satisfy, phrased as a noun phrase or short sentence.',
+      ),
+    priority: z
+      .enum(['must', 'should', 'nice'])
+      .describe('must = bid-killer; should = strongly evaluated; nice = bonus.'),
+    /**
+     * Optional id of the company capability that already covers this
+     * requirement. Null when no obvious match in the bank.
+     */
+    suggestedCapabilityId: z
+      .string()
+      .nullable()
+      .describe('id from the supplied company capability bank, or null'),
+    /**
+     * Coverage assessment given the bank: 'covered' if a clear match,
+     * 'partial' if adjacent, 'gap' if no relevant capability, 'not_assessed'
+     * for cases the model isn't confident enough to call.
+     */
+    coverage: z.enum(['covered', 'partial', 'gap', 'not_assessed']),
+    rationale: z
+      .string()
+      .nullable()
+      .describe(
+        'One sentence on why this requirement was extracted and how it maps (or fails to map) to the bank.',
+      ),
+  })
+  .strict();
+
+export const SuggestRequirementsOutput = z
+  .object({
+    requirements: z.array(SuggestedRequirement),
+    confidence: z.number().min(0).max(1),
+  })
+  .strict();
+
+export type SuggestRequirementsOutputT = z.infer<typeof SuggestRequirementsOutput>;
