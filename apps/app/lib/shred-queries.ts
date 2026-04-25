@@ -1,7 +1,8 @@
 import 'server-only';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNotNull } from 'drizzle-orm';
 import {
   db,
+  documents,
   proposals,
   proposalShreds,
   pursuits,
@@ -109,4 +110,91 @@ export function groupShredsBySection(
     sectionTitle: v.sectionTitle,
     shreds: v.shreds,
   }));
+}
+
+/**
+ * Ownership-checked load of (proposal, opportunityId) by pursuitId.
+ * Returns null if either pursuit ownership or proposal existence fails
+ * — caller can 404 in either case without leaking information.
+ */
+export async function getOwnedProposalWithOpportunity(
+  companyId: string,
+  pursuitId: string,
+): Promise<{ id: string; pursuitId: string; opportunityId: string } | null> {
+  const rows = await db
+    .select({
+      id: proposals.id,
+      pursuitId: proposals.pursuitId,
+      opportunityId: pursuits.opportunityId,
+    })
+    .from(proposals)
+    .innerJoin(pursuits, eq(pursuits.id, proposals.pursuitId))
+    .where(and(eq(proposals.pursuitId, pursuitId), eq(pursuits.companyId, companyId)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export type AvailableShredDocument = {
+  id: string;
+  title: string;
+  documentType: string;
+  pageCount: number | null;
+  textLength: number;
+  processingStatus: string | null;
+};
+
+/**
+ * Documents on the proposal's opportunity that have completed ingestion
+ * and have text we can shred. Filters out documents still in the
+ * ingestion pipeline (no extractedText) — the UI shows them in a
+ * separate "still processing" hint instead of as pickable.
+ */
+export async function listAvailableShredDocuments(
+  opportunityId: string,
+): Promise<AvailableShredDocument[]> {
+  const rows = await db
+    .select({
+      id: documents.id,
+      title: documents.title,
+      documentType: documents.documentType,
+      pageCount: documents.pageCount,
+      extractedText: documents.extractedText,
+      processingStatus: documents.processingStatus,
+    })
+    .from(documents)
+    .where(
+      and(eq(documents.opportunityId, opportunityId), isNotNull(documents.extractedText)),
+    )
+    .orderBy(asc(documents.createdAt));
+
+  return rows
+    .filter((r) => (r.extractedText?.trim().length ?? 0) > 0)
+    .map((r) => ({
+      id: r.id,
+      title: r.title ?? 'Untitled document',
+      documentType: r.documentType,
+      pageCount: r.pageCount,
+      textLength: r.extractedText?.length ?? 0,
+      processingStatus: r.processingStatus,
+    }));
+}
+
+/**
+ * Map of source-document ids → titles for the shreds in a proposal.
+ * Used so each shred row can show a "from doc X" badge without a
+ * per-row JOIN.
+ */
+export async function getSourceDocumentTitlesForProposal(
+  proposalId: string,
+): Promise<Record<string, string>> {
+  const rows = await db
+    .selectDistinct({ id: documents.id, title: documents.title })
+    .from(proposalShreds)
+    .innerJoin(documents, eq(documents.id, proposalShreds.sourceDocumentId))
+    .where(eq(proposalShreds.proposalId, proposalId));
+  const out: Record<string, string> = {};
+  for (const r of rows) {
+    out[r.id] = r.title ?? 'Untitled document';
+  }
+  return out;
 }

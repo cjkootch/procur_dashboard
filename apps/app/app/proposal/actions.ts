@@ -6,6 +6,7 @@ import { redirect } from 'next/navigation';
 import {
   agencies,
   db,
+  documents,
   jurisdictions,
   opportunities,
   proposalComments,
@@ -928,7 +929,7 @@ function toShredType(v: FormDataEntryValue | null): ShredType {
 async function loadOwnedProposal(companyId: string, pursuitId: string) {
   const pursuit = await db.query.pursuits.findFirst({
     where: and(eq(pursuits.id, pursuitId), eq(pursuits.companyId, companyId)),
-    columns: { id: true },
+    columns: { id: true, opportunityId: true },
   });
   if (!pursuit) throw new Error('pursuit not found');
   const proposal = await db.query.proposals.findFirst({
@@ -936,7 +937,7 @@ async function loadOwnedProposal(companyId: string, pursuitId: string) {
     columns: { id: true, pursuitId: true },
   });
   if (!proposal) throw new Error('proposal not found');
-  return proposal;
+  return { ...proposal, opportunityId: pursuit.opportunityId };
 }
 
 async function loadOwnedShred(companyId: string, shredId: string) {
@@ -1097,6 +1098,91 @@ export async function clearAllShredsAction(formData: FormData): Promise<void> {
   const proposal = await loadOwnedProposal(company.id, pursuitId);
 
   await db.delete(proposalShreds).where(eq(proposalShreds.proposalId, proposal.id));
+
+  SHRED_REVALIDATE(pursuitId);
+}
+
+/**
+ * Auto-shred from an already-uploaded RFP document. Reuses the same
+ * Claude pipeline as the paste flow but pulls text from
+ * documents.extractedText (set by the ingestion pipeline) so users
+ * don't have to copy/paste hundreds of pages.
+ *
+ * Caps the input at 200k chars for v1 — larger documents will need a
+ * chunked Trigger.dev background job, which we can add when first
+ * customer hits it. Tracks sourceDocumentId on each inserted shred so
+ * the UI can show provenance.
+ */
+export async function shredRfpFromDocumentAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const documentId = String(formData.get('documentId') ?? '');
+  if (!pursuitId || !documentId) throw new Error('pursuitId + documentId required');
+
+  const proposal = await loadOwnedProposal(company.id, pursuitId);
+
+  // Verify the document belongs to the same opportunity as the pursuit.
+  // Otherwise a malicious actor could pass a documentId from another
+  // company's opportunity and shred its text.
+  const doc = await db.query.documents.findFirst({
+    where: eq(documents.id, documentId),
+    columns: {
+      id: true,
+      title: true,
+      opportunityId: true,
+      extractedText: true,
+      processingStatus: true,
+    },
+  });
+  if (!doc || doc.opportunityId !== proposal.opportunityId) {
+    throw new Error('document not found');
+  }
+  if (!doc.extractedText || doc.extractedText.trim().length === 0) {
+    throw new Error('document has no extracted text — wait for ingestion to complete');
+  }
+
+  const fullTextLength = doc.extractedText.length;
+  const rfpText = doc.extractedText.slice(0, 200_000);
+  const truncated = fullTextLength > 200_000;
+
+  const result = await shredRfp({
+    rfpText,
+    sectionHint: doc.title ?? undefined,
+  });
+
+  await meter({
+    companyId: company.id,
+    source: 'shred_rfp',
+    model: MODELS.sonnet,
+    usage: result.usage,
+  });
+
+  if (result.sentences.length === 0) {
+    SHRED_REVALIDATE(pursuitId);
+    return;
+  }
+
+  const existing = await db
+    .select({ sortOrder: proposalShreds.sortOrder })
+    .from(proposalShreds)
+    .where(eq(proposalShreds.proposalId, proposal.id));
+  const maxSort = existing.reduce((m, r) => Math.max(m, r.sortOrder), -1);
+
+  const rows: NewProposalShred[] = result.sentences.map((s, i) => ({
+    proposalId: proposal.id,
+    sectionPath: s.sectionPath,
+    sectionTitle: s.sectionTitle,
+    sentenceText: s.sentenceText,
+    shredType: s.shredType,
+    sourceDocumentId: documentId,
+    notes:
+      truncated && i === 0
+        ? `Truncated at 200k chars (full doc was ${fullTextLength}).`
+        : null,
+    sortOrder: maxSort + 1 + i,
+  }));
+
+  await db.insert(proposalShreds).values(rows);
 
   SHRED_REVALIDATE(pursuitId);
 }

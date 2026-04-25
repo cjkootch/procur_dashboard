@@ -3,11 +3,14 @@ import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
 import { SHRED_TYPES, type ProposalShred, type ShredType } from '@procur/db';
 import {
-  getOwnedProposalForPursuit,
+  getOwnedProposalWithOpportunity,
+  getSourceDocumentTitlesForProposal,
   groupShredsBySection,
+  listAvailableShredDocuments,
   listShredsForProposal,
   SHRED_TYPE_LABEL,
   summarizeShreds,
+  type AvailableShredDocument,
   type ShredSummary,
 } from '../../../../lib/shred-queries';
 import { chipClass, type ChipTone } from '../../../../lib/chips';
@@ -15,6 +18,7 @@ import {
   addShredAction,
   clearAllShredsAction,
   removeShredAction,
+  shredRfpFromDocumentAction,
   shredRfpFromTextAction,
   toggleShredAccountedForAction,
   updateShredAction,
@@ -37,10 +41,14 @@ export default async function ShredPage({ params }: { params: Promise<Params> })
   const { pursuitId } = await params;
   const { company } = await requireCompany();
 
-  const proposal = await getOwnedProposalForPursuit(company.id, pursuitId);
+  const proposal = await getOwnedProposalWithOpportunity(company.id, pursuitId);
   if (!proposal) notFound();
 
-  const shreds = await listShredsForProposal(proposal.id);
+  const [shreds, documentsAvailable, sourceDocTitles] = await Promise.all([
+    listShredsForProposal(proposal.id),
+    listAvailableShredDocuments(proposal.opportunityId),
+    getSourceDocumentTitlesForProposal(proposal.id),
+  ]);
   const summary = summarizeShreds(shreds);
   const groups = groupShredsBySection(shreds);
 
@@ -79,6 +87,11 @@ export default async function ShredPage({ params }: { params: Promise<Params> })
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_18rem]">
         <main className="space-y-5 min-w-0">
+          {/* Auto-shred from uploaded documents (preferred) */}
+          {documentsAvailable.length > 0 && (
+            <AutoShredCard pursuitId={pursuitId} docs={documentsAvailable} />
+          )}
+
           {/* Bulk import */}
           <BulkImportCard pursuitId={pursuitId} hasShreds={shreds.length > 0} />
 
@@ -100,6 +113,7 @@ export default async function ShredPage({ params }: { params: Promise<Params> })
                   sectionPath={g.sectionPath}
                   sectionTitle={g.sectionTitle}
                   shreds={g.shreds}
+                  sourceDocTitles={sourceDocTitles}
                 />
               ))}
             </div>
@@ -139,6 +153,57 @@ function SummaryStrip({ summary }: { summary: ShredSummary }) {
         label="Shall / Will / Must"
         value={`${summary.byType.shall} / ${summary.byType.will} / ${summary.byType.must}`}
       />
+    </section>
+  );
+}
+
+function AutoShredCard({
+  pursuitId,
+  docs,
+}: {
+  pursuitId: string;
+  docs: AvailableShredDocument[];
+}) {
+  return (
+    <section className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-4">
+      <h2 className="text-sm font-semibold">Shred from an uploaded document</h2>
+      <p className="mt-1 mb-3 text-xs text-[color:var(--color-muted-foreground)]">
+        Pick a document already attached to this opportunity and Claude will extract
+        every compliance sentence from its full text. Documents over 200k characters
+        are truncated; chunk-based processing for larger documents is coming soon.
+      </p>
+      <form
+        action={shredRfpFromDocumentAction}
+        className="grid gap-2 sm:grid-cols-[1fr_auto]"
+      >
+        <input type="hidden" name="pursuitId" value={pursuitId} />
+        <select
+          name="documentId"
+          required
+          defaultValue=""
+          className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
+        >
+          <option value="" disabled>
+            Choose a document…
+          </option>
+          {docs.map((d) => {
+            const kchars = Math.round(d.textLength / 1000);
+            const trunc = d.textLength > 200_000 ? ' · truncated' : '';
+            const pages = d.pageCount ? ` · ${d.pageCount} pages` : '';
+            return (
+              <option key={d.id} value={d.id}>
+                {d.title} ({d.documentType}){pages} · {kchars}k chars{trunc}
+              </option>
+            );
+          })}
+        </select>
+        <button
+          type="submit"
+          className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
+        >
+          Shred document
+        </button>
+      </form>
     </section>
   );
 }
@@ -242,11 +307,13 @@ function SectionGroup({
   sectionPath,
   sectionTitle,
   shreds,
+  sourceDocTitles,
 }: {
   pursuitId: string;
   sectionPath: string;
   sectionTitle: string | null;
   shreds: ProposalShred[];
+  sourceDocTitles: Record<string, string>;
 }) {
   const mandatory = shreds.filter((s) =>
     (['shall', 'will', 'must'] as ShredType[]).includes(s.shredType),
@@ -271,17 +338,35 @@ function SectionGroup({
       </header>
       <ul className="divide-y divide-[color:var(--color-border)]/60">
         {shreds.map((s) => (
-          <ShredRow key={s.id} shred={s} pursuitId={pursuitId} />
+          <ShredRow
+            key={s.id}
+            shred={s}
+            pursuitId={pursuitId}
+            sourceDocTitle={s.sourceDocumentId ? sourceDocTitles[s.sourceDocumentId] : null}
+          />
         ))}
       </ul>
     </section>
   );
 }
 
-function ShredRow({ shred, pursuitId }: { shred: ProposalShred; pursuitId: string }) {
+function ShredRow({
+  shred,
+  pursuitId,
+  sourceDocTitle,
+}: {
+  shred: ProposalShred;
+  pursuitId: string;
+  sourceDocTitle: string | null | undefined;
+}) {
   const isMandatory = (['shall', 'will', 'must'] as ShredType[]).includes(shred.shredType);
   return (
     <li className="px-4 py-2">
+      {sourceDocTitle && (
+        <div className="mb-1 text-[10px] text-[color:var(--color-muted-foreground)]">
+          from <span className="italic">{sourceDocTitle}</span>
+        </div>
+      )}
       <div className="grid items-start gap-2 sm:grid-cols-[1.5rem_1fr_5.5rem_8rem_5rem]">
         {/* Accounted-for checkbox */}
         <form action={toggleShredAccountedForAction} className="pt-1">
