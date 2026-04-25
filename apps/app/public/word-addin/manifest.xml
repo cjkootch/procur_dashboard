@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+  xsi:type="TaskPaneApp">
+
+  <!-- Generate a fresh GUID per environment if you ship to AppSource. This
+       static GUID is fine for sideloaded development + private deployment. -->
+  <Id>5b3a7e84-9e21-4c3a-b53c-6f1e9f3e7b40</Id>
+  <Version>0.1.0.0</Version>
+  <ProviderName>Procur</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+
+  <DisplayName DefaultValue="Procur" />
+  <Description DefaultValue="Generate compliant proposal sections from your Procur capture data, right inside Word." />
+
+  <IconUrl DefaultValue="https://app.procur.app/word-addin/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://app.procur.app/word-addin/icon-80.png" />
+  <SupportUrl DefaultValue="https://procur.app" />
+
+  <!-- Domains the taskpane is allowed to navigate to. The taskpane itself
+       lives at app.procur.app; the API is same-origin so no CORS dance. -->
+  <AppDomains>
+    <AppDomain>https://app.procur.app</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Document" />
+  </Hosts>
+
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://app.procur.app/word-addin/taskpane.html" />
+  </DefaultSettings>
+
+  <Permissions>ReadWriteDocument</Permissions>
+
+  <!-- Modern manifest overrides — adds a ribbon button + custom icon -->
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Document">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="Procur.GetStarted.Title" />
+            <Description resid="Procur.GetStarted.Description" />
+            <LearnMoreUrl resid="Procur.GetStarted.LearnMoreUrl" />
+          </GetStarted>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="Procur.Group">
+                <Label resid="Procur.GroupLabel" />
+                <Icon>
+                  <bt:Image size="16" resid="Procur.Icon.16" />
+                  <bt:Image size="32" resid="Procur.Icon.32" />
+                  <bt:Image size="80" resid="Procur.Icon.80" />
+                </Icon>
+                <Control xsi:type="Button" id="Procur.OpenTaskPane">
+                  <Label resid="Procur.OpenTaskPane.Label" />
+                  <Supertip>
+                    <Title resid="Procur.OpenTaskPane.Title" />
+                    <Description resid="Procur.OpenTaskPane.Description" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Procur.Icon.16" />
+                    <bt:Image size="32" resid="Procur.Icon.32" />
+                    <bt:Image size="80" resid="Procur.Icon.80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>Procur.Taskpane</TaskpaneId>
+                    <SourceLocation resid="Procur.Taskpane.Url" />
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Procur.Icon.16" DefaultValue="https://app.procur.app/word-addin/icon-16.png" />
+        <bt:Image id="Procur.Icon.32" DefaultValue="https://app.procur.app/word-addin/icon-32.png" />
+        <bt:Image id="Procur.Icon.80" DefaultValue="https://app.procur.app/word-addin/icon-80.png" />
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Procur.Taskpane.Url" DefaultValue="https://app.procur.app/word-addin/taskpane.html" />
+        <bt:Url id="Procur.GetStarted.LearnMoreUrl" DefaultValue="https://app.procur.app/settings/word-addin" />
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="Procur.GroupLabel" DefaultValue="Procur" />
+        <bt:String id="Procur.OpenTaskPane.Label" DefaultValue="Open Procur" />
+        <bt:String id="Procur.OpenTaskPane.Title" DefaultValue="Procur for Word" />
+        <bt:String id="Procur.GetStarted.Title" DefaultValue="Welcome to Procur" />
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="Procur.OpenTaskPane.Description" DefaultValue="Generate compliant proposal sections from your Procur capture data." />
+        <bt:String id="Procur.GetStarted.Description" DefaultValue="Open the Procur task pane, paste your access token, then pick a proposal to start drafting." />
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>
