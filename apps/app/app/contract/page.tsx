@@ -16,10 +16,33 @@ type SearchParams = {
   layout?: string;
   tier?: string;
   status?: string;
+  q?: string;
 };
 
 function isLayout(v: string | undefined): v is Layout {
   return v === 'table' || v === 'rows';
+}
+
+/**
+ * Substring-match a contract row against a query string. Case-insensitive.
+ * Match across the fields a user is likely to remember: award title,
+ * agency, contract / task-order / parent / subcontract numbers.
+ */
+function contractMatches(r: ContractListRow, q: string): boolean {
+  const needle = q.trim().toLowerCase();
+  if (needle.length === 0) return true;
+  const haystack = [
+    r.awardTitle,
+    r.awardingAgency,
+    r.contractNumber,
+    r.parentContractNumber,
+    r.taskOrderNumber,
+    r.subcontractNumber,
+  ]
+    .filter(Boolean)
+    .join('  ')
+    .toLowerCase();
+  return haystack.includes(needle);
 }
 
 export default async function ContractListPage({
@@ -31,6 +54,7 @@ export default async function ContractListPage({
   const layout: Layout = isLayout(sp.layout) ? sp.layout : 'table';
   const tierFilter = sp.tier && sp.tier !== 'all' ? sp.tier : null;
   const statusFilter = sp.status && sp.status !== 'all' ? sp.status : null;
+  const q = (sp.q ?? '').trim();
 
   const { company } = await requireCompany();
   const [allRows, awardable] = await Promise.all([
@@ -41,6 +65,7 @@ export default async function ContractListPage({
   const rows = allRows.filter((r) => {
     if (tierFilter && r.tier !== tierFilter) return false;
     if (statusFilter && r.status !== statusFilter) return false;
+    if (q && !contractMatches(r, q)) return false;
     return true;
   });
 
@@ -52,8 +77,14 @@ export default async function ContractListPage({
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Contract Inventory</h1>
           <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-            {rows.length} of {allRows.length} contracts · track awards, task orders, and
-            subcontracts; record obligations so nothing slips after the win
+            {rows.length} of {allRows.length} contracts
+            {q && (
+              <>
+                {' '}· matching <span className="font-medium">&ldquo;{q}&rdquo;</span>
+              </>
+            )}
+            {' '}· track awards, task orders, and subcontracts; record obligations
+            so nothing slips after the win
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -82,8 +113,15 @@ export default async function ContractListPage({
       {/* Filter toolbar */}
       <form
         method="get"
-        className="flex items-center gap-2 border-b border-[color:var(--color-border)] px-6 py-2 text-xs"
+        className="flex flex-wrap items-center gap-2 border-b border-[color:var(--color-border)] px-6 py-2 text-xs"
       >
+        <input
+          type="search"
+          name="q"
+          defaultValue={q}
+          placeholder="Search by title, agency, contract #…"
+          className="min-w-[14rem] flex-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs focus:border-[color:var(--color-foreground)] focus:outline-none"
+        />
         <FilterSelect
           name="tier"
           label="Tier"
@@ -113,7 +151,7 @@ export default async function ContractListPage({
         >
           Apply
         </button>
-        {(tierFilter || statusFilter) && (
+        {(tierFilter || statusFilter || q) && (
           <Link
             href={`/contract?layout=${layout}`}
             className="text-[color:var(--color-muted-foreground)] hover:underline"
@@ -307,6 +345,7 @@ function LayoutToggle({ current, sp }: { current: Layout; sp: SearchParams }) {
     params.set('layout', layout);
     if (sp.tier && sp.tier !== 'all') params.set('tier', sp.tier);
     if (sp.status && sp.status !== 'all') params.set('status', sp.status);
+    if (sp.q) params.set('q', sp.q);
     return `/contract?${params.toString()}`;
   }
   return (
