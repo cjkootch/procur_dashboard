@@ -127,6 +127,13 @@
       "when": 1777140000000,
       "tag": "0017_pricing_indirect_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1777150000000,
+      "tag": "0019_user_fk_cascades",
+      "breakpoints": true
     }
   ]
 }

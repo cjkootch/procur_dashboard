@@ -13,10 +13,10 @@ export const proposalComments = pgTable(
     sectionId: uuid('section_id'),
     body: text('body').notNull(),
     createdBy: uuid('created_by')
-      .references(() => users.id)
+      .references(() => users.id, { onDelete: 'cascade' })
       .notNull(),
     resolvedAt: timestamp('resolved_at'),
-    resolvedBy: uuid('resolved_by').references(() => users.id),
+    resolvedBy: uuid('resolved_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

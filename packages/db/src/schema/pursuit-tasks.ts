@@ -14,7 +14,7 @@ export const pursuitTasks = pgTable(
     description: text('description'),
     dueDate: date('due_date'),
     completedAt: timestamp('completed_at'),
-    assignedUserId: uuid('assigned_user_id').references(() => users.id),
+    assignedUserId: uuid('assigned_user_id').references(() => users.id, { onDelete: 'set null' }),
 
     priority: text('priority').default('medium'),
     category: text('category'),

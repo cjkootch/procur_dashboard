@@ -7,7 +7,7 @@ export const savedOpportunities = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     userId: uuid('user_id')
-      .references(() => users.id)
+      .references(() => users.id, { onDelete: 'cascade' })
       .notNull(),
     opportunityId: uuid('opportunity_id')
       .references(() => opportunities.id)

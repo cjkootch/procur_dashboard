@@ -1,4 +1,10 @@
-import { db, users, companies } from '@procur/db';
+import {
+  db,
+  users,
+  companies,
+  pursuits,
+  pursuitTasks,
+} from '@procur/db';
 import { eq } from 'drizzle-orm';
 
 type ClerkUserEvent = {
@@ -111,6 +117,29 @@ export async function applyMembership(data: ClerkMembershipEvent): Promise<void>
 }
 
 export async function removeMembership(data: ClerkMembershipEvent): Promise<void> {
+  // Clear assignments on the user before unbinding them. Without this,
+  // a removed teammate would still appear as the assignee on pursuits +
+  // tasks they no longer have access to — and the cascade rules only
+  // fire on a full user delete, not a membership change.
+  const user = await db.query.users.findFirst({
+    where: eq(users.clerkId, data.public_user_data.user_id),
+    columns: { id: true },
+  });
+  if (user) {
+    await db
+      .update(pursuits)
+      .set({ assignedUserId: null, updatedAt: new Date() })
+      .where(eq(pursuits.assignedUserId, user.id));
+    await db
+      .update(pursuits)
+      .set({ captureManagerId: null, updatedAt: new Date() })
+      .where(eq(pursuits.captureManagerId, user.id));
+    await db
+      .update(pursuitTasks)
+      .set({ assignedUserId: null, updatedAt: new Date() })
+      .where(eq(pursuitTasks.assignedUserId, user.id));
+  }
+
   await db
     .update(users)
     .set({ companyId: null, role: 'member', updatedAt: new Date() })

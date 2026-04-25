@@ -71,7 +71,7 @@ export const proposals = pgTable(
   latestPdfExportUrl: text('latest_pdf_export_url'),
 
   submittedAt: timestamp('submitted_at'),
-  submittedBy: uuid('submitted_by').references(() => users.id),
+  submittedBy: uuid('submitted_by').references(() => users.id, { onDelete: 'set null' }),
   submissionConfirmation: text('submission_confirmation'),
 
   createdAt: timestamp('created_at').defaultNow().notNull(),

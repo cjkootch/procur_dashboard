@@ -52,7 +52,7 @@ export const pursuitGateReviews = pgTable(
     stage: text('stage').notNull(),
     decision: text('decision').$type<GateReviewDecision>().notNull().default('pending'),
 
-    reviewerUserId: uuid('reviewer_user_id').references(() => users.id),
+    reviewerUserId: uuid('reviewer_user_id').references(() => users.id, { onDelete: 'set null' }),
     summary: text('summary'),
     criteria: jsonb('criteria').$type<GateReviewCriterion[]>().notNull().default([]),
 

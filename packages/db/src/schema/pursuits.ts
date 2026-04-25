@@ -44,8 +44,8 @@ export const pursuits = pgTable(
       customerRelationships?: Array<{ name: string; role: string; notes: string }>;
     }>(),
 
-    assignedUserId: uuid('assigned_user_id').references(() => users.id),
-    captureManagerId: uuid('capture_manager_id').references(() => users.id),
+    assignedUserId: uuid('assigned_user_id').references(() => users.id, { onDelete: 'set null' }),
+    captureManagerId: uuid('capture_manager_id').references(() => users.id, { onDelete: 'set null' }),
 
     submittedAt: timestamp('submitted_at'),
     submittedValue: numeric('submitted_value', { precision: 20, scale: 2 }),
