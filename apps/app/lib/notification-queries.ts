@@ -6,6 +6,10 @@ import {
   type NewNotification,
   type Notification,
 } from '@procur/db';
+import {
+  filterRecipientsByPreference,
+  notificationsEnabledFor,
+} from './notification-preferences';
 
 /**
  * Notification producer. Always swallows write errors — a notification
@@ -13,9 +17,14 @@ import {
  *
  * Producers should call this from inside the action that caused the
  * event, AFTER the primary mutation has succeeded.
+ *
+ * Honors per-user preferences: if the recipient has muted this type
+ * via /settings/notifications, the row is silently skipped.
  */
 export async function insertNotification(input: NewNotification): Promise<void> {
   try {
+    const enabled = await notificationsEnabledFor(input.userId, input.type);
+    if (!enabled) return;
     await db.insert(notifications).values(input);
   } catch (err) {
     console.error('[notifications] insert failed', err, {
@@ -26,18 +35,19 @@ export async function insertNotification(input: NewNotification): Promise<void> 
 }
 
 /**
- * Insert notifications for multiple recipients at once. Used when a
- * pursuit-level event fans out to every member of the company; today
- * we only fan out to a single assignee, but the helper is here for
- * comments / mentions / digests later.
+ * Insert notifications for multiple recipients at once. Filters out
+ * users who have muted the type before the bulk insert, so a comment
+ * @-mentioning 5 people only writes 3 rows if 2 muted.
  */
 export async function insertNotificationsForUsers(
   userIds: string[],
   base: Omit<NewNotification, 'userId'>,
 ): Promise<void> {
   if (userIds.length === 0) return;
-  const rows = userIds.map((userId) => ({ ...base, userId }));
   try {
+    const recipients = await filterRecipientsByPreference(userIds, base.type);
+    if (recipients.length === 0) return;
+    const rows = recipients.map((userId) => ({ ...base, userId }));
     await db.insert(notifications).values(rows);
   } catch (err) {
     console.error('[notifications] bulk insert failed', err);
