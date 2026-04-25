@@ -34,8 +34,9 @@ import {
   type TeamRole,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
-import { STAGE_ORDER, type PursuitStageKey, getActivePursuitCount } from '../../lib/capture-queries';
+import { STAGE_ORDER, STAGE_LABEL, type PursuitStageKey, getActivePursuitCount } from '../../lib/capture-queries';
 import { seedCriteria } from '../../lib/gate-review-queries';
+import { insertNotification } from '../../lib/notification-queries';
 import { FREE_TIER_ACTIVE_PURSUIT_CAP } from '../../lib/plan-limits';
 
 async function resolveUserAndCompany() {
@@ -138,7 +139,7 @@ export async function moveStageAction(formData: FormData): Promise<void> {
 
   const prior = await db.query.pursuits.findFirst({
     where: and(eq(pursuits.id, pursuitId), eq(pursuits.companyId, company.id)),
-    columns: { stage: true },
+    columns: { stage: true, assignedUserId: true },
   });
   if (!prior) throw new Error('pursuit not found');
   if (prior.stage === stage) return;
@@ -161,6 +162,21 @@ export async function moveStageAction(formData: FormData): Promise<void> {
     pursuitId,
     changes: { before: { stage: prior.stage }, after: { stage } },
   });
+
+  // Notify the assignee (if anyone is assigned and they didn't make the
+  // move themselves). Self-moves don't need a self-notification.
+  if (prior.assignedUserId && prior.assignedUserId !== user.id) {
+    await insertNotification({
+      userId: prior.assignedUserId,
+      companyId: company.id,
+      type: 'pursuit.stage_moved',
+      title: `Pursuit moved to ${STAGE_LABEL[stage]}`,
+      body: `From ${STAGE_LABEL[prior.stage as PursuitStageKey] ?? prior.stage}.`,
+      link: `/capture/pursuits/${pursuitId}`,
+      entityType: 'pursuit',
+      entityId: pursuitId,
+    });
+  }
 
   revalidatePath('/capture');
   revalidatePath('/capture/pipeline');
@@ -454,6 +470,29 @@ export async function updateGateReviewAction(formData: FormData): Promise<void> 
     changes: { before: { decision: existing.decision }, after: { decision } },
     metadata: { gateReviewId, stage: existing.stage },
   });
+
+  // Notify the pursuit assignee on a meaningful decision transition
+  // (pending → pass/conditional/fail). Not every save — only when the
+  // decision actually changes — so reviewers tweaking their own
+  // summary don't spam the inbox.
+  if (decision !== existing.decision && decision !== 'pending') {
+    const owner = await db.query.pursuits.findFirst({
+      where: eq(pursuits.id, existing.pursuitId),
+      columns: { assignedUserId: true },
+    });
+    if (owner?.assignedUserId && owner.assignedUserId !== user.id) {
+      await insertNotification({
+        userId: owner.assignedUserId,
+        companyId: company.id,
+        type: 'pursuit.gate_review_decided',
+        title: `Gate review: ${decision === 'pass' ? 'passed' : decision === 'fail' ? 'failed' : decision}`,
+        body: `Stage: ${existing.stage}. ${summary ? summary.slice(0, 140) : ''}`,
+        link: `/capture/pursuits/${existing.pursuitId}?tab=gate-reviews`,
+        entityType: 'gate_review',
+        entityId: gateReviewId,
+      });
+    }
+  }
 
   revalidatePath(`/capture/pursuits/${existing.pursuitId}`);
 }

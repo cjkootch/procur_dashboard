@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 import { UserButton } from '@clerk/nextjs';
 import { getCurrentCompany, getCurrentUser } from '@procur/auth';
+import { NotificationsBell } from './NotificationsBell';
 import { QuickCreate } from './QuickCreate';
 import { SidebarNavLink } from './SidebarNavLink';
 
@@ -141,6 +142,7 @@ export async function AppShell({
             >
               Get help
             </a>
+            <NotificationsBell />
             <UserButton afterSignOutUrl="/sign-in" />
           </div>
         </header>
