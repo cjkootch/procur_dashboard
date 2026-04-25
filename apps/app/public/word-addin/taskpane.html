@@ -25,7 +25,10 @@
           </a>
           and create a token. Paste it below — we&rsquo;ll remember it on this device.
         </p>
-        <input id="tokenInput" type="password" placeholder="prc_word_…" autocomplete="off" />
+        <label class="field" for="tokenInput">
+          <span>Access token</span>
+          <input id="tokenInput" type="password" placeholder="prc_word_…" autocomplete="off" />
+        </label>
         <button id="pairBtn" type="button">Pair</button>
         <p id="pairError" class="error hidden"></p>
       </section>

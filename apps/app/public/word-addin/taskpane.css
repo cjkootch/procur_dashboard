@@ -154,6 +154,19 @@ button.link {
   font-size: inherit;
 }
 
+/* Visible focus rings — required for Office's WebView/WKWebView, which
+   strips Chromium's default focus-ring in some host configurations
+   (Word for Mac in particular). Restores keyboard discoverability and
+   covers Windows High-Contrast mode. */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--procur-navy);
+  outline-offset: 2px;
+}
+
 .row {
   display: flex;
   align-items: center;

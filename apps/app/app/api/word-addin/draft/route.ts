@@ -53,7 +53,11 @@ export async function POST(req: Request): Promise<Response> {
   }
   const proposalId = String(body.proposalId ?? '');
   const sectionId = body.sectionId ? String(body.sectionId) : null;
-  const instruction = body.instruction ? String(body.instruction).trim() : '';
+  // Cap the user-supplied instruction. A pathological client could
+  // otherwise pad this to push token usage way past intent.
+  const instruction = body.instruction
+    ? String(body.instruction).trim().slice(0, 4000)
+    : '';
   if (!proposalId) return jsonResponse({ error: 'proposalId required' }, { status: 400 });
 
   // Ownership-checked load of (proposal, pursuit, opportunity, company).

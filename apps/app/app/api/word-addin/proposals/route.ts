@@ -17,6 +17,9 @@ export async function GET(req: Request): Promise<Response> {
   const auth = await authenticateWordAddinRequest(req);
   if (!auth) return unauthorized();
 
+  // Cap at 100 most-recently-updated proposals. The Word add-in dropdown
+  // can't usefully display more, and an unbounded query would ship every
+  // proposal a customer ever had over the wire on every taskpane open.
   const rows = await db
     .select({
       proposalId: proposals.id,
@@ -30,7 +33,8 @@ export async function GET(req: Request): Promise<Response> {
     .innerJoin(pursuits, eq(pursuits.id, proposals.pursuitId))
     .innerJoin(opportunities, eq(opportunities.id, pursuits.opportunityId))
     .where(eq(pursuits.companyId, auth.companyId))
-    .orderBy(desc(proposals.updatedAt));
+    .orderBy(desc(proposals.updatedAt))
+    .limit(100);
 
   const items = rows.map((r) => {
     const outline = (r.outline as OutlineSection[] | null) ?? [];

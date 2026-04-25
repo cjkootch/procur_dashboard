@@ -21,6 +21,9 @@ import {
 } from '../../actions';
 
 export const dynamic = 'force-dynamic';
+// shredRfpFromTextAction can run 30-90s on long RFP sections. Default
+// Vercel maxDuration is 60s on Pro, so we bump to 120s explicitly.
+export const maxDuration = 120;
 
 const TYPE_TONE: Record<ShredType, ChipTone> = {
   shall: 'danger',
@@ -162,6 +165,7 @@ function BulkImportCard({
         <input type="hidden" name="pursuitId" value={pursuitId} />
         <input
           name="sectionHint"
+          aria-label="Section hint"
           placeholder="Section hint (optional, e.g. 'Volume I')"
           className="w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
         />
@@ -169,6 +173,7 @@ function BulkImportCard({
           name="rfpText"
           rows={hasShreds ? 6 : 12}
           required
+          aria-label="RFP section text to classify"
           maxLength={200_000}
           placeholder="Paste RFP section text here…"
           className="w-full resize-y rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 font-mono text-xs"
@@ -200,22 +205,26 @@ function ManualAddCard({ pursuitId }: { pursuitId: string }) {
           <input type="hidden" name="pursuitId" value={pursuitId} />
           <input
             name="sectionPath"
+            aria-label="Section number"
             placeholder="Section (e.g. 1.1.3)"
             className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
           />
           <input
             name="sectionTitle"
+            aria-label="Section title"
             placeholder="Section title"
             className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
           />
           <input
             name="sentenceText"
+            aria-label="Sentence verbatim"
             placeholder="Sentence verbatim"
             required
             className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
           />
           <select
             name="shredType"
+            aria-label="Shred type"
             defaultValue="shall"
             className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
           >
@@ -289,6 +298,8 @@ function ShredRow({ shred, pursuitId }: { shred: ProposalShred; pursuitId: strin
           <input type="hidden" name="pursuitId" value={pursuitId} />
           <button
             type="submit"
+            role="checkbox"
+            aria-checked={shred.accountedFor}
             aria-label={shred.accountedFor ? 'Mark not accounted for' : 'Mark accounted for'}
             title={
               isMandatory
@@ -297,13 +308,13 @@ function ShredRow({ shred, pursuitId }: { shred: ProposalShred; pursuitId: strin
                   : 'Mandatory item — not yet accounted for'
                 : 'Toggle accounted for'
             }
-            className={`flex h-5 w-5 items-center justify-center rounded border text-xs transition ${
+            className={`flex h-5 w-5 items-center justify-center rounded border text-xs transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-foreground)] ${
               shred.accountedFor
                 ? 'border-emerald-500 bg-emerald-500 text-white'
-                : 'border-[color:var(--color-border)] bg-[color:var(--color-background)] hover:bg-[color:var(--color-muted)]/40'
+                : 'border-[color:var(--color-foreground)]/40 bg-[color:var(--color-background)] hover:bg-[color:var(--color-muted)]/40'
             }`}
           >
-            {shred.accountedFor ? '✓' : ''}
+            <span aria-hidden>{shred.accountedFor ? '✓' : '·'}</span>
           </button>
         </form>
 
@@ -317,12 +328,14 @@ function ShredRow({ shred, pursuitId }: { shred: ProposalShred; pursuitId: strin
           <input type="hidden" name="pursuitId" value={pursuitId} />
           <textarea
             name="sentenceText"
+            aria-label="Sentence text"
             rows={2}
             defaultValue={shred.sentenceText}
             className="w-full resize-y rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs"
           />
           <select
             name="shredType"
+            aria-label="Shred type"
             defaultValue={shred.shredType}
             className={`rounded-full px-2 py-1 text-[11px] font-medium ${chipClass(TYPE_TONE[shred.shredType])}`}
           >
@@ -334,6 +347,7 @@ function ShredRow({ shred, pursuitId }: { shred: ProposalShred; pursuitId: strin
           </select>
           <input
             name="addressedInSection"
+            aria-label="Addressed in proposal section"
             defaultValue={shred.addressedInSection ?? ''}
             placeholder="Addressed in §"
             className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs"

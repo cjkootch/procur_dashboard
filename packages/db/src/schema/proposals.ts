@@ -1,9 +1,11 @@
-import { pgTable, uuid, text, timestamp, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, jsonb, index } from 'drizzle-orm/pg-core';
 import { proposalStatusEnum } from './enums';
 import { pursuits } from './pursuits';
 import { users } from './users';
 
-export const proposals = pgTable('proposals', {
+export const proposals = pgTable(
+  'proposals',
+  {
   id: uuid('id').primaryKey().defaultRandom(),
   pursuitId: uuid('pursuit_id')
     .references(() => pursuits.id)
@@ -74,7 +76,14 @@ export const proposals = pgTable('proposals', {
 
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
+  },
+  (table) => ({
+    pursuitUpdatedIdx: index('proposals_pursuit_updated_idx').on(
+      table.pursuitId,
+      table.updatedAt,
+    ),
+  }),
+);
 
 export type Proposal = typeof proposals.$inferSelect;
 export type NewProposal = typeof proposals.$inferInsert;

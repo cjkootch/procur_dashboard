@@ -1,7 +1,18 @@
-import { pgTable, uuid, text, timestamp, numeric, date, vector } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  numeric,
+  date,
+  vector,
+  index,
+} from 'drizzle-orm/pg-core';
 import { companies } from './companies';
 
-export const pastPerformance = pgTable('past_performance', {
+export const pastPerformance = pgTable(
+  'past_performance',
+  {
   id: uuid('id').primaryKey().defaultRandom(),
   companyId: uuid('company_id')
     .references(() => companies.id)
@@ -34,7 +45,11 @@ export const pastPerformance = pgTable('past_performance', {
 
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
+  },
+  (table) => ({
+    companyIdx: index('past_performance_company_idx').on(table.companyId),
+  }),
+);
 
 export type PastPerformance = typeof pastPerformance.$inferSelect;
 export type NewPastPerformance = typeof pastPerformance.$inferInsert;

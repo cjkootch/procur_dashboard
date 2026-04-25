@@ -20,11 +20,15 @@ const HIGHLIGHTS = [
 /**
  * Two-pane auth shell used by /sign-in and /sign-up. Brand panel on
  * the left (navy background, logo, tagline, feature highlights); the
- * Clerk component hosts on the right with a card frame. Stacks on
- * mobile so the form stays above the fold.
+ * Clerk component hosts on the right.
  *
- * Both panes are full-bleed on small screens — the brand panel collapses
- * to a slim header so it doesn't push the auth form below the fold.
+ * Layout breakpoints:
+ *   - lg (≥1024px): two-column 1fr/1fr split, brand on the left.
+ *   - md (768-1023px, tablets): two-column with a narrower brand
+ *     column so the form fits next to it without scrolling. Highlights
+ *     are hidden to keep the brand pane compact.
+ *   - <md (phones): brand pane collapses to a slim header strip so the
+ *     auth form stays above the fold.
  */
 export function AuthShell({
   title,
@@ -38,9 +42,9 @@ export function AuthShell({
   children: ReactNode;
 }) {
   return (
-    <main className="grid min-h-screen lg:grid-cols-[1fr_1fr]">
+    <main className="grid min-h-screen md:grid-cols-[18rem_1fr] lg:grid-cols-[1fr_1fr]">
       {/* Brand panel */}
-      <aside className="relative flex flex-col justify-between overflow-hidden bg-[#000734] px-8 py-10 text-white lg:px-12 lg:py-14">
+      <aside className="relative flex flex-col justify-between overflow-hidden bg-[#000734] px-6 py-6 text-white md:px-8 md:py-10 lg:px-12 lg:py-14">
         {/* Soft radial glow + diagonal accent — aesthetic, no dependencies */}
         <div
           aria-hidden
@@ -58,18 +62,20 @@ export function AuthShell({
               width={140}
               height={56}
               priority
-              className="h-10 w-auto"
+              className="h-8 w-auto md:h-10"
             />
           </Link>
-          <p className="mt-8 max-w-md text-2xl font-semibold leading-tight lg:text-3xl">
+          <p className="mt-6 max-w-md text-xl font-semibold leading-tight md:mt-8 md:text-2xl lg:text-3xl">
             Win government contracts in emerging markets.
           </p>
-          <p className="mt-3 max-w-md text-sm leading-relaxed text-white/70">
+          {/* Tagline + highlights only render on md+; phones get just the
+              logo strip + headline so the form stays above the fold. */}
+          <p className="mt-3 hidden max-w-md text-sm leading-relaxed text-white/70 md:block">
             One workspace from tender discovery to contract delivery — for teams
             bidding in the Caribbean, Latin America, and Africa.
           </p>
 
-          <ul className="mt-10 space-y-5 max-w-md">
+          <ul className="mt-10 hidden max-w-md space-y-5 lg:block">
             {HIGHLIGHTS.map((h) => (
               <li key={h.title} className="flex gap-3">
                 <span
@@ -85,7 +91,7 @@ export function AuthShell({
           </ul>
         </div>
 
-        <div className="relative mt-10 text-xs text-white/50">
+        <div className="relative mt-6 hidden text-xs text-white/50 md:block">
           © {new Date().getFullYear()} Procur · Built for developing-market procurement.
         </div>
       </aside>

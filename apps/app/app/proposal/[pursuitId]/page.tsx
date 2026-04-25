@@ -42,6 +42,11 @@ type AiReview = {
 };
 
 export const dynamic = 'force-dynamic';
+// Server actions on this route — draftSection, regenerateCompliance,
+// reviewProposal — call Claude with multi-section context and can run
+// 60-90 seconds. Bump maxDuration so we don't 504 the user mid-request.
+// Capped at 120s to stay within Vercel Pro fluid-compute budget.
+export const maxDuration = 120;
 
 type Params = { pursuitId: string };
 
