@@ -29,3 +29,4 @@ export * from './contract-extras';
 export * from './word-addin-tokens';
 export * from './notifications';
 export * from './webhook-events';
+export * from './external-suppliers';

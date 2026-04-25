@@ -1,0 +1,887 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+
+    
+        <!-- ceproc.ok -->
+    
+    <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+    
+
+    <head>
+        <title>ePPS - Approved PPC Suppliers</title>
+
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        
+        <meta name="Description" content="e-Procurement platform home page"/>
+		<meta content="e-Procurement platform - Home page" name="Title"/>
+		<meta content="57" name="Type"/>
+		<meta content="DOCUMENTS/COMM/EN" name="Reference"/>
+		<meta content="European Dynamics" name="Creator"/>
+		<meta name="Language" content="En"/>
+		<meta content="25" name="Classification"/>
+		<meta content="tenders, e-procurement, documents, european law, legislation, economic operator, tenderer, procurement, contract, contracting authority, supplier, awarding authority, institutions, european union, eu" name="Keywords"/>
+
+        <link rel="shortcut icon"   type="image/ico" href="images/favicon.ico" />
+
+        <link rel="stylesheet" type="text/css" href="/epps/css/font-awesome.css" media="screen" />
+        <link rel="stylesheet" type="text/css" href="/epps/css/font-awesome.min.css" media="screen" /> 
+        <link rel="stylesheet" type="text/css" href="/epps/css/screen.css" media="screen, projection" />
+        <!--[if IE]>
+        <link rel="stylesheet"	type="text/css" href="/epps/css/ie-fix.css" media="screen, projection" />
+        <![endif]-->
+        <!--[if IE 7]>
+        <link rel="stylesheet"	type="text/css" href="/epps/css/ie-fix-7.css" media="screen, projection" />
+        <![endif]-->
+        <!--[if lt IE 7]>
+        <link rel="stylesheet"	type="text/css" href="/epps/css/ie-fix-lt7.css" media="screen, projection" />
+        
+        <script type="text/javascript" src="/epps/scripts/buttonfix.js"></script>
+
+        <![endif]-->
+        <link rel="stylesheet" type="text/css" href="/epps/css/print.css" media="print" />
+        
+
+<script>
+	const PAGE_LITERAL = 'Page';
+	const RESULTS_PER_PAGE_LITERAL = 'Results per page';
+	const ERROR_MSG_LITERAL = 'An error has occurred';
+	const WARNING_MSG_LITERAL = 'Warning';
+	const GOTO_PAGE_LITERAL = 'Goto page';
+    const RESULTS_PER_PAGE_OPTIONS_LITERAL = ["10","20","50","100"]
+</script>
+        <script type="text/javascript" src="/epps/scripts/jquery.min.js"></script>
+        <script type="text/javascript" src="/epps/scripts/jquery-migrate-1.2.1.js"></script>
+        <script type="text/javascript" src="/epps/scripts/jquery.formatCurrency-1.4.0.min.js"></script>
+        <script type="text/javascript">
+            var INVALID_CHARACTERS = '<>&%';
+        </script>
+        <script type="text/javascript" src="/epps/scripts/common.js"></script>
+        <script type="text/javascript">
+        //<![CDATA[
+        var $j = jQuery.noConflict();
+        //]]>
+        </script>
+
+        <script type="text/javascript">
+        //<![CDATA[
+        jQuery(function($){
+            $.datepicker.regional["en"] = {
+                clearText: "Clear", 
+                clearStatus: "Erase the current date",
+                closeText: "Close", 
+                closeStatus: "Close without change",
+                prevText: "&#x3c;Prev", 
+                prevStatus: "Show the previous month",
+                nextText: "Next&#x3e;", 
+                nextStatus: "Show the next month",
+                    currentText: "Today", 
+                    currentStatus: "Show the current month",
+                    monthNames: ["January","February",
+                                "March", "April",
+                                "May","June",
+                                "July","August",
+                                "September", "October",
+                                "November","December"],
+                    monthNamesShort: ["Jan", "Feb", 
+                                "Mar", "Apr", 
+                                "May", "Jun", 
+                                "Jul", "Aug", 
+                                "Sep", "Oct", 
+                                "Nov", "Dec"],
+                    monthStatus: "Show a different month", 
+                    yearStatus: "Show a different year",
+                    weekHeader: "Wk", 
+                    weekStatus: "Week of the year",
+                    dayNames: ["Sunday", "Monday", 
+                        "Tuesday", "Wednesday", 
+                        "Thursday", "Friday", 
+                        "Saturday"],
+                    dayNamesShort: ["Sun", "Mon", 
+                        "Tue", "Wed", 
+                        "Thu", "Fri", 
+                        "Sat"],
+                    dayNamesMin: ["Su","Mo",
+                        "Tu", "We",
+                        "Th","Fr",
+            "Sa"],
+                    dayStatus: "Set DD as first week day", 
+                    dateStatus: "Select DD, M d",
+                    dateFormat: "mm/dd/yy", 
+                    firstDay: 1, 
+                    initStatus: "Select a date", isRTL: false};
+                $.datepicker.setDefaults($.datepicker.regional["en"]);
+            }); 
+        //]]>
+        </script>
+        <script type="text/javascript" src="/epps/scripts/jquery.cookie.js"></script>
+        <script type="text/javascript" src="/epps/scripts/popup.js"></script>
+        <script type="text/javascript" src="/epps/scripts/tender.structure.js"></script>	
+        <script type="text/javascript" src="/epps/scripts/add.criteria.js"></script>
+        <script type="text/javascript" src="/epps/scripts/ui.datepicker.js"></script>
+        <script type="text/javascript" src="/epps/scripts/jqComm.js"></script>
+        <script type="text/javascript" src="/epps/scripts/tabber-minimized.js"></script>
+        <script type="text/javascript" src="/epps/scripts/jqForm.js"></script>
+        <script type="text/javascript" src="/epps/scripts/jqTableSet.js"></script>
+        <script type="text/javascript" src="/epps/scripts/jqModal.js"></script>
+        <script type="text/javascript" src="/epps/scripts/jqDnR.js"></script>
+        <script type="text/javascript" src="/epps/scripts/staticValidatorScript.js"></script>
+        <script type="text/javascript" src="/epps/scripts/iframe.js"></script>
+        <script type="text/javascript">
+	        /*@cc_on
+			if (document && document.execCommand) {
+				try { 
+					document.execCommand("BackgroundImageCache",false, true); 
+				}
+				catch (e) {}
+			}
+			@*/
+        </script>	
+        
+        <script type="text/javascript">
+        //<![CDATA[
+        $j('document').ready(function(ev){
+			$j('#Content').showHideMenu("/epps");
+			$j('.Menu').showHideBox();
+            $j('#ToggleSubmenu').toggleCfTVisibility({hide:"Hide Menu", show:"Show Menu"});	
+            $j("#ShowCFTInfo").toggleNextDiv();					
+            $j('.tabber').tabify();
+            $j('.lottabber').tabify({ MenuClass:'ScrollList', ActiveClass:'Selected'});
+             $j('.lotstabber').tabify({ MenuClass:'LotList', ActiveClass:'Selected'});
+            $j("table").tableZebra();
+            $j('.countdown').textCountdown({remaining_text: " remaining characters"});
+            $j("button[id='MClose']").hideAlert();
+            $j("form").prepareForm();
+        });
+
+        function jcv_handleErrors(messages, focusField) {
+            if (focusField && focusField != null) {
+                var doFocus = true;
+                if (focusField.disabled || focusField.type == 'hidden') {
+                    doFocus = false;
+                }
+                if (doFocus &&
+                        focusField.style &&
+                        focusField.style.visibility &&
+                        focusField.style.visibility == 'hidden') {
+                    doFocus = false;
+                }
+                if (doFocus) {
+                    focusField.focus();
+                }
+            }
+
+            if ($j("#Message")) {
+                $j("#Message").remove();
+            }
+            var mesagesCont = document.createElement("div");
+            $j(mesagesCont)
+                .attr("id", "Message")
+                .addClass("Error");
+            var errorMSG = document.createElement("p");
+            $j(errorMSG)
+                .html("<strong>An error has occurred:</strong>");
+            var msg = document.createElement("ul");
+            for (i=0; i< messages.length; i++){
+                $j(msg)
+                    .append("<li>" + messages[i] + "</li>");
+            }
+            var closeP = document.createElement("p");
+            $j(closeP)
+                .addClass("Buttons")
+                .html("<button id=\"MClose\" type=\"submit\">Close</button>");
+            $j(mesagesCont)
+                .append(errorMSG)
+                .append(msg)
+                .append(closeP);
+            $j(mesagesCont).find("button").click(function() {
+                $j("#Message").remove();
+            });
+            $j("#Content h2")
+                .after(mesagesCont);
+        } 
+        //]]>
+        </script>	
+        
+        <script type="text/javascript">
+        //<![CDATA[
+        $j("document").ready(function(ev){
+			// fix IE7/IE6 pagination issue
+        	$j("div .THSort").each(function() {
+        		try {
+	        		var hrefValue = $j(this).parent("a").attr("href");
+					if (hrefValue != null && hrefValue.indexOf("javascript:" != -1)) {
+						var sJsFunction = hrefValue.substring("javascript:".length, hrefValue.length);
+						var jsFunction = new Function(sJsFunction);
+						$j(this).children("img").click(jsFunction);
+					}
+        		} catch (err) {}
+        	});
+        });
+        //]]>
+        </script>	
+        
+		<script type="text/javascript">
+
+			function setParentHref(link){
+				 window.location.href=link;
+			}
+		</script>
+    </head>
+	
+    <body>
+    
+    	<!-- empty toolbar -->
+    	
+        <div id="Container">
+            
+
+
+
+
+
+<div id="YPOLogo">
+	<h1 title="Government of Jamaica Electronic Procurement (GOJEP)">ePPS <span></span></h1>
+</div>
+<!-- YPOLogo // -->
+
+
+<div id="SystemTitle">
+	<p>Government of Jamaica Electronic Procurement (GOJEP)</p>
+</div>
+<!-- SystemTitle // -->
+
+
+            
+
+
+
+
+
+
+
+<script type="text/javascript" language="JavaScript">
+//<![CDATA[
+function openPopup(url) {    
+    newwindow=window.open(url,'name','height=550,width=810,scrollbars=yes,resizable=yes,left=60,top=10');
+    if (window.focus) {
+        newwindow.focus();
+    } 
+}
+
+    $j('document').ready(function(ev){
+    	$j("a.PopUp").click(function(){
+    		PopUpOpts = {
+        		windowname: 'popupwindow',
+        		width:		810,
+        		height:		600,
+        		scroll:		1,
+        		resizable:	0
+        	};
+           	$j(this).PopUp(this.href, PopUpOpts); 
+            return false; 
+        }); 
+    })    
+//]]>
+</script>
+
+
+
+
+<div id="GlobalNav">
+    <ul>
+        
+
+        <li class="First" id="Homepage">
+            <a href="/epps/home.do">Homepage</a>
+        </li>
+        <li id="About">
+            <a href="/epps/DisplayHeaderStaticTextAction.do" class="PopUp">About</a>
+        </li>
+        <li id="FAQ">           
+             <a href="/epps/viewInfo.do?selectedItem=viewInfo.do%3Fsection%3Dfaq&amp;section=faq">USER MANUAL</a>
+        </li>
+        <li id="Help">
+            <a href="/epps/viewInfo.do?isPopup=true&amp;section=userManual" class="PopUp">Help</a>
+        </li>
+        
+        <li class="Last" id="Contact">
+            <a href="/epps/PrepareContactUsAction.do" class="PopUp">Contact us</a>
+        </li>
+    </ul>
+</div><!-- Global_nav // -->
+
+            
+
+
+
+
+
+
+
+
+
+
+<script type="text/javascript">
+	function checkSubmit() {
+		var	quicSearchForm = document.forms["quickSearchForm"];
+		var col = document.getElementsByName("searchSelect")[0];
+		if (col.selectedIndex != 0) {
+			if(checkInputField(quicSearchForm))quicSearchForm.submit();
+    	}
+    	return false;
+	}
+	
+	function checkInputField(form){
+		var input = form[1].value;
+		if(containForbidenChars(input)){
+			form[1].value = '*';
+			alert("An invalid character was provided for search. Invalid characters include: <, >, &, % .");
+			return false;
+		}
+		return true;
+	}
+	
+	function containForbidenChars(input){
+    	return input.indexOf("<")!=-1 || input.indexOf(">")!=-1 || input.indexOf("%")!=-1 || input.indexOf("&")!=-1;
+    }
+	
+	$j(document).ready(function(){
+		$j('#SearchInput').mouseover(function() {
+		   $j(this).attr('title', "Tip: provide a relevant term within asterisks, eg. *consultancy*");
+
+	  	});
+	});
+
+</script>
+
+
+
+
+<div id="Search">
+    <p class="Time"> 
+        18:08:01 COT
+    </p>
+    
+       
+		<div style="float:right; display:block; padding: 6px;">
+			<a href="/epps/prepareAdvancedSearch.do?type=cftFTS" class="SearchPic">Advanced search</a>
+			<a href="/epps/prepareCurrentOpportunities.do">Current competitions</a>
+		</div>
+	 
+</div><!-- Search -->
+
+
+            <div id="Main">
+                <div id="Navigation">
+                    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script type="text/javascript">
+$j(document).ready(function() {
+
+     $j('#loginButton').click(function(event) {
+            $j.cookie('loginButton', null);
+            $j.cookie('loginButton', 'enabled');
+            if ($j.cookie('loginButton')) {
+            } else {
+
+              $j.cookie('loginButton', null);
+              
+              alert("Please enable session cookies for using this site with your web browser.");
+              event.preventDefault();
+            }
+          });
+
+});
+
+$j(document).ready(function () {
+    $j("#Username").attr("autocomplete","off");
+    });
+
+
+</script>
+
+
+
+
+<div class="Menu">
+    <p><span>Log in</span></p>
+    <div class="MenuContent" id="LoginMenuContent">
+    
+        
+        
+            <ul>
+                <li>
+                    <a href="/epps/authenticate/login">Log in</a>
+                </li>
+            </ul>
+        
+        
+        
+
+        <ul>
+            <li>
+                <a href="/epps/forgotPassword.do">Forgot your password?</a>
+            </li>
+            <li>
+                <a href="/epps/prepareRegisterEOOrg.do?registerEO=true">Register as a Supplier</a>
+            </li>
+            <li>
+                <a class="statistics" href="https://www.gojep.gov.jm/ccm">
+                    e-Catalogues
+               </a>
+            </li>
+        </ul>
+    
+
+     
+    
+    </div>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script type="text/javascript">
+<!--
+$j('document').ready(function(ev){
+	var contextRoot = "/epps";
+	var selectedItem = escape("null");
+	$j('.MenuContent li').find('a').each(function() {
+		var link = this.href;
+		var item = escape(link.substring(link.indexOf(contextRoot) + contextRoot.length + 1));
+		// check if this <a> is seleted item and add css class 'Selected'
+		if (item == selectedItem) {
+			$j(this).parent().addClass('Selected');	
+		}
+		// prepare links
+		if (link.indexOf('?') != -1) {
+			this.href = link + '&selectedItem=' + item;
+		} else {
+			this.href = link + '?selectedItem=' + item;
+		}
+	});
+});
+	
+//-->
+</script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+		
+<div class="Menu">
+    <p><span>Reporting (BI) Module</span></p>
+    <div class="MenuContent" id="InfoMenuContent">
+        <ul>
+           <li>
+               	<a href="/epps/reports/viewBiReports.do">View Reports</a>
+        	</li>
+        </ul>
+	</div>
+</div>
+
+
+<div class="Menu">
+    <p><span>Information</span></p>
+    <div class="MenuContent" id="InfoMenuContent">
+        <ul>
+    
+         
+	       	
+	        
+	        <li>
+ 				<a href="/epps/app/viewPlan.do">Annual Procurement Plan Publication</a>
+        	</li>
+	        
+	        <li>
+				<a href="/epps/prepareCurrentOpportunities.do">Current competitions</a>
+        	</li>
+
+			<li>
+				<a href="/epps/notices/viewPublishedNotices.do?formId=301">Bidding advertisements</a>
+			</li>
+			<li>
+ 				<a href="/epps/common/viewOpenedTenders.do">Opened bid details</a>
+        	</li>
+        	
+        	
+       	
+       	<li>
+       		<a href="/epps/viewCaNotices.do">Contract Award Notices</a>
+       	</li>
+        
+        	
+            <li>
+               <a href="/epps/viewInfo.do?section=newItems">News</a>
+            </li>
+
+            
+            <li>
+              <a href="/epps/viewInfo.do?section=faq">USER MANUAL</a>
+            </li>
+            <li>
+            	<a href="/epps/viewInfo.do?section=legal">Electronic public procurement</a>
+            </li>
+            <li>
+            	<a href="/epps/viewInfo.do?section=eproc">Procurement legislation</a>
+            </li>
+            <li>
+            	<a href="/epps/viewInfo.do?section=statistics">Statistics</a>
+            </li>
+            <li>
+            	<a href="/epps/viewInfo.do?section=links">Relevant links</a>
+            </li>
+            <li>
+            	<a href="/epps/viewInfo.do?section=calendar">Calendar</a>
+            </li>
+            
+            <li>
+            	<a href="/epps/ncc/report/registration.do">PPC Supplier Registration Report</a>
+            </li>         
+       	
+       	    <li>
+            	<a href="/epps/viewInfo.do?section=nccLegalForms">PPC Forms</a>
+            </li>
+            
+            <li>
+            	<a href="/epps/viewInfo.do?section=instructions">Instructions</a>
+            </li>
+        </ul>
+    </div><!-- MenuContent -->
+</div><!-- Menu // -->
+
+
+
+
+                </div><!-- Navigation -->
+
+                <div id="Content">
+                	
+
+
+
+
+<noscript>
+	<div class="NoScript">
+		<p>For enjoying the full functionality of this application, please ensure that Javascript is enabled in your browser.</p>
+	</div>
+</noscript>
+
+
+                    
+                    
+                        
+                    
+
+
+
+
+
+
+	
+	<h2>Approved PPC Suppliers</h2>
+
+
+
+                    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                    
+
+
+
+
+
+
+<div>
+	<div class="Tabular Hscroll">
+		
+			<h3>List of PPC Registered Goods and Services Suppliers</h3>		
+	        <form name="listingForm" method="post" action="/epps/ncc/listNccCategoryApprovedSuppliers.do" target="_self">
+		        
+<table id="T01">
+<thead>
+<tr>
+<th>#</th>
+<th>Organisation Name<a href="?d-16564-p=1&amp;d-16564-s=auth.name&amp;categoryType=gs&amp;d-16564-n=1&amp;d-16564-o=2"><a href="?d-16564-p=1&amp;d-16564-s=auth.name&amp;categoryType=gs&amp;d-16564-n=1&amp;d-16564-o=2"><div class="THSort"><img src="/epps/images/ascending.gif" alt="Sort ascending"><img src="/epps//images/descending.gif" alt="Sort descending" class="Descending"></div></a></th>
+<th>Address</th>
+<th>Phone</th>
+<th>Country</th>
+<th>Contact Person</th>
+<th>Confirmed at</th></tr></thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>1Hardarak Company Limited</td>
+<td>35a Trelawny ave</td>
+<td>876 851-9074</td>
+<td>Jamaica</td>
+<td>
+				    	
+					</td>
+<td>14-08-2025 18:06:57</td></tr>
+<tr>
+<td>2</td>
+<td>2F Limited</td>
+<td>18 cheltenham drive, kingston 10</td>
+<td>8763188975</td>
+<td>Jamaica</td>
+<td>
+				    	
+					</td>
+<td>04-08-2025 10:42:09</td></tr>
+<tr>
+<td>3</td>
+<td>360 Recycle Manufacturing Limited</td>
+<td>Burton District</td>
+<td>8767828039</td>
+<td>Jamaica</td>
+<td>
+				    	
+					</td>
+<td>13-02-2025 19:32:53</td></tr>
+<tr>
+<td>4</td>
+<td>360 Stationery Supplies Limited</td>
+<td>31 Pleasant Road</td>
+<td>876-456-7415</td>
+<td>Jamaica</td>
+<td>
+				    	
+					</td>
+<td>02-02-2025 12:10:29</td></tr>
+<tr>
+<td>5</td>
+<td>815 Solutions Ltd</td>
+<td>Bustamante Highway Rhules Pen</td>
+<td>8766307251</td>
+<td>Jamaica</td>
+<td>
+				    	
+					</td>
+<td>22-10-2025 00:00:00</td></tr>
+<tr>
+<td>6</td>
+<td>A.A. Laquis (Jamaica) Limited</td>
+<td>48 Constant Spring Road</td>
+<td>8766483074</td>
+<td>Jamaica</td>
+<td>
+				    	
+					</td>
+<td>07-03-2025 13:00:28</td></tr>
+<tr>
+<td>7</td>
+<td>A and T Pest Eradication Limited</td>
+<td>Lot 513 8 West Greater Portmore</td>
+<td>8768752973</td>
+<td>Jamaica</td>
+<td>
+				    	
+					</td>
+<td>24-07-2025 15:13:12</td></tr>
+<tr>
+<td>8</td>
+<td>ABBVIE SOCIEDAD ANONIMA</td>
+<td>5A Avenida 5-55 Zona 14, Edificio Europlaza, Torre 1, Oficina 261.</td>
+<td>(502)2210-3000</td>
+<td>Guatemala</td>
+<td>
+				    	
+					</td>
+<td>23-07-2025 17:53:48</td></tr>
+<tr>
+<td>9</td>
+<td>Abetter Commercial Enterprise Limited T/a ABC Electrical Sales</td>
+<td>Shop 8 Hagley Park Plaza</td>
+<td>876-754-3714-5</td>
+<td>Jamaica</td>
+<td>
+				    	
+					</td>
+<td>03-12-2025 00:00:00</td></tr>
+<tr>
+<td>10</td>
+<td>A.C AND ROGER REID (MCMASTER'S) LIMITED</td>
+<td>3287 HATSFIELD ROAD, WATERFORD P.O.</td>
+<td>8768563478</td>
+<td>Jamaica</td>
+<td>
+				    	
+					</td>
+<td>03-12-2025 00:00:00</td></tr></tbody></table><input type="hidden" name="tableUid" value="sup"><div class="Pagination"><p class="Results">1,107 results in total.    Displaying: <strong>1-10</strong></p><p class="PageNav">Page <strong>1</strong> of <strong>111</strong><button type="button" class="SearchBtn Disabled" title="First">&laquo;</button><button type="button" class="SearchBtn Disabled" title="Previous">&lsaquo;</button><button type="button" class="SearchBtn" title="Next" onclick=window.location.href=this.getAttribute("href") href="?d-16564-p=2&amp;categoryType=gs">&rsaquo;</button><button type="button" class="SearchBtn" title="Last" onclick=window.location.href=this.getAttribute("href") href="?d-16564-p=111&amp;categoryType=gs">&raquo;</button></p><p class="PageNav"><script type="text/javascript">writePageSelection("111","?d-16564-p=&amp;categoryType=gs",this);</script></p></div>
+				
+		   		<input type="hidden" name="sortColumn" value="">
+		   		<input type="hidden" name="categoryType" value="gs">
+		   		<input type="hidden" name="sortDirection" value=" ASC ">
+		   		<input type="hidden" name="format" value="PDF" id="Status">
+		   		<p class="Buttons">
+		        	<button type="submit" name="SubmitType" value="export" onclick="document.getElementById('Status').value = 'pdf';">
+		        		Export as PDF
+		        	</button>
+		        	<button type="submit" name="SubmitType" value="export" onclick="document.getElementById('Status').value = 'csv';">
+		        		Export as CSV
+		        	</button>
+				</p>
+			</form>
+		
+	</div>
+</div>
+                </div><!-- Content -->
+                <div class="clear"></div>
+            </div><!-- Main -->
+
+            
+
+
+<div id="Footer">
+	<p id="UpdateInfo">
+		Last update
+		:
+		
+		25 April 2026
+
+	</p>
+	<p id="CopyrightInfo">
+		&copy;
+		2026
+		European Dynamics		
+	</p>
+	<ul>
+
+	</ul>
+
+
+	<div style="text-align: center; padding-top: 20px; clear: both;">
+		<img src="/epps/images/f_idb.png" width="150" height="68"
+			alt="IDB - Improving lives"
+			style="vertical-align: top; margin-right: 50px;"> <img
+			src="/epps/images/f_eu.png" width="200" height="58"
+			alt="Funded under the European Union Public Sector Efficiency Program (PSEP)">
+	</div>
+</div>
+<!-- Footer // -->
+
+            <br style="clear:both; width:100%;" />
+        </div><!-- Container -->
+    </body>
+</html>
