@@ -6,18 +6,23 @@ export const dynamic = 'force-dynamic';
 
 /**
  * Onboarding for users who have signed up but don't yet have an active
- * organization in their Clerk session. Clerk's CreateOrganization component
- * handles name + slug; our Clerk webhook (/api/webhooks/clerk) syncs the
- * resulting Clerk org to a `companies` row and the membership to the `users`
- * row out-of-band.
+ * organization in their Clerk session. Clerk's CreateOrganization
+ * component handles name + slug; our Clerk webhook
+ * (/api/webhooks/clerk) syncs the resulting Clerk org to a `companies`
+ * row and the membership to the `users` row out-of-band.
  *
- * If the user already has an active org in their session, skip straight to
- * Capture — the company row will be in Postgres by the time they navigate.
+ * Webhook race protection lives in @procur/auth getCurrentCompany():
+ * if the cookie has an orgId but our DB row hasn't been synced yet, it
+ * hydrates synchronously from Clerk's API. So redirecting to / here
+ * (rather than /capture) is safe — the home page will resolve the
+ * company on the very first render even when the webhook is still in
+ * flight, and the user lands on the SetupChecklist instead of an
+ * empty Capture pipeline.
  */
 export default async function OnboardingPage() {
   const { userId, orgId } = await auth();
   if (!userId) redirect('/sign-in');
-  if (orgId) redirect('/capture');
+  if (orgId) redirect('/');
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center px-6 py-10">
@@ -31,7 +36,7 @@ export default async function OnboardingPage() {
 
       <div className="w-full">
         <CreateOrganization
-          afterCreateOrganizationUrl="/capture"
+          afterCreateOrganizationUrl="/"
           skipInvitationScreen
         />
       </div>
@@ -42,8 +47,8 @@ export default async function OnboardingPage() {
         </p>
         <OrganizationList
           hidePersonal
-          afterSelectOrganizationUrl="/capture"
-          afterCreateOrganizationUrl="/capture"
+          afterSelectOrganizationUrl="/"
+          afterCreateOrganizationUrl="/"
         />
       </section>
     </main>
