@@ -1,9 +1,19 @@
 import Link from 'next/link';
 
-export type TabKey = 'overview' | 'obligations' | 'documents' | 'past-performance';
+export type TabKey =
+  | 'overview'
+  | 'modifications'
+  | 'clins'
+  | 'task-areas'
+  | 'obligations'
+  | 'documents'
+  | 'past-performance';
 
-const TABS: Array<{ key: TabKey; label: string; countKey?: 'obligations' }> = [
+const TABS: Array<{ key: TabKey; label: string; countKey?: 'obligations' | 'modifications' | 'clins' | 'task-areas' }> = [
   { key: 'overview', label: 'Overview' },
+  { key: 'modifications', label: 'Modifications', countKey: 'modifications' },
+  { key: 'clins', label: 'CLINs', countKey: 'clins' },
+  { key: 'task-areas', label: 'Task Areas', countKey: 'task-areas' },
   { key: 'obligations', label: 'Obligations', countKey: 'obligations' },
   { key: 'documents', label: 'Documents' },
   { key: 'past-performance', label: 'Past Performance' },
@@ -12,6 +22,9 @@ const TABS: Array<{ key: TabKey; label: string; countKey?: 'obligations' }> = [
 export function isTabKey(v: string | undefined): v is TabKey {
   return (
     v === 'overview' ||
+    v === 'modifications' ||
+    v === 'clins' ||
+    v === 'task-areas' ||
     v === 'obligations' ||
     v === 'documents' ||
     v === 'past-performance'
@@ -22,16 +35,31 @@ export function ContractTabNav({
   active,
   contractId,
   obligationCount,
+  modificationCount,
+  clinCount,
+  taskAreaCount,
 }: {
   active: TabKey;
   contractId: string;
   obligationCount: number;
+  modificationCount: number;
+  clinCount: number;
+  taskAreaCount: number;
 }) {
   return (
-    <nav className="flex border-b border-[color:var(--color-border)]">
+    <nav className="flex flex-wrap border-b border-[color:var(--color-border)]">
       {TABS.map((t) => {
         const isActive = t.key === active;
-        const count = t.countKey === 'obligations' ? obligationCount : null;
+        const count =
+          t.countKey === 'obligations'
+            ? obligationCount
+            : t.countKey === 'modifications'
+              ? modificationCount
+              : t.countKey === 'clins'
+                ? clinCount
+                : t.countKey === 'task-areas'
+                  ? taskAreaCount
+                  : null;
         return (
           <Link
             key={t.key}

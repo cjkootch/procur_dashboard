@@ -25,3 +25,4 @@ export * from './gate-reviews';
 export * from './pursuit-team-members';
 export * from './capabilities';
 export * from './proposal-shreds';
+export * from './contract-extras';
