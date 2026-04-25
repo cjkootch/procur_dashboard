@@ -10,13 +10,33 @@ import { generateFromContractAction } from './actions';
 
 export const dynamic = 'force-dynamic';
 
-export default async function PastPerformancePage() {
+type SearchParams = { q?: string };
+
+export default async function PastPerformancePage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
+  const sp = await searchParams;
+  const q = (sp.q ?? '').trim();
+
   const { company } = await requireCompany();
-  const [entries, candidates] = await Promise.all([
+  const [allEntries, candidates] = await Promise.all([
     listPastPerformance(company.id),
     listConvertibleContracts(company.id),
   ]);
   const ready = candidates.filter((c) => !c.hasPastPerformance);
+
+  const needle = q.toLowerCase();
+  const entries = q
+    ? allEntries.filter((e) => {
+        const haystack = [e.projectName, e.customerName, e.customerType]
+          .filter(Boolean)
+          .join('  ')
+          .toLowerCase();
+        return haystack.includes(needle);
+      })
+    : allEntries;
 
   return (
     <div className="mx-auto max-w-5xl px-8 py-10">
@@ -26,6 +46,12 @@ export default async function PastPerformancePage() {
           <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
             Library of corporate references. Proposals can cite these for relevant experience
             narratives. Generate entries from completed contracts in one click.
+            {q && (
+              <>
+                {' '}· {entries.length} of {allEntries.length} matching{' '}
+                <span className="font-medium">&ldquo;{q}&rdquo;</span>
+              </>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -43,6 +69,32 @@ export default async function PastPerformancePage() {
           </Link>
         </div>
       </header>
+
+      {allEntries.length > 0 && (
+        <form method="GET" className="mb-6 flex gap-2">
+          <input
+            type="search"
+            name="q"
+            defaultValue={q}
+            placeholder="Search by project, customer, or customer type…"
+            className="flex-1 rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-3 py-1.5 text-sm focus:border-[color:var(--color-foreground)] focus:outline-none"
+          />
+          <button
+            type="submit"
+            className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
+          >
+            Search
+          </button>
+          {q && (
+            <Link
+              href="/past-performance"
+              className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-sm hover:bg-[color:var(--color-muted)]/40"
+            >
+              Clear
+            </Link>
+          )}
+        </form>
+      )}
 
       {ready.length > 0 && (
         <section className="mb-8">
@@ -84,8 +136,19 @@ export default async function PastPerformancePage() {
         </h2>
         {entries.length === 0 ? (
           <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-10 text-center text-sm text-[color:var(--color-muted-foreground)]">
-            No past performance entries yet. Generate one from a completed contract, or add
-            manually for legacy work.
+            {allEntries.length === 0 ? (
+              <>
+                No past performance entries yet. Generate one from a completed contract, or
+                add manually for legacy work.
+              </>
+            ) : (
+              <>
+                No entries match &ldquo;{q}&rdquo;.{' '}
+                <Link href="/past-performance" className="underline">
+                  Clear search
+                </Link>
+              </>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
