@@ -2,10 +2,17 @@
 /*
  * Procur Word add-in — vanilla JS taskpane controller.
  *
- * Auth model: paste the long-lived token once, store it in Office's
- * roaming settings (per-document) so the user stays paired across
- * sessions. Token never leaves the device except as a Bearer header
- * on API calls back to app.procur.app.
+ * Auth model: paste the long-lived token once, store it in browser
+ * localStorage (origin-scoped to app.procur.app, per user/profile).
+ * Token never leaves the device except as a Bearer header on API
+ * calls back to app.procur.app.
+ *
+ * IMPORTANT: We deliberately do NOT use Office.context.document.settings
+ * — those settings are persisted INSIDE the .docx file and travel with
+ * the document. If a user paired in `proposal.docx` and emailed it to a
+ * colleague, the colleague's Word would inherit the paired token and
+ * impersonate the original user's company. localStorage stays on the
+ * user's device.
  */
 (function () {
   'use strict';
@@ -118,12 +125,21 @@
   }
 
   // -----------------------------------------------------------------------
-  // Token storage (Office roaming settings — survives across sessions)
+  // Token storage — browser localStorage on the app.procur.app origin.
+  //
+  // We deliberately avoid Office.context.document.settings because those
+  // are persisted INSIDE the .docx file (CustomXMLParts) and travel with
+  // the document. localStorage is origin-scoped to app.procur.app, per
+  // user / browser profile, and cannot leak via document sharing.
+  //
+  // Key is fixed; if the user signs out via the unpair button we clear
+  // the entry. Office's WebView2 (Win) / WKWebView (Mac) / Edge (web)
+  // all support localStorage normally.
   // -----------------------------------------------------------------------
 
   function readStoredToken() {
     try {
-      return Office.context.document.settings.get(TOKEN_SETTING_KEY) || null;
+      return window.localStorage.getItem(TOKEN_SETTING_KEY) || null;
     } catch (e) {
       return null;
     }
@@ -131,17 +147,15 @@
 
   function writeStoredToken(token) {
     try {
-      Office.context.document.settings.set(TOKEN_SETTING_KEY, token);
-      Office.context.document.settings.saveAsync();
+      window.localStorage.setItem(TOKEN_SETTING_KEY, token);
     } catch (e) {
-      console.warn('settings save failed', e);
+      console.warn('localStorage save failed', e);
     }
   }
 
   function clearStoredToken() {
     try {
-      Office.context.document.settings.set(TOKEN_SETTING_KEY, null);
-      Office.context.document.settings.saveAsync();
+      window.localStorage.removeItem(TOKEN_SETTING_KEY);
     } catch (e) {
       // ignore
     }

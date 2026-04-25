@@ -45,11 +45,34 @@ function str(formData: FormData, key: string): string | null {
   return s.length > 0 ? s : null;
 }
 
+/**
+ * Non-negative dollar amount, 2 decimals. Rejects NaN AND signed values
+ * — used for fields that physically cannot be negative (totalValue,
+ * CLIN amount, CLIN unitPrice, quantity). Returns null for invalid
+ * input so callers can choose to throw or just drop the field.
+ *
+ * For fields that legitimately carry a sign (modification funding
+ * delta = obligation +/- de-obligation), use signedNum.
+ */
+/**
+ * FX-rate coercion. Must be strictly positive — a negative rate would
+ * silently flip the sign of totalValueUsd and bucket the row under
+ * "No value set" in the contract reports. Falls back to 1.0 when the
+ * input is missing, NaN, zero, or negative.
+ */
+function positiveFxRate(raw: string | null): number {
+  if (!raw) return 1;
+  const n = Number.parseFloat(raw);
+  if (!Number.isFinite(n) || n <= 0) return 1;
+  return n;
+}
+
 function num(formData: FormData, key: string): string | null {
   const v = str(formData, key);
   if (!v) return null;
   const n = Number.parseFloat(v);
-  return Number.isFinite(n) ? n.toFixed(2) : null;
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n.toFixed(2);
 }
 
 async function requireOwnedContract(companyId: string, contractId: string) {
@@ -66,7 +89,7 @@ export async function createContractAction(formData: FormData): Promise<void> {
   if (!awardTitle) throw new Error('awardTitle is required');
 
   const totalValue = num(formData, 'totalValue');
-  const fx = Number.parseFloat(str(formData, 'fxRateToUsd') ?? '1') || 1;
+  const fx = positiveFxRate(str(formData, 'fxRateToUsd'));
   const currency = str(formData, 'currency')?.slice(0, 3).toUpperCase() ?? 'USD';
 
   const insertValues: NewContract = {
@@ -162,7 +185,7 @@ export async function updateContractAction(formData: FormData): Promise<void> {
   await requireOwnedContract(company.id, id);
 
   const totalValue = num(formData, 'totalValue');
-  const fx = Number.parseFloat(str(formData, 'fxRateToUsd') ?? '1') || 1;
+  const fx = positiveFxRate(str(formData, 'fxRateToUsd'));
   const currency = str(formData, 'currency')?.slice(0, 3).toUpperCase() ?? 'USD';
 
   await db
@@ -285,6 +308,11 @@ function dateOrNull(formData: FormData, key: string): string | null {
   return v;
 }
 
+/**
+ * Signed dollar amount, 2 decimals. Used for modification.fundingChange
+ * where negative values legitimately encode de-obligations. Use `num`
+ * for fields that cannot be negative.
+ */
 function signedNum(formData: FormData, key: string): string | null {
   const v = str(formData, key);
   if (!v) return null;
@@ -292,11 +320,16 @@ function signedNum(formData: FormData, key: string): string | null {
   return Number.isFinite(n) ? n.toFixed(2) : null;
 }
 
+/**
+ * Non-negative 4-decimal value (CLIN unit price, quantity). Same
+ * rationale as `num` — these fields cannot legitimately be negative.
+ */
 function decimal4(formData: FormData, key: string): string | null {
   const v = str(formData, key);
   if (!v) return null;
   const n = Number.parseFloat(v);
-  return Number.isFinite(n) ? n.toFixed(4) : null;
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n.toFixed(4);
 }
 
 export async function addModificationAction(formData: FormData): Promise<void> {
@@ -409,7 +442,7 @@ export async function addClinAction(formData: FormData): Promise<void> {
     quantity: decimal4(formData, 'quantity'),
     unitOfMeasure: str(formData, 'unitOfMeasure'),
     unitPrice: decimal4(formData, 'unitPrice'),
-    amount: signedNum(formData, 'amount'),
+    amount: num(formData, 'amount'),
     periodStart: dateOrNull(formData, 'periodStart'),
     periodEnd: dateOrNull(formData, 'periodEnd'),
     notes: str(formData, 'notes'),
@@ -439,7 +472,7 @@ export async function updateClinAction(formData: FormData): Promise<void> {
   if (formData.has('quantity')) updates.quantity = decimal4(formData, 'quantity');
   if (formData.has('unitOfMeasure')) updates.unitOfMeasure = str(formData, 'unitOfMeasure');
   if (formData.has('unitPrice')) updates.unitPrice = decimal4(formData, 'unitPrice');
-  if (formData.has('amount')) updates.amount = signedNum(formData, 'amount');
+  if (formData.has('amount')) updates.amount = num(formData, 'amount');
   if (formData.has('periodStart')) updates.periodStart = dateOrNull(formData, 'periodStart');
   if (formData.has('periodEnd')) updates.periodEnd = dateOrNull(formData, 'periodEnd');
   if (formData.has('notes')) updates.notes = str(formData, 'notes');

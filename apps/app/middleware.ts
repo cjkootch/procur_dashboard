@@ -6,6 +6,11 @@ const isPublicRoute = createRouteMatcher([
   '/sign-up(.*)',
   '/api/webhooks/(.*)',
   '/api/health',
+  // Word add-in API: token-authed via Authorization: Bearer header.
+  // Clerk session does not exist on these requests (the taskpane runs
+  // outside the browser cookie context); each route handler calls
+  // authenticateWordAddinRequest() to gate access.
+  '/api/word-addin/(.*)',
 ]);
 
 export default clerkMiddleware(async (auth, req) => {

@@ -61,3 +61,18 @@ export async function revokeWordAddinTokenAction(formData: FormData): Promise<vo
   revalidatePath('/settings/word-addin');
 }
 
+/**
+ * Clear the flash cookie. Invoked by the client-side fresh-token card
+ * once the user has seen the raw token, so a refresh/back-button won't
+ * re-render it. Auth: requireCompany() ensures only the originating
+ * user's session can clear their own flash cookie.
+ */
+export async function clearWordAddinFlashCookieAction(): Promise<void> {
+  await requireCompany();
+  const c = await cookies();
+  c.delete({
+    name: FLASH_COOKIE,
+    path: '/settings/word-addin',
+  });
+}
+
