@@ -63,7 +63,7 @@ export default async function ShredPage({ params }: { params: Promise<Params> })
           <h1 className="text-xl font-semibold">Compliance shred</h1>
           <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
             Sentence-level extract of every compliance verb in the RFP — shall, will, must,
-            should, may. Toggle "accounted for" once each mandatory item is addressed in
+            should, may. Toggle &ldquo;accounted for&rdquo; once each mandatory item is addressed in
             the proposal.
           </p>
         </div>
@@ -89,7 +89,7 @@ export default async function ShredPage({ params }: { params: Promise<Params> })
           {groups.length === 0 ? (
             <section className="rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] p-10 text-center text-sm text-[color:var(--color-muted-foreground)]">
               No shreds yet. Paste a section of the RFP into the bulk import above and
-              click "Classify with AI" to extract every compliance sentence in one pass.
+              click &ldquo;Classify with AI&rdquo; to extract every compliance sentence in one pass.
             </section>
           ) : (
             <div className="space-y-4">
