@@ -85,6 +85,13 @@
       "when": 1777110000000,
       "tag": "0011_contract_extras",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1777115000000,
+      "tag": "0012_word_addin_tokens",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,206 @@
+/* Procur Word add-in taskpane styles. Standalone — no Tailwind. */
+
+:root {
+  --procur-navy: #000734;
+  --procur-fg: #0a0a0a;
+  --procur-muted: #6b7280;
+  --procur-border: #e5e7eb;
+  --procur-bg: #ffffff;
+  --procur-soft-bg: #f9fafb;
+  --procur-danger: #b91c1c;
+  --procur-success: #15803d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--procur-fg);
+  background: var(--procur-bg);
+}
+
+#root {
+  padding: 12px 14px 24px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.brand {
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--procur-border);
+}
+
+.brand .logo {
+  height: 26px;
+  width: auto;
+  display: block;
+}
+
+.card {
+  border: 1px solid var(--procur-border);
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: var(--procur-soft-bg);
+}
+
+h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.subtle {
+  color: var(--procur-muted);
+  margin: 0 0 10px;
+}
+
+.subtle.small {
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.muted {
+  color: var(--procur-muted);
+}
+
+.small {
+  font-size: 11.5px;
+}
+
+.field {
+  display: block;
+  margin-bottom: 10px;
+}
+
+.field > span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--procur-muted);
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+select,
+input,
+textarea {
+  width: 100%;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--procur-border);
+  border-radius: 4px;
+  background: var(--procur-bg);
+}
+
+textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--procur-border);
+  background: var(--procur-bg);
+  color: var(--procur-fg);
+}
+
+button:hover {
+  background: var(--procur-soft-bg);
+}
+
+button.primary {
+  background: var(--procur-navy);
+  color: #ffffff;
+  border-color: var(--procur-navy);
+}
+
+button.primary:hover {
+  opacity: 0.92;
+}
+
+button.primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.link {
+  background: transparent;
+  border: none;
+  color: var(--procur-navy);
+  text-decoration: underline;
+  padding: 0 4px;
+  font-size: inherit;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.error {
+  color: var(--procur-danger);
+  font-size: 12px;
+  margin: 6px 0 0;
+}
+
+#draftOutput {
+  margin-top: 12px;
+  border-top: 1px solid var(--procur-border);
+  padding-top: 12px;
+}
+
+.output-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+#draftContent {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 12.5px;
+  background: var(--procur-soft-bg);
+  border: 1px solid var(--procur-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  max-height: 50vh;
+  overflow: auto;
+  margin: 0 0 6px;
+}
+
+a {
+  color: var(--procur-navy);
+}
+
+.loading {
+  padding: 20px;
+  color: var(--procur-muted);
+  font-size: 12px;
+}

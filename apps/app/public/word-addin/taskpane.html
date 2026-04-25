@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Procur</title>
+    <link rel="stylesheet" href="/word-addin/taskpane.css" />
+    <!-- Office.js — required for any Office Add-in. Pinned to the production CDN. -->
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  </head>
+  <body>
+    <main id="root" class="hidden">
+      <header class="brand">
+        <img src="/brand/procur-logo-dark.svg" alt="Procur" class="logo" />
+      </header>
+
+      <!-- Pairing -->
+      <section id="pairing" class="card">
+        <h2>Pair with your Procur account</h2>
+        <p class="subtle">
+          Go to
+          <a href="https://app.procur.app/settings/word-addin" target="_blank" rel="noreferrer">
+            app.procur.app/settings/word-addin
+          </a>
+          and create a token. Paste it below — we&rsquo;ll remember it on this device.
+        </p>
+        <input id="tokenInput" type="password" placeholder="prc_word_…" autocomplete="off" />
+        <button id="pairBtn" type="button">Pair</button>
+        <p id="pairError" class="error hidden"></p>
+      </section>
+
+      <!-- Authenticated UI -->
+      <section id="signedIn" class="hidden">
+        <p class="subtle small">
+          Signed in as <strong id="userName"></strong>
+          <span class="muted"> · <span id="companyName"></span></span>
+          <button id="signOutBtn" class="link" type="button">unpair</button>
+        </p>
+
+        <label class="field">
+          <span>Proposal</span>
+          <select id="proposalSelect"></select>
+        </label>
+        <label class="field">
+          <span>Section</span>
+          <select id="sectionSelect"></select>
+        </label>
+        <label class="field">
+          <span>Instruction (optional)</span>
+          <textarea id="instructionInput" rows="4" placeholder="What should this draft cover? Anything specific to emphasize?"></textarea>
+        </label>
+
+        <div class="row">
+          <button id="draftBtn" type="button" class="primary">Generate draft</button>
+          <span id="draftStatus" class="muted small"></span>
+        </div>
+
+        <article id="draftOutput" class="hidden">
+          <header class="output-head">
+            <h3 id="draftHeading"></h3>
+            <span id="draftMeta" class="muted small"></span>
+          </header>
+          <pre id="draftContent"></pre>
+          <div class="row">
+            <button id="insertBtn" type="button" class="primary">Insert at cursor</button>
+            <button id="copyBtn" type="button">Copy</button>
+          </div>
+          <p id="insertStatus" class="muted small"></p>
+        </article>
+      </section>
+    </main>
+
+    <p id="loading" class="loading">Initializing Office…</p>
+
+    <script src="/word-addin/taskpane.js"></script>
+  </body>
+</html>
