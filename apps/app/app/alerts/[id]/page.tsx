@@ -19,10 +19,14 @@ export const dynamic = 'force-dynamic';
 
 export default async function AlertDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ confirmDelete?: string }>;
 }) {
   const { id } = await params;
+  const sp = await searchParams;
+  const confirmingDelete = sp.confirmDelete === '1';
   const { user } = await requireCompany();
   const profile = await getAlertProfile(user.id, id);
   if (!profile) notFound();
@@ -130,15 +134,40 @@ export default async function AlertDetailPage({
       </section>
 
       <section>
-        <form action={deleteAlertAction}>
-          <input type="hidden" name="id" value={profile.id} />
-          <button
-            type="submit"
-            className="text-xs text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-brand)]"
+        {confirmingDelete ? (
+          // Two-step delete: clicking "Delete alert" navigates here
+          // (?confirmDelete=1), and only this confirmation submit
+          // actually wipes the row. Prevents fat-finger loss of saved
+          // searches, which take real effort to rebuild.
+          <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius-md)] border border-red-300 bg-red-50/40 p-3 text-xs">
+            <p className="flex-1">
+              Delete <span className="font-medium">&ldquo;{profile.name}&rdquo;</span>? Saved
+              searches and any pending notifications for this alert are gone forever.
+            </p>
+            <form action={deleteAlertAction}>
+              <input type="hidden" name="id" value={profile.id} />
+              <button
+                type="submit"
+                className="rounded-[var(--radius-sm)] border border-red-400 bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700"
+              >
+                Yes, delete
+              </button>
+            </form>
+            <Link
+              href={`/alerts/${profile.id}`}
+              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-3 py-1 text-xs hover:bg-[color:var(--color-muted)]/40"
+            >
+              Cancel
+            </Link>
+          </div>
+        ) : (
+          <Link
+            href={`/alerts/${profile.id}?confirmDelete=1`}
+            className="text-xs text-[color:var(--color-muted-foreground)] hover:text-red-600"
           >
             Delete alert
-          </button>
-        </form>
+          </Link>
+        )}
       </section>
     </div>
   );
