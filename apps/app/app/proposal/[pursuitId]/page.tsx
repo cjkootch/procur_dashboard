@@ -17,6 +17,7 @@ import {
   createProposalAction,
   deleteProposalCommentAction,
   draftSectionAction,
+  extractRequirementsAction,
   markProposalSubmittedAction,
   moveProposalSectionAction,
   regenerateComplianceAction,
@@ -127,12 +128,21 @@ export default async function ProposalDetailPage({
           </p>
           {requirements.length === 0 ? (
             <div className="mt-4 rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] p-4 text-sm">
-              <p className="font-medium">No extracted requirements yet</p>
+              <p className="font-medium">No requirements extracted yet</p>
               <p className="mt-1 text-[color:var(--color-muted-foreground)]">
-                Wait for the AI enrichment pipeline to process this tender&rsquo;s documents.
-                Runs automatically on scrape; you can also re-trigger it from the Trigger.dev
-                dashboard (task <code>opportunity.extract-requirements</code>).
+                Run AI extraction now to scan this tender&rsquo;s description and
+                source documents for mandatory requirements, evaluation criteria,
+                and required documents. Usually 30&ndash;60 seconds.
               </p>
+              <form action={extractRequirementsAction} className="mt-3">
+                <input type="hidden" name="pursuitId" value={pursuitId} />
+                <button
+                  type="submit"
+                  className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
+                >
+                  Extract requirements
+                </button>
+              </form>
             </div>
           ) : (
             <form action={createProposalAction} className="mt-4 space-y-4">

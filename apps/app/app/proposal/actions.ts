@@ -22,6 +22,7 @@ import { requireCompany } from '@procur/auth';
 import {
   draftSection,
   embedText,
+  extractRequirements,
   mapRequirementsToSections,
   meter,
   MODELS,
@@ -170,6 +171,101 @@ function deriveInitialSections(outline: OutlineSection[]): SectionDraft[] {
     wordCount: 0,
     lastEditedAt: new Date().toISOString(),
   }));
+}
+
+/**
+ * Run AI requirement extraction on demand for a pursuit's underlying
+ * opportunity, then persist the result on `opportunities`.
+ *
+ * The Trigger.dev pipeline already runs this on scrape, but two paths
+ * land users on a pursuit before extraction has happened:
+ *   1. They created a pursuit from a manually-entered opportunity (no
+ *      docs to scrape).
+ *   2. The async pipeline hasn't drained yet for this opportunity.
+ *
+ * Either way, the proposal page used to dead-end with "wait for the AI
+ * pipeline" — this action turns that empty state into a one-click fix.
+ *
+ * Source text priority: rawContent.text → parsedContent.text →
+ * description. For low-quality sources we still attempt the call;
+ * extraction_confidence on the model output reflects the reality.
+ *
+ * Idempotent: re-running overwrites the prior extraction. We don't
+ * merge — the new extraction is the new source of truth.
+ */
+export async function extractRequirementsAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  if (!pursuitId) throw new Error('pursuitId required');
+
+  const pursuit = await db.query.pursuits.findFirst({
+    where: and(eq(pursuits.id, pursuitId), eq(pursuits.companyId, company.id)),
+    columns: { id: true, opportunityId: true },
+  });
+  if (!pursuit) throw new Error('pursuit not found');
+
+  const opp = await db.query.opportunities.findFirst({
+    where: eq(opportunities.id, pursuit.opportunityId),
+    columns: {
+      id: true,
+      title: true,
+      description: true,
+      rawContent: true,
+      parsedContent: true,
+    },
+  });
+  if (!opp) throw new Error('opportunity not found');
+
+  const rawText =
+    (opp.rawContent as { text?: string } | null)?.text ??
+    (opp.parsedContent as { text?: string } | null)?.text ??
+    null;
+  const docText = rawText ?? opp.description ?? opp.title;
+
+  let result;
+  try {
+    result = await extractRequirements({
+      title: opp.title,
+      description: opp.description ?? undefined,
+      docText,
+    });
+  } catch (err) {
+    console.error('[extract_requirements] AI call failed', err);
+    throw new Error(
+      'Could not extract requirements from this tender. Try again, or open it from the original portal to confirm the source documents are accessible.',
+    );
+  }
+
+  await meter({
+    companyId: company.id,
+    source: 'extract_requirements',
+    model: MODELS.sonnet,
+    usage: result.usage,
+  });
+
+  // Stamp ids on requirements so the compliance matrix can reference
+  // them later. The model returns a flat list; we add ids client-side.
+  const requirementsWithIds = result.requirements.map((r, i) => ({
+    id: `req-${pursuit.opportunityId}-${i + 1}`,
+    type: r.type,
+    text: r.text,
+    mandatory: r.mandatory,
+    sourceSection: r.sourceSection,
+  }));
+
+  await db
+    .update(opportunities)
+    .set({
+      extractedRequirements: requirementsWithIds,
+      extractedCriteria: result.criteria,
+      mandatoryDocuments: result.mandatoryDocuments,
+      extractionConfidence: String(result.confidence),
+      updatedAt: new Date(),
+    })
+    .where(eq(opportunities.id, opp.id));
+
+  revalidatePath(`/proposal/${pursuitId}`);
+  revalidatePath(`/capture/pursuits/${pursuitId}`);
 }
 
 export async function createProposalAction(formData: FormData): Promise<void> {
