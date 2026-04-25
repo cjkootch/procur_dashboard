@@ -26,6 +26,9 @@ function adminEmails(): Set<string> {
 
 export type AdminUser = {
   id: string;
+  /** Clerk user id — needed when minting an actor token to impersonate
+      another user; the actor.sub claim must reference the staff member. */
+  clerkId: string;
   email: string;
   firstName: string | null;
   lastName: string | null;
@@ -43,7 +46,13 @@ export async function requireAdmin(): Promise<AdminUser> {
 
   const row = await db.query.users.findFirst({
     where: eq(users.clerkId, userId),
-    columns: { id: true, email: true, firstName: true, lastName: true },
+    columns: {
+      id: true,
+      clerkId: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+    },
   });
   if (!row) {
     throw new Error('admin: signed-in user is not in the procur users table');

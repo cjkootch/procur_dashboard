@@ -4,6 +4,7 @@ import { Montserrat } from 'next/font/google';
 import { ClerkProvider } from '@clerk/nextjs';
 import { PostHogProvider } from '@procur/analytics/client';
 import { AssistantDrawerMount } from '../components/assistant/AssistantDrawerMount';
+import { ImpersonationBanner } from '../components/shell/ImpersonationBanner';
 import './globals.css';
 
 // The authenticated app is 100% user-dependent — nothing should be
@@ -27,6 +28,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <ClerkProvider>
       <html lang="en" className={montserrat.variable}>
         <body>
+          {/* Impersonation banner — renders nothing for normal sessions.
+              Calls auth() server-side to detect the act claim. */}
+          <ImpersonationBanner />
           <PostHogProvider
             apiKey={process.env.NEXT_PUBLIC_POSTHOG_KEY}
             apiHost={process.env.NEXT_PUBLIC_POSTHOG_HOST}

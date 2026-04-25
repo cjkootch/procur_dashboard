@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { AdminShell } from '../../../components/shell/AdminShell';
 import { getTenantDetail } from '../../../lib/tenant-queries';
 import { setTenantBudgetAction, setTenantPlanTierAction } from './actions';
+import { startImpersonationAction } from './impersonate-action';
 import { MONTHLY_BUDGET_CENTS, type PlanTier as AiPlanTier } from '@procur/ai';
 
 const PLAN_TIERS = ['free', 'pro', 'team', 'enterprise'] as const;
@@ -178,18 +179,33 @@ export default async function TenantDetailPage({
           <h2 className="mb-3 text-sm font-semibold">Members ({members.length})</h2>
           <ul className="divide-y divide-[color:var(--color-border)]/60">
             {members.map((m) => (
-              <li key={m.id} className="flex items-center justify-between py-2 text-sm">
-                <div>
+              <li
+                key={m.id}
+                className="flex items-center justify-between gap-3 py-2 text-sm"
+              >
+                <div className="min-w-0">
                   <p className="font-medium">
                     {[m.firstName, m.lastName].filter(Boolean).join(' ') || m.email}
                   </p>
-                  <p className="text-[11px] text-[color:var(--color-muted-foreground)]">
+                  <p className="truncate text-[11px] text-[color:var(--color-muted-foreground)]">
                     {m.email}
                   </p>
                 </div>
-                <div className="text-right text-[11px] text-[color:var(--color-muted-foreground)]">
-                  <p className="capitalize">{m.role}</p>
-                  <p>joined {new Date(m.createdAt).toLocaleDateString()}</p>
+                <div className="flex shrink-0 items-center gap-3 text-[11px] text-[color:var(--color-muted-foreground)]">
+                  <div className="text-right">
+                    <p className="capitalize">{m.role}</p>
+                    <p>joined {new Date(m.createdAt).toLocaleDateString()}</p>
+                  </div>
+                  <form action={startImpersonationAction}>
+                    <input type="hidden" name="targetUserId" value={m.id} />
+                    <button
+                      type="submit"
+                      title="Sign in as this user. The session is audit-logged and time-limited."
+                      className="rounded-[var(--radius-sm)] border border-amber-300 bg-amber-50/50 px-2 py-1 text-[11px] text-amber-900 hover:bg-amber-100"
+                    >
+                      Impersonate
+                    </button>
+                  </form>
                 </div>
               </li>
             ))}
