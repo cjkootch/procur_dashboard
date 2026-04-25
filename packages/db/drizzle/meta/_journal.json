@@ -57,6 +57,13 @@
       "when": 1777070452271,
       "tag": "0007_pricing_line_items",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1777098000000,
+      "tag": "0008_pursuit_team_members",
+      "breakpoints": true
     }
   ]
 }

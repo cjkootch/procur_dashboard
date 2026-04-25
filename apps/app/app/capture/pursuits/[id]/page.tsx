@@ -21,8 +21,10 @@ import { PursuitOverviewTab } from '../../pursuits/components/overview-tab';
 import { PursuitActivityTab } from '../../pursuits/components/activity-tab';
 import { PursuitTasksTab } from '../../pursuits/components/tasks-tab';
 import { GateReviewsTab } from '../../pursuits/components/gate-reviews-tab';
+import { TeamingTab } from '../../pursuits/components/teaming-tab';
 import { PursuitDocumentsTab } from '../../pursuits/components/documents-tab';
 import { listGateReviewsForPursuit } from '../../../../lib/gate-review-queries';
+import { listTeamMembersForPursuit, summarizeTeam } from '../../../../lib/team-queries';
 
 export const dynamic = 'force-dynamic';
 
@@ -121,6 +123,10 @@ export default async function PursuitDetailPage({
   // Gate reviews — loaded only when the Gate Reviews tab is active.
   const gateReviews = tab === 'gate-reviews' ? await listGateReviewsForPursuit(id) : [];
 
+  // Team members — loaded only when the Teaming tab is active.
+  const teamMembers = tab === 'teaming' ? await listTeamMembersForPursuit(id) : [];
+  const teamSummary = summarizeTeam(teamMembers);
+
   // Documents attached to the underlying opportunity. Loaded only when the
   // Documents tab is active to avoid an extra query on every page view.
   const docRows =
@@ -207,6 +213,9 @@ export default async function PursuitDetailPage({
           {tab === 'tasks' && <PursuitTasksTab pursuitId={card.id} tasks={tasks} />}
           {tab === 'gate-reviews' && (
             <GateReviewsTab pursuitId={card.id} reviews={gateReviews} />
+          )}
+          {tab === 'teaming' && (
+            <TeamingTab pursuitId={card.id} members={teamMembers} summary={teamSummary} />
           )}
           {tab === 'documents' && (
             <PursuitDocumentsTab
