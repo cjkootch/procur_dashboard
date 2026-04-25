@@ -2,6 +2,7 @@ import type Stripe from 'stripe';
 import { eq } from 'drizzle-orm';
 import { companies, db } from '@procur/db';
 import { getStripe } from '../../../../lib/stripe';
+import { recordWebhookReceipt } from '../../../../lib/webhook-events';
 
 type PlanTier = 'free' | 'pro' | 'team' | 'enterprise';
 
@@ -39,7 +40,15 @@ export async function POST(req: Request): Promise<Response> {
   if (!secret) return new Response('STRIPE_WEBHOOK_SECRET not configured', { status: 500 });
 
   const sig = req.headers.get('stripe-signature');
-  if (!sig) return new Response('missing stripe-signature', { status: 400 });
+  if (!sig) {
+    await recordWebhookReceipt({
+      provider: 'stripe',
+      responseStatus: 400,
+      signatureValid: false,
+      errorMessage: 'missing stripe-signature header',
+    });
+    return new Response('missing stripe-signature', { status: 400 });
+  }
 
   const body = await req.text();
   const stripe = getStripe();
@@ -49,7 +58,32 @@ export async function POST(req: Request): Promise<Response> {
     event = stripe.webhooks.constructEvent(body, sig, secret);
   } catch (err) {
     console.error('stripe webhook signature error', err);
+    await recordWebhookReceipt({
+      provider: 'stripe',
+      responseStatus: 401,
+      signatureValid: false,
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
     return new Response('invalid signature', { status: 401 });
+  }
+
+  // Best-effort companyId resolution up front so the receipt has it
+  // even if the handler errors. Many event types won't have a customer
+  // — we just leave it null in that case.
+  let companyIdGuess: string | null = null;
+  try {
+    const obj = event.data.object as { customer?: string | { id?: string } } | null;
+    const customerId =
+      typeof obj?.customer === 'string' ? obj.customer : obj?.customer?.id ?? null;
+    if (customerId) {
+      const row = await db.query.companies.findFirst({
+        where: eq(companies.stripeCustomerId, customerId),
+        columns: { id: true },
+      });
+      companyIdGuess = row?.id ?? null;
+    }
+  } catch {
+    // ignore — best-effort only
   }
 
   try {
@@ -124,8 +158,26 @@ export async function POST(req: Request): Promise<Response> {
     }
   } catch (err) {
     console.error('stripe webhook handler error', err);
+    await recordWebhookReceipt({
+      provider: 'stripe',
+      eventId: event.id,
+      eventType: event.type,
+      companyId: companyIdGuess,
+      responseStatus: 500,
+      errorMessage: err instanceof Error ? err.message : String(err),
+      payload: event,
+    });
     return new Response('handler error', { status: 500 });
   }
 
+  await recordWebhookReceipt({
+    provider: 'stripe',
+    eventId: event.id,
+    eventType: event.type,
+    companyId: companyIdGuess,
+    responseStatus: 200,
+    processed: true,
+    payload: event,
+  });
   return new Response('ok', { status: 200 });
 }

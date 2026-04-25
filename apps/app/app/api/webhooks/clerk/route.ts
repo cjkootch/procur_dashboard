@@ -1,8 +1,9 @@
 import { Webhook } from 'svix';
 import { tasks } from '@trigger.dev/sdk/v3';
-import { db, users } from '@procur/db';
+import { companies, db, users } from '@procur/db';
 import { eq } from 'drizzle-orm';
 import { handleClerkWebhook, type ClerkWebhookEvent } from '@procur/auth/sync';
+import { recordWebhookReceipt } from '../../../../lib/webhook-events';
 
 export const runtime = 'nodejs';
 
@@ -29,6 +30,13 @@ export async function POST(req: Request): Promise<Response> {
   const svixSignature = req.headers.get('svix-signature');
 
   if (!svixId || !svixTimestamp || !svixSignature) {
+    await recordWebhookReceipt({
+      provider: 'clerk',
+      eventId: svixId,
+      responseStatus: 400,
+      signatureValid: false,
+      errorMessage: 'missing svix headers',
+    });
     return new Response('missing svix headers', { status: 400 });
   }
 
@@ -42,14 +50,46 @@ export async function POST(req: Request): Promise<Response> {
       'svix-timestamp': svixTimestamp,
       'svix-signature': svixSignature,
     }) as ClerkWebhookEvent;
-  } catch {
+  } catch (err) {
+    await recordWebhookReceipt({
+      provider: 'clerk',
+      eventId: svixId,
+      responseStatus: 401,
+      signatureValid: false,
+      errorMessage: err instanceof Error ? err.message : 'invalid signature',
+    });
     return new Response('invalid signature', { status: 401 });
+  }
+
+  // Best-effort companyId lookup from event payload. Clerk org events
+  // carry the org id; we map it to our company row.
+  let companyIdGuess: string | null = null;
+  try {
+    const data = event.data as { id?: string } | undefined;
+    if (data?.id && event.type.startsWith('organization')) {
+      const row = await db.query.companies.findFirst({
+        where: eq(companies.clerkOrgId, data.id),
+        columns: { id: true },
+      });
+      companyIdGuess = row?.id ?? null;
+    }
+  } catch {
+    // ignore
   }
 
   try {
     await handleClerkWebhook(event);
   } catch (err) {
     console.error('clerk webhook handler error', err);
+    await recordWebhookReceipt({
+      provider: 'clerk',
+      eventId: svixId,
+      eventType: event.type,
+      companyId: companyIdGuess,
+      responseStatus: 500,
+      errorMessage: err instanceof Error ? err.message : String(err),
+      payload: event,
+    });
     return new Response('handler error', { status: 500 });
   }
 
@@ -77,5 +117,14 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
+  await recordWebhookReceipt({
+    provider: 'clerk',
+    eventId: svixId,
+    eventType: event.type,
+    companyId: companyIdGuess,
+    responseStatus: 200,
+    processed: true,
+    payload: event,
+  });
   return new Response('ok', { status: 200 });
 }
