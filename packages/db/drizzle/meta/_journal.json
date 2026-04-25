@@ -71,6 +71,13 @@
       "when": 1777102000000,
       "tag": "0009_capabilities",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1777105000000,
+      "tag": "0010_proposal_shreds",
+      "breakpoints": true
     }
   ]
 }

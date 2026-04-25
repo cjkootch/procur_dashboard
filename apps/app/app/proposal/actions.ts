@@ -10,8 +10,12 @@ import {
   opportunities,
   proposalComments,
   proposals,
+  proposalShreds,
   pursuits,
+  SHRED_TYPES,
   type NewProposal,
+  type NewProposalShred,
+  type ShredType,
 } from '@procur/db';
 import { requireCompany } from '@procur/auth';
 import {
@@ -21,6 +25,7 @@ import {
   meter,
   MODELS,
   reviewProposal,
+  shredRfp,
 } from '@procur/ai';
 import { randomUUID } from 'node:crypto';
 import { semanticSearchLibrary } from '../../lib/library-queries';
@@ -900,4 +905,198 @@ export async function moveProposalSectionAction(formData: FormData): Promise<voi
     .where(eq(proposals.id, proposal.id));
 
   revalidatePath(`/proposal/${pursuitId}`);
+}
+
+// ===========================================================================
+// Compliance shreds (sentence-level RFP extraction)
+// ===========================================================================
+
+const SHRED_REVALIDATE = (pursuitId: string) => {
+  revalidatePath(`/proposal/${pursuitId}/shred`);
+  revalidatePath(`/proposal/${pursuitId}`);
+};
+
+function toShredType(v: FormDataEntryValue | null): ShredType {
+  const s = v == null ? '' : String(v);
+  return (SHRED_TYPES as string[]).includes(s) ? (s as ShredType) : 'none';
+}
+
+/**
+ * Ownership-checked load of (pursuit, proposal) by pursuitId. Used by every
+ * shred action to keep the cross-company barrier in one place.
+ */
+async function loadOwnedProposal(companyId: string, pursuitId: string) {
+  const pursuit = await db.query.pursuits.findFirst({
+    where: and(eq(pursuits.id, pursuitId), eq(pursuits.companyId, companyId)),
+    columns: { id: true },
+  });
+  if (!pursuit) throw new Error('pursuit not found');
+  const proposal = await db.query.proposals.findFirst({
+    where: eq(proposals.pursuitId, pursuitId),
+    columns: { id: true, pursuitId: true },
+  });
+  if (!proposal) throw new Error('proposal not found');
+  return proposal;
+}
+
+async function loadOwnedShred(companyId: string, shredId: string) {
+  const rows = await db
+    .select({
+      shred: proposalShreds,
+      companyId: pursuits.companyId,
+    })
+    .from(proposalShreds)
+    .innerJoin(proposals, eq(proposals.id, proposalShreds.proposalId))
+    .innerJoin(pursuits, eq(pursuits.id, proposals.pursuitId))
+    .where(eq(proposalShreds.id, shredId))
+    .limit(1);
+  const first = rows[0];
+  if (!first || first.companyId !== companyId) throw new Error('shred not found');
+  return first.shred;
+}
+
+/**
+ * Bulk-classify a pasted RFP section: Claude extracts every compliance
+ * sentence, classifies the verb, and tags the section path. Inserted as
+ * one batch — sortOrder is a strict monotonic offset so display order
+ * matches RFP order.
+ */
+export async function shredRfpFromTextAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const rfpText = String(formData.get('rfpText') ?? '').trim();
+  const sectionHint = String(formData.get('sectionHint') ?? '').trim() || undefined;
+  if (!pursuitId || !rfpText) throw new Error('pursuitId + rfpText required');
+  if (rfpText.length > 200_000) throw new Error('rfpText too long (>200k chars)');
+
+  const proposal = await loadOwnedProposal(company.id, pursuitId);
+
+  const result = await shredRfp({ rfpText, sectionHint });
+
+  await meter({
+    companyId: company.id,
+    source: 'shred_rfp',
+    model: MODELS.sonnet,
+    usage: result.usage,
+  });
+
+  if (result.sentences.length === 0) {
+    SHRED_REVALIDATE(pursuitId);
+    return;
+  }
+
+  // Compute the next sortOrder offset so this batch sits after existing rows.
+  const existing = await db
+    .select({ sortOrder: proposalShreds.sortOrder })
+    .from(proposalShreds)
+    .where(eq(proposalShreds.proposalId, proposal.id));
+  const maxSort = existing.reduce((m, r) => Math.max(m, r.sortOrder), -1);
+
+  const rows: NewProposalShred[] = result.sentences.map((s, i) => ({
+    proposalId: proposal.id,
+    sectionPath: s.sectionPath,
+    sectionTitle: s.sectionTitle,
+    sentenceText: s.sentenceText,
+    shredType: s.shredType,
+    sortOrder: maxSort + 1 + i,
+  }));
+
+  await db.insert(proposalShreds).values(rows);
+
+  SHRED_REVALIDATE(pursuitId);
+}
+
+export async function addShredAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const sentenceText = String(formData.get('sentenceText') ?? '').trim();
+  if (!pursuitId || !sentenceText) throw new Error('pursuitId + sentenceText required');
+  if (sentenceText.length > 4000) throw new Error('sentenceText too long');
+
+  const proposal = await loadOwnedProposal(company.id, pursuitId);
+
+  const sectionPath = String(formData.get('sectionPath') ?? '').trim();
+  const sectionTitle = String(formData.get('sectionTitle') ?? '').trim() || null;
+
+  const row: NewProposalShred = {
+    proposalId: proposal.id,
+    sectionPath,
+    sectionTitle,
+    sentenceText,
+    shredType: toShredType(formData.get('shredType')),
+  };
+
+  await db.insert(proposalShreds).values(row);
+
+  SHRED_REVALIDATE(pursuitId);
+}
+
+export async function updateShredAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const shredId = String(formData.get('shredId') ?? '');
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  if (!shredId) throw new Error('shredId required');
+
+  await loadOwnedShred(company.id, shredId);
+
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (formData.has('sentenceText')) {
+    const v = String(formData.get('sentenceText') ?? '').trim();
+    if (v.length > 0) updates.sentenceText = v;
+  }
+  if (formData.has('sectionPath'))
+    updates.sectionPath = String(formData.get('sectionPath') ?? '').trim();
+  if (formData.has('sectionTitle'))
+    updates.sectionTitle = String(formData.get('sectionTitle') ?? '').trim() || null;
+  if (formData.has('shredType')) updates.shredType = toShredType(formData.get('shredType'));
+  if (formData.has('addressedInSection'))
+    updates.addressedInSection =
+      String(formData.get('addressedInSection') ?? '').trim() || null;
+  if (formData.has('notes'))
+    updates.notes = String(formData.get('notes') ?? '').trim() || null;
+
+  await db.update(proposalShreds).set(updates).where(eq(proposalShreds.id, shredId));
+
+  if (pursuitId) SHRED_REVALIDATE(pursuitId);
+}
+
+export async function toggleShredAccountedForAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const shredId = String(formData.get('shredId') ?? '');
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  if (!shredId) throw new Error('shredId required');
+
+  const existing = await loadOwnedShred(company.id, shredId);
+
+  await db
+    .update(proposalShreds)
+    .set({ accountedFor: !existing.accountedFor, updatedAt: new Date() })
+    .where(eq(proposalShreds.id, shredId));
+
+  if (pursuitId) SHRED_REVALIDATE(pursuitId);
+}
+
+export async function removeShredAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const shredId = String(formData.get('shredId') ?? '');
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  if (!shredId) throw new Error('shredId required');
+
+  await loadOwnedShred(company.id, shredId);
+
+  await db.delete(proposalShreds).where(eq(proposalShreds.id, shredId));
+
+  if (pursuitId) SHRED_REVALIDATE(pursuitId);
+}
+
+export async function clearAllShredsAction(formData: FormData): Promise<void> {
+  const { company } = await requireCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  if (!pursuitId) throw new Error('pursuitId required');
+
+  const proposal = await loadOwnedProposal(company.id, pursuitId);
+
+  await db.delete(proposalShreds).where(eq(proposalShreds.proposalId, proposal.id));
+
+  SHRED_REVALIDATE(pursuitId);
 }
