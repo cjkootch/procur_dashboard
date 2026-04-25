@@ -6,6 +6,7 @@ import {
   WEBHOOK_PAGE_SIZE,
   type WebhookRow,
 } from '../../lib/webhook-queries';
+import { replayWebhookEventAction } from './actions';
 
 type SearchParams = {
   provider?: string;
@@ -233,6 +234,29 @@ function WebhookRowView({ row }: { row: WebhookRow }) {
           </pre>
         </div>
       )}
+      {/* Replay is only meaningful for Stripe events that have a stored
+          payload AND didn't end in a successful processed handler.
+          Re-running an already-OK event would double-apply the
+          subscription update; the no-op switch in processStripeEvent
+          handles most cases idempotently, but it's still cleaner to
+          hide the button. */}
+      {row.provider === 'stripe' &&
+        row.payload != null &&
+        statusBucket !== 'ok' && (
+          <form action={replayWebhookEventAction} className="mt-2 flex items-center gap-2">
+            <input type="hidden" name="eventRowId" value={row.id} />
+            <button
+              type="submit"
+              className="rounded-[var(--radius-sm)] border border-[color:var(--color-foreground)]/40 bg-[color:var(--color-background)] px-2 py-1 text-[11px] font-medium text-[color:var(--color-foreground)] hover:bg-[color:var(--color-muted)]/40"
+            >
+              Replay
+            </button>
+            <span className="text-[10px] text-[color:var(--color-muted-foreground)]">
+              Re-runs the handler with the stored payload. Audit-logged. Adds a
+              new row showing the replay outcome.
+            </span>
+          </form>
+        )}
     </details>
   );
 }

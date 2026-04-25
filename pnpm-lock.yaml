@@ -35,6 +35,9 @@ importers:
       '@procur/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@procur/payments':
+        specifier: workspace:*
+        version: link:../../packages/payments
       '@procur/utils':
         specifier: workspace:*
         version: link:../../packages/utils
@@ -96,6 +99,9 @@ importers:
       '@procur/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@procur/payments':
+        specifier: workspace:*
+        version: link:../../packages/payments
       '@procur/utils':
         specifier: workspace:*
         version: link:../../packages/utils
@@ -437,6 +443,28 @@ importers:
       react-email:
         specifier: ^3.0.4
         version: 3.0.7(@opentelemetry/api@1.9.0)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/payments:
+    dependencies:
+      '@procur/db':
+        specifier: workspace:*
+        version: link:../db
+      drizzle-orm:
+        specifier: ^0.38.3
+        version: 0.38.4(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.11.6)(@types/react@19.2.14)(postgres@3.4.9)(react@19.2.5)
+      stripe:
+        specifier: ^17.5.0
+        version: 17.7.0
+    devDependencies:
+      '@procur/config':
+        specifier: workspace:*
+        version: link:../config
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.17
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
