@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
+import { listMentionHints, type MentionHint } from '../../../lib/mentions';
 import { getProposalByPursuitId } from '../../../lib/proposal-queries';
 import { getRelevantPastPerformance } from '../../../lib/past-performance-queries';
 import {
@@ -100,7 +101,7 @@ export default async function ProposalDetailPage({
   params: Promise<Params>;
 }) {
   const { pursuitId } = await params;
-  const { company } = await requireCompany();
+  const { user, company } = await requireCompany();
   const detail = await getProposalByPursuitId(company.id, pursuitId);
   if (!detail) notFound();
 
@@ -192,13 +193,14 @@ export default async function ProposalDetailPage({
   const compliancePct =
     compliance.length > 0 ? Math.round((addressedCount / compliance.length) * 100) : 0;
 
-  const [relevantPP, allComments] = await Promise.all([
+  const [relevantPP, allComments, mentionHints] = await Promise.all([
     getRelevantPastPerformance(
       company.id,
       [opportunity.title, opportunity.description].filter(Boolean).join('\n\n'),
       3,
     ),
     listProposalComments(proposal.id),
+    listMentionHints(company.id, user.id),
   ]);
   const proposalLevelComments = allComments.filter((c) => c.sectionId === null);
   const commentsBySection = new Map<string, CommentWithAuthor[]>();
@@ -434,6 +436,7 @@ export default async function ProposalDetailPage({
             pursuitId={pursuitId}
             sectionId={null}
             comments={proposalLevelComments}
+            mentionHints={mentionHints}
           />
         </div>
       </section>
@@ -607,6 +610,7 @@ export default async function ProposalDetailPage({
                   pursuitId={pursuitId}
                   sectionId={sec.id}
                   comments={commentsBySection.get(sec.id) ?? []}
+                  mentionHints={mentionHints}
                 />
 
                 <form
@@ -852,10 +856,12 @@ function CommentThread({
   pursuitId,
   sectionId,
   comments,
+  mentionHints,
 }: {
   pursuitId: string;
   sectionId: string | null;
   comments: CommentWithAuthor[];
+  mentionHints: MentionHint[];
 }) {
   const open = comments.filter((c) => c.resolvedAt === null);
   const resolved = comments.filter((c) => c.resolvedAt !== null);
@@ -893,22 +899,44 @@ function CommentThread({
         </div>
       )}
 
-      <form action={addProposalCommentAction} className="mt-3 flex items-start gap-2">
+      <form action={addProposalCommentAction} className="mt-3 space-y-1">
         <input type="hidden" name="pursuitId" value={pursuitId} />
         {sectionId && <input type="hidden" name="sectionId" value={sectionId} />}
-        <textarea
-          name="body"
-          rows={1}
-          required
-          placeholder={sectionId ? 'Leave a comment on this section…' : 'Start a discussion…'}
-          className="flex-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
-        />
-        <button
-          type="submit"
-          className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
-        >
-          Post
-        </button>
+        <div className="flex items-start gap-2">
+          <textarea
+            name="body"
+            rows={1}
+            required
+            maxLength={4000}
+            placeholder={
+              sectionId
+                ? 'Leave a comment on this section… use @handle to ping a teammate.'
+                : 'Start a discussion… use @handle to ping a teammate.'
+            }
+            className="flex-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
+          />
+          <button
+            type="submit"
+            className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
+          >
+            Post
+          </button>
+        </div>
+        {mentionHints.length > 0 && (
+          <p className="text-[10px] text-[color:var(--color-muted-foreground)]">
+            Mention:{' '}
+            {mentionHints.slice(0, 6).map((h, i) => (
+              <span key={h.handle}>
+                {i > 0 && ' · '}
+                <span className="font-mono">@{h.handle}</span>{' '}
+                <span className="opacity-70">({h.displayName})</span>
+              </span>
+            ))}
+            {mentionHints.length > 6 && (
+              <span className="opacity-70"> · +{mentionHints.length - 6} more</span>
+            )}
+          </p>
+        )}
       </form>
     </div>
   );
