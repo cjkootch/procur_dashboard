@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { AdminShell } from '../../../components/shell/AdminShell';
 import { getTenantDetail } from '../../../lib/tenant-queries';
-import { setTenantPlanTierAction } from './actions';
+import { setTenantBudgetAction, setTenantPlanTierAction } from './actions';
+import { MONTHLY_BUDGET_CENTS, type PlanTier as AiPlanTier } from '@procur/ai';
 
 const PLAN_TIERS = ['free', 'pro', 'team', 'enterprise'] as const;
 
@@ -86,6 +87,54 @@ export default async function TenantDetailPage({
           </form>
         </section>
 
+        {/* AI budget cap */}
+        <section className="mb-6 rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-4">
+          <h2 className="text-sm font-semibold">Monthly AI budget cap</h2>
+          {(() => {
+            const tier = company.planTier as AiPlanTier;
+            const tierDefault = MONTHLY_BUDGET_CENTS[tier];
+            const override = company.monthlyAiBudgetCents;
+            const effective = override ?? tierDefault;
+            return (
+              <>
+                <p className="mt-1 mb-3 text-xs text-[color:var(--color-muted-foreground)]">
+                  Effective cap: <strong>{capLabel(effective)}</strong>
+                  {override == null
+                    ? ` (using ${tier} tier default)`
+                    : ` (per-tenant override; tier default is ${capLabel(tierDefault)})`}
+                  . When usage exceeds the cap, AI calls return BudgetExceededError.
+                </p>
+                <form
+                  action={setTenantBudgetAction}
+                  className="flex flex-wrap items-end gap-2"
+                >
+                  <input type="hidden" name="companyId" value={company.id} />
+                  <label className="flex flex-col gap-1 text-sm">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                      Override (USD)
+                    </span>
+                    <input
+                      name="budgetUsd"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      defaultValue={override == null ? '' : (override / 100).toFixed(2)}
+                      placeholder="leave blank to clear"
+                      className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm w-40"
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
+                  >
+                    Save
+                  </button>
+                </form>
+              </>
+            );
+          })()}
+        </section>
+
         {/* AI spend */}
         <section className="mb-6 rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-4">
           <h2 className="mb-1 text-sm font-semibold">AI spend this month</h2>
@@ -160,4 +209,10 @@ function usd(cents: number): string {
     currency: 'USD',
     maximumFractionDigits: 2,
   }).format(cents / 100);
+}
+
+/** Display a budget cap; null = "unlimited" (enterprise default). */
+function capLabel(cents: number | null | undefined): string {
+  if (cents == null) return 'unlimited';
+  return usd(cents);
 }

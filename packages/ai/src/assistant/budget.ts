@@ -4,8 +4,12 @@ import { and, eq, gte, sql } from 'drizzle-orm';
 export type PlanTier = 'free' | 'pro' | 'team' | 'enterprise';
 
 /**
- * Monthly AI spend caps per plan, in USD cents.
- * null = unlimited. Starter numbers — revisit once we have real usage data.
+ * Default monthly AI spend caps per plan, in USD cents.
+ * null = unlimited. Tenants can override via
+ * `companies.monthly_ai_budget_cents` (set by Procur staff in the
+ * admin app); the override always wins when present.
+ *
+ * Starter numbers — revisit once we have real usage data.
  */
 export const MONTHLY_BUDGET_CENTS: Record<PlanTier, number | null> = {
   free: 500, // $5
@@ -13,6 +17,15 @@ export const MONTHLY_BUDGET_CENTS: Record<PlanTier, number | null> = {
   team: 7500, // $75
   enterprise: null,
 };
+
+/** Resolve the effective cap for a tenant: per-row override > plan default. */
+function effectiveBudgetCents(
+  planTier: PlanTier,
+  override: number | null | undefined,
+): number | null {
+  if (override != null) return override;
+  return MONTHLY_BUDGET_CENTS[planTier];
+}
 
 export type UsageSource =
   | 'assistant'
@@ -43,10 +56,10 @@ function monthStart(d = new Date()): Date {
 export async function getBudgetStatus(companyId: string): Promise<BudgetStatus> {
   const company = await db.query.companies.findFirst({
     where: eq(companies.id, companyId),
-    columns: { planTier: true },
+    columns: { planTier: true, monthlyAiBudgetCents: true },
   });
   const planTier = (company?.planTier ?? 'free') as PlanTier;
-  const limitCents = MONTHLY_BUDGET_CENTS[planTier];
+  const limitCents = effectiveBudgetCents(planTier, company?.monthlyAiBudgetCents);
   const ms = monthStart();
 
   const [row] = await db
