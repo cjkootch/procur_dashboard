@@ -64,6 +64,10 @@ export const proposalShreds = pgTable(
       table.proposalId,
       table.sectionPath,
     ),
+    proposalSortIdx: index('proposal_shreds_proposal_sort_idx').on(
+      table.proposalId,
+      table.sortOrder,
+    ),
   }),
 );
 

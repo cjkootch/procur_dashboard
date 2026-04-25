@@ -43,7 +43,9 @@ export async function mintWordAddinTokenAction(formData: FormData): Promise<void
   });
 
   revalidatePath('/settings/word-addin');
-  redirect('/settings/word-addin?minted=1');
+  // No query param — the FreshTokenCard renders purely from the cookie
+  // we just set; ?minted=1 was a dead signal.
+  redirect('/settings/word-addin');
 }
 
 export async function revokeWordAddinTokenAction(formData: FormData): Promise<void> {

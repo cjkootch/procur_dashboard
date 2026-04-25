@@ -1,6 +1,6 @@
 'use server';
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, max } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import {
@@ -916,6 +916,13 @@ const SHRED_REVALIDATE = (pursuitId: string) => {
   revalidatePath(`/proposal/${pursuitId}`);
 };
 
+/**
+ * Hard cap on a single shred sentence — same value enforced in
+ * addShredAction for the manual flow. Prevents one bad model output
+ * from writing unbounded text into a single row.
+ */
+const MAX_SHRED_TEXT_CHARS = 4000;
+
 function toShredType(v: FormDataEntryValue | null): ShredType {
   const s = v == null ? '' : String(v);
   return (SHRED_TYPES as string[]).includes(s) ? (s as ShredType) : 'none';
@@ -971,7 +978,21 @@ export async function shredRfpFromTextAction(formData: FormData): Promise<void> 
 
   const proposal = await loadOwnedProposal(company.id, pursuitId);
 
-  const result = await shredRfp({ rfpText, sectionHint });
+  // shredRfp() can throw on malformed model output (Zod parse failure)
+  // or on transport errors. We catch here so the user gets a clean
+  // error instead of a generic 500, and so any partial billing doesn't
+  // get masked. The Anthropic call already happened — there's nothing
+  // to refund — but the user-visible state is "no shreds inserted".
+  let result;
+  try {
+    result = await shredRfp({ rfpText, sectionHint });
+  } catch (err) {
+    console.error('[shred_rfp] AI call failed', err);
+    throw new Error(
+      'Could not extract compliance sentences from this text. ' +
+        'Try a smaller section or check that the text is well-formed.',
+    );
+  }
 
   await meter({
     companyId: company.id,
@@ -985,18 +1006,25 @@ export async function shredRfpFromTextAction(formData: FormData): Promise<void> 
     return;
   }
 
-  // Compute the next sortOrder offset so this batch sits after existing rows.
-  const existing = await db
-    .select({ sortOrder: proposalShreds.sortOrder })
+  // Compute the next sortOrder via SQL aggregate. Previously this scanned
+  // every existing shred row to find the max — fine at v1 scale but a
+  // multi-MB scan on RFPs with thousands of sentences. The aggregate also
+  // narrows the race window between concurrent submissions (still not
+  // race-safe without a transaction or unique constraint on
+  // (proposal_id, sort_order); the visual order is stable on equal keys).
+  const [{ value: priorMax = null } = { value: null as number | null }] = await db
+    .select({ value: max(proposalShreds.sortOrder) })
     .from(proposalShreds)
     .where(eq(proposalShreds.proposalId, proposal.id));
-  const maxSort = existing.reduce((m, r) => Math.max(m, r.sortOrder), -1);
+  const maxSort = priorMax ?? -1;
 
   const rows: NewProposalShred[] = result.sentences.map((s, i) => ({
     proposalId: proposal.id,
     sectionPath: s.sectionPath,
     sectionTitle: s.sectionTitle,
-    sentenceText: s.sentenceText,
+    // Hard-cap sentence length to keep one bad model output from writing
+    // unbounded text into a single row.
+    sentenceText: s.sentenceText.slice(0, MAX_SHRED_TEXT_CHARS),
     shredType: s.shredType,
     sortOrder: maxSort + 1 + i,
   }));

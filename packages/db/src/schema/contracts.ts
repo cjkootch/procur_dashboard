@@ -6,13 +6,16 @@ import {
   numeric,
   date,
   jsonb,
+  index,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { contractStatusEnum, contractTierEnum } from './enums';
 import { companies } from './companies';
 import { pursuits } from './pursuits';
 
-export const contracts = pgTable('contracts', {
+export const contracts = pgTable(
+  'contracts',
+  {
   id: uuid('id').primaryKey().defaultRandom(),
   companyId: uuid('company_id')
     .references(() => companies.id)
@@ -58,7 +61,13 @@ export const contracts = pgTable('contracts', {
 
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
+  },
+  (table) => ({
+    companyIdx: index('contracts_company_idx').on(table.companyId),
+    pursuitIdx: index('contracts_pursuit_idx').on(table.pursuitId),
+    parentIdx: index('contracts_parent_idx').on(table.parentContractId),
+  }),
+);
 
 export type Contract = typeof contracts.$inferSelect;
 export type NewContract = typeof contracts.$inferInsert;
