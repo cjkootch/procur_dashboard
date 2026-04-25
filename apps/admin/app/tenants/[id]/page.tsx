@@ -28,13 +28,21 @@ export default async function TenantDetailPage({
           <span className="text-[color:var(--color-foreground)]">{company.name}</span>
         </nav>
 
-        <header className="mb-6">
-          <h1 className="text-2xl font-semibold">{company.name}</h1>
-          <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
-            {company.country ?? '—'} · created{' '}
-            {new Date(company.createdAt).toLocaleDateString()} · clerk org{' '}
-            <span className="font-mono">{company.clerkOrgId ?? '—'}</span>
-          </p>
+        <header className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold">{company.name}</h1>
+            <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+              {company.country ?? '—'} · created{' '}
+              {new Date(company.createdAt).toLocaleDateString()} · clerk org{' '}
+              <span className="font-mono">{company.clerkOrgId ?? '—'}</span>
+            </p>
+          </div>
+          <Link
+            href={`/audit?companyId=${company.id}`}
+            className="shrink-0 rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-muted)]/40"
+          >
+            View audit log →
+          </Link>
         </header>
 
         <section className="mb-6 grid gap-3 sm:grid-cols-4">
