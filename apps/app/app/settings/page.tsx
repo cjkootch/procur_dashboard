@@ -1,4 +1,6 @@
 import { requireCompany } from '@procur/auth';
+import { clearSampleDataAction } from '../onboarding/sample-data-action';
+import { hasSampleData } from '../../lib/sample-data';
 import {
   autofillCompanyProfileAction,
   updateCompanyProfileAction,
@@ -8,6 +10,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function CompanyProfilePage() {
   const { company } = await requireCompany();
+  const showSampleClear = await hasSampleData(company.id);
 
   return (
     <div className="mx-auto max-w-3xl px-8 py-10">
@@ -134,6 +137,33 @@ export default async function CompanyProfilePage() {
           .
         </p>
       </section>
+
+      {showSampleClear && (
+        <section className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-5">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+              Sample data
+            </h2>
+            <p className="mt-2 text-sm">
+              Your workspace contains the seeded demo content (rows tagged{' '}
+              <span className="font-mono">[Sample]</span>).
+            </p>
+            <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+              Clearing removes the two sample pursuits, the sample contract, the
+              sample library doc, and the sample past-performance entry — along
+              with anything you built on top of them. Real data is untouched.
+            </p>
+          </div>
+          <form action={clearSampleDataAction}>
+            <button
+              type="submit"
+              className="rounded-[var(--radius-md)] border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100"
+            >
+              Clear sample data
+            </button>
+          </form>
+        </section>
+      )}
     </div>
   );
 }
