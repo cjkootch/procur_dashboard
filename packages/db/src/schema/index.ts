@@ -27,3 +27,4 @@ export * from './capabilities';
 export * from './proposal-shreds';
 export * from './contract-extras';
 export * from './word-addin-tokens';
+export * from './notifications';

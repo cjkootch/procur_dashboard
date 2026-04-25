@@ -99,6 +99,13 @@
       "when": 1777120000000,
       "tag": "0013_perf_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1777125000000,
+      "tag": "0014_notifications",
+      "breakpoints": true
     }
   ]
 }
