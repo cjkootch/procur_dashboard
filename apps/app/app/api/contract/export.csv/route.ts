@@ -10,15 +10,37 @@ export const dynamic = 'force-dynamic';
  * /contract table view, plus IDs + computed compliance state so the
  * exported sheet is the same source of truth as the UI.
  *
- * The UI links here unconditionally — the route was missing before
- * this commit and 404'd. Now it returns a single .csv with every
- * contract for the current tenant; if the user wants a filtered
- * subset, they can filter in the spreadsheet (the column shape
- * supports it).
+ * Honors the same `?q=`, `?tier=`, `?status=` filters as the page so
+ * the download matches what the user has on screen — without that,
+ * search-and-export silently widened to every contract.
  */
-export async function GET(): Promise<Response> {
+export async function GET(req: Request): Promise<Response> {
   const { company } = await requireCompany();
-  const rows = await listContracts(company.id);
+  const url = new URL(req.url);
+  const q = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+  const tier = url.searchParams.get('tier');
+  const status = url.searchParams.get('status');
+
+  const all = await listContracts(company.id);
+  const rows = all.filter((r) => {
+    if (tier && tier !== 'all' && r.tier !== tier) return false;
+    if (status && status !== 'all' && r.status !== status) return false;
+    if (q.length > 0) {
+      const haystack = [
+        r.awardTitle,
+        r.awardingAgency,
+        r.contractNumber,
+        r.parentContractNumber,
+        r.taskOrderNumber,
+        r.subcontractNumber,
+      ]
+        .filter(Boolean)
+        .join('  ')
+        .toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    return true;
+  });
 
   const headers = [
     'Contract ID',

@@ -6,13 +6,30 @@ import { csvResponse, toCsv } from '../../../../lib/csv';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(): Promise<Response> {
+/**
+ * Past-performance CSV export. Honors `?q=` so the export matches the
+ * search the user ran on the page (project / customer / customer-type
+ * substring). Without that, an export after a search silently
+ * downloaded every entry.
+ */
+export async function GET(req: Request): Promise<Response> {
   const { company } = await requireCompany();
+  const q = (new URL(req.url).searchParams.get('q') ?? '').trim().toLowerCase();
 
-  const rows = await db
+  const allRows = await db
     .select()
     .from(pastPerformance)
     .where(eq(pastPerformance.companyId, company.id));
+
+  const rows = q
+    ? allRows.filter((r) => {
+        const haystack = [r.projectName, r.customerName, r.customerType]
+          .filter(Boolean)
+          .join('  ')
+          .toLowerCase();
+        return haystack.includes(q);
+      })
+    : allRows;
 
   const headers = [
     'Project',

@@ -96,7 +96,13 @@ export default async function ContractListPage({
             Reports
           </Link>
           <a
-            href={`/api/contract/export.csv`}
+            href={(() => {
+              const params = new URLSearchParams();
+              if (sp.tier && sp.tier !== 'all') params.set('tier', sp.tier);
+              if (sp.status && sp.status !== 'all') params.set('status', sp.status);
+              const qs = params.toString();
+              return qs ? `/api/contract/export.csv?${qs}` : '/api/contract/export.csv';
+            })()}
             className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-muted)]/40"
           >
             Export
