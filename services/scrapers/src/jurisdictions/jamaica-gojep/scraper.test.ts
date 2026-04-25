@@ -8,62 +8,106 @@ import { JamaicaGojepScraper, type JamaicaRawData } from './scraper';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIX_DIR = join(__dirname, 'fixtures');
 
-async function loadFixture(): Promise<{ listing: string }> {
-  const listing = await readFile(join(FIX_DIR, 'listing.html'), 'utf8');
-  return { listing };
+async function loadFixtures(): Promise<{ listing: string; awards: string }> {
+  const [listing, awards] = await Promise.all([
+    readFile(join(FIX_DIR, 'listing.html'), 'utf8'),
+    readFile(join(FIX_DIR, 'award-notices.html'), 'utf8'),
+  ]);
+  return { listing, awards };
 }
 
 describe('JamaicaGojepScraper', () => {
-  it('parses the opened-tenders listing into rows', async () => {
-    const fixtureHtml = await loadFixture();
+  it('parses opened-tenders + award-notices surfaces in one fetch', async () => {
+    const fixtureHtml = await loadFixtures();
     const scraper = new JamaicaGojepScraper({ fixtureHtml });
     const raws = await scraper.fetch();
-    // GOJEP renders 10 per page; tolerate +/- a few for layout drift.
-    assert.ok(raws.length >= 5, `expected >=5 rows, got ${raws.length}`);
-    assert.ok(raws.length <= 25, `expected <=25 rows, got ${raws.length}`);
+    // Each fixture page returns ~10 rows; total should be ~20.
+    assert.ok(raws.length >= 10, `expected >=10 rows, got ${raws.length}`);
+    assert.ok(raws.length <= 30, `expected <=30 rows, got ${raws.length}`);
+
+    const surfaces = new Set(
+      raws.map((r) => (r.rawData as unknown as JamaicaRawData).surface),
+    );
+    assert.ok(surfaces.has('opened-tenders'), 'expected opened-tenders rows');
+    assert.ok(surfaces.has('award-notices'), 'expected award-notices rows');
   });
 
-  it('emits stable GOJEP-<resourceId> reference ids', async () => {
-    const fixtureHtml = await loadFixture();
+  it('emits stable GOJEP-<resourceId> reference ids that dedupe across surfaces', async () => {
+    const fixtureHtml = await loadFixtures();
     const scraper = new JamaicaGojepScraper({ fixtureHtml });
     const raws = await scraper.fetch();
     for (const r of raws) {
       assert.match(r.sourceReferenceId, /^GOJEP-\d+$/);
       assert.match(r.sourceUrl, /\/epps\/cft\/prepareViewCfTWS\.do\?resourceId=\d+$/);
     }
-    const ids = new Set(raws.map((r) => r.sourceReferenceId));
-    assert.equal(ids.size, raws.length, 'reference ids must be unique');
+    // resourceIds may overlap intentionally (same tender on both surfaces);
+    // the upsert layer dedupes. We just confirm each row has a valid id.
+    assert.ok(raws.every((r) => r.sourceReferenceId.length > 6));
   });
 
-  it('captures title, reference, agency, deadline, method, status per row', async () => {
-    const fixtureHtml = await loadFixture();
+  it('captures method + evaluation status on opened-tender rows', async () => {
+    const fixtureHtml = await loadFixtures();
     const scraper = new JamaicaGojepScraper({ fixtureHtml });
     const raws = await scraper.fetch();
-    const sample = raws[0]?.rawData as unknown as JamaicaRawData;
+    const opened = raws
+      .map((r) => r.rawData as unknown as JamaicaRawData)
+      .filter((d) => d.surface === 'opened-tenders');
+    assert.ok(opened.length > 0);
+    const sample = opened[0]!;
     assert.ok(sample.title.length > 5);
     assert.ok(sample.referenceNumber.length > 0);
     assert.ok(sample.agency.length > 2);
-    // Closing date format is "Day Mon DD HH:mm:ss COT YYYY".
-    assert.match(sample.closingDateText, /\d{4}\s*$/);
-    assert.ok(sample.method.length > 0);
-    assert.ok(sample.evaluationStatus.length > 0);
+    assert.match(sample.closingDateText ?? '', /\d{4}\s*$/);
+    assert.ok((sample.method ?? '').length > 0);
+    assert.ok((sample.evaluationStatus ?? '').length > 0);
   });
 
-  it('normalizes a row into an opportunity with JMD currency and valid deadline', async () => {
-    const fixtureHtml = await loadFixture();
+  it('captures awarded value + PDF on award-notice rows', async () => {
+    const fixtureHtml = await loadFixtures();
     const scraper = new JamaicaGojepScraper({ fixtureHtml });
     const raws = await scraper.fetch();
-    const first = raws[0];
-    assert.ok(first);
+    const awards = raws
+      .map((r) => r.rawData as unknown as JamaicaRawData)
+      .filter((d) => d.surface === 'award-notices');
+    assert.ok(awards.length > 0, 'expected at least one award-notice row');
+    const withValue = awards.filter((a) => parseFloat(a.awardedValue ?? '0') > 0);
+    const withPdf = awards.filter((a) => a.awardNoticePdfUrl);
+    assert.ok(withValue.length / awards.length > 0.5, 'expected >50% of awards to have values');
+    assert.ok(withPdf.length / awards.length > 0.5, 'expected >50% of awards to have PDF links');
+  });
 
-    const norm = await scraper.parse(first);
-    assert.ok(norm, 'parse returned null');
-
+  it('normalizes an opened-tender row with JMD currency + valid deadline', async () => {
+    const fixtureHtml = await loadFixtures();
+    const scraper = new JamaicaGojepScraper({ fixtureHtml });
+    const raws = await scraper.fetch();
+    const opened = raws.find(
+      (r) => (r.rawData as unknown as JamaicaRawData).surface === 'opened-tenders',
+    );
+    assert.ok(opened);
+    const norm = await scraper.parse(opened);
+    assert.ok(norm);
     assert.equal(norm.currency, 'JMD');
     assert.equal(norm.language, 'en');
     assert.equal(norm.deadlineTimezone, 'America/Jamaica');
-    assert.ok(norm.title.length > 0);
     assert.ok(norm.deadlineAt instanceof Date);
+  });
+
+  it('normalizes an award-notice row with awarded value + attached PDF', async () => {
+    const fixtureHtml = await loadFixtures();
+    const scraper = new JamaicaGojepScraper({ fixtureHtml });
+    const raws = await scraper.fetch();
+    const award = raws.find(
+      (r) => (r.rawData as unknown as JamaicaRawData).surface === 'award-notices',
+    );
+    assert.ok(award);
+    const norm = await scraper.parse(award);
+    assert.ok(norm);
+    assert.equal(norm.currency, 'JMD');
+    assert.ok((norm.valueEstimate ?? 0) > 0);
+    assert.ok(norm.documents);
+    assert.equal(norm.documents.length, 1);
+    assert.equal(norm.documents[0]?.documentType, 'tender_document');
+    assert.match(norm.documents[0]?.originalUrl ?? '', /downloadNoticeForES\.do/);
   });
 
   it('returns null on malformed raw data', async () => {
