@@ -33,7 +33,7 @@ import {
   type TeamingStatus,
   type TeamRole,
 } from '@procur/db';
-import { requireCompany } from '@procur/auth';
+import { getActorUserId, requireCompany } from '@procur/auth';
 import { meter, MODELS, suggestRequirements } from '@procur/ai';
 import { STAGE_ORDER, STAGE_LABEL, type PursuitStageKey, getActivePursuitCount } from '../../lib/capture-queries';
 import { seedCriteria } from '../../lib/gate-review-queries';
@@ -50,6 +50,10 @@ async function resolveUserAndCompany() {
  * are keyed on the parent pursuit so the activity feed can pull the
  * whole history with one indexed query on (entity_type, entity_id).
  *
+ * Stamps `actorUserId` from the Clerk session's `act.sub` so any write
+ * made during a staff-impersonated session is attributable to the real
+ * human, not just the customer they're posing as.
+ *
  * Write failures never fail the user-facing action; they log and move on.
  */
 async function recordPursuitAudit(params: {
@@ -61,9 +65,11 @@ async function recordPursuitAudit(params: {
   metadata?: Record<string, unknown>;
 }): Promise<void> {
   try {
+    const actorUserId = await getActorUserId();
     await db.insert(auditLog).values({
       companyId: params.companyId,
       userId: params.userId,
+      actorUserId,
       action: params.action,
       entityType: 'pursuit',
       entityId: params.pursuitId,

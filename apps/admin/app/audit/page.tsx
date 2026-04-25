@@ -204,6 +204,14 @@ function AuditEventRow({ row }: { row: AuditRow }) {
                   by {row.actorName || row.actorEmail}
                 </span>
               ) : null}
+              {(row.impersonatorName || row.impersonatorEmail) && (
+                <span
+                  title="Staff member who drove this action via Clerk impersonation"
+                  className="ml-1.5 inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-amber-500 bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900"
+                >
+                  impersonated by {row.impersonatorName || row.impersonatorEmail}
+                </span>
+              )}
               {row.companyName && (
                 <>
                   {' · '}

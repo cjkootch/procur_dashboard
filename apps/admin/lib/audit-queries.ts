@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, desc, eq, gte, lte, type SQL } from 'drizzle-orm';
+import { aliasedTable, and, desc, eq, gte, lte, type SQL } from 'drizzle-orm';
 import {
   auditLog,
   companies,
@@ -29,8 +29,14 @@ export type AuditRow = {
   companyId: string | null;
   companyName: string | null;
   userId: string | null;
+  /** Email of the customer-side user the action ran as. */
   actorEmail: string | null;
+  /** Display name of the customer-side user. */
   actorName: string | null;
+  /** Email of the staff impersonator (act.sub), null in normal sessions. */
+  impersonatorEmail: string | null;
+  /** Display name of the staff impersonator. */
+  impersonatorName: string | null;
   action: string;
   entityType: string | null;
   entityId: string | null;
@@ -73,6 +79,10 @@ export async function listAuditEvents(filter: AuditFilter = {}): Promise<AuditPa
   const page = Math.max(1, filter.page ?? 1);
   const offset = (page - 1) * PAGE_SIZE;
 
+  // Self-join `users` twice: once for the row's userId (customer-side
+  // actor), once for actorUserId (staff impersonator, when set).
+  const impersonator = aliasedTable(users, 'impersonator');
+
   const rows = await db
     .select({
       id: auditLog.id,
@@ -82,6 +92,9 @@ export async function listAuditEvents(filter: AuditFilter = {}): Promise<AuditPa
       actorEmail: users.email,
       actorFirstName: users.firstName,
       actorLastName: users.lastName,
+      impersonatorEmail: impersonator.email,
+      impersonatorFirstName: impersonator.firstName,
+      impersonatorLastName: impersonator.lastName,
       action: auditLog.action,
       entityType: auditLog.entityType,
       entityId: auditLog.entityId,
@@ -92,6 +105,7 @@ export async function listAuditEvents(filter: AuditFilter = {}): Promise<AuditPa
     .from(auditLog)
     .leftJoin(companies, eq(companies.id, auditLog.companyId))
     .leftJoin(users, eq(users.id, auditLog.userId))
+    .leftJoin(impersonator, eq(impersonator.id, auditLog.actorUserId))
     .where(conds.length > 0 ? and(...conds) : undefined)
     .orderBy(desc(auditLog.createdAt))
     .limit(PAGE_SIZE + 1)
@@ -109,6 +123,9 @@ export async function listAuditEvents(filter: AuditFilter = {}): Promise<AuditPa
       actorEmail: r.actorEmail,
       actorName:
         [r.actorFirstName, r.actorLastName].filter(Boolean).join(' ') || null,
+      impersonatorEmail: r.impersonatorEmail,
+      impersonatorName:
+        [r.impersonatorFirstName, r.impersonatorLastName].filter(Boolean).join(' ') || null,
       action: r.action,
       entityType: r.entityType,
       entityId: r.entityId,
