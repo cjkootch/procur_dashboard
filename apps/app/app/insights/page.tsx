@@ -18,12 +18,20 @@ export default async function InsightsPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-8 py-10">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Insights</h1>
-        <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
-          Snapshot of your pipeline, wins, and library assets. Updates in real time as you
-          progress pursuits.
-        </p>
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Insights</h1>
+          <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
+            Snapshot of your pipeline, wins, and library assets. Updates in real time as you
+            progress pursuits.
+          </p>
+        </div>
+        <a
+          href="/api/insights/export.csv"
+          className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[color:var(--color-muted)]/40"
+        >
+          Download .csv
+        </a>
       </header>
 
       <section className="mb-10 grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-6 md:grid-cols-4">
