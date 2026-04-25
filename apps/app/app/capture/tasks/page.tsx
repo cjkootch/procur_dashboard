@@ -16,12 +16,31 @@ export default async function AllTasksPage() {
     .where(eq(pursuits.companyId, company.id));
 
   if (companyPursuits.length === 0) {
+    const discoverUrl =
+      process.env.NEXT_PUBLIC_DISCOVER_URL ?? 'https://discover.procur.app';
     return (
       <div className="mx-auto max-w-4xl px-8 py-10">
         <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
-        <p className="mt-4 text-sm text-[color:var(--color-muted-foreground)]">
-          No pursuits yet. Start one from Discover.
-        </p>
+        <div className="mt-6 rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-10 text-center">
+          <p className="font-medium">No tasks yet</p>
+          <p className="mt-2 text-sm text-[color:var(--color-muted-foreground)]">
+            Tasks live on pursuits. Track an opportunity to start adding work.
+          </p>
+          <div className="mt-4 flex justify-center gap-2">
+            <a
+              href={discoverUrl}
+              className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)]"
+            >
+              Browse opportunities
+            </a>
+            <Link
+              href="/capture/new"
+              className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-4 py-2 text-sm font-medium hover:bg-[color:var(--color-muted)]/40"
+            >
+              Add manually
+            </Link>
+          </div>
+        </div>
       </div>
     );
   }

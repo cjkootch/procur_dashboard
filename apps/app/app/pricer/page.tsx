@@ -12,6 +12,11 @@ export default async function PricerListPage() {
   const started = rows.filter((r) => r.pricingModelId);
   const available = rows.filter((r) => !r.pricingModelId);
 
+  // When the company has zero pursuits in any pricable stage, the
+  // page is a flat dead-end — show the user where to start instead of
+  // two empty card lists.
+  const hasAnyPricable = available.length > 0 || started.length > 0;
+
   return (
     <div className="mx-auto max-w-5xl px-8 py-10">
       <header className="mb-6">
@@ -21,6 +26,30 @@ export default async function PricerListPage() {
           multi-year escalation, auto-calculated target value.
         </p>
       </header>
+
+      {!hasAnyPricable && (
+        <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-10 text-center">
+          <p className="font-medium">Nothing to price yet</p>
+          <p className="mt-2 text-sm text-[color:var(--color-muted-foreground)]">
+            The pricer activates once you have a pursuit in capture planning or
+            later. Move a pursuit forward to start modeling cost.
+          </p>
+          <div className="mt-4 flex justify-center gap-2">
+            <Link
+              href="/capture/pipeline"
+              className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)]"
+            >
+              Open pipeline
+            </Link>
+            <Link
+              href="/capture/pursuits"
+              className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-4 py-2 text-sm font-medium hover:bg-[color:var(--color-muted)]/40"
+            >
+              All pursuits
+            </Link>
+          </div>
+        </div>
+      )}
 
       {available.length > 0 && (
         <section className="mb-10">
@@ -35,22 +64,24 @@ export default async function PricerListPage() {
         </section>
       )}
 
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-          In progress ({started.length})
-        </h2>
-        {started.length === 0 ? (
-          <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-10 text-center text-sm text-[color:var(--color-muted-foreground)]">
-            No pricing models started yet.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {started.map((r) => (
-              <Row key={r.pursuitId} row={r} />
-            ))}
-          </div>
-        )}
-      </section>
+      {hasAnyPricable && (
+        <section>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            In progress ({started.length})
+          </h2>
+          {started.length === 0 ? (
+            <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-10 text-center text-sm text-[color:var(--color-muted-foreground)]">
+              No pricing models started yet — pick a pursuit above to start one.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {started.map((r) => (
+                <Row key={r.pursuitId} row={r} />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }
