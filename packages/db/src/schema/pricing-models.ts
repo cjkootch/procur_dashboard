@@ -24,6 +24,25 @@ export const pricingModels = pgTable('pricing_models', {
   gaRate: numeric('ga_rate', { precision: 5, scale: 2 }),
   wrapRate: numeric('wrap_rate', { precision: 5, scale: 2 }),
 
+  /**
+   * How indirect rates compound onto direct labor:
+   *   multiplicative — (1 + fringe) × (1 + overhead) × (1 + ga). Default
+   *                    for US federal-style cost models. Layers stack:
+   *                    overhead applies on top of (DL + fringe), G&A on
+   *                    top of (DL + fringe + overhead).
+   *   additive       — fringe% + overhead% + ga% all applied to direct
+   *                    labor independently. Common in some IFI / MDB
+   *                    cost rules and quick-look approximations.
+   *
+   * The indirect-rate UI on the pricer lets users flip between modes;
+   * persisting the choice here keeps the pricer math + the UI's
+   * 'currently saved' state aligned across reloads.
+   */
+  indirectRateMode: text('indirect_rate_mode')
+    .$type<'multiplicative' | 'additive'>()
+    .default('multiplicative')
+    .notNull(),
+
   currency: text('currency').default('USD'),
   fxRateToUsd: numeric('fx_rate_to_usd', { precision: 10, scale: 4 }),
 

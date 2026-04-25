@@ -65,6 +65,22 @@ function toRateSource(v: FormDataEntryValue | null): LaborRateSource | null {
     : null;
 }
 
+/**
+ * Coerce a posted value to a valid indirect-rate mode, falling back
+ * to the prior persisted value when the input is missing or unrecognized.
+ * Treating an unrecognized string as "leave alone" prevents a stray
+ * form submission from accidentally flipping the mode.
+ */
+function toIndirectMode(
+  v: FormDataEntryValue | null,
+  fallback: 'multiplicative' | 'additive',
+): 'multiplicative' | 'additive' {
+  if (v == null) return fallback;
+  const s = String(v).trim();
+  if (s === 'multiplicative' || s === 'additive') return s;
+  return fallback;
+}
+
 async function requirePricingModelForPursuit(
   companyId: string,
   pursuitId: string,
@@ -141,6 +157,7 @@ export async function updatePricingModelAction(formData: FormData): Promise<void
       fringeRate: toNumeric(formData.get('fringeRate')) ?? pricingModel.fringeRate,
       overheadRate: toNumeric(formData.get('overheadRate')) ?? pricingModel.overheadRate,
       gaRate: toNumeric(formData.get('gaRate')) ?? pricingModel.gaRate,
+      indirectRateMode: toIndirectMode(formData.get('indirectRateMode'), pricingModel.indirectRateMode),
       currency: String(formData.get('currency') ?? pricingModel.currency ?? 'USD') || 'USD',
       fxRateToUsd: toNumeric(formData.get('fxRateToUsd')) ?? pricingModel.fxRateToUsd,
       notes: String(formData.get('notes') ?? pricingModel.notes ?? '') || null,
@@ -269,7 +286,7 @@ async function recomputeWrapAndLaborTotals(pricingModelId: string): Promise<void
   const basePeriodMonths = pricingModel.basePeriodMonths ?? 12;
   const optionYears = pricingModel.optionYears ?? 0;
   const periodYears = Math.max(1, Math.ceil(basePeriodMonths / 12) + optionYears);
-  const wrap = wrapRateFor(fringe, overhead, ga);
+  const wrap = wrapRateFor(fringe, overhead, ga, pricingModel.indirectRateMode);
 
   const lcs = await db
     .select()
