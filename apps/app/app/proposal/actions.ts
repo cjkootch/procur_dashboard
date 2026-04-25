@@ -29,6 +29,8 @@ import {
 } from '@procur/ai';
 import { randomUUID } from 'node:crypto';
 import { semanticSearchLibrary } from '../../lib/library-queries';
+import { extractMentionHandles, resolveMentions } from '../../lib/mentions';
+import { insertNotificationsForUsers } from '../../lib/notification-queries';
 import { semanticSearchPastPerformance } from '../../lib/past-performance-queries';
 import {
   getTemplateById,
@@ -724,6 +726,7 @@ export async function addProposalCommentAction(formData: FormData): Promise<void
   const pursuitId = String(formData.get('pursuitId') ?? '');
   const body = String(formData.get('body') ?? '').trim();
   if (!body) throw new Error('comment body required');
+  if (body.length > 4000) throw new Error('comment body too long');
   const sectionIdRaw = formData.get('sectionId');
   const sectionId =
     typeof sectionIdRaw === 'string' && sectionIdRaw.length > 0 ? sectionIdRaw : null;
@@ -736,6 +739,31 @@ export async function addProposalCommentAction(formData: FormData): Promise<void
     body,
     createdBy: user.id,
   });
+
+  // Fan out @-mention notifications. Self-mentions are dropped — typing
+  // your own handle to refer to yourself shouldn't notify yourself.
+  const handles = extractMentionHandles(body);
+  if (handles.length > 0) {
+    const mentioned = await resolveMentions(company.id, handles);
+    const recipientIds = mentioned.map((u) => u.id).filter((id) => id !== user.id);
+    if (recipientIds.length > 0) {
+      const actorName =
+        [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email;
+      const preview = body.length > 140 ? `${body.slice(0, 140)}…` : body;
+      await insertNotificationsForUsers(recipientIds, {
+        companyId: company.id,
+        type: 'proposal.comment_mentioned',
+        title: `${actorName} mentioned you in a comment`,
+        body: preview,
+        link: `/proposal/${pursuitId}`,
+        entityType: 'proposal_comment',
+        // entityId is the proposal id for now — we don't return the
+        // inserted comment id from the insert above. If we ever build
+        // per-comment deep-links, refactor to .returning({ id }).
+        entityId: proposal.id,
+      });
+    }
+  }
 
   revalidatePath(`/proposal/${pursuitId}`);
 }
