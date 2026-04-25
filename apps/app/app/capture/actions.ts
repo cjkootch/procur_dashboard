@@ -5,21 +5,31 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import {
   auditLog,
+  CAPABILITY_CATEGORIES,
+  COVERAGE_STATUSES,
+  companyCapabilities,
   db,
   opportunities,
   pursuits,
+  pursuitCapabilityRequirements,
   pursuitGateReviews,
   pursuitTasks,
   pursuitTeamMembers,
+  REQUIREMENT_PRIORITIES,
   TEAM_ROLES,
   TEAMING_STATUSES,
+  type CapabilityCategory,
+  type CoverageStatus,
   type GateReviewCriterion,
   type GateReviewCriterionStatus,
   type GateReviewDecision,
+  type NewCompanyCapability,
   type NewPursuit,
+  type NewPursuitCapabilityRequirement,
   type NewPursuitGateReview,
   type NewPursuitTask,
   type NewPursuitTeamMember,
+  type RequirementPriority,
   type TeamingStatus,
   type TeamRole,
 } from '@procur/db';
@@ -639,6 +649,238 @@ export async function removeTeamMemberAction(formData: FormData): Promise<void> 
     action: 'pursuit.team_member_removed',
     pursuitId: existing.pursuitId,
     metadata: { teamMemberId: memberId, partnerName: existing.partnerName },
+  });
+
+  revalidatePath(`/capture/pursuits/${existing.pursuitId}`);
+}
+
+// ===========================================================================
+// Capabilities (company bank + per-pursuit requirements matrix)
+// ===========================================================================
+
+function toCategory(v: FormDataEntryValue | null): CapabilityCategory {
+  const s = v == null ? '' : String(v);
+  return (CAPABILITY_CATEGORIES as string[]).includes(s)
+    ? (s as CapabilityCategory)
+    : 'service';
+}
+
+function toPriority(v: FormDataEntryValue | null): RequirementPriority {
+  const s = v == null ? '' : String(v);
+  return (REQUIREMENT_PRIORITIES as string[]).includes(s)
+    ? (s as RequirementPriority)
+    : 'must';
+}
+
+function toCoverage(v: FormDataEntryValue | null): CoverageStatus {
+  const s = v == null ? '' : String(v);
+  return (COVERAGE_STATUSES as string[]).includes(s)
+    ? (s as CoverageStatus)
+    : 'not_assessed';
+}
+
+async function requireCapability(companyId: string, capabilityId: string) {
+  const row = await db.query.companyCapabilities.findFirst({
+    where: and(
+      eq(companyCapabilities.id, capabilityId),
+      eq(companyCapabilities.companyId, companyId),
+    ),
+  });
+  if (!row) throw new Error('capability not found');
+  return row;
+}
+
+async function requireRequirement(companyId: string, requirementId: string) {
+  const rows = await db
+    .select({ req: pursuitCapabilityRequirements, companyId: pursuits.companyId })
+    .from(pursuitCapabilityRequirements)
+    .innerJoin(pursuits, eq(pursuits.id, pursuitCapabilityRequirements.pursuitId))
+    .where(eq(pursuitCapabilityRequirements.id, requirementId))
+    .limit(1);
+  const first = rows[0];
+  if (!first || first.companyId !== companyId) throw new Error('requirement not found');
+  return first.req;
+}
+
+export async function addCapabilityAction(formData: FormData): Promise<void> {
+  const { user, company } = await resolveUserAndCompany();
+  const name = String(formData.get('name') ?? '').trim();
+  const pursuitId = String(formData.get('pursuitId') ?? '') || null;
+  if (!name) throw new Error('name required');
+  if (name.length > 200) throw new Error('name too long');
+
+  const row: NewCompanyCapability = {
+    companyId: company.id,
+    name,
+    category: toCategory(formData.get('category')),
+    description: String(formData.get('description') ?? '').trim() || null,
+    evidenceUrl: String(formData.get('evidenceUrl') ?? '').trim() || null,
+  };
+
+  const [created] = await db
+    .insert(companyCapabilities)
+    .values(row)
+    .returning({ id: companyCapabilities.id });
+
+  if (pursuitId) {
+    revalidatePath(`/capture/pursuits/${pursuitId}`);
+    // No audit on the pursuit — capability bank is company-scoped, not
+    // pursuit-scoped. We only log when it gets mapped to a requirement.
+  }
+
+  // Suppress unused-var lint for user/created on the no-pursuit path.
+  void user;
+  void created;
+}
+
+export async function updateCapabilityAction(formData: FormData): Promise<void> {
+  const { company } = await resolveUserAndCompany();
+  const capabilityId = String(formData.get('capabilityId') ?? '');
+  if (!capabilityId) throw new Error('capabilityId required');
+
+  await requireCapability(company.id, capabilityId);
+
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (formData.has('name')) {
+    const v = String(formData.get('name') ?? '').trim();
+    if (v.length > 0) updates.name = v;
+  }
+  if (formData.has('category')) updates.category = toCategory(formData.get('category'));
+  if (formData.has('description'))
+    updates.description = String(formData.get('description') ?? '').trim() || null;
+  if (formData.has('evidenceUrl'))
+    updates.evidenceUrl = String(formData.get('evidenceUrl') ?? '').trim() || null;
+
+  await db
+    .update(companyCapabilities)
+    .set(updates)
+    .where(eq(companyCapabilities.id, capabilityId));
+
+  const pursuitId = String(formData.get('pursuitId') ?? '') || null;
+  if (pursuitId) revalidatePath(`/capture/pursuits/${pursuitId}`);
+}
+
+export async function removeCapabilityAction(formData: FormData): Promise<void> {
+  const { company } = await resolveUserAndCompany();
+  const capabilityId = String(formData.get('capabilityId') ?? '');
+  if (!capabilityId) throw new Error('capabilityId required');
+
+  await requireCapability(company.id, capabilityId);
+
+  // Requirements that reference this capability will have capability_id
+  // set to null automatically (FK on delete: set null), turning them
+  // back into unmapped gaps.
+  await db.delete(companyCapabilities).where(eq(companyCapabilities.id, capabilityId));
+
+  const pursuitId = String(formData.get('pursuitId') ?? '') || null;
+  if (pursuitId) revalidatePath(`/capture/pursuits/${pursuitId}`);
+}
+
+export async function addRequirementAction(formData: FormData): Promise<void> {
+  const { user, company } = await resolveUserAndCompany();
+  const pursuitId = String(formData.get('pursuitId') ?? '');
+  const requirement = String(formData.get('requirement') ?? '').trim();
+  if (!pursuitId || !requirement) throw new Error('pursuitId + requirement required');
+  if (requirement.length > 1000) throw new Error('requirement too long');
+
+  await requirePursuitOwnedByCompany(company.id, pursuitId);
+
+  const capRaw = String(formData.get('capabilityId') ?? '').trim();
+  const capabilityId = capRaw.length > 0 ? capRaw : null;
+  if (capabilityId) {
+    // Verify the capability belongs to this company before linking.
+    await requireCapability(company.id, capabilityId);
+  }
+
+  const row: NewPursuitCapabilityRequirement = {
+    pursuitId,
+    requirement,
+    priority: toPriority(formData.get('priority')),
+    coverage: toCoverage(formData.get('coverage')),
+    capabilityId,
+    notes: String(formData.get('notes') ?? '').trim() || null,
+  };
+
+  const [created] = await db
+    .insert(pursuitCapabilityRequirements)
+    .values(row)
+    .returning({ id: pursuitCapabilityRequirements.id });
+
+  await recordPursuitAudit({
+    companyId: company.id,
+    userId: user.id,
+    action: 'pursuit.requirement_added',
+    pursuitId,
+    metadata: {
+      requirementId: created?.id,
+      priority: row.priority,
+      coverage: row.coverage,
+      hasCapability: capabilityId !== null,
+    },
+  });
+
+  revalidatePath(`/capture/pursuits/${pursuitId}`);
+}
+
+export async function updateRequirementAction(formData: FormData): Promise<void> {
+  const { user, company } = await resolveUserAndCompany();
+  const requirementId = String(formData.get('requirementId') ?? '');
+  if (!requirementId) throw new Error('requirementId required');
+
+  const existing = await requireRequirement(company.id, requirementId);
+
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (formData.has('requirement')) {
+    const v = String(formData.get('requirement') ?? '').trim();
+    if (v.length > 0) updates.requirement = v;
+  }
+  if (formData.has('priority')) updates.priority = toPriority(formData.get('priority'));
+  if (formData.has('coverage')) updates.coverage = toCoverage(formData.get('coverage'));
+  if (formData.has('capabilityId')) {
+    const v = String(formData.get('capabilityId') ?? '').trim();
+    if (v.length === 0) {
+      updates.capabilityId = null;
+    } else {
+      await requireCapability(company.id, v);
+      updates.capabilityId = v;
+    }
+  }
+  if (formData.has('notes'))
+    updates.notes = String(formData.get('notes') ?? '').trim() || null;
+
+  await db
+    .update(pursuitCapabilityRequirements)
+    .set(updates)
+    .where(eq(pursuitCapabilityRequirements.id, requirementId));
+
+  await recordPursuitAudit({
+    companyId: company.id,
+    userId: user.id,
+    action: 'pursuit.requirement_updated',
+    pursuitId: existing.pursuitId,
+    metadata: { requirementId, fields: Object.keys(updates).filter((k) => k !== 'updatedAt') },
+  });
+
+  revalidatePath(`/capture/pursuits/${existing.pursuitId}`);
+}
+
+export async function removeRequirementAction(formData: FormData): Promise<void> {
+  const { user, company } = await resolveUserAndCompany();
+  const requirementId = String(formData.get('requirementId') ?? '');
+  if (!requirementId) throw new Error('requirementId required');
+
+  const existing = await requireRequirement(company.id, requirementId);
+
+  await db
+    .delete(pursuitCapabilityRequirements)
+    .where(eq(pursuitCapabilityRequirements.id, requirementId));
+
+  await recordPursuitAudit({
+    companyId: company.id,
+    userId: user.id,
+    action: 'pursuit.requirement_removed',
+    pursuitId: existing.pursuitId,
+    metadata: { requirementId },
   });
 
   revalidatePath(`/capture/pursuits/${existing.pursuitId}`);

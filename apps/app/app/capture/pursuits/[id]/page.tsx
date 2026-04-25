@@ -21,9 +21,15 @@ import { PursuitOverviewTab } from '../../pursuits/components/overview-tab';
 import { PursuitActivityTab } from '../../pursuits/components/activity-tab';
 import { PursuitTasksTab } from '../../pursuits/components/tasks-tab';
 import { GateReviewsTab } from '../../pursuits/components/gate-reviews-tab';
+import { CapabilitiesTab } from '../../pursuits/components/capabilities-tab';
 import { TeamingTab } from '../../pursuits/components/teaming-tab';
 import { PursuitDocumentsTab } from '../../pursuits/components/documents-tab';
 import { listGateReviewsForPursuit } from '../../../../lib/gate-review-queries';
+import {
+  listCompanyCapabilities,
+  listRequirementsForPursuit,
+  summarizeRequirements,
+} from '../../../../lib/capability-queries';
 import { listTeamMembersForPursuit, summarizeTeam } from '../../../../lib/team-queries';
 
 export const dynamic = 'force-dynamic';
@@ -127,6 +133,16 @@ export default async function PursuitDetailPage({
   const teamMembers = tab === 'teaming' ? await listTeamMembersForPursuit(id) : [];
   const teamSummary = summarizeTeam(teamMembers);
 
+  // Capabilities + requirements — loaded only when the Capabilities tab is active.
+  const [capabilities, requirements] =
+    tab === 'capabilities'
+      ? await Promise.all([
+          listCompanyCapabilities(company.id),
+          listRequirementsForPursuit(id),
+        ])
+      : [[], []];
+  const capabilitySummary = summarizeRequirements(requirements);
+
   // Documents attached to the underlying opportunity. Loaded only when the
   // Documents tab is active to avoid an extra query on every page view.
   const docRows =
@@ -213,6 +229,14 @@ export default async function PursuitDetailPage({
           {tab === 'tasks' && <PursuitTasksTab pursuitId={card.id} tasks={tasks} />}
           {tab === 'gate-reviews' && (
             <GateReviewsTab pursuitId={card.id} reviews={gateReviews} />
+          )}
+          {tab === 'capabilities' && (
+            <CapabilitiesTab
+              pursuitId={card.id}
+              capabilities={capabilities}
+              requirements={requirements}
+              summary={capabilitySummary}
+            />
           )}
           {tab === 'teaming' && (
             <TeamingTab pursuitId={card.id} members={teamMembers} summary={teamSummary} />
