@@ -105,3 +105,38 @@ export const DraftSectionOutput = z
   .strict();
 
 export type DraftSectionOutputT = z.infer<typeof DraftSectionOutput>;
+
+export const ShredSentence = z
+  .object({
+    sectionPath: z
+      .string()
+      .describe(
+        'Outline section number/path the sentence belongs to (e.g. "1.1.3" or "Volume I / 2.4"). Empty string if no section is detectable.',
+      ),
+    sectionTitle: z
+      .string()
+      .nullable()
+      .describe('Section heading title if present in the source text, else null'),
+    sentenceText: z.string().describe('The compliance sentence verbatim from the source'),
+    shredType: z
+      .enum(['shall', 'will', 'must', 'should', 'may', 'none'])
+      .describe(
+        'Compliance verb classification. shall/will/must = mandatory. should = strongly recommended. may = optional. none = not a compliance sentence.',
+      ),
+  })
+  .strict();
+
+export const ShredRfpOutput = z
+  .object({
+    sentences: z
+      .array(ShredSentence)
+      .describe('Compliance sentences extracted from the RFP text, in document order'),
+    confidence: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe('Overall extraction confidence 0-1'),
+  })
+  .strict();
+
+export type ShredRfpOutputT = z.infer<typeof ShredRfpOutput>;

@@ -238,6 +238,12 @@ export default async function ProposalDetailPage({
           >
             Download .docx
           </a>
+          <Link
+            href={`/proposal/${pursuitId}/shred`}
+            className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-muted)]/40"
+          >
+            Compliance shred →
+          </Link>
           <Link href={`/capture/pursuits/${pursuitId}`} className="underline">
             Pursuit details →
           </Link>

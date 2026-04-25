@@ -23,6 +23,7 @@ export type UsageSource =
   | 'map_requirements'
   | 'extract_pricing'
   | 'extract_company_profile'
+  | 'shred_rfp'
   | 'embeddings'
   | 'other';
 
