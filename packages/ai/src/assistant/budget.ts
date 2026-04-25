@@ -37,6 +37,7 @@ export type UsageSource =
   | 'extract_pricing'
   | 'extract_company_profile'
   | 'shred_rfp'
+  | 'suggest_requirements'
   | 'embeddings'
   | 'other';
 

@@ -33,6 +33,10 @@ import {
 import { listTeamMembersForPursuit, summarizeTeam } from '../../../../lib/team-queries';
 
 export const dynamic = 'force-dynamic';
+// suggestRequirementsForPursuitAction calls Claude Sonnet 4.6 with the
+// full opportunity description + capability bank — typically 20–60s.
+// Bump from the default 60s to keep the AI call from 504-ing.
+export const maxDuration = 120;
 
 const CAPTURE_QUESTION_BLANK = {
   winThemes: [],

@@ -19,6 +19,7 @@ import {
   addRequirementAction,
   removeCapabilityAction,
   removeRequirementAction,
+  suggestRequirementsForPursuitAction,
   updateCapabilityAction,
   updateRequirementAction,
 } from '../../actions';
@@ -78,6 +79,29 @@ export function CapabilitiesTab({
           tone={summary.mustGapCount > 0 ? 'danger' : 'success'}
           hint={summary.mustGapCount > 0 ? 'Teaming trigger or no-bid signal' : null}
         />
+      </section>
+
+      {/* AI suggest */}
+      <section className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold">Suggest requirements from the RFP</h2>
+            <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+              Reads the opportunity description and proposes
+              capability-matrix rows mapped to your existing capability bank.
+              Re-running is idempotent — exact-text duplicates are skipped.
+            </p>
+          </div>
+          <form action={suggestRequirementsForPursuitAction}>
+            <input type="hidden" name="pursuitId" value={pursuitId} />
+            <button
+              type="submit"
+              className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
+            >
+              Suggest with AI
+            </button>
+          </form>
+        </div>
       </section>
 
       {/* Add requirement */}
