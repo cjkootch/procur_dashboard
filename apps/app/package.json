@@ -16,6 +16,7 @@
     "@procur/analytics": "workspace:*",
     "@procur/auth": "workspace:*",
     "@procur/db": "workspace:*",
+    "@procur/payments": "workspace:*",
     "@procur/utils": "workspace:*",
     "@sentry/nextjs": "^8.47.0",
     "@trigger.dev/sdk": "^3.3.9",
