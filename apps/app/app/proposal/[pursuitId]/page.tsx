@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
+import { MentionText } from '../../../components/comments/MentionText';
 import { listMentionHints, type MentionHint } from '../../../lib/mentions';
 import { getProposalByPursuitId } from '../../../lib/proposal-queries';
 import { getRelevantPastPerformance } from '../../../lib/past-performance-queries';
@@ -865,6 +866,9 @@ function CommentThread({
 }) {
   const open = comments.filter((c) => c.resolvedAt === null);
   const resolved = comments.filter((c) => c.resolvedAt !== null);
+  // Set of handles that map to real teammates (passed to MentionText so
+  // typos render as plain text instead of styled-but-undelivered chips).
+  const knownHandles = new Set(mentionHints.map((h) => h.handle));
 
   return (
     <div className={sectionId ? 'mt-4 border-t border-[color:var(--color-border)] pt-3' : ''}>
@@ -882,7 +886,12 @@ function CommentThread({
       ) : (
         <div className="space-y-2">
           {open.map((c) => (
-            <CommentRow key={c.id} pursuitId={pursuitId} comment={c} />
+            <CommentRow
+              key={c.id}
+              pursuitId={pursuitId}
+              comment={c}
+              knownHandles={knownHandles}
+            />
           ))}
           {resolved.length > 0 && (
             <details className="mt-3">
@@ -891,7 +900,12 @@ function CommentThread({
               </summary>
               <div className="mt-2 space-y-2 opacity-70">
                 {resolved.map((c) => (
-                  <CommentRow key={c.id} pursuitId={pursuitId} comment={c} />
+                  <CommentRow
+              key={c.id}
+              pursuitId={pursuitId}
+              comment={c}
+              knownHandles={knownHandles}
+            />
                 ))}
               </div>
             </details>
@@ -945,9 +959,11 @@ function CommentThread({
 function CommentRow({
   pursuitId,
   comment,
+  knownHandles,
 }: {
   pursuitId: string;
   comment: CommentWithAuthor;
+  knownHandles: Set<string>;
 }) {
   const author = comment.authorName ?? comment.authorEmail ?? 'Someone';
   const isResolved = comment.resolvedAt !== null;
@@ -957,7 +973,9 @@ function CommentRow({
         <span className="font-medium text-[color:var(--color-foreground)]">{author}</span>
         <span>{new Date(comment.createdAt).toLocaleString()}</span>
       </div>
-      <p className="whitespace-pre-wrap">{comment.body}</p>
+      <p>
+        <MentionText body={comment.body} knownHandles={knownHandles} />
+      </p>
       <div className="mt-2 flex items-center gap-3 text-xs">
         <form
           action={
