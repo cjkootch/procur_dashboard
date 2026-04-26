@@ -81,6 +81,9 @@ export async function upsertOpportunity(
     ),
   });
 
+  const awardedAmountString =
+    norm.awardedAmount != null ? String(norm.awardedAmount) : null;
+
   const row: NewOpportunity = {
     sourceReferenceId: norm.sourceReferenceId,
     jurisdictionId,
@@ -98,6 +101,14 @@ export async function upsertOpportunity(
     deadlineAt: norm.deadlineAt ?? null,
     deadlineTimezone: norm.deadlineTimezone ?? null,
     language: norm.language ?? 'en',
+    // Lifecycle: scrapers that consume award-notice surfaces should
+    // emit 'awarded' so Discover's past-awards view can find the row
+    // by status alone, even when the date format escapes parseGojepDate
+    // (which has historically silently returned undefined on edge cases).
+    status: norm.status ?? 'active',
+    awardedAt: norm.awardedAt ?? null,
+    awardedAmount: awardedAmountString,
+    awardedToCompanyName: norm.awardedToCompanyName ?? null,
     rawContent: norm.rawContent,
     slug,
     lastSeenAt: new Date(),

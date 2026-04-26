@@ -176,8 +176,10 @@ export class JamaicaGojepScraper extends TenderScraper {
     const d = raw.rawData as unknown as JamaicaRawData;
     if (!d.title) return null;
 
-    const deadline = parseGojepDate(d.closingDateText ?? d.awardDateText);
+    const closingDate = parseGojepDate(d.closingDateText);
+    const awardDate = parseGojepDate(d.awardDateText);
     const value = parseAwardedValue(d.awardedValue);
+    const isAward = d.surface === 'award-notices';
 
     const documents = d.awardNoticePdfUrl
       ? [
@@ -197,10 +199,25 @@ export class JamaicaGojepScraper extends TenderScraper {
       referenceNumber: d.referenceNumber,
       agencyName: d.agency,
       currency: 'JMD',
+      // For award-notice rows, valueEstimate is the awarded value
+      // (no separate budget estimate is published). Same number lands
+      // in awardedAmount below, so downstream surfaces that only look
+      // at valueEstimate still render. Open tenders fall through here
+      // with valueEstimate undefined since GOJEP doesn't publish budgets.
       valueEstimate: value,
-      deadlineAt: deadline ?? undefined,
+      // Use the award date as the deadline for past-awards rows so
+      // recency sorting works. Falls back to closingDate (the bid
+      // submission deadline) for opened-tender rows.
+      deadlineAt: closingDate ?? awardDate ?? undefined,
       deadlineTimezone: 'America/Jamaica',
       language: 'en',
+      // Surface-driven lifecycle. Award-notice surface always means the
+      // contract is awarded — this is the durable signal Discover's
+      // past-awards query keys off, even when parseGojepDate fails on
+      // an edge-case format and awardDate ends up undefined.
+      status: isAward ? 'awarded' : 'active',
+      awardedAt: isAward ? awardDate : undefined,
+      awardedAmount: isAward ? value : undefined,
       rawContent: d as unknown as Record<string, unknown>,
       documents,
     };

@@ -10,6 +10,8 @@ export type ScrapedDocument = {
   title?: string;
 };
 
+export type OpportunityLifecycleStatus = 'active' | 'closed' | 'awarded' | 'cancelled';
+
 export type NormalizedOpportunity = {
   sourceReferenceId: string;
   sourceUrl: string;
@@ -26,6 +28,16 @@ export type NormalizedOpportunity = {
   deadlineAt?: Date;
   deadlineTimezone?: string;
   language?: string;
+  /**
+   * Lifecycle marker. Most surfaces emit 'active' (or omit, default
+   * 'active'). Award-notice surfaces should set 'awarded' so the
+   * Past-awards view in Discover can find the row regardless of
+   * whether deadlineAt was successfully parsed.
+   */
+  status?: OpportunityLifecycleStatus;
+  awardedAt?: Date;
+  awardedAmount?: number;
+  awardedToCompanyName?: string;
   rawContent: Record<string, unknown>;
   documents?: ScrapedDocument[];
 };

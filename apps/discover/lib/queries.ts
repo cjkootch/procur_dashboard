@@ -1,5 +1,19 @@
 import 'server-only';
-import { and, asc, desc, eq, gte, ilike, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from 'drizzle-orm';
 import {
   agencies,
   db,
@@ -77,20 +91,39 @@ export type ListOpportunitiesInput = OpportunityFilters & {
   scope?: OpportunityScope;
 };
 
-const deadlineScopeCondition = (scope: OpportunityScope) =>
+/**
+ * Past-scope predicate. Unifies two ways an opportunity can be "past":
+ *
+ *   1. status IN ('awarded','closed') — labeled by a scraper that
+ *      consumes an award-notice or closed-tender surface (e.g. Jamaica
+ *      GOJEP's award-notices feed sets status='awarded'). This is the
+ *      authoritative signal and works even when deadlineAt is null.
+ *
+ *   2. status='active' AND deadlineAt < now() — legacy/unlabeled rows
+ *      where the scraper never set a lifecycle but the deadline has
+ *      passed. Most scrapers historically leave everything 'active'.
+ *
+ * The 'open' scope stays narrow: status='active' AND (no deadline OR
+ * deadline still in the future). Awarded/closed rows are explicitly
+ * excluded from open even if their deadline somehow lands in the future.
+ */
+const scopeCondition = (scope: OpportunityScope) =>
   scope === 'past'
-    ? and(isNotNull(opportunities.deadlineAt), lt(opportunities.deadlineAt, sql`now()`))!
-    : or(gte(opportunities.deadlineAt, sql`now()`), isNull(opportunities.deadlineAt))!;
+    ? or(
+        inArray(opportunities.status, ['awarded', 'closed']),
+        and(
+          eq(opportunities.status, 'active'),
+          isNotNull(opportunities.deadlineAt),
+          lt(opportunities.deadlineAt, sql`now()`),
+        ),
+      )!
+    : and(
+        eq(opportunities.status, 'active'),
+        or(gte(opportunities.deadlineAt, sql`now()`), isNull(opportunities.deadlineAt))!,
+      )!;
 
 const base = (filters: OpportunityFilters, scope: OpportunityScope = 'open') => {
-  const conds = [
-    eq(opportunities.status, 'active'),
-    // Open scope: drop expired rows. Past scope: drop unexpired rows.
-    // Some scrapers and migration imports leave `status='active'` on
-    // rows whose deadline is years in the past, and the past-awards
-    // view explicitly *wants* those.
-    deadlineScopeCondition(scope),
-  ];
+  const conds = [scopeCondition(scope)];
   if (filters.q) {
     const term = `%${filters.q}%`;
     const titleOrDesc = or(
