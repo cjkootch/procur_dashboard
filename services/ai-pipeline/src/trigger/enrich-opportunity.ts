@@ -6,6 +6,7 @@ import { classifyTask } from './classify';
 import { summarizeTask } from './summarize';
 import { detectLanguageTask } from './detect-language';
 import { extractRequirementsTask } from './extract-requirements';
+import { processDocumentTask } from './process-document';
 import { translateTask } from './translate';
 import { loadOpportunity } from '../helpers';
 
@@ -15,11 +16,14 @@ export type EnrichOpportunityPayload = { opportunityId: string };
  * Orchestrator. Fired by scraper.run() after it upserts a new opportunity.
  *
  * Flow:
+ *   0. process-document for every pending doc (download → R2 → extract text)
  *   1. detect-language + classify + summarize in parallel (all Haiku, fast)
  *   2. extract-requirements if the opportunity has processed documents (Sonnet, slower)
  *
- * Prompt caching kicks in for step 2: the same doc text was read by classify
- * and summarize in step 1, so Anthropic has already cached the prefix.
+ * Step 0 must finish before step 1 because classify/summarize read the
+ * extracted document text. Prompt caching kicks in for step 2: the same
+ * doc text was read by classify and summarize in step 1, so Anthropic
+ * has already cached the prefix.
  */
 export const enrichOpportunityTask = task({
   id: 'opportunity.enrich',
@@ -27,6 +31,29 @@ export const enrichOpportunityTask = task({
   run: async (payload: EnrichOpportunityPayload) => {
     const { opportunityId } = payload;
     log.info('ai.enrich.started', { opportunityId });
+
+    const pendingDocs = await db
+      .select({ id: documents.id })
+      .from(documents)
+      .where(
+        and(
+          eq(documents.opportunityId, opportunityId),
+          eq(documents.processingStatus, 'pending'),
+        ),
+      );
+
+    if (pendingDocs.length > 0) {
+      log.info('ai.enrich.processing-documents', {
+        opportunityId,
+        count: pendingDocs.length,
+      });
+      await batch.triggerByTaskAndWait(
+        pendingDocs.map((d) => ({
+          task: processDocumentTask,
+          payload: { documentId: d.id },
+        })),
+      );
+    }
 
     await batch.triggerByTaskAndWait([
       { task: detectLanguageTask, payload: { opportunityId } },
