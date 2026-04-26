@@ -56,6 +56,30 @@ describe('JamaicaGojepSuppliersScraper', () => {
     assert.deepEqual([...categories].sort(), ['gs', 'w14', 'w5']);
   });
 
+  it('stops paginating once a page emits no new sourceReferenceIds', async () => {
+    // Simulate GOJEP's behavior: real content for pages 1..3, then the
+    // portal silently returns page-3 content for any further page (its
+    // DisplayTag clamps p to the last page instead of 404'ing). Without
+    // dupe-detection this would loop maxPagesPerCategory times.
+    const fixture = await readFile(join(FIX_DIR, 'list-gs.html'), 'utf8');
+    let calls = 0;
+    const scraper = new JamaicaGojepSuppliersScraper({
+      // No fixtureHtml — force the live-fetch path.
+      maxPagesPerCategory: 50, // would be 50 wasteful fetches if dedup didn't trip
+      pageFetcher: async (_category, _page) => {
+        calls += 1;
+        return fixture; // every page returns the same content
+      },
+    });
+    const rows = await scraper.fetch();
+    // Stop should trip on page 2 of each of 3 categories: total ≤ 6 fetches,
+    // not 150. (Page 1 produces fresh rows, page 2 produces all-dupes → stop.)
+    assert.ok(calls <= 6, `expected ≤6 fetches, got ${calls}`);
+    // Output should still contain ~10 rows per category (one fixture's worth),
+    // never the 50-page-loop product.
+    assert.ok(rows.length <= 60, `expected ≤60 rows, got ${rows.length}`);
+  });
+
   it('skips rows that look like layout / header / paging', async () => {
     const fixtureHtml = await loadFixture();
     const scraper = new JamaicaGojepSuppliersScraper({ fixtureHtml });
