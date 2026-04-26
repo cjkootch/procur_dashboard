@@ -53,10 +53,15 @@ export type SupplierRow = {
 export type SuppliersScraperInput = {
   fixtureHtml?: Partial<Record<SupplierCategory, string>>;
   /** Pages to walk per category. Default 200 — covers all known
-   *  categories with headroom; stops early when a page returns 0 rows. */
+   *  categories with headroom; stops early when a page returns 0 new
+   *  rows (see fetchCategory for the dupe-detection guard). */
   maxPagesPerCategory?: number;
   /** Override the DisplayTag table id (live: 16564). */
   tableId?: string;
+  /** Inject a custom page fetcher. Tests use this to simulate the
+   *  portal's "return the last page over and over past the end"
+   *  behavior. Defaults to fetchWithRetry against the live URL. */
+  pageFetcher?: (category: SupplierCategory, page: number) => Promise<string>;
 };
 
 const REGISTRATION_DATE_REGEX = /\d{1,2}-\d{1,2}-\d{4}/;
@@ -98,22 +103,44 @@ export class JamaicaGojepSuppliersScraper {
     return out;
   }
 
-  /** Walk pagination for one category until we hit an empty page. */
+  /**
+   * Walk pagination for one category, stopping when we hit either an
+   * empty page OR a page that produces zero new sourceReferenceIds.
+   *
+   * The double guard matters because GOJEP's DisplayTag pagination
+   * doesn't return an empty page when you walk past the last real
+   * page — it silently returns the LAST page's content over and over.
+   * Without the dupe-check, a `maxPagesPerCategory=200` walk against a
+   * 27-page category would do 27 real fetches + 173 fetches that
+   * each re-emit the same 10 rows → 100% bandwidth waste, ~3× the
+   * upsert volume.
+   */
   private async fetchCategory(category: SupplierCategory): Promise<SupplierRow[]> {
     const out: SupplierRow[] = [];
+    const seen = new Set<string>();
     const maxPages = this.input.maxPagesPerCategory ?? 200;
     const tableId = this.input.tableId ?? DEFAULT_TABLE_ID;
 
+    const fetcher =
+      this.input.pageFetcher ??
+      (async (cat: SupplierCategory, page: number) => {
+        const url =
+          page === 1
+            ? `${PORTAL}${LIST_PATH}?categoryType=${cat}`
+            : `${PORTAL}${LIST_PATH}?categoryType=${cat}&d-${tableId}-p=${page}`;
+        const res = await fetchWithRetry(url);
+        return res.text();
+      });
+
     for (let p = 1; p <= maxPages; p += 1) {
-      const url =
-        p === 1
-          ? `${PORTAL}${LIST_PATH}?categoryType=${category}`
-          : `${PORTAL}${LIST_PATH}?categoryType=${category}&d-${tableId}-p=${p}`;
-      const res = await fetchWithRetry(url);
-      const html = await res.text();
+      const html = await fetcher(category, p);
       const rows = this.parsePage(html, category);
       if (rows.length === 0) break;
-      out.push(...rows);
+
+      const fresh = rows.filter((r) => !seen.has(r.sourceReferenceId));
+      if (fresh.length === 0) break; // page repeated — past last real page
+      for (const r of fresh) seen.add(r.sourceReferenceId);
+      out.push(...fresh);
     }
 
     return out;
