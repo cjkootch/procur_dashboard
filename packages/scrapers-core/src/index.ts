@@ -2,6 +2,7 @@ export { TenderScraper } from './base';
 export type { ScraperRunOptions } from './base';
 export type {
   NormalizedOpportunity,
+  OpportunityLifecycleStatus,
   RawOpportunity,
   ScrapedDocument,
   ScraperError,
