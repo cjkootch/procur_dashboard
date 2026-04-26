@@ -40,3 +40,4 @@ coverage/
 
 # Trigger.dev
 .trigger/
+.env.sentry-build-plugin
