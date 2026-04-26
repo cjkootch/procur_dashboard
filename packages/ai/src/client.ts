@@ -8,6 +8,12 @@ let cached: Anthropic | null = null;
  * Deferred init so modules importing `@procur/ai` at build time don't require
  * ANTHROPIC_API_KEY to be set (e.g. during `next build`). First call at
  * runtime reads the env var.
+ *
+ * If CF_AI_GATEWAY_BASE_URL is set, requests are routed through Cloudflare
+ * AI Gateway for observability (per-call cost/latency dashboards),
+ * automatic prompt caching across identical requests, and rate limiting.
+ * Format: https://gateway.ai.cloudflare.com/v1/<account-id>/<gateway-name>
+ * — provider segment ('/anthropic') is appended here.
  */
 export function getClient(): Anthropic {
   if (!cached) {
@@ -16,7 +22,12 @@ export function getClient(): Anthropic {
         'ANTHROPIC_API_KEY is not set — populate .env.local or Trigger.dev project env',
       );
     }
-    cached = new Anthropic();
+    const gatewayBase = process.env.CF_AI_GATEWAY_BASE_URL;
+    cached = new Anthropic({
+      baseURL: gatewayBase
+        ? `${gatewayBase.replace(/\/$/, '')}/anthropic`
+        : undefined,
+    });
   }
   return cached;
 }
