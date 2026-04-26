@@ -4,6 +4,7 @@ import {
   listActiveCategories,
   listJurisdictions,
   listOpportunities,
+  type OpportunityScope,
   type OpportunitySort,
 } from '../../lib/queries';
 import { OpportunityCard } from '../../components/opportunity-card';
@@ -51,6 +52,10 @@ function isSort(v: string | undefined): v is OpportunitySort {
   );
 }
 
+function isScope(v: string | undefined): v is OpportunityScope {
+  return v === 'open' || v === 'past';
+}
+
 export default async function OpportunitiesPage({
   searchParams,
 }: {
@@ -63,8 +68,11 @@ export default async function OpportunitiesPage({
   const minValueUsd = toInt(getOne(sp.minValue));
   const maxValueUsd = toInt(getOne(sp.maxValue));
   const page = toInt(getOne(sp.page)) ?? 1;
+  const scopeRaw = getOne(sp.view);
+  const scope: OpportunityScope = isScope(scopeRaw) ? scopeRaw : 'open';
+  const defaultSort: OpportunitySort = scope === 'past' ? 'deadline-desc' : 'deadline-asc';
   const sortRaw = getOne(sp.sort);
-  const sort: OpportunitySort = isSort(sortRaw) ? sortRaw : 'deadline-asc';
+  const sort: OpportunitySort = isSort(sortRaw) ? sortRaw : defaultSort;
 
   const perPage = 24;
 
@@ -78,6 +86,7 @@ export default async function OpportunitiesPage({
       page,
       perPage,
       sort,
+      scope,
     }),
     listActiveCategories(),
     listJurisdictions(),
@@ -91,7 +100,8 @@ export default async function OpportunitiesPage({
       category,
       minValue: minValueUsd,
       maxValue: maxValueUsd,
-      sort: sort === 'deadline-asc' ? undefined : sort,
+      view: scope === 'open' ? undefined : scope,
+      sort: sort === defaultSort ? undefined : sort,
       page: page === 1 ? undefined : page,
       ...nextParams,
     };
@@ -102,14 +112,52 @@ export default async function OpportunitiesPage({
     return `/opportunities${qs ? `?${qs}` : ''}`;
   };
 
+  // Build scope-toggle URLs that wipe `page` (page 1 of the new scope
+  // makes more sense than page-N of a different scope) but preserve
+  // every other filter the user has set.
+  const buildScopeHref = (nextScope: OpportunityScope) => {
+    const params = new URLSearchParams();
+    const merged: Record<string, string | number | undefined> = {
+      q,
+      jurisdiction,
+      category,
+      minValue: minValueUsd,
+      maxValue: maxValueUsd,
+      view: nextScope === 'open' ? undefined : nextScope,
+    };
+    for (const [k, v] of Object.entries(merged)) {
+      if (v != null && v !== '') params.set(k, String(v));
+    }
+    const qs = params.toString();
+    return `/opportunities${qs ? `?${qs}` : ''}`;
+  };
+
+  const headlineCopy =
+    scope === 'past'
+      ? `${total.toLocaleString()} closed tenders & past awards across ${allJurisdictions.length} jurisdictions.`
+      : `${total.toLocaleString()} active tenders across ${allJurisdictions.length} jurisdictions.`;
+
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Opportunities</h1>
-        <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
-          {total.toLocaleString()} active tenders across {allJurisdictions.length} jurisdictions.
-        </p>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {scope === 'past' ? 'Past awards & closed tenders' : 'Opportunities'}
+        </h1>
+        <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">{headlineCopy}</p>
       </header>
+
+      <div
+        role="tablist"
+        aria-label="View"
+        className="mb-5 flex gap-1 border-b border-[color:var(--color-border)] text-sm"
+      >
+        <ScopeTab href={buildScopeHref('open')} active={scope === 'open'}>
+          Open
+        </ScopeTab>
+        <ScopeTab href={buildScopeHref('past')} active={scope === 'past'}>
+          Past awards
+        </ScopeTab>
+      </div>
 
       <div className="mb-6">
         <SearchBar defaultQuery={q} placeholder="Search by keyword, reference, or agency" />
@@ -163,28 +211,48 @@ export default async function OpportunitiesPage({
           </FilterGroup>
 
           <FilterGroup title="Sort">
-            <SortLink buildHref={buildHref} value="deadline-asc" current={sort}>
-              Closing soon
-            </SortLink>
-            <SortLink buildHref={buildHref} value="value-desc" current={sort}>
-              Highest value
-            </SortLink>
-            <SortLink buildHref={buildHref} value="recent" current={sort}>
-              Most recent
-            </SortLink>
-            <SortLink buildHref={buildHref} value="deadline-desc" current={sort}>
-              Closing latest
-            </SortLink>
+            {scope === 'past' ? (
+              <>
+                <SortLink buildHref={buildHref} value="deadline-desc" current={sort}>
+                  Recently closed
+                </SortLink>
+                <SortLink buildHref={buildHref} value="deadline-asc" current={sort}>
+                  Oldest closed
+                </SortLink>
+                <SortLink buildHref={buildHref} value="value-desc" current={sort}>
+                  Highest value
+                </SortLink>
+              </>
+            ) : (
+              <>
+                <SortLink buildHref={buildHref} value="deadline-asc" current={sort}>
+                  Closing soon
+                </SortLink>
+                <SortLink buildHref={buildHref} value="value-desc" current={sort}>
+                  Highest value
+                </SortLink>
+                <SortLink buildHref={buildHref} value="recent" current={sort}>
+                  Most recent
+                </SortLink>
+                <SortLink buildHref={buildHref} value="deadline-desc" current={sort}>
+                  Closing latest
+                </SortLink>
+              </>
+            )}
           </FilterGroup>
         </aside>
 
         <section>
           {rows.length === 0 ? (
             <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-10 text-center">
-              <p className="font-medium">No opportunities match your filters</p>
+              <p className="font-medium">
+                {scope === 'past'
+                  ? 'No closed tenders match your filters'
+                  : 'No opportunities match your filters'}
+              </p>
               <p className="mt-2 text-sm text-[color:var(--color-muted-foreground)]">
                 Try clearing filters or{' '}
-                <Link className="underline" href="/opportunities">
+                <Link className="underline" href={scope === 'past' ? '/opportunities?view=past' : '/opportunities'}>
                   browse all
                 </Link>
                 .
@@ -208,6 +276,31 @@ export default async function OpportunitiesPage({
         </section>
       </div>
     </div>
+  );
+}
+
+function ScopeTab({
+  href,
+  active,
+  children,
+}: {
+  href: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      role="tab"
+      aria-selected={active}
+      href={href}
+      className={`-mb-px border-b-2 px-3 py-2 ${
+        active
+          ? 'border-[color:var(--color-foreground)] font-medium text-[color:var(--color-foreground)]'
+          : 'border-transparent text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]'
+      }`}
+    >
+      {children}
+    </Link>
   );
 }
 

@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { OpportunitySummary } from '../lib/queries';
-import { formatMoney, timeUntil } from '../lib/format';
+import { formatDate, formatMoney, timeUntil } from '../lib/format';
 
 type Props = { op: OpportunitySummary };
 
@@ -126,7 +126,9 @@ export function OpportunityCard({ op }: Props) {
                 : 'text-[color:var(--color-brand)]'
             }`}
           >
-            {countdown === 'closed' ? 'Closed' : `Closes in ${countdown}`}
+            {countdown === 'closed'
+              ? `Closed${op.deadlineAt ? ` ${formatDate(op.deadlineAt)}` : ''}`
+              : `Closes in ${countdown}`}
           </span>
         )}
       </header>
