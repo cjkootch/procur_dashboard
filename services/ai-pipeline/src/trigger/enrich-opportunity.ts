@@ -6,6 +6,8 @@ import { classifyTask } from './classify';
 import { summarizeTask } from './summarize';
 import { detectLanguageTask } from './detect-language';
 import { extractRequirementsTask } from './extract-requirements';
+import { translateTask } from './translate';
+import { loadOpportunity } from '../helpers';
 
 export type EnrichOpportunityPayload = { opportunityId: string };
 
@@ -31,6 +33,18 @@ export const enrichOpportunityTask = task({
       { task: classifyTask, payload: { opportunityId } },
       { task: summarizeTask, payload: { opportunityId } },
     ]);
+
+    // Auto-translate to English when the source language is not English.
+    // Discover renders the translated copy when the user's
+    // Accept-Language is en-*. Re-load after the parallel batch since
+    // detect-language may have just updated `language`.
+    const refreshed = await loadOpportunity(opportunityId);
+    if (refreshed && refreshed.language && refreshed.language !== 'en') {
+      await translateTask.triggerAndWait({
+        opportunityId,
+        targetLanguage: 'en',
+      });
+    }
 
     const [hasDocs] = await db
       .select({ id: documents.id })

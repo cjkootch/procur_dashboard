@@ -9,6 +9,17 @@ import {
   taxonomyCategories,
 } from '@procur/db';
 
+/**
+ * Per-language translations stored on `opportunities.parsed_content`
+ * under the `translations` key. Populated by the AI pipeline's
+ * translateTask when an opportunity's source language isn't the
+ * Procur display language.
+ */
+export type OpportunityTranslations = Record<
+  string,
+  { title?: string; description?: string; summary?: string } | undefined
+>;
+
 export type OpportunitySummary = {
   id: string;
   slug: string;
@@ -29,6 +40,8 @@ export type OpportunitySummary = {
   jurisdictionCountry: string;
   agencyName: string | null;
   agencyShort: string | null;
+  language: string | null;
+  translations: OpportunityTranslations | null;
 };
 
 export type OpportunitySort = 'deadline-asc' | 'deadline-desc' | 'value-desc' | 'recent';
@@ -155,6 +168,8 @@ export async function listOpportunities(
       jurisdictionCountry: jurisdictions.countryCode,
       agencyName: agencies.name,
       agencyShort: agencies.shortName,
+      language: opportunities.language,
+      translations: sql<OpportunityTranslations | null>`${opportunities.parsedContent}->'translations'`,
     })
     .from(opportunities)
     .innerJoin(jurisdictions, eq(jurisdictions.id, opportunities.jurisdictionId))
@@ -201,6 +216,8 @@ export async function getOpportunityBySlug(
       jurisdictionCountry: jurisdictions.countryCode,
       agencyName: agencies.name,
       agencyShort: agencies.shortName,
+      language: opportunities.language,
+      translations: sql<OpportunityTranslations | null>`${opportunities.parsedContent}->'translations'`,
     })
     .from(opportunities)
     .innerJoin(jurisdictions, eq(jurisdictions.id, opportunities.jurisdictionId))

@@ -1,9 +1,16 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { getOpportunityBySlug, getOpportunityDocuments } from '../../../lib/queries';
 import { flagFor } from '../../../lib/flags';
-import { formatDate, formatMoney, timeUntil } from '../../../lib/format';
+import {
+  formatDate,
+  formatMoney,
+  pickTranslated,
+  preferredLanguage,
+  timeUntil,
+} from '../../../lib/format';
 
 export const revalidate = 600;
 
@@ -41,6 +48,18 @@ export default async function OpportunityDetailPage({
   const value = formatMoney(op.valueEstimate, op.currency);
   const valueUsd = op.currency !== 'USD' ? formatMoney(op.valueEstimateUsd, 'USD') : null;
   const countdown = timeUntil(op.deadlineAt);
+  const hdrs = await headers();
+  const userLanguage = preferredLanguage(hdrs.get('accept-language'));
+  const displayTitle =
+    pickTranslated('title', op.title, op.language, op.translations, userLanguage) ?? op.title;
+  const displaySummary = pickTranslated('summary', op.aiSummary, op.language, op.translations, userLanguage);
+  const displayDescription = pickTranslated(
+    'description',
+    op.description,
+    op.language,
+    op.translations,
+    userLanguage,
+  );
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -101,7 +120,7 @@ export default async function OpportunityDetailPage({
             </span>
           )}
         </div>
-        <h1 className="text-3xl font-semibold tracking-tight">{op.title}</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">{displayTitle}</h1>
         {op.referenceNumber && (
           <p className="text-sm text-[color:var(--color-muted-foreground)]">
             Reference: {op.referenceNumber}
@@ -121,18 +140,18 @@ export default async function OpportunityDetailPage({
         <Fact label="Category" value={op.category ?? '—'} />
       </section>
 
-      {op.aiSummary && (
+      {displaySummary && (
         <section className="mt-8">
           <h2 className="text-lg font-semibold">Summary</h2>
-          <p className="mt-2 text-base leading-relaxed">{op.aiSummary}</p>
+          <p className="mt-2 text-base leading-relaxed">{displaySummary}</p>
         </section>
       )}
 
-      {op.description && (
+      {displayDescription && (
         <section className="mt-8">
           <h2 className="text-lg font-semibold">Description</h2>
           <p className="mt-2 whitespace-pre-line text-base leading-relaxed text-[color:var(--color-muted-foreground)]">
-            {op.description}
+            {displayDescription}
           </p>
         </section>
       )}

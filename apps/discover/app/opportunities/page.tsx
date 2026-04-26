@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
 import {
   listActiveCategories,
   listJurisdictions,
@@ -8,6 +9,7 @@ import {
   type OpportunitySort,
 } from '../../lib/queries';
 import { OpportunityCard } from '../../components/opportunity-card';
+import { preferredLanguage } from '../../lib/format';
 import { Pagination } from '../../components/pagination';
 import { SearchBar } from '../../components/search-bar';
 
@@ -62,6 +64,8 @@ export default async function OpportunitiesPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
+  const hdrs = await headers();
+  const userLanguage = preferredLanguage(hdrs.get('accept-language'));
   const q = getOne(sp.q);
   const jurisdiction = getOne(sp.jurisdiction);
   const category = getOne(sp.category);
@@ -262,7 +266,7 @@ export default async function OpportunitiesPage({
             <>
               <div className="grid gap-4 md:grid-cols-2">
                 {rows.map((op) => (
-                  <OpportunityCard key={op.id} op={op} />
+                  <OpportunityCard key={op.id} op={op} userLanguage={userLanguage} />
                 ))}
               </div>
               <Pagination

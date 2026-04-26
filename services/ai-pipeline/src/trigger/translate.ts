@@ -29,16 +29,21 @@ export const translateTask = task({
     const result = await translateOpportunity({
       title: opp.title,
       description: opp.description ?? undefined,
+      summary: opp.aiSummary ?? undefined,
       sourceLanguage,
       targetLanguage: payload.targetLanguage,
     });
 
     const existing = (opp.parsedContent as Record<string, unknown> | null) ?? {};
     const translations =
-      (existing.translations as Record<string, { title: string; description: string }>) ?? {};
+      (existing.translations as Record<
+        string,
+        { title: string; description: string; summary?: string }
+      >) ?? {};
     translations[payload.targetLanguage] = {
       title: result.title,
       description: result.description,
+      summary: result.summary,
     };
 
     await db

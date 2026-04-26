@@ -1,8 +1,14 @@
 import Link from 'next/link';
 import type { OpportunitySummary } from '../lib/queries';
-import { formatDate, formatMoney, timeUntil } from '../lib/format';
+import { formatDate, formatMoney, pickTranslated, timeUntil } from '../lib/format';
 
-type Props = { op: OpportunitySummary };
+type Props = {
+  op: OpportunitySummary;
+  /** Primary language subtag from Accept-Language (en, es, pt, …).
+   *  When the opportunity's source language differs and a translation
+   *  exists on the row, render the translation instead of the original. */
+  userLanguage?: string;
+};
 
 /**
  * Strip glyphs that government portal HTML occasionally embeds and
@@ -87,7 +93,7 @@ function splitBulletedTitle(text: string): { headline: string; extraCount: numbe
   return { headline: parts[0]!, extraCount: parts.length - 1 };
 }
 
-export function OpportunityCard({ op }: Props) {
+export function OpportunityCard({ op, userLanguage = 'en' }: Props) {
   // Some legacy / migration rows have a null slug — those have nowhere
   // to land on the detail page. Render an unlinked card rather than a
   // dead link to /opportunities/.
@@ -96,9 +102,16 @@ export function OpportunityCard({ op }: Props) {
   const value = formatMoney(op.valueEstimate, op.currency);
   const valueUsd = op.currency !== 'USD' ? formatMoney(op.valueEstimateUsd, 'USD') : null;
   const countdown = timeUntil(op.deadlineAt);
-  const cleanedTitle = cleanText(op.title);
+  // Resolve display copy per user-language preference. When the user
+  // wants en and the opportunity is es, use the AI-pipeline translation
+  // (parsedContent.translations.en) if it exists.
+  const displayTitle =
+    pickTranslated('title', op.title, op.language, op.translations, userLanguage) ?? op.title;
+  const displaySummary = pickTranslated('summary', op.aiSummary, op.language, op.translations, userLanguage);
+  const displayDescription = pickTranslated('description', op.description, op.language, op.translations, userLanguage);
+  const cleanedTitle = cleanText(displayTitle);
   const { headline, extraCount } = splitBulletedTitle(cleanedTitle);
-  const rawSummary = cleanText(op.aiSummary ?? op.description);
+  const rawSummary = cleanText(displaySummary ?? displayDescription);
   // If the description is just a clone of the title (common with
   // scrapers that fall back to title when no description exists), drop
   // it — the card already shows the title and the duplicate just eats
