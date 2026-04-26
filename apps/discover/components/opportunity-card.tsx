@@ -19,7 +19,11 @@ type Props = { op: OpportunitySummary };
  * trip on the very codepoints we exist to remove.
  */
 const SQUARE_BULLET_RE = new RegExp(
-  '[\\uFFFD\\u2610-\\u2612\\u25A0-\\u25CF]',
+  // FFFD = replacement char, 2610-2612 = ballot boxes, 25A0-25CF =
+  // generic squares/triangles, E000-F8FF = Private Use Area where
+  // portal HTML routinely embeds font-specific glyphs that render
+  // as boxes in our stack.
+  '[\\uFFFD\\u2610-\\u2612\\u25A0-\\u25CF\\uE000-\\uF8FF]',
   'g',
 );
 // C0 controls (excluding TAB \u0009, LF \u000A, CR \u000D so word
@@ -43,6 +47,23 @@ function cleanText(input: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * A handful of legacy / migration-imported rows have a slugified title
+ * stuffed into `referenceNumber` — e.g.
+ *   "GUYSUCO-Advertisement-Invitation-for-Bids-IFB-Agriculture-Equipments"
+ * Real procurement references are short, structured ("IFB/MOE 03/2022",
+ * "EDESUR-DAF-CM-2026-0003") and rarely exceed ~30 chars. Heuristic:
+ * if the cleaned reference is long *and* dominated by hyphens *and* has
+ * no slashes/colons/digits-with-slashes, treat it as a slug and hide it.
+ * Better to omit a noisy field than to display garbage.
+ */
+function isSluggyReference(ref: string): boolean {
+  if (ref.length < 35) return false;
+  const hyphenRatio = (ref.match(/-/g)?.length ?? 0) / ref.length;
+  const hasStructuredHints = /[/:]|\d{4}/.test(ref);
+  return hyphenRatio > 0.08 && !hasStructuredHints;
+}
+
 export function OpportunityCard({ op }: Props) {
   const href = `/opportunities/${op.slug}`;
   const value = formatMoney(op.valueEstimate, op.currency);
@@ -50,6 +71,8 @@ export function OpportunityCard({ op }: Props) {
   const countdown = timeUntil(op.deadlineAt);
   const title = cleanText(op.title);
   const summaryText = cleanText(op.aiSummary ?? op.description);
+  const cleanedRef = cleanText(op.referenceNumber);
+  const referenceLabel = cleanedRef && !isSluggyReference(cleanedRef) ? cleanedRef : null;
 
   return (
     <article className="flex flex-col gap-3 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5 transition hover:border-[color:var(--color-foreground)]">
@@ -84,7 +107,7 @@ export function OpportunityCard({ op }: Props) {
       <footer className="mt-auto flex flex-wrap items-end justify-between gap-3 pt-2 text-xs">
         <div className="text-[color:var(--color-muted-foreground)]">
           {op.agencyShort ?? op.agencyName ?? op.jurisdictionName}
-          {op.referenceNumber && <span> · {cleanText(op.referenceNumber)}</span>}
+          {referenceLabel && <span> · {referenceLabel}</span>}
         </div>
         {value && (
           <div className="text-right">

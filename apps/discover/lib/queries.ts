@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, desc, eq, gte, ilike, lte, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, isNull, lte, or, sql } from 'drizzle-orm';
 import {
   agencies,
   db,
@@ -50,7 +50,15 @@ export type ListOpportunitiesInput = OpportunityFilters & {
 };
 
 const base = (filters: OpportunityFilters) => {
-  const conds = [eq(opportunities.status, 'active')];
+  const conds = [
+    eq(opportunities.status, 'active'),
+    // Drop tenders whose deadline has already passed. Some scrapers
+    // and migration imports leave `status='active'` on rows whose
+    // deadline is years in the past; without this guard those crowd
+    // out the actually-actionable opportunities. Rows with no recorded
+    // deadline are kept (they're typically EOIs / open-ended notices).
+    or(gte(opportunities.deadlineAt, sql`now()`), isNull(opportunities.deadlineAt))!,
+  ];
   if (filters.q) {
     const term = `%${filters.q}%`;
     const titleOrDesc = or(
@@ -194,10 +202,17 @@ export async function getOpportunityDocuments(opportunityId: string) {
 }
 
 export async function getGlobalStats() {
+  // Same active+future-deadline cut as the listing query, so the
+  // headline number matches what the user sees on /opportunities.
+  const activeAndOpen = and(
+    eq(opportunities.status, 'active'),
+    or(gte(opportunities.deadlineAt, sql`now()`), isNull(opportunities.deadlineAt))!,
+  );
+
   const [active] = await db
     .select({ c: sql<number>`count(*)::int` })
     .from(opportunities)
-    .where(eq(opportunities.status, 'active'));
+    .where(activeAndOpen);
 
   // Count jurisdictions that *actually* have at least one active
   // opportunity, not jurisdictions seeded as `active=true`. The
@@ -207,7 +222,7 @@ export async function getGlobalStats() {
   const [juris] = await db
     .select({ c: sql<number>`count(distinct ${opportunities.jurisdictionId})::int` })
     .from(opportunities)
-    .where(eq(opportunities.status, 'active'));
+    .where(activeAndOpen);
 
   return {
     activeOpportunities: active?.c ?? 0,
