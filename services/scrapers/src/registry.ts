@@ -1,6 +1,7 @@
 import type { TenderScraper } from '@procur/scrapers-core';
 import { BarbadosGisScraper } from './jurisdictions/barbados-gis/scraper';
 import { ChileMpScraper } from './jurisdictions/chile-mp/scraper';
+import { ChileMpSessionScraper } from './jurisdictions/chile-mp-session/scraper';
 import { ColombiaSecopScraper } from './jurisdictions/colombia-secop/scraper';
 import { DrDgcpScraper } from './jurisdictions/dr-dgcp/scraper';
 import { GuyanaLcrScraper } from './jurisdictions/guyana-lcr/scraper';
@@ -20,6 +21,7 @@ export const scrapers: Record<string, ScraperFactory> = {
   'dominican-republic': () => new DrDgcpScraper(),
   barbados: () => new BarbadosGisScraper(),
   chile: () => new ChileMpScraper(),
+  'chile-session': () => new ChileMpSessionScraper(),
   colombia: () => new ColombiaSecopScraper(),
 };
 
