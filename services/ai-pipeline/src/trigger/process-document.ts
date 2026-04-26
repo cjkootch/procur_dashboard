@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db, documents } from '@procur/db';
 import { fetchWithRetry } from '@procur/scrapers-core';
 import { log } from '@procur/utils/logger';
-import { uploadBuffer } from '../lib/r2';
+import { uploadBuffer } from '../lib/blob-storage';
 import { extensionForUrl, extractTextFromBuffer } from '../lib/extract-text';
 
 export type ProcessDocumentPayload = { documentId: string };
