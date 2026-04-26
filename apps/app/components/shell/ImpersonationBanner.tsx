@@ -14,7 +14,19 @@ import { ExitImpersonationButton } from './ExitImpersonationButton';
  * Renders nothing in normal sessions.
  */
 export async function ImpersonationBanner() {
-  const { sessionClaims } = await auth();
+  // The root layout renders this on every route — including Next's
+  // internal /_not-found shell, which is served without running
+  // clerkMiddleware. auth() throws there ("Clerk: auth() was called
+  // but Clerk can't detect usage of clerkMiddleware()"). The banner
+  // is purely a staff-impersonation indicator, so failing closed
+  // (render nothing) is the right behavior whenever we can't read
+  // the session.
+  let sessionClaims: Awaited<ReturnType<typeof auth>>['sessionClaims'] = null;
+  try {
+    ({ sessionClaims } = await auth());
+  } catch {
+    return null;
+  }
   const actor = sessionClaims?.act as { sub?: string } | undefined;
   if (!actor?.sub) return null;
 
