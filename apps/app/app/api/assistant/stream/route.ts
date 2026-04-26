@@ -89,6 +89,20 @@ export async function POST(req: Request): Promise<Response> {
           send(event);
 
           if (event.type === 'assistant_message_complete') {
+            // Anthropic requires tool_result blocks to sit on a user turn
+            // *between* the tool_use assistant turn and the next assistant
+            // turn. tool_result events arrive AFTER the prior
+            // assistant_message_complete (the tool_use one), so by the
+            // time *this* assistant_message_complete fires, anything in
+            // pendingToolResults belongs to the previous assistant turn
+            // and must be persisted BEFORE we save the current one.
+            // Persisting in the wrong order corrupts the next replay
+            // ("tool_use ids were found without tool_result blocks
+            // immediately after").
+            if (pendingToolResults.length > 0) {
+              await appendToolResults(resolvedThreadId, pendingToolResults);
+              pendingToolResults.length = 0;
+            }
             await appendAssistantMessage({
               threadId: resolvedThreadId,
               content: event.content as AnthropicContentBlock[],
@@ -99,12 +113,6 @@ export async function POST(req: Request): Promise<Response> {
               cacheReadTokens: event.usage.cacheReadTokens,
               costCents: event.usage.costCents,
             });
-            // If this turn required tools, flush any accumulated tool_results
-            // as a user turn between assistant messages.
-            if (pendingToolResults.length > 0) {
-              await appendToolResults(resolvedThreadId, pendingToolResults);
-              pendingToolResults.length = 0;
-            }
           } else if (event.type === 'tool_result') {
             pendingToolResults.push({
               tool_use_id: event.id,

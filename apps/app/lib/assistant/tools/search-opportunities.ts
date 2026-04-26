@@ -1,7 +1,7 @@
 import 'server-only';
 import { z } from 'zod';
 import { defineTool } from '@procur/ai';
-import { and, asc, desc, eq, gt, ilike, inArray, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, ilike, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { agencies, db, jurisdictions, opportunities } from '@procur/db';
 
 const input = z.object({
@@ -17,29 +17,77 @@ const input = z.object({
 });
 
 /**
+ * Common Spanish/English stop-words that hurt keyword matching when
+ * present in a multi-word `query` ("any supply opportunities for fuel"
+ * → ["supply", "fuel"]).
+ */
+const STOP_WORDS = new Set([
+  'a', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has',
+  'have', 'in', 'is', 'it', 'me', 'my', 'of', 'on', 'or', 'show', 'that', 'the',
+  'this', 'to', 'us', 'we', 'with', 'opportunity', 'opportunities', 'tender',
+  'tenders',
+  // es
+  'el', 'la', 'los', 'las', 'de', 'del', 'en', 'por', 'para', 'con', 'una',
+  'uno', 'que', 'es', 'su',
+]);
+
+function tokenize(query: string): string[] {
+  return query
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((t) => t.length >= 2 && !STOP_WORDS.has(t));
+}
+
+/**
  * Cross-market opportunity search. Public scope — returns active
- * opportunities regardless of whether the company has a pursuit for them.
- * Filters by keyword (ilike over title/description/reference), jurisdiction,
+ * opportunities (deadline still in the future) regardless of whether
+ * the company has a pursuit for them. Filters by keyword (token-AND
+ * across title/description/reference/aiSummary), jurisdiction,
  * category, value range, deadline window. Defaults to top 20 most recent.
  */
 export const searchOpportunitiesTool = defineTool({
   name: 'search_opportunities',
   description:
-    "Search active government tender opportunities across all jurisdictions Procur scrapes. Filters: query (keyword), jurisdictionSlugs (e.g. ['jamaica', 'guyana']), categories, minValueUsd, maxValueUsd, deadlineBefore/deadlineAfter (ISO date), sort (deadline_asc|deadline_desc|value_desc|recent, default recent), limit (default 20). Use this for 'find me tenders about X' questions.",
+    "Search active government tender opportunities across all jurisdictions Procur scrapes. The `query` is tokenized and EVERY non-stopword token must appear somewhere in title/description/reference/AI summary (case-insensitive substring) — so 'fuel supply' matches both 'Supply of fuel' and 'Diesel fuel for the supply chain'. Pass broad single-domain words rather than long phrases (good: 'fuel'; better when needed: 'fuel diesel petroleum'). Filters: query (keyword), jurisdictionSlugs (e.g. ['jamaica', 'guyana']), categories, minValueUsd, maxValueUsd, deadlineBefore/deadlineAfter (ISO date), sort (deadline_asc|deadline_desc|value_desc|recent, default recent), limit (default 20). Use this for 'find me tenders about X' questions.",
   kind: 'read',
   schema: input,
   handler: async (_ctx, args) => {
-    const conds = [eq(opportunities.status, 'active')];
+    const conds = [
+      eq(opportunities.status, 'active'),
+      // Match the discover listing: only return tenders whose deadline
+      // is still in the future (or unknown). Without this we surface
+      // 2-year-old "active" rows that nobody can bid on.
+      or(gt(opportunities.deadlineAt, sql`now()`), isNull(opportunities.deadlineAt))!,
+    ];
 
     if (args.query) {
-      const like = `%${args.query}%`;
-      const clause = or(
-        ilike(opportunities.title, like),
-        ilike(opportunities.description, like),
-        ilike(opportunities.referenceNumber, like),
-        ilike(opportunities.aiSummary, like),
-      );
-      if (clause) conds.push(clause);
+      const tokens = tokenize(args.query);
+      // Each token must appear somewhere in any of the 4 text columns —
+      // expressed as AND-of-OR-of-ilikes. Substring (ilike '%token%') so
+      // we still match "petroleum" inside "petroleum-based" etc.
+      for (const token of tokens) {
+        const like = `%${token}%`;
+        const clause = or(
+          ilike(opportunities.title, like),
+          ilike(opportunities.description, like),
+          ilike(opportunities.referenceNumber, like),
+          ilike(opportunities.aiSummary, like),
+        );
+        if (clause) conds.push(clause);
+      }
+      // If the query had no usable tokens (all stop-words), fall back
+      // to the original substring match so we don't silently broaden
+      // to "everything".
+      if (tokens.length === 0) {
+        const like = `%${args.query}%`;
+        const clause = or(
+          ilike(opportunities.title, like),
+          ilike(opportunities.description, like),
+          ilike(opportunities.referenceNumber, like),
+          ilike(opportunities.aiSummary, like),
+        );
+        if (clause) conds.push(clause);
+      }
     }
     if (args.jurisdictionSlugs && args.jurisdictionSlugs.length > 0) {
       conds.push(inArray(jurisdictions.slug, args.jurisdictionSlugs));
