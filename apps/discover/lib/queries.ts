@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, desc, eq, gte, ilike, isNull, lte, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import {
   agencies,
   db,
@@ -43,21 +43,40 @@ export type OpportunityFilters = {
   deadlineAfter?: Date;
 };
 
+/**
+ * Listing scope:
+ *   - 'open'   active tenders whose deadline is still in the future
+ *              (or unknown). The default for /opportunities — what a
+ *              bidder would actually act on.
+ *   - 'past'   closed / awarded — deadline already passed. Useful for
+ *              market-intelligence research ("who won fuel contracts
+ *              in Jamaica last year?"). Backs the past-awards view.
+ *
+ * Both scopes share filters and pagination; only the deadline
+ * predicate flips.
+ */
+export type OpportunityScope = 'open' | 'past';
+
 export type ListOpportunitiesInput = OpportunityFilters & {
   page?: number;
   perPage?: number;
   sort?: OpportunitySort;
+  scope?: OpportunityScope;
 };
 
-const base = (filters: OpportunityFilters) => {
+const deadlineScopeCondition = (scope: OpportunityScope) =>
+  scope === 'past'
+    ? and(isNotNull(opportunities.deadlineAt), lt(opportunities.deadlineAt, sql`now()`))!
+    : or(gte(opportunities.deadlineAt, sql`now()`), isNull(opportunities.deadlineAt))!;
+
+const base = (filters: OpportunityFilters, scope: OpportunityScope = 'open') => {
   const conds = [
     eq(opportunities.status, 'active'),
-    // Drop tenders whose deadline has already passed. Some scrapers
-    // and migration imports leave `status='active'` on rows whose
-    // deadline is years in the past; without this guard those crowd
-    // out the actually-actionable opportunities. Rows with no recorded
-    // deadline are kept (they're typically EOIs / open-ended notices).
-    or(gte(opportunities.deadlineAt, sql`now()`), isNull(opportunities.deadlineAt))!,
+    // Open scope: drop expired rows. Past scope: drop unexpired rows.
+    // Some scrapers and migration imports leave `status='active'` on
+    // rows whose deadline is years in the past, and the past-awards
+    // view explicitly *wants* those.
+    deadlineScopeCondition(scope),
   ];
   if (filters.q) {
     const term = `%${filters.q}%`;
@@ -95,10 +114,14 @@ export async function listOpportunities(
   const perPage = input.perPage ?? 24;
   const page = Math.max(1, input.page ?? 1);
   const offset = (page - 1) * perPage;
-  const where = base(input);
+  const scope = input.scope ?? 'open';
+  const where = base(input, scope);
 
+  // Past awards default to most-recently-closed first; open tenders
+  // default to closing-soonest first.
+  const defaultSort: OpportunitySort = scope === 'past' ? 'deadline-desc' : 'deadline-asc';
   const orderBy = (() => {
-    switch (input.sort ?? 'deadline-asc') {
+    switch (input.sort ?? defaultSort) {
       case 'deadline-asc':
         return asc(opportunities.deadlineAt);
       case 'deadline-desc':
