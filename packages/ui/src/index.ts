@@ -1,2 +1,13 @@
-// @procur/ui — placeholder. Real implementation ships in later phases.
-export const __pkg = 'ui' as const;
+export { cn } from './cn';
+export { Button } from './button';
+export type { ButtonProps, ButtonVariant, ButtonSize } from './button';
+export { Input } from './input';
+export type { InputProps } from './input';
+export { Textarea } from './textarea';
+export type { TextareaProps } from './textarea';
+export { Select } from './select';
+export type { SelectProps } from './select';
+export { Card, CardHeader, CardTitle } from './card';
+export type { CardProps, CardHeaderProps, CardTitleProps } from './card';
+export { Label } from './label';
+export type { LabelProps } from './label';

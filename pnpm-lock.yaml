@@ -102,6 +102,9 @@ importers:
       '@procur/payments':
         specifier: workspace:*
         version: link:../../packages/payments
+      '@procur/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       '@procur/utils':
         specifier: workspace:*
         version: link:../../packages/utils
@@ -193,6 +196,9 @@ importers:
       '@procur/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@procur/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       '@procur/utils':
         specifier: workspace:*
         version: link:../../packages/utils
@@ -522,10 +528,20 @@ importers:
         version: 5.9.3
 
   packages/ui:
+    dependencies:
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
     devDependencies:
       '@procur/config':
         specifier: workspace:*
         version: link:../config
+      '@types/react':
+        specifier: ^19.0.2
+        version: 19.2.14
+      react:
+        specifier: ^19.0.0
+        version: 19.2.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -3322,6 +3338,10 @@ packages:
   clone@1.0.4:
     resolution: {integrity: sha512-JQHZ2QMW6l3aH/j6xCqQThY/9OH4D/9ls34cgkUBiEeocRTU04tHfKPBsUK1PqZCUQM7GiA0IIXJSuXHI64Kbg==}
     engines: {node: '>=0.8'}
+
+  clsx@2.1.1:
+    resolution: {integrity: sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==}
+    engines: {node: '>=6'}
 
   color-convert@2.0.1:
     resolution: {integrity: sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ==}
@@ -8763,6 +8783,8 @@ snapshots:
       wrap-ansi: 7.0.0
 
   clone@1.0.4: {}
+
+  clsx@2.1.1: {}
 
   color-convert@2.0.1:
     dependencies:

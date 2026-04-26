@@ -1,5 +1,8 @@
 @import 'tailwindcss';
 
+/* Pull in shared UI primitives so their Tailwind classes get scanned. */
+@source "../../../packages/ui/src/**/*.{ts,tsx}";
+
 @theme {
   --color-brand: oklch(0.55 0.18 250);
   --color-brand-foreground: oklch(0.98 0 0);
