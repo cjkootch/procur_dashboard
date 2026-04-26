@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
   agencies,
   db,
@@ -125,7 +125,7 @@ async function attachTaskCounts(
       overdueCount: sql<number>`count(*) filter (where ${pursuitTasks.completedAt} is null and ${pursuitTasks.dueDate} < ${now.toISOString().slice(0, 10)})::int`,
     })
     .from(pursuitTasks)
-    .where(sql`${pursuitTasks.pursuitId} = ANY(${pursuitIds})`)
+    .where(inArray(pursuitTasks.pursuitId, pursuitIds))
     .groupBy(pursuitTasks.pursuitId);
 
   const counts = new Map(taskCounts.map((c) => [c.pursuitId, c]));
@@ -372,7 +372,7 @@ export async function getCaptureDashboardData(
         completedAt: pursuitTasks.completedAt,
       })
       .from(pursuitTasks)
-      .where(sql`${pursuitTasks.pursuitId} = ANY(${pursuitIds})`);
+      .where(inArray(pursuitTasks.pursuitId, pursuitIds));
   }
 
   // Tasks: classify each
