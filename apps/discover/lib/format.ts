@@ -45,7 +45,10 @@ export function formatMoney(
  * Server-safe (no tz tricks; uses UTC for stability).
  */
 export function timeUntil(target: Date | null | undefined, now: Date = new Date()): string {
-  if (!target) return '';
+  // Guard against Invalid Date — when serialization or upstream parsing
+  // produces a Date object whose getTime() is NaN, the rest of the
+  // math cascades into "NaN months" rendered to users. Treat as null.
+  if (!target || Number.isNaN(target.getTime())) return '';
   const diffMs = target.getTime() - now.getTime();
   if (diffMs <= 0) return 'closed';
   const minutes = Math.floor(diffMs / 60_000);

@@ -199,10 +199,15 @@ export async function getGlobalStats() {
     .from(opportunities)
     .where(eq(opportunities.status, 'active'));
 
+  // Count jurisdictions that *actually* have at least one active
+  // opportunity, not jurisdictions seeded as `active=true`. The
+  // seed marks every supported country active so the filter dropdown
+  // shows them, but the headline copy "N jurisdictions" should
+  // reflect coverage of real data flowing.
   const [juris] = await db
-    .select({ c: sql<number>`count(*)::int` })
-    .from(jurisdictions)
-    .where(eq(jurisdictions.active, true));
+    .select({ c: sql<number>`count(distinct ${opportunities.jurisdictionId})::int` })
+    .from(opportunities)
+    .where(eq(opportunities.status, 'active'));
 
   return {
     activeOpportunities: active?.c ?? 0,
@@ -259,14 +264,31 @@ export async function getAgenciesForJurisdiction(jurisdictionId: string) {
     .orderBy(desc(agencies.opportunitiesCount));
 }
 
+/**
+ * Categories that actually have ≥1 active opportunity. Returning the
+ * full taxonomy seed (the prior behavior) created a false UX where
+ * users could "filter by Construction" and get 0 results because
+ * none of the scraped opportunities have been AI-classified yet.
+ *
+ * Once `services/ai-pipeline/classify` runs against new inserts, the
+ * filter list grows automatically as categories get populated.
+ */
 export async function listActiveCategories() {
-  return db
-    .select({
+  const rows = await db
+    .selectDistinct({
       slug: taxonomyCategories.slug,
       name: taxonomyCategories.name,
       parentSlug: taxonomyCategories.parentSlug,
+      sortOrder: taxonomyCategories.sortOrder,
     })
     .from(taxonomyCategories)
-    .where(eq(taxonomyCategories.active, true))
+    .innerJoin(opportunities, eq(opportunities.category, taxonomyCategories.slug))
+    .where(
+      and(
+        eq(taxonomyCategories.active, true),
+        eq(opportunities.status, 'active'),
+      ),
+    )
     .orderBy(asc(taxonomyCategories.sortOrder));
+  return rows.map(({ sortOrder: _sortOrder, ...rest }) => rest);
 }

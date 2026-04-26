@@ -122,7 +122,12 @@ export default async function OpportunitiesPage({
               All
             </FilterLink>
             {allJurisdictions
-              .filter((j) => j.active)
+              // Show only jurisdictions that have at least one active
+              // tender. Without this, the filter offered countries we
+              // technically support but haven't scraped data for yet
+              // (e.g., Trinidad's scraper is disabled), giving users
+              // a guaranteed zero-result click.
+              .filter((j) => j.active && (j.opportunitiesCount ?? 0) > 0)
               .map((j) => (
                 <FilterLink
                   key={j.slug}
@@ -134,22 +139,24 @@ export default async function OpportunitiesPage({
               ))}
           </FilterGroup>
 
-          <FilterGroup title="Category">
-            <FilterLink href={buildHref({ category: undefined, page: undefined })} active={!category}>
-              All
-            </FilterLink>
-            {categories
-              .filter((c) => !c.parentSlug)
-              .map((c) => (
-                <FilterLink
-                  key={c.slug}
-                  href={buildHref({ category: c.slug, page: undefined })}
-                  active={category === c.slug}
-                >
-                  {c.name}
-                </FilterLink>
-              ))}
-          </FilterGroup>
+          {categories.length > 0 && (
+            <FilterGroup title="Category">
+              <FilterLink href={buildHref({ category: undefined, page: undefined })} active={!category}>
+                All
+              </FilterLink>
+              {categories
+                .filter((c) => !c.parentSlug)
+                .map((c) => (
+                  <FilterLink
+                    key={c.slug}
+                    href={buildHref({ category: c.slug, page: undefined })}
+                    active={category === c.slug}
+                  >
+                    {c.name}
+                  </FilterLink>
+                ))}
+            </FilterGroup>
+          )}
 
           <FilterGroup title="Value (USD)">
             <ValueFilter buildHref={buildHref} current={{ minValueUsd, maxValueUsd }} />
