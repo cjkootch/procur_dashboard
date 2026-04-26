@@ -48,7 +48,7 @@ function tokenize(query: string): string[] {
 export const searchOpportunitiesTool = defineTool({
   name: 'search_opportunities',
   description:
-    "Search active government tender opportunities across all jurisdictions Procur scrapes. The `query` is tokenized and EVERY non-stopword token must appear somewhere in title/description/reference/AI summary (case-insensitive substring) — so 'fuel supply' matches both 'Supply of fuel' and 'Diesel fuel for the supply chain'. Pass broad single-domain words rather than long phrases (good: 'fuel'; better when needed: 'fuel diesel petroleum'). Filters: query (keyword), jurisdictionSlugs (e.g. ['jamaica', 'guyana']), categories, minValueUsd, maxValueUsd, deadlineBefore/deadlineAfter (ISO date), sort (deadline_asc|deadline_desc|value_desc|recent, default recent), limit (default 20). Use this for 'find me tenders about X' questions.",
+    "Search active government tender opportunities across all jurisdictions Procur scrapes. The `query` is tokenized and EVERY non-stopword token must appear somewhere in title/description/reference/AI summary (case-insensitive substring) — so 'fuel supply' matches both 'Supply of fuel' and 'Diesel fuel for the supply chain'. Pass broad single-domain words rather than long phrases (good: 'fuel'; better when needed: 'fuel diesel petroleum'). Filters: query (keyword), jurisdictionSlugs (e.g. ['jamaica', 'guyana']), categories, minValueUsd, maxValueUsd, deadlineBefore/deadlineAfter (ISO date), sort (deadline_asc|deadline_desc|value_desc|recent, default recent), limit (default 20). Use this for 'find me tenders about X' questions. RENDERING: when listing opportunities back to the user, ALWAYS format each title as a markdown link to its `detailUrl` — e.g. `[Supply of asphalt](https://discover.procur.app/opportunities/jm-2026-...)`. This makes rows clickable in the chat. Inside markdown tables, put the link in the title cell.",
   kind: 'read',
   schema: input,
   handler: async (_ctx, args) => {
@@ -120,6 +120,8 @@ export const searchOpportunitiesTool = defineTool({
 
     const limit = Math.min(args.limit ?? 20, 50);
 
+    const discoverBase = process.env.NEXT_PUBLIC_DISCOVER_URL ?? 'https://discover.procur.app';
+
     const rows = await db
       .select({
         id: opportunities.id,
@@ -150,6 +152,13 @@ export const searchOpportunitiesTool = defineTool({
         id: r.id,
         slug: r.slug,
         title: r.title,
+        // Absolute URL to the Discover detail page. The chat client
+        // renders markdown, so the model can wrap titles as
+        // [Title](detailUrl) to make rows clickable. Falls back to the
+        // listing for legacy rows that lost their slug.
+        detailUrl: r.slug
+          ? `${discoverBase}/opportunities/${r.slug}`
+          : `${discoverBase}/opportunities`,
         referenceNumber: r.referenceNumber,
         category: r.category,
         jurisdictionSlug: r.jurisdictionSlug,
