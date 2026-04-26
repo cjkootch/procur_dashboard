@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { PageContextInput, RenderedMessage, RenderedToolUse } from './types';
 
 type StreamEvent =
@@ -325,8 +327,8 @@ function MessageView({
         </div>
       )}
       {message.text && (
-        <div className="whitespace-pre-wrap rounded-[var(--radius-md)] bg-[color:var(--color-muted)]/40 px-3 py-2 text-sm">
-          {message.text}
+        <div className="rounded-[var(--radius-md)] bg-[color:var(--color-muted)]/40 px-3 py-2 text-sm">
+          <AssistantMarkdown text={message.text} />
         </div>
       )}
       {message.streaming && !message.text && message.toolUses.length === 0 && (
@@ -492,6 +494,96 @@ function ToolCard({ toolUse }: { toolUse: RenderedToolUse }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Assistant text passes through Claude as Markdown. We render it
+ * with react-markdown + GFM (tables, task lists, strikethrough,
+ * autolinks) and override the default elements with chat-bubble-
+ * appropriate styles — tighter spacing, no top margins on first-
+ * child, scoped link colors.
+ *
+ * Streaming-safe: react-markdown re-parses on every text update,
+ * so partial markdown (e.g. a closing `**` not yet streamed)
+ * renders as best-effort plain text until completion.
+ */
+function AssistantMarkdown({ text }: { text: string }) {
+  return (
+    <div className="space-y-2 text-sm leading-relaxed">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          p: ({ children }) => <p className="m-0 first:mt-0 last:mb-0">{children}</p>,
+          ul: ({ children }) => (
+            <ul className="m-0 list-disc space-y-0.5 pl-5">{children}</ul>
+          ),
+          ol: ({ children }) => (
+            <ol className="m-0 list-decimal space-y-0.5 pl-5">{children}</ol>
+          ),
+          li: ({ children }) => <li className="m-0">{children}</li>,
+          h1: ({ children }) => <h3 className="text-base font-semibold">{children}</h3>,
+          h2: ({ children }) => <h3 className="text-base font-semibold">{children}</h3>,
+          h3: ({ children }) => <h3 className="text-sm font-semibold">{children}</h3>,
+          h4: ({ children }) => <h4 className="text-sm font-semibold">{children}</h4>,
+          strong: ({ children }) => (
+            <strong className="font-semibold text-[color:var(--color-foreground)]">
+              {children}
+            </strong>
+          ),
+          em: ({ children }) => <em className="italic">{children}</em>,
+          hr: () => <hr className="my-2 border-[color:var(--color-border)]" />,
+          a: ({ href, children }) => (
+            <a
+              href={href}
+              target={href?.startsWith('http') ? '_blank' : undefined}
+              rel={href?.startsWith('http') ? 'noopener noreferrer' : undefined}
+              className="text-[color:var(--color-brand)] underline underline-offset-2 hover:opacity-80"
+            >
+              {children}
+            </a>
+          ),
+          code: ({ children, className }) => {
+            const inline = !className?.includes('language-');
+            if (inline) {
+              return (
+                <code className="rounded bg-[color:var(--color-muted)]/60 px-1 py-0.5 font-mono text-[12px]">
+                  {children}
+                </code>
+              );
+            }
+            return (
+              <code className="block overflow-x-auto rounded-[var(--radius-sm)] bg-[color:var(--color-muted)]/60 p-2 font-mono text-[12px]">
+                {children}
+              </code>
+            );
+          },
+          pre: ({ children }) => <pre className="m-0 p-0">{children}</pre>,
+          table: ({ children }) => (
+            <div className="overflow-x-auto">
+              <table className="m-0 w-full border-collapse text-[13px]">{children}</table>
+            </div>
+          ),
+          th: ({ children }) => (
+            <th className="border-b border-[color:var(--color-border)] px-2 py-1 text-left font-semibold">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="border-b border-[color:var(--color-border)]/40 px-2 py-1">
+              {children}
+            </td>
+          ),
+          blockquote: ({ children }) => (
+            <blockquote className="border-l-2 border-[color:var(--color-border)] pl-3 italic text-[color:var(--color-muted-foreground)]">
+              {children}
+            </blockquote>
+          ),
+        }}
+      >
+        {text}
+      </ReactMarkdown>
     </div>
   );
 }
