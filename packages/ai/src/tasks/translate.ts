@@ -6,6 +6,9 @@ import { TranslationOutput, type TranslationOutputT } from '../types';
 export type TranslateInput = {
   title: string;
   description?: string;
+  /** AI-generated summary, also translated when present so the
+   *  Discover card is fully in the target language. */
+  summary?: string;
   sourceLanguage: string;
   targetLanguage: string;
 };
@@ -19,6 +22,7 @@ export async function translateOpportunity(
     return {
       title: input.title,
       description: input.description ?? '',
+      summary: input.summary,
       usage: {
         cacheCreationTokens: 0,
         cacheReadTokens: 0,
@@ -34,7 +38,8 @@ Rules:
 - Preserve all reference numbers, dates, currency amounts, and agency names verbatim.
 - Use neutral, formal register appropriate to procurement.
 - Do not add explanatory notes — translate only what is given.
-- Keep paragraph structure.`;
+- Keep paragraph structure.
+- For the summary field, keep it to the same number of sentences and the same neutral tone as the source.`;
 
   const client = getClient();
   const response = await client.messages.parse({
@@ -47,6 +52,7 @@ Rules:
         content: JSON.stringify({
           title: input.title,
           description: input.description ?? '',
+          summary: input.summary ?? '',
         }),
       },
     ],

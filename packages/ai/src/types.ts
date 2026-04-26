@@ -38,6 +38,7 @@ export const TranslationOutput = z
   .object({
     title: z.string(),
     description: z.string(),
+    summary: z.string().optional(),
   })
   .strict();
 
