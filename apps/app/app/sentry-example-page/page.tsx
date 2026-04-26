@@ -2,7 +2,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import Head from "next/head";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 class SentryExampleFrontendError extends Error {
   constructor(message: string | undefined) {
@@ -13,16 +13,10 @@ class SentryExampleFrontendError extends Error {
 
 export default function Page() {
   const [hasSentError, setHasSentError] = useState(false);
-  const [isConnected, setIsConnected] = useState(true);
-
-  useEffect(() => {
-    Sentry.logger.info("Sentry example page loaded");
-    async function checkConnectivity() {
-      const result = await Sentry.diagnoseSdkConnectivity();
-      setIsConnected(result !== "sentry-unreachable");
-    }
-    checkConnectivity();
-  }, []);
+  // Sentry.diagnoseSdkConnectivity() and Sentry.logger are v9+ APIs.
+  // We're pinned to @sentry/nextjs ^8.x — assume connectivity is good
+  // and let the throw + Sentry.captureException flow validate end-to-end.
+  const isConnected = true;
 
   return (
     <div>
@@ -52,7 +46,7 @@ export default function Page() {
           Click the button below, and view the sample error on the Sentry{" "}
           <a
             target="_blank"
-            rel="noopener"
+            rel="noopener noreferrer"
             href="https://auto-tech-consulting-llc.sentry.io/issues/?project=4511286591946752"
           >
             Issues Page
@@ -60,7 +54,7 @@ export default function Page() {
           . For more details about setting up Sentry,{" "}
           <a
             target="_blank"
-            rel="noopener"
+            rel="noopener noreferrer"
             href="https://docs.sentry.io/platforms/javascript/guides/nextjs/"
           >
             read our docs
@@ -71,7 +65,6 @@ export default function Page() {
         <button
           type="button"
           onClick={async () => {
-            Sentry.logger.info("User clicked the button, throwing a sample error");
             await Sentry.startSpan(
               {
                 name: "Example Frontend/Backend Span",
