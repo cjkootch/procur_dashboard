@@ -210,7 +210,7 @@ export const seedJurisdictions: Array<
     currency: 'COP',
     language: 'es',
     timezone: 'America/Bogota',
-    active: false,
+    active: true,
     agencies: [
       ['Agencia Nacional de Contratación Pública - Colombia Compra Eficiente', 'CCE', 'agency'],
       ['Ministerio de Hacienda y Crédito Público', 'MHCP', 'ministry'],
