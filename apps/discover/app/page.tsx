@@ -8,7 +8,10 @@ import { SearchBar } from '../components/search-bar';
 import { CategoryPills } from '../components/category-pills';
 import { OpportunityCard } from '../components/opportunity-card';
 
-export const revalidate = 300;
+// 60s ISR — fresh enough that scraper runs (every 4h) reflect within
+// a minute on the home stat counters without sacrificing the cache
+// benefit for repeat visitors.
+export const revalidate = 60;
 
 export default async function HomePage() {
   const [stats, categories, featured] = await Promise.all([
