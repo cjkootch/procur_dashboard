@@ -64,18 +64,55 @@ function isSluggyReference(ref: string): boolean {
   return hyphenRatio > 0.08 && !hasStructuredHints;
 }
 
+/**
+ * Some agencies (Guyana Sugar Corp especially) pack multiple unrelated
+ * sub-tenders into a single title separated by bullet glyphs:
+ *   "Supply & Delivery of Bagasse... • Replacement of Auxiliary Carrier
+ *    Head Shaft... • Supply and Delivery of Oil Centrifuge for Albion..."
+ * That blows past the line-clamp and makes neighbouring cards look
+ * tiny by comparison. Lift the first sub-item as the headline and
+ * surface the remaining count as a badge.
+ *
+ * Also strips leading bullet markers ("• Supply..." → "Supply...").
+ */
+function splitBulletedTitle(text: string): { headline: string; extraCount: number } {
+  const stripped = text.replace(/^[\s••·\-*]+/, '').trim();
+  // Only treat as multi-item if separators are bullets, NOT regular
+  // punctuation — otherwise we'd cut every sentence with a colon.
+  const parts = stripped
+    .split(/\s*[•·]\s*/)
+    .map((p) => p.trim())
+    .filter((p) => p.length >= 6);
+  if (parts.length <= 1) return { headline: stripped, extraCount: 0 };
+  return { headline: parts[0]!, extraCount: parts.length - 1 };
+}
+
 export function OpportunityCard({ op }: Props) {
-  const href = `/opportunities/${op.slug}`;
+  // Some legacy / migration rows have a null slug — those have nowhere
+  // to land on the detail page. Render an unlinked card rather than a
+  // dead link to /opportunities/.
+  const slug = op.slug?.trim();
+  const href = slug ? `/opportunities/${slug}` : null;
   const value = formatMoney(op.valueEstimate, op.currency);
   const valueUsd = op.currency !== 'USD' ? formatMoney(op.valueEstimateUsd, 'USD') : null;
   const countdown = timeUntil(op.deadlineAt);
-  const title = cleanText(op.title);
-  const summaryText = cleanText(op.aiSummary ?? op.description);
+  const cleanedTitle = cleanText(op.title);
+  const { headline, extraCount } = splitBulletedTitle(cleanedTitle);
+  const rawSummary = cleanText(op.aiSummary ?? op.description);
+  // If the description is just a clone of the title (common with
+  // scrapers that fall back to title when no description exists), drop
+  // it — the card already shows the title and the duplicate just eats
+  // visual space.
+  const summaryText = rawSummary && rawSummary !== cleanedTitle ? rawSummary : '';
   const cleanedRef = cleanText(op.referenceNumber);
   const referenceLabel = cleanedRef && !isSluggyReference(cleanedRef) ? cleanedRef : null;
 
   return (
-    <article className="flex flex-col gap-3 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5 transition hover:border-[color:var(--color-foreground)]">
+    <article
+      className={`group relative flex h-full flex-col gap-3 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5 transition hover:border-[color:var(--color-foreground)] ${
+        href ? 'cursor-pointer focus-within:border-[color:var(--color-foreground)]' : ''
+      }`}
+    >
       <header className="flex items-start justify-between gap-3">
         <JurisdictionBadge
           countryCode={op.jurisdictionCountry}
@@ -94,9 +131,32 @@ export function OpportunityCard({ op }: Props) {
         )}
       </header>
 
-      <Link href={href} className="block">
-        <h3 className="text-base font-semibold leading-snug group-hover:underline">{title}</h3>
-      </Link>
+      <h3
+        className="line-clamp-2 text-base font-semibold leading-snug group-hover:underline"
+        title={cleanedTitle}
+      >
+        {/*
+          Stretched-link pattern: the anchor has no visible body, but its
+          ::after fills the article so the entire card surface is the
+          hit target. Title text stays selectable; footer/badge clicks
+          still navigate. The whole card animates as one focusable unit.
+        */}
+        {href ? (
+          <Link
+            href={href}
+            className="before:absolute before:inset-0 before:rounded-[var(--radius-lg)] before:content-['']"
+          >
+            <span className="relative">{headline}</span>
+          </Link>
+        ) : (
+          headline
+        )}
+        {extraCount > 0 && (
+          <span className="relative ml-1 inline-flex items-center rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1.5 py-px align-middle text-[10px] font-medium text-[color:var(--color-muted-foreground)]">
+            +{extraCount} more
+          </span>
+        )}
+      </h3>
 
       {summaryText ? (
         <p className="line-clamp-3 text-sm text-[color:var(--color-muted-foreground)]">
