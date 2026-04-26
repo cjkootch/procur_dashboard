@@ -37,18 +37,17 @@ import { fromZonedTime } from 'date-fns-tz';
 
 const PORTAL = 'https://www.gojep.gov.jm';
 /**
- * Best-known path for the authenticated current-competitions listing
- * on the e-PPS platform. If GOJEP rotates the slug on a redesign the
- * scraper will surface a "no rows" warning and the value can be
- * adjusted here. Kept as a constant rather than env var since it's
- * not a secret.
+ * Authenticated current-competitions listing on the e-PPS platform.
+ * `searchSelect=8` is GOJEP's "open competitions" filter; the
+ * `isCurrentCompetitions=true` flag scopes the response to in-progress
+ * tenders. Confirmed via live inspection of an authenticated session.
+ *
+ * The query already carries `?` so any pagination param appends with `&`.
  */
-const LISTING_PATH = '/epps/cft/listCFT.do';
+const LISTING_PATH = '/epps/quickSearchAction.do?isCurrentCompetitions=true&searchSelect=8';
 /**
- * displayTag table id for Current Competitions. Page-instance specific
- * but stable across runs (same convention as the Opened-Tenders scraper
- * which uses '3680181'). We pin the most-recent observed value and
- * fall back gracefully if pagination doesn't honour it.
+ * displayTag table id used for pagination on the Current Competitions
+ * search results. Stable across runs on the same e-PPS instance.
  */
 const TABLE_ID = '3680181';
 
@@ -67,10 +66,11 @@ const DETAIL_HREF_REGEX = /\/epps\/cft\/prepareViewCfTWS\.do\?resourceId=(\d+)/;
 export type JamaicaCurrentRawData = {
   resourceId: string;
   title: string;
-  referenceNumber: string;
+  description?: string;
   agency: string;
   publishedDateText?: string;
   closingDateText?: string;
+  category?: string;
   procedureType?: string;
   detailUrl: string;
 };
@@ -82,25 +82,24 @@ type ScraperInput = {
 };
 
 /**
- * GOJEP serves dates in Java's default Date.toString() form,
- *   "Fri Apr 24 13:00:00 COT 2026"
- * (reused from jamaica-gojep). Strip the TZ token and treat the
- * wall-clock as America/Jamaica.
+ * GOJEP's authenticated Current Competitions table renders dates as
+ *   "18/05/2026 11:00:00"  (dd/MM/yyyy HH:mm:ss)
+ * — local Jamaica wall-clock, no TZ suffix. (The public Opened-Tenders
+ * surface that jamaica-gojep consumes uses a different Java
+ * Date.toString() format; the two scrapers therefore parse separately.)
  */
 const GOJEP_DATE_REGEX =
-  /^[A-Za-z]+\s+(?<mon>[A-Za-z]+)\s+(?<day>\d{1,2})\s+(?<h>\d{1,2}):(?<m>\d{1,2}):(?<s>\d{1,2})\s+\w+\s+(?<year>\d{4})\s*$/;
-const MONTH_INDEX: Record<string, number> = {
-  Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
-  Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12,
-};
+  /^(?<day>\d{1,2})\/(?<mon>\d{1,2})\/(?<year>\d{4})(?:\s+(?<h>\d{1,2}):(?<m>\d{1,2})(?::(?<s>\d{1,2}))?)?\s*$/;
 
-function parseGojepDate(input: string | undefined): Date | undefined {
+export function parseGojepCurrentDate(input: string | undefined): Date | undefined {
   if (!input) return undefined;
   const m = input.trim().match(GOJEP_DATE_REGEX);
   if (!m?.groups) return undefined;
-  const month = MONTH_INDEX[m.groups['mon']!];
-  if (!month) return undefined;
-  const iso = `${m.groups['year']}-${String(month).padStart(2, '0')}-${m.groups['day']!.padStart(2, '0')}T${m.groups['h']!.padStart(2, '0')}:${m.groups['m']!.padStart(2, '0')}:${m.groups['s']!.padStart(2, '0')}`;
+  const { day, mon, year, h, m: min, s } = m.groups;
+  if (!day || !mon || !year) return undefined;
+  const iso =
+    `${year}-${mon.padStart(2, '0')}-${day.padStart(2, '0')}` +
+    `T${(h ?? '00').padStart(2, '0')}:${(min ?? '00').padStart(2, '0')}:${(s ?? '00').padStart(2, '0')}`;
   try {
     return fromZonedTime(iso, 'America/Jamaica');
   } catch {
@@ -195,13 +194,16 @@ export class JamaicaGojepCurrentScraper extends TenderScraper {
       sourceReferenceId: d.resourceId,
       sourceUrl: raw.sourceUrl,
       title: d.title.slice(0, 500),
-      description: d.title,
-      referenceNumber: d.referenceNumber || undefined,
+      description: d.description ?? d.title,
+      // GOJEP doesn't expose a separate procurement-reference; the
+      // resourceId in the URL is the only stable identifier.
+      referenceNumber: d.resourceId,
       type: d.procedureType,
+      category: d.category,
       agencyName: d.agency,
       currency: 'JMD',
-      publishedAt: parseGojepDate(d.publishedDateText),
-      deadlineAt: parseGojepDate(d.closingDateText),
+      publishedAt: parseGojepCurrentDate(d.publishedDateText),
+      deadlineAt: parseGojepCurrentDate(d.closingDateText),
       deadlineTimezone: 'America/Jamaica',
       language: 'en',
       rawContent: d as unknown as Record<string, unknown>,
@@ -217,7 +219,8 @@ export class JamaicaGojepCurrentScraper extends TenderScraper {
   }
 
   private async fetchPage(page: number): Promise<string> {
-    const url = `${PORTAL}${LISTING_PATH}?d-${TABLE_ID}-p=${page}`;
+    // LISTING_PATH already carries `?...`, so pagination uses `&`.
+    const url = `${PORTAL}${LISTING_PATH}&d-${TABLE_ID}-p=${page}`;
     const res = await fetchWithRetry(url, {
       headers: {
         Cookie: this.sessionCookie!,
@@ -235,27 +238,18 @@ export class JamaicaGojepCurrentScraper extends TenderScraper {
     const $ = loadHtml(html);
     const rows: JamaicaCurrentRawData[] = [];
 
-    // displayTag tables on e-PPS render as <table> with rows in a tbody.
-    // Selector tries the common e-PPS table classes first then falls
-    // back to "any table whose row links contain prepareViewCfTWS".
-    const candidateSelectors = [
-      'table.displaytag tbody tr',
-      'table.tenderList tbody tr',
-      'table.cftList tbody tr',
-      'table tbody tr',
-    ];
-    let $rows = $('');
-    for (const selector of candidateSelectors) {
-      $rows = $(selector);
-      if ($rows.length > 0) break;
-    }
+    // GOJEP's Current Competitions list is a vanilla <tr> grid with
+    // alternating Even/Odd row classes; rather than hunt for a stable
+    // table class we anchor on rows that actually carry a detail link.
+    const $rows = $('tr').filter(
+      (_i, el) => $(el).find('a[href*="prepareViewCfTWS"]').length > 0,
+    );
 
     $rows.each((_i, el) => {
       const $row = $(el);
       const $cells = $row.find('td');
-      if ($cells.length < 4) return;
+      if ($cells.length < 5) return;
 
-      // Detail link → resourceId is the only stable id GOJEP exposes.
       const $link = $row.find('a[href*="prepareViewCfTWS"]').first();
       const href = $link.attr('href') ?? '';
       const idMatch = href.match(DETAIL_HREF_REGEX);
@@ -263,26 +257,38 @@ export class JamaicaGojepCurrentScraper extends TenderScraper {
       const resourceId = idMatch[1];
       const detailUrl = href.startsWith('http') ? href : `${PORTAL}${href}`;
 
-      // Cell layout on e-PPS Current Competitions is conventionally:
-      //   reference | title | agency | published | closing | procedure
-      // We map by index but tolerate variable column counts.
-      const referenceNumber = textOf($cells.eq(0));
-      const title = textOf($link) || textOf($cells.eq(1));
+      // Cell layout (verified from authenticated session, Apr 2026):
+      //   0: row index            (skip)
+      //   1: title link
+      //   2: procuring entity
+      //   3: <img title="..."> with full description
+      //   4: closing date          ("18/05/2026 11:00:00")
+      //   5: contract type         ("Goods" / "Services" / "Works")
+      //   6: procedure             ("Open - NCB" / "Restricted")
+      //   7: phase (hidden)
+      //   8: notice PDF link (hidden)
+      //   9: published date        ("24/04/2026 16:10:21")
+      const title = textOf($link).trim();
       const agency = textOf($cells.eq(2));
-      const publishedDateText = textOf($cells.eq(3));
+      const description =
+        $cells.eq(3).find('img[title]').attr('title')?.trim() || textOf($cells.eq(3));
       const closingDateText = textOf($cells.eq(4));
-      const procedureType = $cells.length > 5 ? textOf($cells.eq(5)) : undefined;
+      const category = $cells.length > 5 ? textOf($cells.eq(5)) : undefined;
+      const procedureType = $cells.length > 6 ? textOf($cells.eq(6)) : undefined;
+      const publishedDateText =
+        $cells.length > 9 ? textOf($cells.eq(9)) : undefined;
 
       if (!title) return;
 
       rows.push({
         resourceId,
         title,
-        referenceNumber,
+        description: description || undefined,
         agency,
-        publishedDateText,
-        closingDateText,
-        procedureType,
+        publishedDateText: publishedDateText || undefined,
+        closingDateText: closingDateText || undefined,
+        category: category || undefined,
+        procedureType: procedureType || undefined,
         detailUrl,
       });
     });

@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { JamaicaGojepCurrentScraper, isLoginPage } from './scraper';
+import {
+  JamaicaGojepCurrentScraper,
+  isLoginPage,
+  parseGojepCurrentDate,
+} from './scraper';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIX_DIR = join(__dirname, 'fixtures');
@@ -20,7 +24,30 @@ describe('isLoginPage', () => {
     assert.equal(isLoginPage('<form><input name="j_username" /></form>'), true);
   });
   it('returns false on the actual tender list', () => {
-    assert.equal(isLoginPage('<table class="displaytag"><tr><td>2026-X</td></tr></table>'), false);
+    assert.equal(
+      isLoginPage(
+        '<tr><td><a href="/epps/cft/prepareViewCfTWS.do?resourceId=1">x</a></td></tr>',
+      ),
+      false,
+    );
+  });
+});
+
+describe('parseGojepCurrentDate', () => {
+  it('parses dd/MM/yyyy HH:mm:ss in Jamaica time', () => {
+    const d = parseGojepCurrentDate('18/05/2026 11:00:00');
+    assert.ok(d);
+    // Jamaica = UTC-5 year-round, so 11:00 local → 16:00 UTC
+    assert.equal(d.toISOString(), '2026-05-18T16:00:00.000Z');
+  });
+  it('parses date-only form', () => {
+    const d = parseGojepCurrentDate('24/04/2026');
+    assert.ok(d);
+    assert.equal(d.toISOString(), '2026-04-24T05:00:00.000Z');
+  });
+  it('returns undefined for non-matching input', () => {
+    assert.equal(parseGojepCurrentDate('Fri Apr 24 13:00:00 COT 2026'), undefined);
+    assert.equal(parseGojepCurrentDate(''), undefined);
   });
 });
 
@@ -37,48 +64,55 @@ describe('JamaicaGojepCurrentScraper', () => {
     }
   });
 
-  it('parses every displayTag row from the listing fixture', async () => {
+  it('parses every Current Competitions row from the listing fixture', async () => {
     const listing = await loadListing();
     const scraper = new JamaicaGojepCurrentScraper({ fixtureHtml: { listing } });
     const raws = await scraper.fetch();
     assert.equal(raws.length, 3);
     const ids = raws.map((r) => r.sourceReferenceId).sort();
-    assert.deepEqual(ids, ['12345', '24680', '67890']);
+    assert.deepEqual(ids, ['9354555', '9358888', '9360111']);
   });
 
   it('reconstructs the absolute detail URL from the row link', async () => {
     const listing = await loadListing();
     const scraper = new JamaicaGojepCurrentScraper({ fixtureHtml: { listing } });
     const raws = await scraper.fetch();
-    const first = raws.find((r) => r.sourceReferenceId === '12345');
+    const first = raws.find((r) => r.sourceReferenceId === '9354555');
     assert.ok(first);
-    assert.match(first.sourceUrl, /^https:\/\/www\.gojep\.gov\.jm\/epps\/cft\/prepareViewCfTWS\.do\?resourceId=12345$/);
+    assert.match(
+      first.sourceUrl,
+      /^https:\/\/www\.gojep\.gov\.jm\/epps\/cft\/prepareViewCfTWS\.do\?resourceId=9354555$/,
+    );
   });
 
-  it('normalizes a row into JMD / America-Jamaica TZ shape', async () => {
+  it('normalizes the laptop tender end-to-end', async () => {
     const listing = await loadListing();
     const scraper = new JamaicaGojepCurrentScraper({ fixtureHtml: { listing } });
     const raws = await scraper.fetch();
-    const nwa = raws.find((r) => r.sourceReferenceId === '12345');
-    assert.ok(nwa);
-    const norm = await scraper.parse(nwa);
+    const laptops = raws.find((r) => r.sourceReferenceId === '9354555');
+    assert.ok(laptops);
+    const norm = await scraper.parse(laptops);
     assert.ok(norm);
-    assert.equal(norm.title, 'Supply of asphalt for road resurfacing — Kingston');
-    assert.equal(norm.agencyName, 'National Works Agency');
-    assert.equal(norm.referenceNumber, '2026-NWA-001');
+    assert.equal(
+      norm.title,
+      'The Supply and Delivery of 225 Laptops for all Parish Courts',
+    );
+    assert.ok(norm.description?.startsWith('The Court Administration Division'));
+    assert.equal(norm.agencyName, 'Court Management Services');
+    assert.equal(norm.referenceNumber, '9354555');
     assert.equal(norm.currency, 'JMD');
     assert.equal(norm.language, 'en');
     assert.equal(norm.deadlineTimezone, 'America/Jamaica');
-    assert.equal(norm.type, 'Open Tender');
-    assert.ok(norm.publishedAt instanceof Date);
-    assert.ok(norm.deadlineAt instanceof Date);
+    assert.equal(norm.type, 'Open - NCB');
+    assert.equal(norm.category, 'Goods');
+    assert.equal(norm.publishedAt!.toISOString(), '2026-04-24T21:10:21.000Z');
+    assert.equal(norm.deadlineAt!.toISOString(), '2026-05-18T16:00:00.000Z');
   });
 
   it('drops rows whose link doesn\'t expose a prepareViewCfTWS resourceId', async () => {
-    const malformed = `
-      <table class="displaytag"><tbody>
-        <tr><td>X-1</td><td><a href="/epps/cft/listCFT.do">No resourceId here</a></td><td>X</td><td>Mon Apr 14 09:00:00 EST 2026</td><td>Fri May 15 13:00:00 EST 2026</td></tr>
-      </tbody></table>`;
+    const malformed = `<table>
+      <tr><td>1</td><td><a href="/epps/cft/somethingelse.do">No resourceId here</a></td><td>X</td><td></td><td>18/05/2026 11:00:00</td></tr>
+    </table>`;
     const scraper = new JamaicaGojepCurrentScraper({ fixtureHtml: { listing: malformed } });
     const raws = await scraper.fetch();
     assert.equal(raws.length, 0);
