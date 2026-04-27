@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { listJurisdictions } from '../../lib/queries';
 import { flagFor } from '../../lib/flags';
 
-export const revalidate = 600;
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Jurisdictions',

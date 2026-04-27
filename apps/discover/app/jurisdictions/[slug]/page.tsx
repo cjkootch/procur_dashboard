@@ -9,7 +9,7 @@ import {
 import { OpportunityCard } from '../../../components/opportunity-card';
 import { flagFor } from '../../../lib/flags';
 
-export const revalidate = 600;
+export const dynamic = 'force-dynamic';
 
 type Params = { slug: string };
 

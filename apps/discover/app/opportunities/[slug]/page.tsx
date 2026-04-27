@@ -12,7 +12,7 @@ import {
   timeUntil,
 } from '../../../lib/format';
 
-export const revalidate = 600;
+export const dynamic = 'force-dynamic';
 
 type Params = { slug: string };
 
