@@ -235,9 +235,23 @@ export async function listOpportunities(
   };
 }
 
+export type OpportunityDetail = OpportunitySummary & {
+  /** When Procur first scraped this opportunity. Surfaced as a fallback
+   *  for "posted on" when the source portal didn't expose publishedAt. */
+  firstSeenAt: Date | null;
+  preBidMeetingAt: Date | null;
+  clarificationDeadlineAt: Date | null;
+  subCategory: string | null;
+  tags: string[] | null;
+  status: 'active' | 'closed' | 'awarded' | 'cancelled';
+  awardedAt: Date | null;
+  awardedAmount: string | null;
+  awardedToCompanyName: string | null;
+};
+
 export async function getOpportunityBySlug(
   slug: string,
-): Promise<(OpportunitySummary & { id: string }) | null> {
+): Promise<(OpportunityDetail & { id: string }) | null> {
   const [row] = await db
     .select({
       id: opportunities.id,
@@ -247,6 +261,8 @@ export async function getOpportunityBySlug(
       referenceNumber: opportunities.referenceNumber,
       type: opportunities.type,
       category: opportunities.category,
+      subCategory: opportunities.subCategory,
+      tags: opportunities.tags,
       aiSummary: opportunities.aiSummary,
       sourceUrl: opportunities.sourceUrl,
       valueEstimate: opportunities.valueEstimate,
@@ -254,6 +270,13 @@ export async function getOpportunityBySlug(
       valueEstimateUsd: opportunities.valueEstimateUsd,
       publishedAt: opportunities.publishedAt,
       deadlineAt: opportunities.deadlineAt,
+      preBidMeetingAt: opportunities.preBidMeetingAt,
+      clarificationDeadlineAt: opportunities.clarificationDeadlineAt,
+      firstSeenAt: opportunities.firstSeenAt,
+      status: opportunities.status,
+      awardedAt: opportunities.awardedAt,
+      awardedAmount: opportunities.awardedAmount,
+      awardedToCompanyName: opportunities.awardedToCompanyName,
       jurisdictionSlug: jurisdictions.slug,
       jurisdictionName: jurisdictions.name,
       jurisdictionCountry: jurisdictions.countryCode,
