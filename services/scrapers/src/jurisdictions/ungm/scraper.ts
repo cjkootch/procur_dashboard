@@ -309,61 +309,79 @@ export class UngmScraper extends TenderScraper {
       const id = $row.attr('data-noticeid') ?? $row.attr('data-notice-id') ?? $row.attr('data-id');
       if (!id) return;
 
-      // Title: find the anchor whose href points at this notice's own
-      // detail page (/Public/Notice/<id>). Naively grabbing the first
-      // anchor with text was matching the "Save / Unsave this
-      // procurement opportunity" bookmark button (the first interactive
-      // element in the row's resultOptions cell).
-      const detailHrefMatch = `/Public/Notice/${id}`;
-      const $titleLink = $row
-        .find('a')
-        .filter((_j, a) => {
-          const href = $(a).attr('href') ?? '';
-          return href.includes(detailHrefMatch);
-        })
-        .first();
-      let title = textOf($titleLink);
+      // UNGM's CSS-grid rows render the notice metadata as one big text
+      // blob in a single cell, with the title link rendered as an
+      // external-link ICON whose anchor text is just "Open in a new
+      // window" (screen-reader). Targeting anchors by href / text was
+      // fundamentally the wrong approach. Instead: take ALL text from
+      // the row and extract title via the consistent format:
+      //
+      //   <date> <time> (GMT ±N.NN) <decimal-sort-num> · <ref?> <TITLE> Open in a new window
+      //
+      // The "Open in a new window" suffix is screen-reader text from
+      // every external-link icon — strip it. The leading date/number
+      // prefix is rendered alongside the title because UNGM uses a
+      // single flex cell. Strip it too. What remains is ref + title.
 
-      // Fallback: if no detail-page anchor is found (rare, e.g. UNGM
-      // changes URL conventions), look for an anchor whose text isn't
-      // a known UI button label.
-      if (!title) {
-        const $alt = $row
-          .find('a')
-          .filter((_j, a) => {
-            const t = textOf($(a));
-            if (!t) return false;
-            const lower = t.toLowerCase();
-            // Skip anything that looks like a save/unsave bookmark, an
-            // outbound "Open in a new window" hint, etc.
-            return (
-              !lower.startsWith('unsave') &&
-              !lower.startsWith('save this') &&
-              !lower.includes('open in a new window')
-            );
-          })
-          .first();
-        title = textOf($alt);
+      const rawText = collapseWhitespace($row.text());
+      const cleaned = rawText
+        // Drop every "Open in a new window" screen-reader cue (multiple
+        // can appear if the row has more than one external-link icon).
+        .replace(/\bOpen in a new window\b/g, ' ')
+        // Drop the bookmark button labels that match anywhere.
+        .replace(/\bUnsave this procurement opportunity\.?/gi, ' ')
+        .replace(/\bSave this procurement opportunity\.?/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      // Pull out the deadline (date + GMT offset) and the sort score so
+      // we can drop them from the title. Format observed:
+      //   "27-Apr-2026 23:59 (GMT -4.00) 0.291591816..."
+      const deadlineMatch = cleaned.match(
+        /^(\d{1,2}-[A-Za-z]{3}-\d{4})\s+(\d{1,2}:\d{2})\s+\(GMT\s*([+-]?\d+(?:\.\d+)?)\)\s*[\d.]+\s*[·\-]?\s*/,
+      );
+
+      let titleAndRef = cleaned;
+      let deadlineRaw: string | undefined;
+      let timezoneOffset: string | undefined;
+      if (deadlineMatch) {
+        deadlineRaw = `${deadlineMatch[1]} ${deadlineMatch[2]}`;
+        timezoneOffset = deadlineMatch[3];
+        titleAndRef = cleaned.slice(deadlineMatch[0].length).trim();
       }
+
+      // Try to peel off a leading reference number — UN refs commonly
+      // look like "LRPS-2026-9203289", "UNDP-HND-00602",
+      // "RFP/2026/12345", etc. Two or more uppercase letters, dashes
+      // or slashes, ending in digits.
+      let reference: string | undefined;
+      const refMatch = titleAndRef.match(
+        /^([A-Z][A-Z0-9]{1,}(?:[-/][A-Z0-9]+)+)\s+/,
+      );
+      if (refMatch) {
+        reference = refMatch[1];
+        titleAndRef = titleAndRef.slice(refMatch[0].length).trim();
+      }
+
+      const title = titleAndRef.trim();
       if (!title) return;
 
-      // Field extraction by class-suffix hint with positional fallback.
       const cellByClass = (suffix: string): string | undefined => {
         const $hit = $row.find(`[class*="${suffix}"]`).first();
-        return textOf($hit) || undefined;
+        const t = textOf($hit);
+        return t ? collapseWhitespace(t) : undefined;
       };
-
-      const $cells = $row.find('div[role="cell"], div.tableCell');
 
       const data: UngmRawData = {
         noticeId: id,
         title,
-        reference: cellByClass('reference') ?? (textOf($cells.eq(1)) || undefined),
-        agency: cellByClass('agency') ?? (textOf($cells.eq(2)) || undefined),
+        reference: reference ?? cellByClass('reference'),
+        agency: cellByClass('agency'),
         noticeType: cellByClass('noticetype') ?? cellByClass('type') ?? undefined,
-        deadlineDateUtc:
-          cellByClass('deadline') ?? (textOf($cells.last()) || undefined),
+        // Compose a deadline ISO string from "27-Apr-2026 23:59" + offset.
+        deadlineDateUtc: composeDeadlineIso(deadlineRaw, timezoneOffset),
         publishedDateUtc: cellByClass('published') ?? cellByClass('publishdate'),
+        countries: undefined,
       };
 
       out.push({
@@ -429,6 +447,47 @@ function stringOrUndef(v: unknown): string | undefined {
   if (v == null) return undefined;
   const s = String(v).trim();
   return s.length > 0 ? s : undefined;
+}
+
+function collapseWhitespace(s: string): string {
+  return s.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+const MONTH_INDEX_3: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+/**
+ * Combine UNGM's '27-Apr-2026 23:59' text + 'GMT ±N.NN' offset into
+ * an ISO 8601 UTC string. Returns undefined if the input is malformed.
+ *
+ * UNGM's "GMT -4.00" notation means UTC offset of -4 hours; the
+ * decimal portion is hours, not minutes (so "-3.30" would be ambiguous
+ * but we haven't seen non-zero decimals in practice).
+ */
+function composeDeadlineIso(
+  dateTime: string | undefined,
+  gmtOffset: string | undefined,
+): string | undefined {
+  if (!dateTime) return undefined;
+  const m = dateTime.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})\s+(\d{1,2}):(\d{2})$/);
+  if (!m) return undefined;
+  const day = Number.parseInt(m[1]!, 10);
+  const monKey = m[2]!.toLowerCase();
+  const month = MONTH_INDEX_3[monKey];
+  const year = Number.parseInt(m[3]!, 10);
+  const hour = Number.parseInt(m[4]!, 10);
+  const minute = Number.parseInt(m[5]!, 10);
+  if (month == null) return undefined;
+
+  const offsetHours = gmtOffset != null ? Number.parseFloat(gmtOffset) : 0;
+  if (Number.isNaN(offsetHours)) return undefined;
+
+  // Convert local-with-offset to UTC: utcMs = localMs - offsetMs.
+  const localMs = Date.UTC(year, month, day, hour, minute);
+  const utcMs = localMs - offsetHours * 3600 * 1000;
+  return new Date(utcMs).toISOString();
 }
 
 function parseUtc(input: string | undefined): Date | undefined {
