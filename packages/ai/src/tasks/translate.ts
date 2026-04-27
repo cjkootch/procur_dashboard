@@ -1,4 +1,4 @@
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
+import { zodOutputFormat } from '../zod-output';
 import { getClient, MODELS } from '../client';
 import { extractUsage, type CacheUsage } from '../prompt-blocks';
 import { TranslationOutput, type TranslationOutputT } from '../types';

@@ -1,4 +1,16 @@
-import { z } from 'zod';
+// Anthropic SDK's `zodOutputFormat` helper internally calls Zod 4's
+// `toJSONSchema(schema)` which reads schema.def — only present on
+// schemas built with the Zod 4 API. Importing from 'zod' (the v3
+// classic) produces schemas without .def, which throws TypeError:
+// "Cannot read properties of undefined (reading 'def')" deep inside
+// the Anthropic helper. All structured-output tasks (translate,
+// classify, summarize, extract-requirements, etc.) consume schemas
+// from this file via zodOutputFormat — so every schema here must be
+// Zod 4. The 'zod/v4' subpath ships in the same package; swapping
+// the import is sufficient. The schema syntax we use (.object().strict(),
+// .string(), .number().min().max(), .array(), .enum(), .nullable(),
+// .optional(), .describe()) is identical across v3 and v4.
+import { z } from 'zod/v4';
 
 export const ClassifyOutput = z
   .object({
