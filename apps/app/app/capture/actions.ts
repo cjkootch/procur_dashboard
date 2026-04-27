@@ -39,6 +39,7 @@ import { STAGE_ORDER, STAGE_LABEL, type PursuitStageKey, getActivePursuitCount }
 import { seedCriteria } from '../../lib/gate-review-queries';
 import { insertNotification } from '../../lib/notification-queries';
 import { FREE_TIER_ACTIVE_PURSUIT_CAP } from '../../lib/plan-limits';
+import { fireExtractRequirements } from '../../lib/trigger-extract-requirements';
 
 async function resolveUserAndCompany() {
   const { user, company } = await requireCompany();
@@ -122,6 +123,10 @@ export async function createPursuitAction(formData: FormData): Promise<void> {
     pursuitId: created.id,
     changes: { after: { opportunityId, stage: 'identification' } },
   });
+
+  // Defer expensive Sonnet requirement-extraction until tracking time.
+  // Idempotent — re-runs across users / tenants are no-ops.
+  await fireExtractRequirements(opportunityId);
 
   revalidatePath('/capture');
   revalidatePath('/capture/pursuits');

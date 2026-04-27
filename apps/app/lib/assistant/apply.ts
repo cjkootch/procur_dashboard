@@ -17,6 +17,7 @@ import {
 } from '@procur/db';
 import type { AssistantContext } from '@procur/ai';
 import { getActivePursuitCount } from '../capture-queries';
+import { fireExtractRequirements } from '../trigger-extract-requirements';
 import { semanticSearchLibrary } from '../library-queries';
 import { semanticSearchPastPerformance } from '../past-performance-queries';
 import { FREE_TIER_ACTIVE_PURSUIT_CAP } from '../plan-limits';
@@ -83,6 +84,10 @@ const createPursuit: ApplyHandler = async (ctx, rawPayload) => {
   };
   const [created] = await db.insert(pursuits).values(row).returning({ id: pursuits.id });
   if (!created) return { ok: false, error: 'insert_failed' };
+
+  // Defer expensive Sonnet requirement-extraction until tracking time.
+  // Idempotent — re-runs across users / tenants are no-ops.
+  await fireExtractRequirements(payload.opportunityId);
 
   revalidatePath('/capture');
   revalidatePath('/capture/pipeline');

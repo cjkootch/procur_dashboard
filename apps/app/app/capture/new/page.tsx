@@ -6,6 +6,7 @@ import { db, opportunities, pursuits, type NewPursuit } from '@procur/db';
 import { Card, Label } from '@procur/ui';
 import { getActivePursuitCount } from '../../../lib/capture-queries';
 import { FREE_TIER_ACTIVE_PURSUIT_CAP } from '../../../lib/plan-limits';
+import { fireExtractRequirements } from '../../../lib/trigger-extract-requirements';
 
 export const dynamic = 'force-dynamic';
 
@@ -125,5 +126,8 @@ async function trackFromDiscover(opportunityId: string): Promise<never> {
   };
   const [created] = await db.insert(pursuits).values(row).returning({ id: pursuits.id });
   if (!created) redirect('/capture');
+  // Defer expensive Sonnet requirement-extraction until someone actually
+  // tracks the opp. Idempotent — first tracker pays, subsequent are no-ops.
+  await fireExtractRequirements(opportunityId);
   redirect(`/capture/pursuits/${created.id}`);
 }
