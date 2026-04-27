@@ -35,6 +35,43 @@ export const SummaryOutput = z
 
 export type SummaryOutputT = z.infer<typeof SummaryOutput>;
 
+/**
+ * Combined enrichment output: language detection + classification +
+ * summary in a single Haiku call.
+ *
+ * Replaces three separate calls (detect-language + classify + summarize)
+ * with one. Saves ~60% in per-opportunity AI cost since the input
+ * (title/description/agency/docText) is only sent once instead of three
+ * times, and the AI Gateway prompt cache fronts the static system
+ * prefix (instruction + taxonomy list) for the rest of the corpus.
+ */
+export const EnrichCoreOutput = z
+  .object({
+    language: z
+      .string()
+      .describe('ISO 639-1 two-letter code: en, es, pt, fr, etc.'),
+    category: z
+      .string()
+      .describe('Top-level taxonomy slug from the supplied list'),
+    subCategory: z
+      .string()
+      .nullable()
+      .describe('Optional taxonomy sub-category slug, null if not applicable'),
+    summary: z
+      .string()
+      .describe(
+        'Neutral 2-3 sentence summary in plain English (under 60 words). Translate from the source language as you summarize. Start with what is being procured, then who is procuring it. Include rough scale or scope when stated.',
+      ),
+    confidence: z
+      .number()
+      .min(0)
+      .max(1)
+      .describe('Overall confidence 0-1 across language detection and classification'),
+  })
+  .strict();
+
+export type EnrichCoreOutputT = z.infer<typeof EnrichCoreOutput>;
+
 export const LanguageOutput = z
   .object({
     language: z
