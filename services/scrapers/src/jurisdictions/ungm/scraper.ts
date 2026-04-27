@@ -328,9 +328,16 @@ export class UngmScraper extends TenderScraper {
         // Drop every "Open in a new window" screen-reader cue (multiple
         // can appear if the row has more than one external-link icon).
         .replace(/\bOpen in a new window\b/g, ' ')
-        // Drop the bookmark button labels that match anywhere.
+        // Bookmark button labels — visible on logged-in sessions.
         .replace(/\bUnsave this procurement opportunity\.?/gi, ' ')
         .replace(/\bSave this procurement opportunity\.?/gi, ' ')
+        // UNGM Pro upsell text shown to anonymous / free-tier viewers
+        // in place of the save button. Trigger.dev workers always see
+        // this version since they're not logged in.
+        .replace(
+          /\bSubscribe to UNGM Pro to be able to save procurement opportunities\.?/gi,
+          ' ',
+        )
         .replace(/\s+/g, ' ')
         .trim();
 
