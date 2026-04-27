@@ -114,6 +114,9 @@ importers:
       '@trigger.dev/sdk':
         specifier: ^3.3.9
         version: 3.3.17(zod@3.25.76)
+      '@vercel/blob':
+        specifier: ^0.27.0
+        version: 0.27.3
       docx:
         specifier: ^9.0.3
         version: 9.6.1
