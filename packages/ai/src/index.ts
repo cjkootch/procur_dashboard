@@ -1,6 +1,11 @@
 export { getClient, MODELS, type ModelName } from './client';
 export { classifyOpportunity, type ClassifyInput, type ClassifyResult } from './tasks/classify';
 export {
+  enrichCore,
+  type EnrichCoreInput,
+  type EnrichCoreResult,
+} from './tasks/enrich-core';
+export {
   summarizeOpportunity,
   type SummarizeInput,
   type SummarizeResult,
@@ -102,6 +107,7 @@ export {
   SummaryOutput,
   LanguageOutput,
   TranslationOutput,
+  EnrichCoreOutput,
   ExtractRequirementsOutput,
   ShredRfpOutput,
   SuggestRequirementsOutput,
@@ -109,6 +115,7 @@ export {
   type SummaryOutputT,
   type LanguageOutputT,
   type TranslationOutputT,
+  type EnrichCoreOutputT,
   type ExtractRequirementsOutputT,
   type ShredRfpOutputT,
   type SuggestRequirementsOutputT,
