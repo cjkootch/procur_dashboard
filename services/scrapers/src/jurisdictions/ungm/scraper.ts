@@ -2,23 +2,30 @@
  * United Nations Global Marketplace (UNGM).
  *
  * Portal:   https://www.ungm.org
- * Surface:  Public Notices search (no auth required)
+ * Surface:  Public Notices search
  *
- * UNGM is the single procurement portal for the UN system — WFP food
- * aid, UNDP fuel, UNICEF, UN peacekeeping rations, IAEA, FAO, UNESCO,
- * etc. ~80% of notices are visible without authentication; the rest
- * require a registered supplier account. This scraper covers the
- * public surface.
+ * Real API contract — captured from a live browser cURL after several
+ * speculative misses:
  *
- * UNGM is an ASP.NET MVC app and the public search form posts as
- * `application/x-www-form-urlencoded`, NOT JSON — first-pass JSON
- * attempts came back HTTP 500 because the .NET model binder couldn't
- * deserialize. Headers also matter: their backend rejects requests
- * missing `X-Requested-With: XMLHttpRequest` and a plausible
- * Origin/Referer, treating them as anti-bot.
+ *   POST https://www.ungm.org/Public/Notice/Search
+ *   Content-Type: application/json
+ *   X-Requested-With: XMLHttpRequest
+ *   Cookie: <session + antiforgery cookies from a prior GET to /Public/Notice>
+ *   Body: { PageIndex, PageSize, Title, Description, Reference, PublishedFrom,
+ *           PublishedTo, DeadlineFrom, DeadlineTo, Countries, Agencies, UNSPSCs,
+ *           NoticeTypes, SortField: "Deadline", SortAscending, isPicker,
+ *           IsSustainable, IsActive, NoticeDisplayType, NoticeSearchTotalLabelId,
+ *           TypeOfCompetitions }
  *
- * Document attachments on UNGM notices typically require auth — we
- * skip them in v1.
+ * Critical: every field above is required. Omit any and .NET's model binder
+ * returns a generic 500 from the framework — no useful body. (Hours of
+ * speculation taught me this.)
+ *
+ * Date fields use `dd-MMM-yyyy` format (e.g. `27-Apr-2026`) when set, or
+ * empty string when unfiltered. SortField is "Deadline", not "DeadlineUtc".
+ *
+ * Document attachments on UNGM notices typically require a registered
+ * supplier account — skipped in v1.
  */
 import {
   TenderScraper,
@@ -34,10 +41,11 @@ const PORTAL = 'https://www.ungm.org';
 const SEARCH_PATH = '/Public/Notice/Search';
 const NOTICE_DETAIL_PATH = '/Public/Notice'; // /<id>
 
-const COMMON_HEADERS = {
+const COMMON_HEADERS: Record<string, string> = {
   'user-agent':
-    'Mozilla/5.0 (compatible; ProcurBot/1.0; +https://procur.app/scraper)',
-  accept: 'application/json, text/html, */*; q=0.5',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 ' +
+    '(KHTML, like Gecko) Version/18.5 Safari/605.1.15',
+  accept: '*/*',
   'accept-language': 'en-US,en;q=0.9',
   'x-requested-with': 'XMLHttpRequest',
   origin: PORTAL,
@@ -61,36 +69,38 @@ type UngmInput = {
   fixtureJson?: unknown;
   /** Pages to walk per run. */
   maxPages?: number;
-  /** Page size — UNGM accepts up to 100. */
+  /** Page size — UNGM accepts up to ~100. */
   pageSize?: number;
 };
 
 /**
- * UNGM's public search expects ASP.NET MVC form-encoded body — Pascal-cased
- * field names, repeated keys for arrays. JSON returns 500 from their model
- * binder.
+ * Build the JSON body matching UNGM's documented contract. Every field
+ * here is required by their model binder; missing any returns 500.
  */
-function buildFormBody(pageIndex: number, pageSize: number): URLSearchParams {
-  const body = new URLSearchParams();
-  body.set('PageIndex', String(pageIndex));
-  body.set('PageSize', String(pageSize));
-  body.set('Title', '');
-  body.set('Description', '');
-  body.set('Reference', '');
-  body.set('PublishedFrom', '');
-  body.set('PublishedTo', '');
-  body.set('DeadlineFrom', '');
-  body.set('DeadlineTo', '');
-  body.set('SortField', 'DeadlineUtc');
-  body.set('Ascending', 'true');
-  // Empty array params still need to be present so the model binder
-  // doesn't throw on missing properties.
-  body.set('Countries', '');
-  body.set('Agencies', '');
-  body.set('UNSPSCs', '');
-  body.set('NoticeTypes', '');
-  body.set('NoticeStatuses', '');
-  return body;
+function buildSearchBody(pageIndex: number, pageSize: number): Record<string, unknown> {
+  return {
+    PageIndex: pageIndex,
+    PageSize: pageSize,
+    Title: '',
+    Description: '',
+    Reference: '',
+    PublishedFrom: '',
+    PublishedTo: '',
+    DeadlineFrom: '',
+    DeadlineTo: '',
+    Countries: [],
+    Agencies: [],
+    UNSPSCs: [],
+    NoticeTypes: [],
+    SortField: 'Deadline',
+    SortAscending: true,
+    isPicker: false,
+    IsSustainable: false,
+    IsActive: true,
+    NoticeDisplayType: null,
+    NoticeSearchTotalLabelId: 'noticeSearchTotal',
+    TypeOfCompetitions: [],
+  };
 }
 
 export class UngmScraper extends TenderScraper {
@@ -111,29 +121,25 @@ export class UngmScraper extends TenderScraper {
     const pageSize = this.input.pageSize ?? 100;
     const maxPages = this.input.maxPages ?? 5;
 
-    // Step 1: GET the search page to capture session cookies and the
-    // ASP.NET anti-forgery token. UNGM's POST is protected by
-    // [ValidateAntiForgeryToken]; without the matching cookie + form
-    // field, .NET rejects the request with a generic 500 from inside
-    // the antiforgery filter rather than a clean 403.
-    const session = await this.bootstrapSession();
+    // Bootstrap: GET /Public/Notice once to capture session cookies
+    // (especially `ASP.NET_SessionId` and `__RequestVerificationToken`).
+    // Without these the search POST returns a generic 500 from inside
+    // the antiforgery filter.
+    const cookieHeader = await this.bootstrapCookies();
 
     for (let page = 0; page < maxPages; page += 1) {
-      const body = buildFormBody(page, pageSize);
-      if (session.token) body.set('__RequestVerificationToken', session.token);
-
+      const body = buildSearchBody(page, pageSize);
       const res = await fetchWithRetry(`${PORTAL}${SEARCH_PATH}`, {
         method: 'POST',
         headers: {
           ...COMMON_HEADERS,
-          'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          ...(session.cookieHeader ? { cookie: session.cookieHeader } : {}),
+          'content-type': 'application/json',
+          ...(cookieHeader ? { cookie: cookieHeader } : {}),
         },
-        body: body.toString(),
+        body: JSON.stringify(body),
         timeoutMs: 45_000,
-        // Drop 500 from retryable statuses so we get the response back
-        // and can read UNGM's body. fetchWithRetry throws on exhausted
-        // retries — would never hit our error-handling branch.
+        // 500 stays out of retry — UNGM's 500s are consistent client
+        // errors (model-binder rejects), not transient server hiccups.
         retryableStatuses: [408, 429, 502, 503, 504],
       });
 
@@ -145,12 +151,11 @@ export class UngmScraper extends TenderScraper {
           status: res.status,
           page,
           contentType: ct,
-          haveToken: Boolean(session.token),
-          haveCookie: Boolean(session.cookieHeader),
+          haveCookie: Boolean(cookieHeader),
           bodyPreview: preview,
         });
         throw new Error(
-          `UNGM search returned ${res.status} on page ${page}. content-type=${ct}. token=${Boolean(session.token)} cookie=${Boolean(session.cookieHeader)}. body[0..2000]: ${preview}`,
+          `UNGM search returned ${res.status} on page ${page}. content-type=${ct}. cookie=${Boolean(cookieHeader)}. body[0..2000]: ${preview}`,
         );
       }
 
@@ -161,10 +166,7 @@ export class UngmScraper extends TenderScraper {
         try {
           json = JSON.parse(text);
         } catch {
-          log.error('ungm.search.bad_json', {
-            page,
-            bodyPreview: text.slice(0, 500),
-          });
+          log.error('ungm.search.bad_json', { page, bodyPreview: text.slice(0, 500) });
           throw new Error(`UNGM search page ${page}: response claimed JSON but failed to parse`);
         }
         pageRows = this.parseSearchResponse(json);
@@ -172,8 +174,6 @@ export class UngmScraper extends TenderScraper {
         pageRows = this.parseSearchHtml(text);
       }
 
-      // Log the first response so we can confirm structure on the
-      // next run.
       if (page === 0) {
         log.info('ungm.search.first_page', {
           contentType,
@@ -191,20 +191,12 @@ export class UngmScraper extends TenderScraper {
   }
 
   /**
-   * Bootstrap session: GET the public notices page, capture (a) any
-   * Set-Cookie headers (UNGM's session cookie + the antiforgery cookie)
-   * and (b) the __RequestVerificationToken hidden input value embedded
-   * in the page's search form.
-   *
-   * Both must accompany the subsequent POST or .NET's antiforgery
-   * filter rejects the request with a generic 500. If the bootstrap
-   * itself fails, return empty session — the search request will then
-   * throw with the body preview, telling us why.
+   * GET /Public/Notice once and collect the Set-Cookie headers as a
+   * Cookie request header for subsequent POSTs. UNGM's antiforgery
+   * filter requires the session + antiforgery cookies even for
+   * "anonymous" POSTs.
    */
-  private async bootstrapSession(): Promise<{
-    token: string | null;
-    cookieHeader: string | null;
-  }> {
+  private async bootstrapCookies(): Promise<string | null> {
     try {
       const res = await fetchWithRetry(`${PORTAL}/Public/Notice`, {
         method: 'GET',
@@ -214,39 +206,29 @@ export class UngmScraper extends TenderScraper {
       });
       if (!res.ok) {
         log.warn('ungm.bootstrap.non_ok', { status: res.status });
-        return { token: null, cookieHeader: null };
+        return null;
       }
-      const html = await res.text();
+      // Drain the body so the connection doesn't sit idle.
+      await res.text();
 
-      // Parse all Set-Cookie response headers and extract `name=value`
-      // pairs for the request Cookie header. UNGM may set multiple
-      // (session + antiforgery + load-balancer affinity).
-      const setCookieHeaders = collectSetCookieHeaders(res);
-      const cookieHeader = setCookieHeaders.length > 0 ? setCookieHeaders.join('; ') : null;
-
-      // Extract the antiforgery token from the hidden input. Different
-      // .NET versions render this with single OR double quotes and the
-      // attribute order varies; a permissive regex handles both.
-      const $ = loadHtml(html);
-      const tokenInput = $('input[name="__RequestVerificationToken"]').first();
-      const token = tokenInput.attr('value') ?? null;
-
+      const setCookies = collectSetCookieHeaders(res);
+      const cookieHeader = setCookies.length > 0 ? setCookies.join('; ') : null;
       log.info('ungm.bootstrap', {
         haveCookie: Boolean(cookieHeader),
-        cookieCount: setCookieHeaders.length,
-        haveToken: Boolean(token),
-        htmlLength: html.length,
+        cookieCount: setCookies.length,
       });
-      return { token, cookieHeader };
+      return cookieHeader;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn('ungm.bootstrap.failed', { error: msg });
-      return { token: null, cookieHeader: null };
+      return null;
     }
   }
 
   /**
-   * JSON path — modern UNGM API. Schema (best-known):
+   * JSON path. UNGM's search returns either a partial-rendered HTML
+   * fragment or a JSON envelope depending on Accept headers — defensive
+   * on both. Field names per browser inspection:
    *   { Notices: [{ Id, Title, Reference, AgencyName, NoticeTypeName,
    *                 PublishedDateUtc, DeadlineDateUtc, Countries: [...] }],
    *     TotalRecords }
@@ -301,8 +283,8 @@ export class UngmScraper extends TenderScraper {
   }
 
   /**
-   * HTML fallback — UNGM sometimes returns a table fragment for
-   * .NET MVC partial views.
+   * HTML fallback — UNGM may return a server-rendered partial table
+   * fragment depending on Accept header.
    */
   private parseSearchHtml(html: string): RawOpportunity[] {
     const $ = loadHtml(html);
@@ -367,23 +349,15 @@ export class UngmScraper extends TenderScraper {
 
 /**
  * Pull all Set-Cookie headers from the response and return them as
- * `name=value` pairs ready to concatenate into a Cookie request header.
- * Drops the cookie attributes (Path, Expires, HttpOnly, etc.) — they're
- * directives for the user agent, not part of what to send back.
- *
- * fetch's headers.get('set-cookie') returns a comma-joined string for
- * multiple cookies, which is ambiguous because cookie values may also
- * contain commas (Expires=Wed, 09 Jun 2027 ...). headers.getSetCookie()
- * is the safe API for splitting.
+ * `name=value` pairs. fetch's headers.get('set-cookie') comma-joins
+ * which is ambiguous when cookie attributes contain commas
+ * (Expires=Wed, 09 Jun 2027 ...). headers.getSetCookie() splits safely.
  */
 function collectSetCookieHeaders(res: Response): string[] {
-  // getSetCookie is in WHATWG fetch and shipped in Node 18+.
   const all: string[] | undefined = res.headers.getSetCookie?.();
   const list = Array.isArray(all)
     ? all
-    : // Fallback for older runtimes — split on the comma-before-token
-      // pattern. Imperfect but matches typical .NET output.
-      (res.headers.get('set-cookie') ?? '')
+    : (res.headers.get('set-cookie') ?? '')
         .split(/,(?=\s*[A-Za-z0-9_-]+=)/)
         .map((s) => s.trim())
         .filter(Boolean);
