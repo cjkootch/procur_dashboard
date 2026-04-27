@@ -1,4 +1,4 @@
-import { schedules } from '@trigger.dev/sdk/v3';
+import { schedules } from '@trigger.dev/sdk';
 import { JamaicaGojepSuppliersScraper } from '../../jurisdictions/jamaica-gojep-suppliers/scraper';
 import { upsertSuppliers } from '../../jurisdictions/jamaica-gojep-suppliers/upsert';
 

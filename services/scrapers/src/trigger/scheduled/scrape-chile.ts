@@ -1,4 +1,4 @@
-import { schedules, tasks } from '@trigger.dev/sdk/v3';
+import { schedules, tasks } from '@trigger.dev/sdk';
 import { ChileMpScraper } from '../../jurisdictions/chile-mp/scraper';
 
 /**

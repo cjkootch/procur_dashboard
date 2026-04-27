@@ -1,4 +1,4 @@
-import { schedules, tasks } from '@trigger.dev/sdk/v3';
+import { schedules, tasks } from '@trigger.dev/sdk';
 import { GuyanaNptabScraper } from '../../jurisdictions/guyana-nptab/scraper';
 
 export const scrapeGuyana = schedules.task({

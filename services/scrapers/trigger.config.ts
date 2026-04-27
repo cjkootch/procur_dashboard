@@ -1,8 +1,8 @@
-import { defineConfig } from '@trigger.dev/sdk/v3';
+import { defineConfig } from '@trigger.dev/sdk';
 
 export default defineConfig({
   project: 'proj_eigtroxsysxjbjgeyuql',
-  runtime: 'node',
+  runtime: 'node-22',
   logLevel: 'info',
   maxDuration: 3600,
   retries: {

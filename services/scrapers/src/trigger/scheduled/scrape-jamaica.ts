@@ -1,4 +1,4 @@
-import { schedules, tasks } from '@trigger.dev/sdk/v3';
+import { schedules, tasks } from '@trigger.dev/sdk';
 import { JamaicaGojepScraper } from '../../jurisdictions/jamaica-gojep/scraper';
 
 export const scrapeJamaica = schedules.task({

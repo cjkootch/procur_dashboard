@@ -1,4 +1,4 @@
-import { schedules, tasks } from '@trigger.dev/sdk/v3';
+import { schedules, tasks } from '@trigger.dev/sdk';
 import { JamaicaGojepCurrentScraper } from '../../jurisdictions/jamaica-gojep-current/scraper';
 
 /**
