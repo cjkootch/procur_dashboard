@@ -50,7 +50,9 @@ export async function getInsights(companyId: string): Promise<InsightsSnapshot> 
     })
     .from(pursuits)
     .innerJoin(opportunities, eq(opportunities.id, pursuits.opportunityId))
-    .innerJoin(jurisdictions, eq(jurisdictions.id, opportunities.jurisdictionId))
+    // leftJoin: private uploaded opportunities have no jurisdiction;
+    // inner-joining would silently drop them from every insights metric.
+    .leftJoin(jurisdictions, eq(jurisdictions.id, opportunities.jurisdictionId))
     .where(eq(pursuits.companyId, companyId));
 
   const byStage = new Map<PursuitStageKey, StageBreakdown>();
@@ -101,16 +103,20 @@ export async function getInsights(companyId: string): Promise<InsightsSnapshot> 
       weightedPipelineUsd += weighted;
     }
 
-    const jurKey = r.jurisdictionId;
-    const jur = jurisdictionAgg.get(jurKey) ?? {
-      name: r.jurisdictionName,
-      countryCode: r.jurisdictionCountry,
-      pursuitCount: 0,
-      wonCount: 0,
-    };
-    jur.pursuitCount += 1;
-    if (stage === 'awarded') jur.wonCount += 1;
-    jurisdictionAgg.set(jurKey, jur);
+    // Per-jurisdiction breakdown skips private uploads (they have no
+    // jurisdiction). They still count in the global totals above.
+    if (r.jurisdictionId && r.jurisdictionName && r.jurisdictionCountry) {
+      const jurKey = r.jurisdictionId;
+      const jur = jurisdictionAgg.get(jurKey) ?? {
+        name: r.jurisdictionName,
+        countryCode: r.jurisdictionCountry,
+        pursuitCount: 0,
+        wonCount: 0,
+      };
+      jur.pursuitCount += 1;
+      if (stage === 'awarded') jur.wonCount += 1;
+      jurisdictionAgg.set(jurKey, jur);
+    }
 
     if (r.category) {
       const cat = categoryAgg.get(r.category) ?? { pursuitCount: 0, wonCount: 0 };

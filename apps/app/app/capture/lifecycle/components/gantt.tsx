@@ -15,7 +15,8 @@ import { flagFor, formatDate, formatMoney } from '../../../../lib/format';
 export type GanttRow = {
   id: string;
   title: string;
-  jurisdictionCountry: string;
+  /** Null for private uploaded opportunities (no jurisdiction). */
+  jurisdictionCountry: string | null;
   stage: PursuitCard['stage'];
   startDate: Date;
   endDate: Date | null;

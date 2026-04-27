@@ -43,7 +43,11 @@ export type OpportunitySummary = {
   type: string | null;
   category: string | null;
   aiSummary: string | null;
-  sourceUrl: string;
+  // Nullable now that the opportunities schema relaxed source_url. In
+  // practice every row Discover returns has it set (scraped opportunities
+  // always carry a sourceUrl) — uploaded ones are filtered out by
+  // `isNull(opportunities.companyId)` upstream.
+  sourceUrl: string | null;
   valueEstimate: string | null;
   currency: string | null;
   valueEstimateUsd: string | null;
@@ -123,7 +127,13 @@ const scopeCondition = (scope: OpportunityScope) =>
       )!;
 
 const base = (filters: OpportunityFilters, scope: OpportunityScope = 'open') => {
-  const conds = [scopeCondition(scope)];
+  const conds = [
+    // Privacy boundary: Discover is the public listing — never expose
+    // private uploaded opportunities (companyId IS NOT NULL means a
+    // tenant's own RFP, scoped to their Capture app only).
+    isNull(opportunities.companyId),
+    scopeCondition(scope),
+  ];
   if (filters.q) {
     const term = `%${filters.q}%`;
     const titleOrDesc = or(
@@ -255,7 +265,9 @@ export async function getOpportunityBySlug(
     .from(opportunities)
     .innerJoin(jurisdictions, eq(jurisdictions.id, opportunities.jurisdictionId))
     .leftJoin(agencies, eq(agencies.id, opportunities.agencyId))
-    .where(eq(opportunities.slug, slug))
+    // Privacy: even with a slug match, never serve a private uploaded
+    // opportunity from Discover. Slugs are easy to guess.
+    .where(and(eq(opportunities.slug, slug), isNull(opportunities.companyId)))
     .limit(1);
 
   if (!row) return null;
@@ -277,8 +289,11 @@ export async function getOpportunityDocuments(opportunityId: string) {
 export async function getGlobalStats() {
   // Same active+future-deadline cut as the listing query, so the
   // headline number matches what the user sees on /opportunities.
+  // Excludes private uploaded opportunities (companyId IS NOT NULL) —
+  // those are tenant-scoped and shouldn't inflate public marketing copy.
   const activeAndOpen = and(
     eq(opportunities.status, 'active'),
+    isNull(opportunities.companyId),
     or(gte(opportunities.deadlineAt, sql`now()`), isNull(opportunities.deadlineAt))!,
   );
 
@@ -375,6 +390,8 @@ export async function listActiveCategories() {
       and(
         eq(taxonomyCategories.active, true),
         eq(opportunities.status, 'active'),
+        // Only public opportunities count toward "this category has data".
+        isNull(opportunities.companyId),
       ),
     )
     .orderBy(asc(taxonomyCategories.sortOrder));

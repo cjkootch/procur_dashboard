@@ -9,9 +9,12 @@ import {
   index,
   customType,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { opportunityStatusEnum } from './enums';
 import { jurisdictions } from './jurisdictions';
 import { agencies } from './agencies';
+import { companies } from './companies';
+import { users } from './users';
 
 const tsvector = customType<{ data: string }>({
   dataType() {
@@ -25,11 +28,23 @@ export const opportunities = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
 
     sourceReferenceId: text('source_reference_id').notNull(),
-    jurisdictionId: uuid('jurisdiction_id')
-      .references(() => jurisdictions.id)
-      .notNull(),
+    jurisdictionId: uuid('jurisdiction_id').references(() => jurisdictions.id),
     agencyId: uuid('agency_id').references(() => agencies.id),
-    sourceUrl: text('source_url').notNull(),
+    sourceUrl: text('source_url'),
+
+    /**
+     * 'scraped' = public tender ingested by a scraper (the historical default).
+     * 'uploaded' = private RFP a customer uploaded via the Capture app — only
+     * visible to the owning company.
+     */
+    source: text('source').default('scraped').notNull(),
+    /**
+     * Set when source='uploaded'. Null for public scraped opportunities;
+     * private uploads are scoped to one tenant via this FK. Discover queries
+     * filter on `companyId IS NULL` so privates never leak.
+     */
+    companyId: uuid('company_id').references(() => companies.id),
+    uploadedByUserId: uuid('uploaded_by_user_id').references(() => users.id),
 
     title: text('title').notNull(),
     description: text('description'),
@@ -93,14 +108,21 @@ export const opportunities = pgTable(
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   (table) => ({
-    sourceRefIdx: uniqueIndex('opp_source_ref_idx').on(
-      table.jurisdictionId,
-      table.sourceReferenceId,
-    ),
+    // Partial unique: only enforced for scraped rows. Uploaded rows have
+    // synthetic source_reference_id values and no jurisdiction — they
+    // shouldn't share a deduplication namespace with the scraped corpus.
+    sourceRefIdx: uniqueIndex('opp_source_ref_idx')
+      .on(table.jurisdictionId, table.sourceReferenceId)
+      .where(sql`${table.source} = 'scraped'`),
     slugIdx: uniqueIndex('opp_slug_idx').on(table.slug),
     deadlineIdx: index('opp_deadline_idx').on(table.deadlineAt),
     statusIdx: index('opp_status_idx').on(table.status),
     jurisdictionStatusIdx: index('opp_jur_status_idx').on(table.jurisdictionId, table.status),
+    // Capture queries scope by company; partial keeps the index small
+    // since the vast majority of rows are public (company_id IS NULL).
+    companyIdx: index('opp_company_id_idx')
+      .on(table.companyId)
+      .where(sql`${table.companyId} IS NOT NULL`),
     searchIdx: index('opp_search_idx').using('gin', table.searchVector),
   }),
 );

@@ -183,14 +183,16 @@ export default async function OpportunityDetailPage({
         >
           Track this opportunity →
         </a>
-        <a
-          href={op.sourceUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-4 py-2 text-sm font-medium hover:border-[color:var(--color-foreground)]"
-        >
-          View on source portal ↗
-        </a>
+        {op.sourceUrl && (
+          <a
+            href={op.sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-4 py-2 text-sm font-medium hover:border-[color:var(--color-foreground)]"
+          >
+            View on source portal ↗
+          </a>
+        )}
       </section>
 
       <section className="mt-10 rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-6">
