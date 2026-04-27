@@ -128,6 +128,24 @@ export default async function OpportunityDetailPage({
         )}
       </header>
 
+      {(op.tags?.length || op.subCategory) && (
+        <div className="mb-4 flex flex-wrap gap-1.5">
+          {op.subCategory && (
+            <span className="rounded-[var(--radius-sm)] bg-[color:var(--color-muted)] px-2 py-0.5 text-xs text-[color:var(--color-foreground)]">
+              {op.subCategory}
+            </span>
+          )}
+          {op.tags?.map((t) => (
+            <span
+              key={t}
+              className="rounded-[var(--radius-sm)] bg-[color:var(--color-muted)] px-2 py-0.5 text-xs text-[color:var(--color-foreground)]"
+            >
+              {t}
+            </span>
+          ))}
+        </div>
+      )}
+
       <section className="grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-6 md:grid-cols-4">
         <Fact label="Estimated value" value={value ?? '—'} sub={valueUsd ? `≈ ${valueUsd}` : undefined} />
         <Fact
@@ -136,9 +154,61 @@ export default async function OpportunityDetailPage({
           sub={countdown && countdown !== 'closed' ? `in ${countdown}` : undefined}
           highlight={countdown && countdown !== 'closed' ? 'brand' : undefined}
         />
-        <Fact label="Published" value={op.publishedAt ? formatDate(op.publishedAt) : '—'} />
+        {/* Posted date — falls back to firstSeenAt (when Procur first
+            scraped the listing) when the source portal didn't expose
+            publishedAt. Many gov procurement portals list tenders
+            without a posted-on stamp; this keeps the column from
+            being permanently "—" for those. */}
+        <Fact
+          label={op.publishedAt ? 'Published' : 'Discovered'}
+          value={
+            op.publishedAt
+              ? formatDate(op.publishedAt)
+              : op.firstSeenAt
+                ? formatDate(op.firstSeenAt)
+                : '—'
+          }
+          sub={op.publishedAt ? undefined : 'first scraped on this date'}
+        />
         <Fact label="Category" value={op.category ?? '—'} />
       </section>
+
+      {(op.preBidMeetingAt || op.clarificationDeadlineAt) && (
+        <section className="mt-4 grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-6 md:grid-cols-2">
+          <Fact
+            label="Pre-bid meeting"
+            value={op.preBidMeetingAt ? formatDate(op.preBidMeetingAt) : '—'}
+          />
+          <Fact
+            label="Clarification deadline"
+            value={
+              op.clarificationDeadlineAt ? formatDate(op.clarificationDeadlineAt) : '—'
+            }
+          />
+        </section>
+      )}
+
+      {op.status === 'awarded' && (
+        <section className="mt-4 rounded-[var(--radius-lg)] border border-emerald-500/30 bg-emerald-500/5 p-6">
+          <p className="text-xs uppercase tracking-wide text-emerald-700">Awarded</p>
+          <div className="mt-2 grid gap-4 md:grid-cols-3">
+            <Fact
+              label="Awarded to"
+              value={op.awardedToCompanyName ?? '—'}
+            />
+            <Fact
+              label="Awarded value"
+              value={
+                formatMoney(op.awardedAmount, op.currency) ?? '—'
+              }
+            />
+            <Fact
+              label="Award date"
+              value={op.awardedAt ? formatDate(op.awardedAt) : '—'}
+            />
+          </div>
+        </section>
+      )}
 
       {displaySummary && (
         <section className="mt-8">
