@@ -12,8 +12,16 @@
     "type-check": "tsc --noEmit",
     "clean": "rm -rf dist .turbo node_modules"
   },
+  "dependencies": {
+    "clsx": "^2.1.1"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
   "devDependencies": {
     "@procur/config": "workspace:*",
+    "@types/react": "^19.0.2",
+    "react": "^19.0.0",
     "typescript": "^5.7.2"
   }
 }

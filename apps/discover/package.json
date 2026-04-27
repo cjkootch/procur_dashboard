@@ -13,6 +13,7 @@
   "dependencies": {
     "@procur/analytics": "workspace:*",
     "@procur/db": "workspace:*",
+    "@procur/ui": "workspace:*",
     "@procur/utils": "workspace:*",
     "@sentry/nextjs": "^8.47.0",
     "drizzle-orm": "^0.38.3",
