@@ -1,10 +1,8 @@
 import { requireCompany } from '@procur/auth';
 import { clearSampleDataAction } from '../onboarding/sample-data-action';
 import { hasSampleData } from '../../lib/sample-data';
-import {
-  autofillCompanyProfileAction,
-  updateCompanyProfileAction,
-} from './actions';
+import { updateCompanyProfileAction } from './actions';
+import { AutofillCompanyProfileForm } from './AutofillCompanyProfileForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,20 +28,7 @@ export default async function CompanyProfilePage() {
             year. Existing values are preserved — new capabilities are appended.
           </p>
         </div>
-        <form action={autofillCompanyProfileAction} className="flex flex-wrap items-center gap-2">
-          <input
-            name="websiteUrl"
-            defaultValue={company.websiteUrl ?? ''}
-            placeholder="https://your-company.com"
-            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
-          />
-          <button
-            type="submit"
-            className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)]"
-          >
-            Autofill with AI
-          </button>
-        </form>
+        <AutofillCompanyProfileForm defaultUrl={company.websiteUrl ?? ''} />
       </section>
 
       <form

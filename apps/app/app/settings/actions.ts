@@ -55,74 +55,114 @@ export async function updateCompanyProfileAction(formData: FormData): Promise<vo
 }
 
 /**
+ * Result type for the autofill action — we surface errors inline in
+ * the form via `useActionState` instead of throwing, which would crash
+ * into the page-level error boundary and hide the actual reason behind
+ * a generic digest.
+ */
+export type AutofillState =
+  | { ok: true }
+  | { ok: false; error: string }
+  | null;
+
+/**
  * Fetches the user's company website, hands the text to Sonnet, and merges
  * the returned profile suggestions with the existing company row. Non-null
  * user-set fields are preserved; empty fields get populated. Capabilities
  * are de-duped by lower-case match.
  */
-export async function autofillCompanyProfileAction(formData: FormData): Promise<void> {
-  const { company } = await requireCompany();
-  const inputUrl = str(formData, 'websiteUrl') ?? company.websiteUrl;
-  if (!inputUrl) throw new Error('Add a website URL first');
-
-  const normalizedUrl = inputUrl.startsWith('http') ? inputUrl : `https://${inputUrl}`;
-
-  let html = '';
+export async function autofillCompanyProfileAction(
+  _prev: AutofillState,
+  formData: FormData,
+): Promise<AutofillState> {
   try {
-    const res = await fetch(normalizedUrl, {
-      headers: { 'user-agent': 'ProcurProfileBot/1.0 (+https://procur.app)' },
-      signal: AbortSignal.timeout(15_000),
+    const { company } = await requireCompany();
+    const inputUrl = str(formData, 'websiteUrl') ?? company.websiteUrl;
+    if (!inputUrl) {
+      return { ok: false, error: 'Add a website URL first.' };
+    }
+
+    const normalizedUrl = inputUrl.startsWith('http') ? inputUrl : `https://${inputUrl}`;
+
+    let html = '';
+    try {
+      const res = await fetch(normalizedUrl, {
+        headers: { 'user-agent': 'ProcurProfileBot/1.0 (+https://procur.app)' },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) {
+        return {
+          ok: false,
+          error: `Couldn't fetch ${normalizedUrl} — server returned ${res.status}.`,
+        };
+      }
+      const raw = await res.text();
+      html = raw.slice(0, 200_000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown';
+      return {
+        ok: false,
+        error: `Couldn't reach ${normalizedUrl}. ${msg}`,
+      };
+    }
+
+    const text = html
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
+      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (text.length < 200) {
+      return {
+        ok: false,
+        error: 'The page returned too little readable text. If your site is JS-rendered, try a static About page URL.',
+      };
+    }
+
+    let suggestion: Awaited<ReturnType<typeof extractCompanyProfile>>;
+    try {
+      suggestion = await extractCompanyProfile({
+        websiteUrl: normalizedUrl,
+        websiteText: text,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown error';
+      return { ok: false, error: `AI extraction failed: ${msg}` };
+    }
+    await meter({
+      companyId: company.id,
+      source: 'extract_company_profile',
+      model: MODELS.sonnet,
+      usage: suggestion.usage,
     });
-    if (!res.ok) throw new Error(`fetch ${res.status}`);
-    const raw = await res.text();
-    html = raw.slice(0, 200_000);
-  } catch (err) {
-    throw new Error(
-      `Could not fetch ${normalizedUrl}. Make sure the URL is reachable. (${err instanceof Error ? err.message : 'unknown'})`,
+
+    const existing = new Set(
+      (company.capabilities ?? []).map((c) => c.toLowerCase()),
     );
+    const mergedCapabilities = [
+      ...(company.capabilities ?? []),
+      ...suggestion.suggestedCapabilities.filter((c) => !existing.has(c.toLowerCase())),
+    ];
+
+    await db
+      .update(companies)
+      .set({
+        websiteUrl: company.websiteUrl ?? normalizedUrl,
+        industry: company.industry ?? suggestion.suggestedIndustry,
+        yearFounded: company.yearFounded ?? suggestion.yearFoundedHint,
+        employeeCount: company.employeeCount ?? suggestion.employeeCountHint,
+        capabilities: mergedCapabilities.length > 0 ? mergedCapabilities : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(companies.id, company.id));
+
+    revalidatePath('/settings');
+    return { ok: true };
+  } catch (err) {
+    // Last-resort catch — keeps the page from crashing into the error
+    // boundary even if something we didn't anticipate fails.
+    const msg = err instanceof Error ? err.message : 'Unexpected error.';
+    return { ok: false, error: msg };
   }
-
-  const text = html
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
-    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (text.length < 200) {
-    throw new Error('The page returned too little text to analyze.');
-  }
-
-  const suggestion = await extractCompanyProfile({
-    websiteUrl: normalizedUrl,
-    websiteText: text,
-  });
-  await meter({
-    companyId: company.id,
-    source: 'extract_company_profile',
-    model: MODELS.sonnet,
-    usage: suggestion.usage,
-  });
-
-  const existing = new Set(
-    (company.capabilities ?? []).map((c) => c.toLowerCase()),
-  );
-  const mergedCapabilities = [
-    ...(company.capabilities ?? []),
-    ...suggestion.suggestedCapabilities.filter((c) => !existing.has(c.toLowerCase())),
-  ];
-
-  await db
-    .update(companies)
-    .set({
-      websiteUrl: company.websiteUrl ?? normalizedUrl,
-      industry: company.industry ?? suggestion.suggestedIndustry,
-      yearFounded: company.yearFounded ?? suggestion.yearFoundedHint,
-      employeeCount: company.employeeCount ?? suggestion.employeeCountHint,
-      capabilities: mergedCapabilities.length > 0 ? mergedCapabilities : null,
-      updatedAt: new Date(),
-    })
-    .where(eq(companies.id, company.id));
-
-  revalidatePath('/settings');
 }
