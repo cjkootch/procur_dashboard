@@ -2,6 +2,12 @@ import OpenAI from 'openai';
 
 let cached: OpenAI | null = null;
 
+/**
+ * If CF_AI_GATEWAY_BASE_URL is set, OpenAI calls (embeddings) are routed
+ * through Cloudflare AI Gateway for cost/latency observability and
+ * caching of identical embedding requests. Same gateway as the Anthropic
+ * client; the provider-specific segment ('/openai') is appended here.
+ */
 function getOpenAI(): OpenAI {
   if (!cached) {
     if (!process.env.OPENAI_API_KEY) {
@@ -9,7 +15,12 @@ function getOpenAI(): OpenAI {
         'OPENAI_API_KEY is not set — needed for content-library embeddings',
       );
     }
-    cached = new OpenAI();
+    const gatewayBase = process.env.CF_AI_GATEWAY_BASE_URL;
+    cached = new OpenAI({
+      baseURL: gatewayBase
+        ? `${gatewayBase.replace(/\/$/, '')}/openai`
+        : undefined,
+    });
   }
   return cached;
 }
