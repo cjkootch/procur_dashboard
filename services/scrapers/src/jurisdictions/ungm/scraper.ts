@@ -175,12 +175,23 @@ export class UngmScraper extends TenderScraper {
       }
 
       if (page === 0) {
+        // Larger sample (3000 chars) so if the cell-level parser is
+        // mis-targeting fields we can see the actual structure of one
+        // notice row and target-fix on the next deploy.
         log.info('ungm.search.first_page', {
           contentType,
           length: text.length,
           rowsParsed: pageRows.length,
-          sample: text.slice(0, 300),
+          sample: text.slice(0, 3000),
         });
+
+        // Also: log a normalized parse of the first row so we can
+        // verify which fields were picked up vs missed.
+        if (pageRows.length > 0) {
+          log.info('ungm.search.first_row', {
+            sample: pageRows[0],
+          });
+        }
       }
 
       if (pageRows.length === 0) break;
@@ -283,29 +294,53 @@ export class UngmScraper extends TenderScraper {
   }
 
   /**
-   * HTML fallback — UNGM may return a server-rendered partial table
-   * fragment depending on Accept header.
+   * HTML path — UNGM's actual response. Each notice is a top-level
+   * <div role="row" data-noticeid="297630"> with nested <div role="cell">
+   * children. Field positions are guessed from typical UNGM column
+   * layout; if any are wrong, the diagnostic log will surface a longer
+   * sample for adjustment.
    */
   private parseSearchHtml(html: string): RawOpportunity[] {
     const $ = loadHtml(html);
     const out: RawOpportunity[] = [];
 
-    $('tr[data-notice-id], tr[data-id]').each((_i, el) => {
-      const $tr = $(el);
-      const id = $tr.attr('data-notice-id') ?? $tr.attr('data-id');
+    // Match the actual UNGM markup: divs with role="row" and a
+    // data-noticeid attribute. Old `tr[data-notice-id]` selector
+    // never matched because UNGM uses CSS-grid divs, not tables.
+    $('div[data-noticeid], div[data-notice-id], div[data-id]').each((_i, el) => {
+      const $row = $(el);
+      const id = $row.attr('data-noticeid') ?? $row.attr('data-notice-id') ?? $row.attr('data-id');
       if (!id) return;
 
-      const title = textOf($tr.find('a').first());
+      // Title is usually the first anchor in the row pointing at the
+      // notice detail page (or the first non-empty anchor).
+      const $titleLink = $row
+        .find('a')
+        .filter((_j, a) => textOf($(a)).length > 0)
+        .first();
+      const title = textOf($titleLink);
       if (!title) return;
 
-      const $cells = $tr.find('td');
+      // Best-effort field extraction. UNGM tags cells with descriptive
+      // class names (e.g. .agency, .reference, .deadline) — read by
+      // suffix match so minor renames don't break us. Falls back to
+      // ordered cells if class hints aren't found.
+      const cellByClass = (suffix: string): string | undefined => {
+        const $hit = $row.find(`[class*="${suffix}"]`).first();
+        return textOf($hit) || undefined;
+      };
+
+      const $cells = $row.find('div[role="cell"], div.tableCell');
+
       const data: UngmRawData = {
         noticeId: id,
         title,
-        reference: textOf($cells.eq(1)) || undefined,
-        agency: textOf($cells.eq(2)) || undefined,
-        noticeType: textOf($cells.eq(3)) || undefined,
-        deadlineDateUtc: textOf($cells.eq(4)) || undefined,
+        reference: cellByClass('reference') ?? (textOf($cells.eq(1)) || undefined),
+        agency: cellByClass('agency') ?? (textOf($cells.eq(2)) || undefined),
+        noticeType: cellByClass('noticetype') ?? cellByClass('type') ?? undefined,
+        deadlineDateUtc:
+          cellByClass('deadline') ?? (textOf($cells.last()) || undefined),
+        publishedDateUtc: cellByClass('published') ?? cellByClass('publishdate'),
       };
 
       out.push({
