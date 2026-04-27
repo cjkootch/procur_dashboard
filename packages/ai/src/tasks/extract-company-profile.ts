@@ -1,5 +1,7 @@
-import { z } from 'zod';
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
+// Schemas consumed by zodOutputFormat MUST be Zod 4 — see
+// packages/ai/src/types.ts for the full explanation.
+import { z } from 'zod/v4';
+import { zodOutputFormat } from '../zod-output';
 import { getClient, MODELS } from '../client';
 import { buildSystem, extractUsage, type CacheUsage } from '../prompt-blocks';
 
