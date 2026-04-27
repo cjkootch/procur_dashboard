@@ -329,6 +329,12 @@ export class UngmScraper extends TenderScraper {
           /\bSubscribe to UNGM Pro to be able to save procurement opportunities\.?/gi,
           ' ',
         )
+        // Sustainability badge tooltip — appears as screen-reader text
+        // on notices flagged as sustainable. Only some notices have it.
+        .replace(
+          /\bThis procurement opportunity meets the requirements to be considered as sustainable\.?/gi,
+          ' ',
+        )
         .replace(/\s+/g, ' ')
         .trim();
 
