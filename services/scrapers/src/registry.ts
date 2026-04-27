@@ -9,6 +9,7 @@ import { GuyanaNptabScraper } from './jurisdictions/guyana-nptab/scraper';
 import { JamaicaGojepScraper } from './jurisdictions/jamaica-gojep/scraper';
 import { JamaicaGojepCurrentScraper } from './jurisdictions/jamaica-gojep-current/scraper';
 import { TrinidadEgpScraper } from './jurisdictions/trinidad-egp/scraper';
+import { UngmScraper } from './jurisdictions/ungm/scraper';
 
 export type ScraperFactory = () => TenderScraper;
 
@@ -23,6 +24,7 @@ export const scrapers: Record<string, ScraperFactory> = {
   chile: () => new ChileMpScraper(),
   'chile-session': () => new ChileMpSessionScraper(),
   colombia: () => new ColombiaSecopScraper(),
+  un: () => new UngmScraper(),
 };
 
 export function getScraper(slug: string): TenderScraper {

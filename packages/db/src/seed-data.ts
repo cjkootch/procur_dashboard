@@ -200,6 +200,33 @@ export const seedJurisdictions: Array<
     ],
   },
   {
+    name: 'United Nations',
+    slug: 'un',
+    // 'UN' isn't a real ISO country code but the regional-indicator
+    // emoji renders as the UN flag on most platforms. flagFor() is
+    // resilient — at worst it falls back to 🏳️.
+    countryCode: 'UN',
+    region: 'global',
+    portalName: 'UN Global Marketplace (UNGM)',
+    portalUrl: 'https://www.ungm.org',
+    scraperModule: 'ungm',
+    currency: 'USD',
+    language: 'en',
+    timezone: 'UTC',
+    active: true,
+    agencies: [
+      ['World Food Programme', 'WFP', 'multilateral'],
+      ['UN Development Programme', 'UNDP', 'multilateral'],
+      ['UN High Commissioner for Refugees', 'UNHCR', 'multilateral'],
+      ['UNICEF', 'UNICEF', 'multilateral'],
+      ['World Health Organization', 'WHO', 'multilateral'],
+      ['Food and Agriculture Organization', 'FAO', 'multilateral'],
+      ['UN Population Fund', 'UNFPA', 'multilateral'],
+      ['International Atomic Energy Agency', 'IAEA', 'multilateral'],
+      ['UN Office for Project Services', 'UNOPS', 'multilateral'],
+    ],
+  },
+  {
     name: 'Colombia',
     slug: 'colombia',
     countryCode: 'CO',
