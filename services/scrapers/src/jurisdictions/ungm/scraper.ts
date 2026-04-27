@@ -317,22 +317,31 @@ export class UngmScraper extends TenderScraper {
       const id = $row.attr('data-noticeid') ?? $row.attr('data-notice-id') ?? $row.attr('data-id');
       if (!id) return;
 
+      // Strip every known UNGM aria-label / tooltip / button-text
+      // pattern. UNGM flattens all this accessibility text into the
+      // row's textContent because every interactive element has both
+      // an icon (visible) and a screen-reader-only span. Each pattern
+      // here was discovered the hard way after seeing it leak into a
+      // title in production.
       const cleaned = collapseWhitespace($row.text())
-        // Screen-reader text from every external-link icon.
+        // External-link icon (multiple per row).
         .replace(/\bOpen in a new window\b/g, ' ')
-        // Bookmark button labels (logged-in variants).
+        // Save bookmark button — logged-in variant.
         .replace(/\bUnsave this procurement opportunity\.?/gi, ' ')
         .replace(/\bSave this procurement opportunity\.?/gi, ' ')
-        // UNGM Pro upsell shown to anonymous viewers (trigger.dev
-        // workers always see this since they're not logged in).
+        // Save bookmark button — anonymous variant (trigger.dev workers).
         .replace(
           /\bSubscribe to UNGM Pro to be able to save procurement opportunities\.?/gi,
           ' ',
         )
-        // Sustainability badge tooltip — appears as screen-reader text
-        // on notices flagged as sustainable. Only some notices have it.
+        // Sustainability badge.
         .replace(
           /\bThis procurement opportunity meets the requirements to be considered as sustainable\.?/gi,
+          ' ',
+        )
+        // Notice link aria-label / hint text.
+        .replace(
+          /\bClick on the procurement opportunity to learn more\.?/gi,
           ' ',
         )
         .replace(/\s+/g, ' ')
