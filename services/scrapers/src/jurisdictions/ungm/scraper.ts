@@ -30,6 +30,7 @@
 import {
   TenderScraper,
   fetchWithRetry,
+  findTrailingCountry,
   loadHtml,
   textOf,
   type NormalizedOpportunity,
@@ -406,6 +407,11 @@ export class UngmScraper extends TenderScraper {
       referenceNumber: d.reference,
       type: d.noticeType,
       agencyName: d.agency,
+      // First country in the rawContent — UNGM rows have one country
+      // suffix per notice. Surfaced on Discover as a chip and via the
+      // beneficiary_country filter dropdown.
+      beneficiaryCountry:
+        d.countries && d.countries.length > 0 ? d.countries[0] : undefined,
       currency: 'USD',
       publishedAt: publishedAt ?? undefined,
       deadlineAt: deadlineAt ?? undefined,
@@ -471,9 +477,15 @@ function parseUngmTail(tail: string): {
     rest = (rest.slice(0, refMatch.index) + rest.slice(refMatch.index + refMatch[0].length)).replace(/\s+/g, ' ').trim();
   }
 
-  // 5. Country — typically the last token(s) in the tail. Hard to detect
-  // reliably without a country lookup. Skip in v1; AI enrich can pull
-  // it from rawContent.
+  // 5. Country — match the trailing token(s) against the bundled list
+  // of country names (longest-match wins so "Sierra Leone" beats
+  // "Leone", "United States" beats "States").
+  let country: string | undefined;
+  const trailing = findTrailingCountry(rest);
+  if (trailing) {
+    country = trailing.name;
+    rest = rest.slice(0, trailing.startIndex).trim();
+  }
 
   // 6. Agency — heuristic: the first ALL-CAPS token is usually the
   // agency code (UNDP, WFP, UNHCR, FAO, etc.). The notice-type phrase
@@ -496,6 +508,7 @@ function parseUngmTail(tail: string): {
     agency,
     noticeType,
     reference,
+    country,
   };
 }
 

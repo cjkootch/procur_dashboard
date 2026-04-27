@@ -76,7 +76,7 @@ export default async function OpportunityDetailPage({
     },
     areaServed: {
       '@type': 'Country',
-      name: op.jurisdictionName,
+      name: op.beneficiaryCountry ?? op.jurisdictionName,
     },
   };
 
@@ -115,6 +115,12 @@ export default async function OpportunityDetailPage({
             {op.jurisdictionName}
             {op.agencyName && <> · {op.agencyName}</>}
           </span>
+          {op.beneficiaryCountry && (
+            <span className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40 px-2 py-0.5 text-xs">
+              <span aria-hidden className="text-[color:var(--color-muted-foreground)]">→</span>
+              {op.beneficiaryCountry}
+            </span>
+          )}
           {op.type && (
             <span className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-xs">
               {op.type}

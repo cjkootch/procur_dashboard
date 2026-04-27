@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import {
   listActiveCategories,
+  listBeneficiaryCountries,
   listJurisdictions,
   listOpportunities,
   type OpportunityScope,
@@ -69,6 +70,7 @@ export default async function OpportunitiesPage({
   const q = getOne(sp.q);
   const jurisdiction = getOne(sp.jurisdiction);
   const category = getOne(sp.category);
+  const beneficiaryCountry = getOne(sp.country);
   const minValueUsd = toInt(getOne(sp.minValue));
   const maxValueUsd = toInt(getOne(sp.maxValue));
   const page = toInt(getOne(sp.page)) ?? 1;
@@ -80,11 +82,12 @@ export default async function OpportunitiesPage({
 
   const perPage = 24;
 
-  const [{ rows, total }, categories, allJurisdictions] = await Promise.all([
+  const [{ rows, total }, categories, allJurisdictions, beneficiaryCountries] = await Promise.all([
     listOpportunities({
       q,
       jurisdiction,
       category,
+      beneficiaryCountry,
       minValueUsd,
       maxValueUsd,
       page,
@@ -94,6 +97,7 @@ export default async function OpportunitiesPage({
     }),
     listActiveCategories(),
     listJurisdictions(),
+    listBeneficiaryCountries(),
   ]);
 
   const buildHref = (nextParams: Record<string, string | number | undefined>) => {
@@ -102,6 +106,7 @@ export default async function OpportunitiesPage({
       q,
       jurisdiction,
       category,
+      country: beneficiaryCountry,
       minValue: minValueUsd,
       maxValue: maxValueUsd,
       view: scope === 'open' ? undefined : scope,
@@ -125,6 +130,7 @@ export default async function OpportunitiesPage({
       q,
       jurisdiction,
       category,
+      country: beneficiaryCountry,
       minValue: minValueUsd,
       maxValue: maxValueUsd,
       view: nextScope === 'open' ? undefined : nextScope,
@@ -190,6 +196,26 @@ export default async function OpportunitiesPage({
                 </FilterLink>
               ))}
           </FilterGroup>
+
+          {beneficiaryCountries.length > 0 && (
+            <FilterGroup title="Beneficiary country">
+              <FilterLink
+                href={buildHref({ country: undefined, page: undefined })}
+                active={!beneficiaryCountry}
+              >
+                All
+              </FilterLink>
+              {beneficiaryCountries.map((c) => (
+                <FilterLink
+                  key={c}
+                  href={buildHref({ country: c, page: undefined })}
+                  active={beneficiaryCountry === c}
+                >
+                  {c}
+                </FilterLink>
+              ))}
+            </FilterGroup>
+          )}
 
           {categories.length > 0 && (
             <FilterGroup title="Category">

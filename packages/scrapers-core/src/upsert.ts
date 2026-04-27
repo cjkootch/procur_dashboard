@@ -109,6 +109,7 @@ export async function upsertOpportunity(
     awardedAt: norm.awardedAt ?? null,
     awardedAmount: awardedAmountString,
     awardedToCompanyName: norm.awardedToCompanyName ?? null,
+    beneficiaryCountry: norm.beneficiaryCountry ?? null,
     rawContent: norm.rawContent,
     slug,
     lastSeenAt: new Date(),

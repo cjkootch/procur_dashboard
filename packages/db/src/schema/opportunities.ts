@@ -98,6 +98,20 @@ export const opportunities = pgTable(
     awardedAt: timestamp('awarded_at'),
 
     language: text('language').default('en'),
+    /**
+     * Free-text country name where the work is performed / who benefits
+     * from the procurement. Distinct from `jurisdictionId.countryCode`
+     * which marks where the procurement portal lives.
+     *
+     * Example: a UNDP notice for Suriname has jurisdictionId='un' (UNGM
+     * portal) and beneficiaryCountry='Suriname'. A Jamaican government
+     * notice has both pointing at Jamaica — for non-multilateral
+     * jurisdictions the two coincide and we leave this column null.
+     *
+     * Stored as the country name UNGM (and similar) emit verbatim.
+     * Avoids a country-name-to-ISO-code mapping table.
+     */
+    beneficiaryCountry: text('beneficiary_country'),
     slug: text('slug').unique(),
     searchVector: tsvector('search_vector'),
 
@@ -128,6 +142,12 @@ export const opportunities = pgTable(
     companyIdx: index('opp_company_id_idx')
       .on(table.companyId)
       .where(sql`${table.companyId} IS NOT NULL`),
+    // Beneficiary-country filter on Discover hits this lookup; partial
+    // since most rows (Jamaica/Trinidad/Chile/etc national portals) leave
+    // beneficiary_country null — they ARE the beneficiary country.
+    beneficiaryCountryIdx: index('opp_beneficiary_country_idx')
+      .on(table.beneficiaryCountry)
+      .where(sql`${table.beneficiaryCountry} IS NOT NULL`),
     searchIdx: index('opp_search_idx').using('gin', table.searchVector),
   }),
 );
