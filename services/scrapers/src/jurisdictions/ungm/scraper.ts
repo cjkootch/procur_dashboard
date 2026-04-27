@@ -304,27 +304,50 @@ export class UngmScraper extends TenderScraper {
     const $ = loadHtml(html);
     const out: RawOpportunity[] = [];
 
-    // Match the actual UNGM markup: divs with role="row" and a
-    // data-noticeid attribute. Old `tr[data-notice-id]` selector
-    // never matched because UNGM uses CSS-grid divs, not tables.
     $('div[data-noticeid], div[data-notice-id], div[data-id]').each((_i, el) => {
       const $row = $(el);
       const id = $row.attr('data-noticeid') ?? $row.attr('data-notice-id') ?? $row.attr('data-id');
       if (!id) return;
 
-      // Title is usually the first anchor in the row pointing at the
-      // notice detail page (or the first non-empty anchor).
+      // Title: find the anchor whose href points at this notice's own
+      // detail page (/Public/Notice/<id>). Naively grabbing the first
+      // anchor with text was matching the "Save / Unsave this
+      // procurement opportunity" bookmark button (the first interactive
+      // element in the row's resultOptions cell).
+      const detailHrefMatch = `/Public/Notice/${id}`;
       const $titleLink = $row
         .find('a')
-        .filter((_j, a) => textOf($(a)).length > 0)
+        .filter((_j, a) => {
+          const href = $(a).attr('href') ?? '';
+          return href.includes(detailHrefMatch);
+        })
         .first();
-      const title = textOf($titleLink);
+      let title = textOf($titleLink);
+
+      // Fallback: if no detail-page anchor is found (rare, e.g. UNGM
+      // changes URL conventions), look for an anchor whose text isn't
+      // a known UI button label.
+      if (!title) {
+        const $alt = $row
+          .find('a')
+          .filter((_j, a) => {
+            const t = textOf($(a));
+            if (!t) return false;
+            const lower = t.toLowerCase();
+            // Skip anything that looks like a save/unsave bookmark, an
+            // outbound "Open in a new window" hint, etc.
+            return (
+              !lower.startsWith('unsave') &&
+              !lower.startsWith('save this') &&
+              !lower.includes('open in a new window')
+            );
+          })
+          .first();
+        title = textOf($alt);
+      }
       if (!title) return;
 
-      // Best-effort field extraction. UNGM tags cells with descriptive
-      // class names (e.g. .agency, .reference, .deadline) — read by
-      // suffix match so minor renames don't break us. Falls back to
-      // ordered cells if class hints aren't found.
+      // Field extraction by class-suffix hint with positional fallback.
       const cellByClass = (suffix: string): string | undefined => {
         const $hit = $row.find(`[class*="${suffix}"]`).first();
         return textOf($hit) || undefined;

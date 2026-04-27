@@ -168,7 +168,7 @@ export default async function OpportunityDetailPage({
                 ? formatDate(op.firstSeenAt)
                 : '—'
           }
-          sub={op.publishedAt ? undefined : 'first scraped on this date'}
+          sub={op.publishedAt ? undefined : 'first seen on this date'}
         />
         <Fact label="Category" value={op.category ?? '—'} />
       </section>
