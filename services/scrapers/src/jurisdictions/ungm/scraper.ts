@@ -111,41 +111,46 @@ export class UngmScraper extends TenderScraper {
     const pageSize = this.input.pageSize ?? 100;
     const maxPages = this.input.maxPages ?? 5;
 
+    // Step 1: GET the search page to capture session cookies and the
+    // ASP.NET anti-forgery token. UNGM's POST is protected by
+    // [ValidateAntiForgeryToken]; without the matching cookie + form
+    // field, .NET rejects the request with a generic 500 from inside
+    // the antiforgery filter rather than a clean 403.
+    const session = await this.bootstrapSession();
+
     for (let page = 0; page < maxPages; page += 1) {
       const body = buildFormBody(page, pageSize);
+      if (session.token) body.set('__RequestVerificationToken', session.token);
+
       const res = await fetchWithRetry(`${PORTAL}${SEARCH_PATH}`, {
         method: 'POST',
         headers: {
           ...COMMON_HEADERS,
           'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          ...(session.cookieHeader ? { cookie: session.cookieHeader } : {}),
         },
         body: body.toString(),
         timeoutMs: 45_000,
-        // Only retry on truly transient statuses. UNGM's 500 is
-        // consistently a client-error (model-binder rejection of our
-        // request body) and not transient; retrying it just wastes
-        // time. Critically, fetchWithRetry THROWS after exhausting
-        // retries on retryable statuses — so if we left 500 in the
-        // default list, we'd never get back the response object and
-        // never see UNGM's error body.
+        // Drop 500 from retryable statuses so we get the response back
+        // and can read UNGM's body. fetchWithRetry throws on exhausted
+        // retries — would never hit our error-handling branch.
         retryableStatuses: [408, 429, 502, 503, 504],
       });
 
       const text = await res.text();
       if (!res.ok) {
-        // Embed UNGM's response body directly in the error message so
-        // it surfaces in the run's errors[].message field — the
-        // separate log.error path was getting swallowed by trigger.dev.
         const ct = res.headers.get('content-type') ?? '';
-        const preview = text.slice(0, 600).replace(/\s+/g, ' ');
+        const preview = text.slice(0, 2000).replace(/\s+/g, ' ');
         log.error('ungm.search.http_error', {
           status: res.status,
           page,
           contentType: ct,
+          haveToken: Boolean(session.token),
+          haveCookie: Boolean(session.cookieHeader),
           bodyPreview: preview,
         });
         throw new Error(
-          `UNGM search returned ${res.status} on page ${page}. content-type=${ct}. body[0..600]: ${preview}`,
+          `UNGM search returned ${res.status} on page ${page}. content-type=${ct}. token=${Boolean(session.token)} cookie=${Boolean(session.cookieHeader)}. body[0..2000]: ${preview}`,
         );
       }
 
@@ -183,6 +188,61 @@ export class UngmScraper extends TenderScraper {
     }
 
     return out;
+  }
+
+  /**
+   * Bootstrap session: GET the public notices page, capture (a) any
+   * Set-Cookie headers (UNGM's session cookie + the antiforgery cookie)
+   * and (b) the __RequestVerificationToken hidden input value embedded
+   * in the page's search form.
+   *
+   * Both must accompany the subsequent POST or .NET's antiforgery
+   * filter rejects the request with a generic 500. If the bootstrap
+   * itself fails, return empty session — the search request will then
+   * throw with the body preview, telling us why.
+   */
+  private async bootstrapSession(): Promise<{
+    token: string | null;
+    cookieHeader: string | null;
+  }> {
+    try {
+      const res = await fetchWithRetry(`${PORTAL}/Public/Notice`, {
+        method: 'GET',
+        headers: COMMON_HEADERS,
+        timeoutMs: 30_000,
+        retryableStatuses: [408, 429, 502, 503, 504],
+      });
+      if (!res.ok) {
+        log.warn('ungm.bootstrap.non_ok', { status: res.status });
+        return { token: null, cookieHeader: null };
+      }
+      const html = await res.text();
+
+      // Parse all Set-Cookie response headers and extract `name=value`
+      // pairs for the request Cookie header. UNGM may set multiple
+      // (session + antiforgery + load-balancer affinity).
+      const setCookieHeaders = collectSetCookieHeaders(res);
+      const cookieHeader = setCookieHeaders.length > 0 ? setCookieHeaders.join('; ') : null;
+
+      // Extract the antiforgery token from the hidden input. Different
+      // .NET versions render this with single OR double quotes and the
+      // attribute order varies; a permissive regex handles both.
+      const $ = loadHtml(html);
+      const tokenInput = $('input[name="__RequestVerificationToken"]').first();
+      const token = tokenInput.attr('value') ?? null;
+
+      log.info('ungm.bootstrap', {
+        haveCookie: Boolean(cookieHeader),
+        cookieCount: setCookieHeaders.length,
+        haveToken: Boolean(token),
+        htmlLength: html.length,
+      });
+      return { token, cookieHeader };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn('ungm.bootstrap.failed', { error: msg });
+      return { token: null, cookieHeader: null };
+    }
   }
 
   /**
@@ -303,6 +363,34 @@ export class UngmScraper extends TenderScraper {
       rawContent: d as unknown as Record<string, unknown>,
     };
   }
+}
+
+/**
+ * Pull all Set-Cookie headers from the response and return them as
+ * `name=value` pairs ready to concatenate into a Cookie request header.
+ * Drops the cookie attributes (Path, Expires, HttpOnly, etc.) — they're
+ * directives for the user agent, not part of what to send back.
+ *
+ * fetch's headers.get('set-cookie') returns a comma-joined string for
+ * multiple cookies, which is ambiguous because cookie values may also
+ * contain commas (Expires=Wed, 09 Jun 2027 ...). headers.getSetCookie()
+ * is the safe API for splitting.
+ */
+function collectSetCookieHeaders(res: Response): string[] {
+  // getSetCookie is in WHATWG fetch and shipped in Node 18+.
+  const all: string[] | undefined = res.headers.getSetCookie?.();
+  const list = Array.isArray(all)
+    ? all
+    : // Fallback for older runtimes — split on the comma-before-token
+      // pattern. Imperfect but matches typical .NET output.
+      (res.headers.get('set-cookie') ?? '')
+        .split(/,(?=\s*[A-Za-z0-9_-]+=)/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+  return list
+    .map((line) => line.split(';', 1)[0]?.trim() ?? '')
+    .filter(Boolean);
 }
 
 function stringOrUndef(v: unknown): string | undefined {
