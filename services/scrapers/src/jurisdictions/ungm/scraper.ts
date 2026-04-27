@@ -125,17 +125,20 @@ export class UngmScraper extends TenderScraper {
 
       const text = await res.text();
       if (!res.ok) {
-        // Capture UNGM's error message so the next iteration of the
-        // scraper has something to work from. .NET typically returns
-        // a small HTML error page or a JSON error body — first 500
-        // chars is enough to diagnose.
+        // Embed UNGM's response body directly in the error message so
+        // it surfaces in the run's errors[].message field — the
+        // separate log.error path was getting swallowed by trigger.dev.
+        const ct = res.headers.get('content-type') ?? '';
+        const preview = text.slice(0, 600).replace(/\s+/g, ' ');
         log.error('ungm.search.http_error', {
           status: res.status,
           page,
-          contentType: res.headers.get('content-type') ?? null,
-          bodyPreview: text.slice(0, 500),
+          contentType: ct,
+          bodyPreview: preview,
         });
-        throw new Error(`UNGM search returned ${res.status} on page ${page}`);
+        throw new Error(
+          `UNGM search returned ${res.status} on page ${page}. content-type=${ct}. body[0..600]: ${preview}`,
+        );
       }
 
       const contentType = res.headers.get('content-type') ?? '';
