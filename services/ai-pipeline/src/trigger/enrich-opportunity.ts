@@ -1,6 +1,6 @@
 import { task, batch } from '@trigger.dev/sdk/v3';
 import { eq, and } from 'drizzle-orm';
-import { db, documents, opportunities } from '@procur/db';
+import { db, documents, opportunities, pursuits } from '@procur/db';
 import { log } from '@procur/utils/logger';
 import { enrichCoreTask } from './enrich-core';
 import { extractRequirementsTask } from './extract-requirements';
@@ -16,17 +16,15 @@ export type EnrichOpportunityPayload = { opportunityId: string };
  * Flow:
  *   0. process-document for every pending doc (download → Blob → extract text)
  *   1. enrich-core: ONE Haiku call producing language + category + subCategory
- *      + summary + confidence. Replaces the old fan-out to detect-language +
- *      classify + summarize (cuts ~60% of per-opp AI cost — same input is
- *      sent once, system prompt is cache-friendly across the corpus).
+ *      + summary + confidence.
  *   2. translate to English if source language isn't English.
- *   3. extract-requirements if the opportunity has processed documents
- *      (Sonnet, slower).
- *
- * Step 0 must finish before step 1 because enrich-core can read the
- * extracted document text. Prompt caching kicks in for step 3: the
- * doc text was already read by enrich-core in step 1, so Anthropic has
- * already cached the prefix.
+ *   3. extract-requirements ONLY IF any pursuit already exists for this
+ *      opportunity. Saves Sonnet cost on the 90%+ of scraped opps that
+ *      no one ever tracks. For Discover-tracked opps where the pursuit
+ *      is created AFTER enrich ran, the create-pursuit handlers
+ *      themselves fire extract-requirements (see
+ *      apps/app/lib/trigger-extract-requirements.ts). The task is
+ *      idempotent so concurrent paths are safe.
  */
 export const enrichOpportunityTask = task({
   id: 'opportunity.enrich',
@@ -72,18 +70,18 @@ export const enrichOpportunityTask = task({
       });
     }
 
-    const [hasDocs] = await db
-      .select({ id: documents.id })
-      .from(documents)
-      .where(
-        and(
-          eq(documents.opportunityId, opportunityId),
-          eq(documents.processingStatus, 'completed'),
-        ),
-      )
+    // If any pursuit already exists for this opp (typical: uploaded
+    // private bids where the pursuit is created BEFORE the enrich
+    // runs), fire extract-requirements at the end. Discover-scraped
+    // opps with no pursuit yet skip this — saves Sonnet cost on the
+    // long tail. Idempotent task; concurrent fires are safe.
+    const [existingPursuit] = await db
+      .select({ id: pursuits.id })
+      .from(pursuits)
+      .where(eq(pursuits.opportunityId, opportunityId))
       .limit(1);
 
-    if (hasDocs) {
+    if (existingPursuit) {
       await extractRequirementsTask.triggerAndWait({ opportunityId });
     }
 
@@ -94,8 +92,8 @@ export const enrichOpportunityTask = task({
 
     log.info('ai.enrich.completed', {
       opportunityId,
-      hadDocuments: Boolean(hasDocs),
+      hadPursuit: Boolean(existingPursuit),
     });
-    return { opportunityId, hadDocuments: Boolean(hasDocs) };
+    return { opportunityId, hadPursuit: Boolean(existingPursuit) };
   },
 });

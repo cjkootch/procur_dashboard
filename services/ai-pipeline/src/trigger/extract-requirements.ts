@@ -14,6 +14,18 @@ export const extractRequirementsTask = task({
     const opp = await loadOpportunity(payload.opportunityId);
     if (!opp) throw new Error(`opportunity ${payload.opportunityId} not found`);
 
+    // Idempotency: this task moved from the per-scrape enrich path
+    // (where it ran exactly once) to the pursuit-create path (where
+    // multiple users from one or different tenants can race the same
+    // opportunity). Skip work if requirements were already extracted.
+    if (opp.extractedRequirements && opp.extractedRequirements.length > 0) {
+      log.info('ai.extract-requirements.skipped', {
+        opportunityId: opp.id,
+        reason: 'already extracted',
+      });
+      return null;
+    }
+
     const docText = await loadDocumentText(opp.id);
     if (!docText) {
       log.info('ai.extract-requirements.skipped', {
