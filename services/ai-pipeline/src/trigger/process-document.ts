@@ -8,18 +8,25 @@ import { extensionForUrl, extractTextFromBuffer } from '../lib/extract-text';
 
 export type ProcessDocumentPayload = { documentId: string };
 
-const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
+const MAX_FILE_BYTES = 100 * 1024 * 1024; // 100 MB
+const VERCEL_BLOB_HOST_RE = /\.public\.blob\.vercel-storage\.com$/;
 
 /**
- * Download a tender attachment, persist it to R2, extract text, and
- * advance `processing_status` to 'completed'.
+ * Download a tender attachment, persist it to Vercel Blob, extract
+ * text, and advance `processing_status` to 'completed'.
  *
  * Triggered by enrich-opportunity for every freshly-scraped pending
  * document, and by the scheduled sweep for any that fell through.
  *
+ * For private uploads, the originalUrl IS already a Vercel Blob URL
+ * (the Capture app's upload form writes directly to Blob via
+ * @vercel/blob/client). In that case we skip the re-upload step:
+ * download from Blob, extract text, and reuse the same URL as the
+ * persisted r2Url.
+ *
  * Failure modes (status='error', error message persisted):
  *   - URL unreachable / non-2xx after retries
- *   - File >50 MB (Anthropic context + R2 cost guardrail)
+ *   - File >100 MB (Anthropic context + storage cost guardrail)
  *   - Unsupported file type (anything other than PDF/DOCX/TXT/MD)
  *   - Text extraction throws (corrupt PDF, encrypted, etc.)
  *
@@ -70,18 +77,46 @@ export const processDocumentTask = task({
       }
 
       const contentType = res.headers.get('content-type') ?? undefined;
-      const ext = extensionForUrl(doc.originalUrl, contentType);
-      const r2Key = `tender-documents/${doc.id}.${ext}`;
-
       const extracted = await extractTextFromBuffer(buf, contentType, doc.originalUrl);
 
-      const upload = await uploadBuffer(r2Key, buf, extracted.mimeType);
+      // If the doc was uploaded directly to Vercel Blob by the Capture
+      // app (private uploads), originalUrl is already a Blob URL and
+      // re-uploading would just duplicate the bytes. Reuse the URL.
+      let r2Key: string;
+      let r2Url: string;
+      try {
+        const originHost = new URL(doc.originalUrl).host;
+        if (VERCEL_BLOB_HOST_RE.test(originHost)) {
+          // pathname starts with '/' — strip it to get the Blob key.
+          r2Key = new URL(doc.originalUrl).pathname.replace(/^\//, '');
+          r2Url = doc.originalUrl;
+        } else {
+          const ext = extensionForUrl(doc.originalUrl, contentType);
+          const upload = await uploadBuffer(
+            `tender-documents/${doc.id}.${ext}`,
+            buf,
+            extracted.mimeType,
+          );
+          r2Key = upload.key;
+          r2Url = upload.url;
+        }
+      } catch {
+        // URL parse failed for some reason — fall back to upload path.
+        const ext = extensionForUrl(doc.originalUrl, contentType);
+        const upload = await uploadBuffer(
+          `tender-documents/${doc.id}.${ext}`,
+          buf,
+          extracted.mimeType,
+        );
+        r2Key = upload.key;
+        r2Url = upload.url;
+      }
 
       await db
         .update(documents)
         .set({
-          r2Key: upload.key,
-          r2Url: upload.url,
+          r2Key,
+          r2Url,
           extractedText: extracted.text,
           pageCount: extracted.pageCount,
           fileSize: buf.byteLength,
@@ -94,7 +129,7 @@ export const processDocumentTask = task({
 
       log.info('document.process.completed', {
         documentId,
-        r2Key: upload.key,
+        r2Key,
         bytes: buf.byteLength,
         pages: extracted.pageCount,
         textLen: extracted.text.length,
