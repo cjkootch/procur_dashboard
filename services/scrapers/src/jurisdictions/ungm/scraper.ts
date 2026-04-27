@@ -410,7 +410,11 @@ export class UngmScraper extends TenderScraper {
       publishedAt: publishedAt ?? undefined,
       deadlineAt: deadlineAt ?? undefined,
       deadlineTimezone: 'UTC',
-      language: 'en',
+      // Don't pin to 'en' — UNGM notices come in Spanish, French,
+      // Portuguese, etc. Let detect-language (now part of enrich-core)
+      // decide. The schema default of 'en' will apply on insert; the
+      // enrich pipeline overwrites with the real detected language and
+      // triggers translate when source != 'en'.
       rawContent: d as unknown as Record<string, unknown>,
     };
   }
