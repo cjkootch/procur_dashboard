@@ -8,10 +8,12 @@ import { SearchBar } from '../components/search-bar';
 import { CategoryPills } from '../components/category-pills';
 import { OpportunityCard } from '../components/opportunity-card';
 
-// 60s ISR — fresh enough that scraper runs (every 4h) reflect within
-// a minute on the home stat counters without sacrificing the cache
-// benefit for repeat visitors.
-export const revalidate = 60;
+// Render at request time. Discover queries on this page filter on
+// `opportunities.company_id` (privacy boundary for private uploads),
+// and prerendering at build time can crash when Vercel's preview/build
+// runtime points at a Neon DB branch that's behind the migration head.
+// SSR keeps the page always-fresh and DB-schema-tolerant.
+export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
   const [stats, categories, featured] = await Promise.all([

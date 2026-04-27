@@ -59,8 +59,13 @@ export type PursuitCard = {
     currency: string | null;
     valueEstimateUsd: string | null;
     deadlineAt: Date | null;
-    jurisdictionName: string;
-    jurisdictionCountry: string;
+    /**
+     * Null for private uploaded opportunities — they aren't tied to a
+     * jurisdiction. UI should render "Private bid" or similar in that
+     * case (see pursuit-card.tsx, pursuit-hero.tsx).
+     */
+    jurisdictionName: string | null;
+    jurisdictionCountry: string | null;
     agencyName: string | null;
     agencyShort: string | null;
     referenceNumber: string | null;
@@ -103,7 +108,9 @@ function selectPursuitsBase(companyId: string) {
     })
     .from(pursuits)
     .innerJoin(opportunities, eq(opportunities.id, pursuits.opportunityId))
-    .innerJoin(jurisdictions, eq(jurisdictions.id, opportunities.jurisdictionId))
+    // leftJoin: private uploaded opportunities have no jurisdiction.
+    // Inner-joining would silently hide them from every pursuit list.
+    .leftJoin(jurisdictions, eq(jurisdictions.id, opportunities.jurisdictionId))
     .leftJoin(agencies, eq(agencies.id, opportunities.agencyId))
     .leftJoin(users, eq(users.id, pursuits.assignedUserId))
     .where(eq(pursuits.companyId, companyId));

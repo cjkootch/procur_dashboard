@@ -44,16 +44,29 @@ export function PursuitHero({
 
   const value = formatMoney(op.valueEstimate, op.currency);
 
+  // Private uploaded opportunities have no jurisdiction; render a neutral
+  // "Private bid" badge so the hero layout still has a leading visual.
+  const isPrivate = op.jurisdictionCountry == null;
+
   return (
     <div>
       <div className="flex items-start gap-3">
-        <span aria-label={op.jurisdictionName} className="text-2xl leading-none">
-          {flagFor(op.jurisdictionCountry)}
-        </span>
+        {isPrivate ? (
+          <span
+            aria-label="Private bid"
+            className="rounded-[var(--radius-sm)] bg-[color:var(--color-muted)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-muted-foreground)]"
+          >
+            Private
+          </span>
+        ) : (
+          <span aria-label={op.jurisdictionName ?? undefined} className="text-2xl leading-none">
+            {flagFor(op.jurisdictionCountry)}
+          </span>
+        )}
         <div className="flex-1">
           <h1 className="text-xl font-semibold tracking-tight">{op.title}</h1>
           <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-            {op.jurisdictionName}
+            {op.jurisdictionName ?? 'Private bid'}
             {op.agencyName && <> · {op.agencyName}</>}
             {op.referenceNumber && (
               <>
