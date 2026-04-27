@@ -121,6 +121,14 @@ export class UngmScraper extends TenderScraper {
         },
         body: body.toString(),
         timeoutMs: 45_000,
+        // Only retry on truly transient statuses. UNGM's 500 is
+        // consistently a client-error (model-binder rejection of our
+        // request body) and not transient; retrying it just wastes
+        // time. Critically, fetchWithRetry THROWS after exhausting
+        // retries on retryable statuses — so if we left 500 in the
+        // default list, we'd never get back the response object and
+        // never see UNGM's error body.
+        retryableStatuses: [408, 429, 502, 503, 504],
       });
 
       const text = await res.text();
