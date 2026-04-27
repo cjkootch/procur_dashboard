@@ -295,10 +295,18 @@ export class UngmScraper extends TenderScraper {
 
   /**
    * HTML path — UNGM's actual response. Each notice is a top-level
-   * <div role="row" data-noticeid="297630"> with nested <div role="cell">
-   * children. Field positions are guessed from typical UNGM column
-   * layout; if any are wrong, the diagnostic log will surface a longer
-   * sample for adjustment.
+   * <div role="row" data-noticeid="..."> with all metadata flattened
+   * into one big concatenated text blob. Confirmed against live data
+   * (UNDP-SUR-00166 and others), the format is:
+   *
+   *   [<button>] <TITLE> <deadline-date> <time> (GMT ±N) <sort> <publish-date> <agency> <type> <ref> <country> [Open in a new window]
+   *
+   * KEY INSIGHT (cost three deploys to figure out): the TITLE comes
+   * BEFORE the first date, not after. Earlier versions assumed the
+   * leading date was a strippable prefix and the title was after it.
+   * It's the opposite. Use the first occurrence of dd-Mmm-yyyy as a
+   * splitter — title is everything before it, metadata everything
+   * after.
    */
   private parseSearchHtml(html: string): RawOpportunity[] {
     const $ = loadHtml(html);
@@ -309,79 +317,49 @@ export class UngmScraper extends TenderScraper {
       const id = $row.attr('data-noticeid') ?? $row.attr('data-notice-id') ?? $row.attr('data-id');
       if (!id) return;
 
-      // UNGM's CSS-grid rows render the notice metadata as one big text
-      // blob in a single cell, with the title link rendered as an
-      // external-link ICON whose anchor text is just "Open in a new
-      // window" (screen-reader). Targeting anchors by href / text was
-      // fundamentally the wrong approach. Instead: take ALL text from
-      // the row and extract title via the consistent format:
-      //
-      //   <date> <time> (GMT ±N.NN) <decimal-sort-num> · <ref?> <TITLE> Open in a new window
-      //
-      // The "Open in a new window" suffix is screen-reader text from
-      // every external-link icon — strip it. The leading date/number
-      // prefix is rendered alongside the title because UNGM uses a
-      // single flex cell. Strip it too. What remains is ref + title.
-
-      const rawText = collapseWhitespace($row.text());
-      const cleaned = rawText
-        // Drop every "Open in a new window" screen-reader cue (multiple
-        // can appear if the row has more than one external-link icon).
+      const cleaned = collapseWhitespace($row.text())
+        // Screen-reader text from every external-link icon.
         .replace(/\bOpen in a new window\b/g, ' ')
-        // Drop the bookmark button labels that match anywhere.
+        // Bookmark button labels (logged-in variants).
         .replace(/\bUnsave this procurement opportunity\.?/gi, ' ')
         .replace(/\bSave this procurement opportunity\.?/gi, ' ')
+        // UNGM Pro upsell shown to anonymous viewers (trigger.dev
+        // workers always see this since they're not logged in).
+        .replace(
+          /\bSubscribe to UNGM Pro to be able to save procurement opportunities\.?/gi,
+          ' ',
+        )
         .replace(/\s+/g, ' ')
         .trim();
 
-      // Pull out the deadline (date + GMT offset) and the sort score so
-      // we can drop them from the title. Format observed:
-      //   "27-Apr-2026 23:59 (GMT -4.00) 0.291591816..."
-      const deadlineMatch = cleaned.match(
-        /^(\d{1,2}-[A-Za-z]{3}-\d{4})\s+(\d{1,2}:\d{2})\s+\(GMT\s*([+-]?\d+(?:\.\d+)?)\)\s*[\d.]+\s*[·\-]?\s*/,
-      );
-
-      let titleAndRef = cleaned;
-      let deadlineRaw: string | undefined;
-      let timezoneOffset: string | undefined;
-      if (deadlineMatch) {
-        deadlineRaw = `${deadlineMatch[1]} ${deadlineMatch[2]}`;
-        timezoneOffset = deadlineMatch[3];
-        titleAndRef = cleaned.slice(deadlineMatch[0].length).trim();
+      // Find the FIRST dd-Mmm-yyyy. That's the deadline date and the
+      // splitter between title (before) and structured metadata (after).
+      const firstDateMatch = cleaned.match(/\b(\d{1,2}-[A-Za-z]{3}-\d{4})\b/);
+      if (!firstDateMatch || firstDateMatch.index == null) {
+        // No date in the row — skip. UNGM rows always have a deadline
+        // date; if missing, this is probably a header row or layout
+        // artifact we shouldn't ingest.
+        return;
       }
 
-      // Try to peel off a leading reference number — UN refs commonly
-      // look like "LRPS-2026-9203289", "UNDP-HND-00602",
-      // "RFP/2026/12345", etc. Two or more uppercase letters, dashes
-      // or slashes, ending in digits.
-      let reference: string | undefined;
-      const refMatch = titleAndRef.match(
-        /^([A-Z][A-Z0-9]{1,}(?:[-/][A-Z0-9]+)+)\s+/,
-      );
-      if (refMatch) {
-        reference = refMatch[1];
-        titleAndRef = titleAndRef.slice(refMatch[0].length).trim();
-      }
-
-      const title = titleAndRef.trim();
+      const title = cleaned.slice(0, firstDateMatch.index).trim();
       if (!title) return;
+      const tail = cleaned.slice(firstDateMatch.index);
 
-      const cellByClass = (suffix: string): string | undefined => {
-        const $hit = $row.find(`[class*="${suffix}"]`).first();
-        const t = textOf($hit);
-        return t ? collapseWhitespace(t) : undefined;
-      };
+      // Parse the post-title region. Best-effort — UNGM's per-notice
+      // markup varies. If a field doesn't extract cleanly the AI enrich
+      // pipeline usually fills the gap from the AI summary.
+      const parsed = parseUngmTail(tail);
 
       const data: UngmRawData = {
         noticeId: id,
         title,
-        reference: reference ?? cellByClass('reference'),
-        agency: cellByClass('agency'),
-        noticeType: cellByClass('noticetype') ?? cellByClass('type') ?? undefined,
-        // Compose a deadline ISO string from "27-Apr-2026 23:59" + offset.
-        deadlineDateUtc: composeDeadlineIso(deadlineRaw, timezoneOffset),
-        publishedDateUtc: cellByClass('published') ?? cellByClass('publishdate'),
-        countries: undefined,
+        reference: parsed.reference,
+        agency: parsed.agency,
+        noticeType: parsed.noticeType,
+        countries: parsed.country ? [parsed.country] : undefined,
+        publishedDateUtc: parsed.publishedDateUtc,
+        deadlineDateUtc: parsed.deadlineDateUtc,
       };
 
       out.push({
@@ -421,6 +399,89 @@ export class UngmScraper extends TenderScraper {
       rawContent: d as unknown as Record<string, unknown>,
     };
   }
+}
+
+/**
+ * Parse the post-title region of a UNGM notice row. Format observed:
+ *
+ *   <deadline-date> <time> (GMT ±N) <sort-decimal> <publish-date> <agency-tokens> <type-phrase> <ref?> <country?>
+ *
+ * Example (UNDP-SUR-00166 from a real card):
+ *   "27-Apr-2026 20:00 (GMT -4.00) 0.0961783311375 13-Apr-2026 UNDP Request for proposal UNDP-SUR-00166 Suriname"
+ *
+ * Best-effort extraction: anything we can't confidently identify is
+ * left undefined for the AI enrich pipeline to fill in from context.
+ */
+function parseUngmTail(tail: string): {
+  deadlineDateUtc?: string;
+  publishedDateUtc?: string;
+  agency?: string;
+  noticeType?: string;
+  reference?: string;
+  country?: string;
+} {
+  // 1. Deadline: <date> <time> (GMT ±N)
+  const deadlineMatch = tail.match(
+    /^(\d{1,2}-[A-Za-z]{3}-\d{4})\s+(\d{1,2}:\d{2})\s+\(GMT\s*([+-]?\d+(?:\.\d+)?)\)\s*/,
+  );
+  if (!deadlineMatch) {
+    return {};
+  }
+  const deadlineDateUtc = composeDeadlineIso(
+    `${deadlineMatch[1]} ${deadlineMatch[2]}`,
+    deadlineMatch[3],
+  );
+  let rest = tail.slice(deadlineMatch[0].length).trim();
+
+  // 2. Sort decimal (UI sort score we don't care about).
+  const sortMatch = rest.match(/^[\d.]+\s+/);
+  if (sortMatch) rest = rest.slice(sortMatch[0].length);
+
+  // 3. Optional second date — the publish date (dd-Mmm-yyyy, no time).
+  let publishedDateUtc: string | undefined;
+  const publishMatch = rest.match(/^(\d{1,2}-[A-Za-z]{3}-\d{4})\s+/);
+  if (publishMatch) {
+    publishedDateUtc = composeDeadlineIso(`${publishMatch[1]} 00:00`, '0');
+    rest = rest.slice(publishMatch[0].length);
+  }
+
+  // 4. Reference number — UN refs follow patterns like UNDP-SUR-00166,
+  // LRPS-2026-9203289, RFP/2026/12345. Pull the first such token from
+  // anywhere in the remaining tail (it doesn't always come last).
+  let reference: string | undefined;
+  const refMatch = rest.match(/\b([A-Z][A-Z0-9]{1,}(?:[-/][A-Z0-9]+)+)\b/);
+  if (refMatch && refMatch.index != null) {
+    reference = refMatch[1];
+    // Splice the ref out so what's left is just agency + type + country.
+    rest = (rest.slice(0, refMatch.index) + rest.slice(refMatch.index + refMatch[0].length)).replace(/\s+/g, ' ').trim();
+  }
+
+  // 5. Country — typically the last token(s) in the tail. Hard to detect
+  // reliably without a country lookup. Skip in v1; AI enrich can pull
+  // it from rawContent.
+
+  // 6. Agency — heuristic: the first ALL-CAPS token is usually the
+  // agency code (UNDP, WFP, UNHCR, FAO, etc.). The notice-type phrase
+  // ("Request for proposal", "Invitation to bid") follows.
+  let agency: string | undefined;
+  let noticeType: string | undefined;
+  const agencyMatch = rest.match(/^([A-Z]{2,}(?:-[A-Z]{2,})?)\s+(.+)$/);
+  if (agencyMatch) {
+    agency = agencyMatch[1];
+    noticeType = agencyMatch[2]?.trim();
+  } else if (rest.length > 0) {
+    // Couldn't find an obvious agency code — stash whatever's left as
+    // notice type so it's at least visible somewhere.
+    noticeType = rest;
+  }
+
+  return {
+    deadlineDateUtc,
+    publishedDateUtc,
+    agency,
+    noticeType,
+    reference,
+  };
 }
 
 /**
