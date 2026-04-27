@@ -12,6 +12,7 @@ import {
   timeUntil,
 } from '../../../lib/format';
 
+// SSR every request — never serve stale content; we own the freshness.
 export const dynamic = 'force-dynamic';
 
 type Params = { slug: string };
