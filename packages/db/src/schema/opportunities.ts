@@ -108,12 +108,17 @@ export const opportunities = pgTable(
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   (table) => ({
-    // Partial unique: only enforced for scraped rows. Uploaded rows have
-    // synthetic source_reference_id values and no jurisdiction — they
-    // shouldn't share a deduplication namespace with the scraped corpus.
-    sourceRefIdx: uniqueIndex('opp_source_ref_idx')
-      .on(table.jurisdictionId, table.sourceReferenceId)
-      .where(sql`${table.source} = 'scraped'`),
+    // Unique on (jurisdictionId, sourceReferenceId). Uploaded private
+    // opportunities have jurisdictionId IS NULL — Postgres treats NULL
+    // values in unique indexes as distinct by default, so multiple
+    // uploads coexist without colliding. Originally tried partial
+    // (WHERE source='scraped') but that broke ON CONFLICT in
+    // upsertOpportunity since the simple ON CONFLICT (cols) form
+    // requires a non-partial unique index to match.
+    sourceRefIdx: uniqueIndex('opp_source_ref_idx').on(
+      table.jurisdictionId,
+      table.sourceReferenceId,
+    ),
     slugIdx: uniqueIndex('opp_slug_idx').on(table.slug),
     deadlineIdx: index('opp_deadline_idx').on(table.deadlineAt),
     statusIdx: index('opp_status_idx').on(table.status),
