@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { PageContextInput, RenderedMessage, RenderedToolUse } from './types';
+import { DealEconomicsCard, isDealEconomicsOutput } from './DealEconomicsCard';
 
 type StreamEvent =
   | { type: 'thread'; threadId: string }
@@ -396,13 +397,19 @@ function MessageView({
     <div className="flex flex-col gap-2">
       {message.toolUses.length > 0 && (
         <div className="flex flex-col gap-2">
-          {message.toolUses.map((t) =>
-            t.result && !t.result.isError && isProposalOutput(t.result.output) ? (
-              <ProposalCard key={t.id} proposal={t.result.output} threadId={threadId} />
-            ) : (
-              <ToolCard key={t.id} toolUse={t} />
-            ),
-          )}
+          {message.toolUses.map((t) => {
+            if (t.result && !t.result.isError) {
+              if (isDealEconomicsOutput(t.result.output)) {
+                return <DealEconomicsCard key={t.id} output={t.result.output} />;
+              }
+              if (isProposalOutput(t.result.output)) {
+                return (
+                  <ProposalCard key={t.id} proposal={t.result.output} threadId={threadId} />
+                );
+              }
+            }
+            return <ToolCard key={t.id} toolUse={t} />;
+          })}
         </div>
       )}
       {message.text && (

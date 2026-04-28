@@ -32,6 +32,7 @@ import {
   type OpportunityScope,
 } from './queries';
 import { addOpportunityToPursuit, createAlertProfile } from './mutations';
+import { composeDealEconomics } from './deal-economics';
 
 /**
  * Discover catalog URL base — opportunities are viewed on Discover
@@ -1359,6 +1360,154 @@ export function buildCatalogTools(): ToolRegistry {
                 'discount range over the live marker price returned here.',
             };
           },
+        ),
+    }),
+
+    compose_deal_economics: defineTool({
+      name: 'compose_deal_economics',
+      description:
+        'Run the fuel-deal calculator on a candidate deal. Use whenever the ' +
+        'user asks "is this a good deal", "what\'s our margin", "build me ' +
+        'a deal at X $/USG", "model an Azeri Light cargo at $76 net CIF", ' +
+        '"what does the P&L look like at $3.10 sell / $2.05 cost". Returns ' +
+        'per-USG margin, gross/net profit, scorecard recommendation ' +
+        '(strong | acceptable | marginal | do_not_proceed), warnings ' +
+        '(severity-graded), breakevens (max product cost, max freight, min ' +
+        'sell price), peak cash exposure, and a 9-step freight-rate ' +
+        'sensitivity grid. The chat surface renders this with adjustable ' +
+        'sliders so the user can probe different assumptions without ' +
+        'another tool call. Only product + volume + sellPrice are required; ' +
+        'productCost is auto-pulled from the latest spot benchmark when ' +
+        'omitted. Volume + price accept either USG or bbls — pick whichever ' +
+        'matches how the user is talking (refined products → USG, crude/' +
+        'bunker → bbls). For products without a spot benchmark feed (jet, ' +
+        'hfo, lng, lpg, food, crude grades), supply productCostPerUsg or ' +
+        'productCostPerBbl explicitly.',
+      kind: 'read',
+      schema: z.object({
+        product: z
+          .enum([
+            'ulsd',
+            'gasoline_87',
+            'gasoline_91',
+            'jet_a',
+            'jet_a1',
+            'avgas',
+            'lfo',
+            'hfo',
+            'lng',
+            'lpg',
+            'biodiesel_b20',
+          ])
+          .describe(
+            "Product code. For crude grades (Azeri Light, Brent, etc.) use 'lfo' " +
+              "for light-sweet (~0.85 kg/L) or 'hfo' for heavier sour. The choice " +
+              "drives density default + benchmark lookup; cost-stack semantics are " +
+              "the same.",
+          ),
+        volumeUsg: z
+          .number()
+          .positive()
+          .optional()
+          .describe('Deal volume in US gallons. Provide this OR volumeBbls.'),
+        volumeBbls: z
+          .number()
+          .positive()
+          .optional()
+          .describe('Deal volume in barrels (1 bbl = 42 USG). Use for crude / bunker.'),
+        sellPricePerUsg: z
+          .number()
+          .positive()
+          .optional()
+          .describe('Sell price to buyer in USD per US gallon.'),
+        sellPricePerBbl: z
+          .number()
+          .positive()
+          .optional()
+          .describe('Sell price in USD per barrel. Use for crude / bunker.'),
+        productCostPerUsg: z
+          .number()
+          .positive()
+          .optional()
+          .describe(
+            'Acquisition cost in USD/USG. Omit to auto-pull the latest spot benchmark for this product.',
+          ),
+        productCostPerBbl: z
+          .number()
+          .positive()
+          .optional()
+          .describe('Acquisition cost in USD/bbl.'),
+        freightPerUsg: z
+          .number()
+          .nonnegative()
+          .optional()
+          .describe('Freight cost in USD/USG. Default 0.'),
+        freightRateUsdPerMt: z
+          .number()
+          .positive()
+          .optional()
+          .describe(
+            'Freight rate in USD per metric tonne. If set, overrides freightPerUsg.',
+          ),
+        densityKgL: z
+          .number()
+          .positive()
+          .optional()
+          .describe(
+            'Product density in kg/L. Defaulted by product if omitted: ULSD 0.84, ' +
+              'gasoline 0.74–0.745, jet 0.81, light crude / LFO 0.86, HFO 0.96.',
+          ),
+        incoterm: z
+          .enum(['fob', 'cif', 'cfr', 'dap', 'exw', 'fas'])
+          .optional()
+          .describe('Default cfr.'),
+        demurrageDays: z.number().nonnegative().optional(),
+        demurrageRatePerDay: z
+          .number()
+          .positive()
+          .optional()
+          .describe('USD/day. Provide alongside demurrageDays for the demurrage warning.'),
+        dischargeHandlingPerUsg: z.number().nonnegative().optional(),
+        compliancePerUsg: z.number().nonnegative().optional(),
+        tradeFinancePerUsg: z.number().nonnegative().optional(),
+        intermediaryFeePerUsg: z.number().nonnegative().optional(),
+        vtcVariableOpsPerUsg: z.number().nonnegative().optional(),
+        counterpartyRiskScore: z
+          .number()
+          .min(0)
+          .max(100)
+          .optional()
+          .describe('0–100. Default 50.'),
+        countryRiskScore: z
+          .number()
+          .min(0)
+          .max(100)
+          .optional()
+          .describe('0–100. Default 50.'),
+        monthlyFixedOverheadUsd: z.number().nonnegative().optional(),
+        asOf: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional()
+          .describe('YYYY-MM-DD. Used for benchmark lookup. Default today.'),
+        dealRef: z
+          .string()
+          .max(80)
+          .optional()
+          .describe('Free-form deal label that flows into the result.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'compose_deal_economics',
+            args: input,
+            summarize: (out: { results: { scorecard: { recommendation: string } } }) => ({
+              resultCount: 1,
+              resultSummary: { recommendation: out.results.scorecard.recommendation },
+            }),
+          },
+          async () => composeDealEconomics(input),
         ),
     }),
 
