@@ -41,15 +41,17 @@ loadEnv({ path: '../../.env' });
 const SPARQL_ENDPOINT = 'https://query.wikidata.org/sparql';
 
 /**
- * Pulls every entity that is an oil refinery (or subclass thereof)
- * with optional country, operator, capacity, status. Limits to ~1000
- * to stay well below the 60-second query timeout.
+ * Pulls every entity that's a direct instance of "oil refinery"
+ * (Q235365). Earlier version used `wdt:P31/wdt:P279*` for subclass
+ * traversal but Wikidata's free SPARQL service times out silently on
+ * that path expression and returns 0 rows. Direct P31 catches ~700
+ * refineries which is what we actually want.
  */
 const SPARQL_QUERY = `
 SELECT ?refinery ?refineryLabel ?countryCode ?operatorLabel ?ownerLabel
        ?capacity ?capacityUnit ?statusLabel ?inception
 WHERE {
-  ?refinery wdt:P31/wdt:P279* wd:Q235365 .
+  ?refinery wdt:P31 wd:Q235365 .
   OPTIONAL {
     ?refinery wdt:P17 ?country .
     ?country wdt:P298 ?countryCode .
@@ -66,7 +68,7 @@ WHERE {
   OPTIONAL { ?refinery wdt:P571 ?inception . }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en" . }
 }
-LIMIT 1000
+LIMIT 1500
 `;
 
 type SparqlBinding<T> = { value: T };
@@ -83,18 +85,27 @@ type SparqlRow = {
 };
 
 async function fetchWikidata(): Promise<SparqlRow[]> {
-  const url = `${SPARQL_ENDPOINT}?query=${encodeURIComponent(SPARQL_QUERY)}`;
-  const res = await fetch(url, {
+  // POST is more reliable than GET for SPARQL — avoids URL-length
+  // issues and is the form Wikidata's docs recommend for non-trivial
+  // queries.
+  const res = await fetch(SPARQL_ENDPOINT, {
+    method: 'POST',
     headers: {
       Accept: 'application/sparql-results+json',
+      'Content-Type': 'application/x-www-form-urlencoded',
       'User-Agent': 'procur-research/1.0 (contact: cole@vectortradecapital.com)',
     },
+    body: `query=${encodeURIComponent(SPARQL_QUERY)}`,
   });
   if (!res.ok) {
-    throw new Error(`Wikidata SPARQL ${res.status}: ${await res.text()}`);
+    const body = await res.text();
+    throw new Error(`Wikidata SPARQL ${res.status}: ${body.slice(0, 500)}`);
   }
-  const json = (await res.json()) as { results: { bindings: SparqlRow[] } };
-  return json.results.bindings;
+  const json = (await res.json()) as {
+    head?: { vars?: string[] };
+    results?: { bindings?: SparqlRow[] };
+  };
+  return json.results?.bindings ?? [];
 }
 
 function slugify(name: string, country: string): string {
