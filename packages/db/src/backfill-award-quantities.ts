@@ -120,29 +120,40 @@ function parseMagnitude(raw: string): number | null {
 /**
  * Try every pattern in order; first hit wins. Patterns are ordered by
  * specificity — explicit "bbl" > MT > liters > gallons > m³.
+ *
+ * Multilingual coverage: the supplier graph ingests from Spanish-
+ * language portals (DR DGCP, Mexican CompraNet) + Portuguese (BR) +
+ * French (Haiti, Senegal CFA-region) alongside English-language
+ * sources. Each unit family captures the equivalents.
  */
 function extract(description: string, category: string | null): Extraction | null {
   const text = description.toLowerCase();
 
-  // Allow forms like "1.5 million", "1.5 m", "1,500", "100k", "100 k".
-  // We capture <value> and <unit> separately; value normalizer below
-  // does the multiplier work.
+  // Common shared-prefix for "<number><optional multiplier-word>".
+  // Spanish / Portuguese sometimes use period as thousands separator
+  // and comma as decimal: "1.500,50" = 1500.50. We pre-normalize that
+  // pattern below.
+  const NUM = String.raw`[\d,. ]+(?:\.\d+)?\s*(?:million|millón|millones|milhão|milhões|mille|mil|thousand|miles)?(?:\s*[kmb])?`;
+
   const patterns: Array<{
     rx: RegExp;
     method: string;
     confidence: number;
     bblPer: (n: number) => number;
   }> = [
-    // Explicit barrels
+    // Explicit barrels — EN: bbl/barrel(s); ES: barriles; PT: barris; FR: barils.
     {
-      rx: /([\d,]+(?:\.\d+)?\s*(?:million|thousand)?(?:\s*[kmb])?)\s*(?:bbl|barrels?|bbls)\b/i,
+      rx: new RegExp(`(${NUM})\\s*(?:bbl|barrels?|bbls|barriles|barris|barils)\\b`, 'i'),
       method: 'explicit-bbl',
       confidence: 1.0,
       bblPer: (n) => n,
     },
-    // Metric tons
+    // Metric tons — EN: MT/metric tons/tonnes; ES: toneladas (métricas); PT: toneladas; FR: tonnes.
     {
-      rx: /([\d,]+(?:\.\d+)?\s*(?:million|thousand)?(?:\s*[kmb])?)\s*(?:metric\s*tons?|mt|tonnes?|m\.t\.?|t\b)/i,
+      rx: new RegExp(
+        `(${NUM})\\s*(?:metric\\s*tons?|tonnes?|toneladas(?:\\s*m[eé]tricas?)?|tm|m\\.?t\\.?|mt|t)\\b`,
+        'i',
+      ),
       method: 'mt-converted',
       confidence: 0.7,
       bblPer: (n) => {
@@ -151,35 +162,49 @@ function extract(description: string, category: string | null): Extraction | nul
         return n * factor;
       },
     },
-    // US gallons
+    // Gallons — EN: gallon(s)/gal; ES: galones/gal; PT: galões/gal; FR: gallons.
     {
-      rx: /([\d,]+(?:\.\d+)?\s*(?:million|thousand)?(?:\s*[kmb])?)\s*(?:us\s*)?gallons?\b/i,
+      rx: new RegExp(
+        `(${NUM})\\s*(?:us\\s*)?(?:gallons?|galones?|gal[oó]es?|galão)\\b`,
+        'i',
+      ),
       method: 'gallons-converted',
       confidence: 0.85,
       bblPer: (n) => n * 0.02381,
     },
     {
-      rx: /([\d,]+(?:\.\d+)?\s*(?:million|thousand)?(?:\s*[kmb])?)\s*gal\b/i,
+      rx: new RegExp(`(${NUM})\\s*gal\\b`, 'i'),
       method: 'gallons-converted',
-      confidence: 0.85,
+      confidence: 0.8,
       bblPer: (n) => n * 0.02381,
     },
-    // Liters
+    // Liters — EN: liter(s); ES: litros; PT: litros; FR: litres.
     {
-      rx: /([\d,]+(?:\.\d+)?\s*(?:million|thousand)?(?:\s*[kmb])?)\s*(?:liters?|litres?)\b/i,
+      rx: new RegExp(`(${NUM})\\s*(?:liters?|litres?|litros)\\b`, 'i'),
       method: 'liters-converted',
       confidence: 0.85,
       bblPer: (n) => n * 0.006290,
     },
     {
-      rx: /([\d,]+(?:\.\d+)?\s*(?:million|thousand)?(?:\s*[kmb])?)\s*l\b/i,
+      // "lt" abbrev seen in Spanish-language tenders.
+      rx: new RegExp(`(${NUM})\\s*(?:lt|lts)\\b`, 'i'),
       method: 'liters-converted',
-      confidence: 0.6, // 'L' alone is more ambiguous (could be Litres / size code)
+      confidence: 0.7,
       bblPer: (n) => n * 0.006290,
     },
-    // Cubic meters
     {
-      rx: /([\d,]+(?:\.\d+)?\s*(?:million|thousand)?(?:\s*[kmb])?)\s*(?:m3|m³|cubic\s*met(?:re|er)s?)\b/i,
+      // Bare "L" — most ambiguous (could be liters OR a size code).
+      rx: new RegExp(`(${NUM})\\s*l\\b`, 'i'),
+      method: 'liters-converted',
+      confidence: 0.5,
+      bblPer: (n) => n * 0.006290,
+    },
+    // Cubic meters — m3/m³; ES: metros cúbicos; PT: metros cúbicos.
+    {
+      rx: new RegExp(
+        `(${NUM})\\s*(?:m3|m³|cubic\\s*met(?:re|er)s?|metros?\\s*c[uú]bicos?)\\b`,
+        'i',
+      ),
       method: 'm3-converted',
       confidence: 0.85,
       bblPer: (n) => n * 6.2898,
@@ -190,11 +215,17 @@ function extract(description: string, category: string | null): Extraction | nul
     const m = text.match(p.rx);
     if (!m) continue;
     let valuePart = m[1]!.trim();
-    // Map "5 million" / "5 thousand" → magnitude suffix our parser eats.
+    // Map magnitude words → suffix our parser eats. Multilingual.
     valuePart = valuePart
-      .replace(/\bmillion\b/i, 'm')
-      .replace(/\bthousand\b/i, 'k')
+      .replace(/\b(?:million|millón|millones|milhão|milhões)\b/i, 'm')
+      .replace(/\b(?:thousand|miles|mille|mil)\b/i, 'k')
       .replace(/\s+/g, '');
+    // Spanish/Portuguese number formatting: period as thousands
+    // separator, comma as decimal (1.500,50 = 1500.50). Detect that
+    // pattern via "N.NNN,NN" and convert before parseMagnitude.
+    if (/^\d{1,3}(?:\.\d{3})+(?:,\d+)?[kmb]?$/.test(valuePart)) {
+      valuePart = valuePart.replace(/\./g, '').replace(/,/g, '.');
+    }
     const num = parseMagnitude(valuePart);
     if (num == null) continue;
     const bbl = p.bblPer(num);
@@ -251,6 +282,8 @@ async function main() {
     confidence: number;
   }> = [];
   let unmatched = 0;
+  const debug = process.argv.includes('--debug');
+  const unmatchedSamples: string[] = [];
 
   for (const r of rows) {
     if (!r.commodity_description) {
@@ -261,6 +294,9 @@ async function main() {
     const ext = extract(r.commodity_description, cat);
     if (!ext) {
       unmatched += 1;
+      if (debug && unmatchedSamples.length < 25) {
+        unmatchedSamples.push(r.commodity_description.slice(0, 220));
+      }
       continue;
     }
     successes.push({ id: r.id, ...ext });
@@ -275,6 +311,10 @@ async function main() {
   );
   for (const [method, n] of Object.entries(counts).sort((a, b) => b[1] - a[1])) {
     console.log(`  ${method}: ${n}`);
+  }
+  if (debug && unmatchedSamples.length > 0) {
+    console.log('\nFirst 25 unmatched descriptions (use this to spot missing patterns):');
+    unmatchedSamples.forEach((s, i) => console.log(`  [${i + 1}] ${s}`));
   }
 
   if (dryRun) {
