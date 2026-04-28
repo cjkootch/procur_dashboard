@@ -18,6 +18,13 @@ export const users = pgTable('users', {
     notifications?: Record<string, boolean>;
   }>(),
   lastActiveAt: timestamp('last_active_at'),
+  /**
+   * Last time this user invoked the Discover assistant's "what's new"
+   * tool. The next call computes the delta as opportunities posted
+   * after this timestamp, then updates it atomically. Defaults to
+   * NULL (first call gets the last 7 days).
+   */
+  lastAssistantSeenAt: timestamp('last_assistant_seen_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
