@@ -29,6 +29,8 @@
     "ingest-osm-refineries": "tsx src/ingest-osm-refineries.ts",
     "ingest-wikipedia-refineries": "tsx src/ingest-wikipedia-refineries.ts",
     "ingest-fractracker-refineries": "tsx src/ingest-fractracker-refineries.ts",
+    "seed-crude-grades": "tsx src/seed-crude-grades.ts",
+    "seed-refinery-slate": "tsx src/seed-refinery-slate.ts",
     "cleanup-cross-role-merges": "tsx src/cleanup-cross-role-merges.ts",
     "type-check": "tsc --noEmit",
     "test": "node --import tsx --test 'src/**/*.test.ts'",
