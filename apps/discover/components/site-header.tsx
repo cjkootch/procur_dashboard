@@ -1,5 +1,6 @@
 import Image from 'next/image';
 import Link from 'next/link';
+import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs';
 
 const HOVER_LINK =
   'hover:underline focus-visible:outline-none focus-visible:underline rounded-sm';
@@ -8,6 +9,8 @@ const SIGN_IN_BUTTON =
   'bg-[color:var(--color-foreground)] text-[color:var(--color-background)] hover:opacity-90 ' +
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-foreground)]/30 ' +
   'focus-visible:ring-offset-1 focus-visible:ring-offset-[color:var(--color-background)]';
+
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.procur.app';
 
 export function SiteHeader() {
   return (
@@ -31,12 +34,29 @@ export function SiteHeader() {
           <Link className={HOVER_LINK} href="/jurisdictions">
             Jurisdictions
           </Link>
-          <a
-            className={SIGN_IN_BUTTON}
-            href={process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.procur.app'}
-          >
-            Sign in
-          </a>
+          {/* Auth-aware right side. Both states render exactly one
+              control so the header doesn't reflow during hydration. */}
+          <SignedOut>
+            <a className={SIGN_IN_BUTTON} href={APP_URL}>
+              Sign in
+            </a>
+          </SignedOut>
+          <SignedIn>
+            <a
+              className={HOVER_LINK + ' text-[color:var(--color-foreground)]'}
+              href={APP_URL}
+            >
+              Open app
+            </a>
+            <UserButton
+              afterSignOutUrl="/"
+              appearance={{
+                elements: {
+                  avatarBox: 'h-8 w-8',
+                },
+              }}
+            />
+          </SignedIn>
         </nav>
       </div>
     </header>

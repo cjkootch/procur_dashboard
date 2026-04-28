@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import { ClerkProvider } from '@clerk/nextjs';
 import { Montserrat } from 'next/font/google';
 import { SiteHeader } from '../components/site-header';
 import { SiteFooter } from '../components/site-footer';
@@ -31,13 +32,21 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
+  // ClerkProvider here gives us session-aware components (UserButton,
+  // SignedIn/SignedOut) inside the otherwise-public Discover surface.
+  // Discover stays browseable while signed-out — middleware enforces
+  // nothing; ClerkProvider is purely there to detect the cross-subdomain
+  // cookie set by app.procur.app's sign-in flow and surface the user
+  // identity in the header.
   return (
-    <html lang="en" className={montserrat.variable}>
-      <body className="flex min-h-screen flex-col">
-        <SiteHeader />
-        <main className="flex-1">{children}</main>
-        <SiteFooter />
-      </body>
-    </html>
+    <ClerkProvider>
+      <html lang="en" className={montserrat.variable}>
+        <body className="flex min-h-screen flex-col">
+          <SiteHeader />
+          <main className="flex-1">{children}</main>
+          <SiteFooter />
+        </body>
+      </html>
+    </ClerkProvider>
   );
 }
