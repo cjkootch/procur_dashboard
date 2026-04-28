@@ -158,6 +158,18 @@ export function MapView({
         }
         style={fullscreen ? undefined : { height: 'calc(100vh - 280px)', minHeight: '600px' }}
       >
+        {fullscreen && (
+          // The header's Fullscreen toggle is hidden behind this z-50 overlay
+          // when fullscreen is on, so render an in-overlay exit affordance
+          // that's always reachable. z-[1000] sits above Leaflet's controls.
+          <button
+            type="button"
+            onClick={() => setFullscreen(false)}
+            className="absolute right-4 top-4 z-[1000] rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-3 py-1.5 text-xs font-medium shadow-md hover:bg-[color:var(--color-muted)]/40"
+          >
+            Exit fullscreen (Esc)
+          </button>
+        )}
         <MapContainer
           center={[20, 20]}
           zoom={2}
