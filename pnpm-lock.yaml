@@ -475,6 +475,9 @@ importers:
       '@neondatabase/serverless':
         specifier: ^0.10.4
         version: 0.10.4
+      cheerio:
+        specifier: ^1.0.0
+        version: 1.2.0
       csv-parse:
         specifier: ^5.6.0
         version: 5.6.0
