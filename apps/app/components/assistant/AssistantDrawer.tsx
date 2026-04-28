@@ -45,12 +45,15 @@ export function AssistantDrawer() {
   return (
     <div
       ref={backdropRef}
-      className="fixed inset-0 z-50 bg-black/30"
+      className="fixed inset-0 z-50"
       onClick={(e) => {
         if (e.target === backdropRef.current) setOpen(false);
       }}
     >
-      <div className="absolute right-0 top-0 flex h-full w-full max-w-[560px] flex-col border-l border-[color:var(--color-border)] bg-[color:var(--color-background)] shadow-2xl">
+      {/* Floating chat-window popover anchored bottom-right above the
+          launcher. Sits clearly on top of the page rather than splitting
+          the viewport into "page" + "side rail" halves. */}
+      <div className="absolute bottom-4 right-4 flex h-[min(80vh,720px)] w-[min(95vw,480px)] flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] shadow-2xl">
         <header className="flex items-center justify-between border-b border-[color:var(--color-border)] px-4 py-2.5">
           <div>
             <div className="text-sm font-semibold">Procur Assistant</div>
