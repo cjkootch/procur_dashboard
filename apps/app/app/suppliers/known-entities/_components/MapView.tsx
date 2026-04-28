@@ -33,6 +33,7 @@ const ROLE_COLORS: Record<string, string> = {
   trader: '#ea580c', // orange
   producer: '#16a34a', // green
   'state-buyer': '#9333ea', // purple
+  'power-plant': '#dc2626', // red — refined-fuel buyer
 };
 
 function makeIcon(color: string): L.DivIcon {

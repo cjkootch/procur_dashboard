@@ -25,6 +25,7 @@
     "ingest-gem-refineries": "tsx src/ingest-gem-refineries.ts",
     "ingest-gem-extraction": "tsx src/ingest-gem-extraction.ts",
     "ingest-gem-ownership": "tsx src/ingest-gem-ownership.ts",
+    "ingest-gem-power-plants": "tsx src/ingest-gem-power-plants.ts",
     "ingest-osm-refineries": "tsx src/ingest-osm-refineries.ts",
     "ingest-wikipedia-refineries": "tsx src/ingest-wikipedia-refineries.ts",
     "type-check": "tsc --noEmit",
