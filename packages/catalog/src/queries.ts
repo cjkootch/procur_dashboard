@@ -3124,6 +3124,128 @@ export async function getCommodityTicker(
   });
 }
 
+/**
+ * Histogram of award contract values (USD) — log-bucketed because
+ * award sizes span 4-5 orders of magnitude (small fleet refuels at
+ * $5k vs. national tenders at $10M+). Buckets are powers of 10
+ * starting at $1k: [1k–10k, 10k–100k, 100k–1M, 1M–10M, 10M+].
+ *
+ * Replaces the per-bbl price-delta histogram on the intelligence
+ * dashboard since most awards lack quantity in the description.
+ */
+export async function getAwardValueHistogram(filters: {
+  buyerCountry?: string;
+  categoryTag?: string;
+  monthsLookback?: number;
+}): Promise<Array<{ bucketLabel: string; bucketLowUsd: number; awardsCount: number }>> {
+  const monthsLookback = filters.monthsLookback ?? 12;
+  const result = await db.execute(sql`
+    WITH window_rows AS (
+      SELECT contract_value_usd::numeric AS v
+      FROM awards
+      WHERE award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+        AND contract_value_usd IS NOT NULL
+        AND contract_value_usd > 0
+        ${
+          filters.categoryTag && filters.categoryTag !== 'all'
+            ? sql`AND ${filters.categoryTag} = ANY(category_tags)`
+            : sql``
+        }
+        ${filters.buyerCountry ? sql`AND buyer_country = ${filters.buyerCountry}` : sql``}
+    ),
+    bucketed AS (
+      SELECT
+        CASE
+          WHEN v < 1000 THEN 0
+          WHEN v < 10000 THEN 1
+          WHEN v < 100000 THEN 2
+          WHEN v < 1000000 THEN 3
+          WHEN v < 10000000 THEN 4
+          ELSE 5
+        END AS bucket_idx,
+        COUNT(*)::int AS awards_count
+      FROM window_rows
+      GROUP BY 1
+    )
+    SELECT bucket_idx, awards_count FROM bucketed ORDER BY bucket_idx ASC;
+  `);
+  const labels = ['<$1k', '$1k–10k', '$10k–100k', '$100k–1M', '$1M–10M', '$10M+'];
+  const lows = [0, 1000, 10000, 100000, 1_000_000, 10_000_000];
+  // Fill in zero-count buckets so the chart x-axis is consistent.
+  const counts = new Map<number, number>();
+  for (const r of result.rows as Array<Record<string, unknown>>) {
+    counts.set(Number(r.bucket_idx), Number(r.awards_count));
+  }
+  return labels.map((label, i) => ({
+    bucketLabel: label,
+    bucketLowUsd: lows[i]!,
+    awardsCount: counts.get(i) ?? 0,
+  }));
+}
+
+/**
+ * Monthly average + median award value (USD). Replaces the per-bbl
+ * delta line chart with a signal that doesn't depend on quantity
+ * extraction. Useful for spotting deal-size shifts (concentration
+ * into bigger awards = consolidation; smaller spread = retail-style
+ * fragmentation).
+ */
+export async function getMonthlyAvgAwardValue(filters: {
+  buyerCountry?: string;
+  categoryTag?: string;
+  monthsLookback?: number;
+}): Promise<
+  Array<{
+    month: string;
+    avgValueUsd: number | null;
+    medianValueUsd: number | null;
+    awardsCount: number;
+  }>
+> {
+  const monthsLookback = filters.monthsLookback ?? 12;
+  const result = await db.execute(sql`
+    WITH series AS (
+      SELECT generate_series(
+        date_trunc('month', NOW() - (${monthsLookback}::int || ' months')::interval),
+        date_trunc('month', NOW()),
+        '1 month'::interval
+      ) AS month
+    ),
+    buckets AS (
+      SELECT
+        date_trunc('month', award_date)::date AS month,
+        AVG(contract_value_usd) AS avg_v,
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY contract_value_usd) AS median_v,
+        COUNT(*)::int AS awards_count
+      FROM awards
+      WHERE award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+        AND contract_value_usd IS NOT NULL
+        AND contract_value_usd > 0
+        ${
+          filters.categoryTag && filters.categoryTag !== 'all'
+            ? sql`AND ${filters.categoryTag} = ANY(category_tags)`
+            : sql``
+        }
+        ${filters.buyerCountry ? sql`AND buyer_country = ${filters.buyerCountry}` : sql``}
+      GROUP BY 1
+    )
+    SELECT
+      to_char(s.month, 'YYYY-MM') AS month,
+      b.avg_v,
+      b.median_v,
+      COALESCE(b.awards_count, 0) AS awards_count
+    FROM series s
+    LEFT JOIN buckets b ON b.month = s.month
+    ORDER BY s.month ASC;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    month: String(r.month),
+    avgValueUsd: r.avg_v != null ? Number.parseFloat(String(r.avg_v)) : null,
+    medianValueUsd: r.median_v != null ? Number.parseFloat(String(r.median_v)) : null,
+    awardsCount: Number(r.awards_count ?? 0),
+  }));
+}
+
 // ─── Vessel intelligence — port-call inference ────────────────────
 
 export interface PortCallRow {

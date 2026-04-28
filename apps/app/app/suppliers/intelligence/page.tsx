@@ -1,11 +1,11 @@
 import Link from 'next/link';
 import {
   findCompetingSellers,
+  getAwardValueHistogram,
   getCommodityTicker,
-  getMonthlyAvgDelta,
+  getMonthlyAvgAwardValue,
   getMonthlyAwardsVolume,
   getNewBuyers,
-  getPriceDeltaHistogram,
   getTopBuyersByCategory,
   getTopSuppliersByCategory,
 } from '@procur/catalog';
@@ -92,11 +92,10 @@ export default async function IntelligencePage({ searchParams }: Props) {
     dormantLookbackMonths: Math.max(monthsLookback * 3, 36),
     limit: 15,
   };
-  const deltaFilters = {
+  const valueFilters = {
     buyerCountry,
     categoryTag: categoryTag === 'all' ? undefined : categoryTag,
     monthsLookback,
-    minConfidence: 0.6,
   };
 
   const [
@@ -106,8 +105,8 @@ export default async function IntelligencePage({ searchParams }: Props) {
     newBuyers,
     competing,
     ticker,
-    deltaHist,
-    deltaMonthly,
+    valueHist,
+    avgAwardMonthly,
   ] = await Promise.all([
     getTopBuyersByCategory(filters, 10),
     getTopSuppliersByCategory(filters, 10),
@@ -117,8 +116,8 @@ export default async function IntelligencePage({ searchParams }: Props) {
       ? Promise.resolve(null)
       : findCompetingSellers(competingArgs),
     getCommodityTicker(TICKER_SERIES.map((s) => s.slug)),
-    getPriceDeltaHistogram({ ...deltaFilters, bucketUsd: 5, maxAbsUsd: 80 }),
-    getMonthlyAvgDelta(deltaFilters),
+    getAwardValueHistogram(valueFilters),
+    getMonthlyAvgAwardValue(valueFilters),
   ]);
 
   const baseHref = (
@@ -139,33 +138,24 @@ export default async function IntelligencePage({ searchParams }: Props) {
     hint: `${b.awardsCount} awards · ${fmtUsd(b.totalValueUsd)}`,
   }));
 
-  // Price-delta histogram — fill empty buckets between min and max
-  // for a cleaner visualization.
-  const histData: BarDatum[] = (() => {
-    if (deltaHist.length === 0) return [];
-    const bucket = 5;
-    const minStart = Math.min(...deltaHist.map((b) => b.bucketStart));
-    const maxStart = Math.max(...deltaHist.map((b) => b.bucketStart));
-    const byStart = new Map(deltaHist.map((b) => [b.bucketStart, b]));
-    const out: BarDatum[] = [];
-    for (let s = minStart; s <= maxStart; s += bucket) {
-      const b = byStart.get(s);
-      const value = b?.awardsCount ?? 0;
-      const sign = s >= 0 ? '+' : '';
-      out.push({
-        label: `${sign}${s}`,
-        value,
-        hint: `${value} awards · $${s} to $${s + bucket}/bbl over benchmark`,
-        highlight: s <= 0 && s + bucket > 0, // around-zero bucket
-      });
-    }
-    return out;
-  })();
+  // Award-value histogram — log-bucketed contract_value_usd. Replaces
+  // the per-bbl delta histogram (which depended on quantity extraction
+  // that mostly returned null for our corpus).
+  const histData: BarDatum[] = valueHist.map((b) => ({
+    label: b.bucketLabel,
+    value: b.awardsCount,
+    hint: `${b.awardsCount} awards`,
+  }));
 
-  // Avg-delta-over-time line chart.
-  const deltaMonthlyData: LinePoint[] = deltaMonthly.map((m) => ({
+  // Monthly average + median award value (USD), log-scale-friendly via
+  // formatY. Replaces the per-bbl delta line.
+  const avgAwardData: LinePoint[] = avgAwardMonthly.map((m) => ({
     label: m.month.slice(2, 7),
-    value: m.avgDeltaUsdPerBbl,
+    value: m.avgValueUsd,
+  }));
+  const medianAwardData: LinePoint[] = avgAwardMonthly.map((m) => ({
+    label: m.month.slice(2, 7),
+    value: m.medianValueUsd,
   }));
 
   return (
@@ -322,26 +312,51 @@ export default async function IntelligencePage({ searchParams }: Props) {
         </div>
         <div>
           <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-            Price delta over benchmark — distribution ($/bbl)
+            Award size distribution (contract value $USD)
           </h2>
           <BarChart
             data={histData}
             yLabel="awards"
-            emptyMessage="No priced awards in this window. Run backfill-award-quantities + REFRESH MATERIALIZED VIEW award_price_deltas to populate."
+            emptyMessage="No awards with USD values in this window."
           />
         </div>
       </section>
 
-      <section className="mb-8">
-        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-          Average per-bbl delta vs benchmark, monthly
-        </h2>
-        <LineChart
-          points={deltaMonthlyData}
-          yLabel="$/bbl over benchmark"
-          formatY={(n) => `${n >= 0 ? '+' : ''}$${n.toFixed(1)}`}
-          emptyMessage="Need at least 2 months of priced awards to draw a trend. Backfill quantities + refresh the MV first."
-        />
+      <section className="mb-8 grid gap-4 lg:grid-cols-2">
+        <div>
+          <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Average award size, monthly
+          </h2>
+          <LineChart
+            points={avgAwardData}
+            yLabel="$USD"
+            formatY={(n) =>
+              n >= 1_000_000
+                ? `$${(n / 1_000_000).toFixed(1)}M`
+                : n >= 1_000
+                  ? `$${(n / 1_000).toFixed(0)}k`
+                  : `$${n.toFixed(0)}`
+            }
+            emptyMessage="Need at least 2 months of priced awards."
+          />
+        </div>
+        <div>
+          <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Median award size, monthly
+          </h2>
+          <LineChart
+            points={medianAwardData}
+            yLabel="$USD"
+            formatY={(n) =>
+              n >= 1_000_000
+                ? `$${(n / 1_000_000).toFixed(1)}M`
+                : n >= 1_000
+                  ? `$${(n / 1_000).toFixed(0)}k`
+                  : `$${n.toFixed(0)}`
+            }
+            emptyMessage="Need at least 2 months of priced awards."
+          />
+        </div>
       </section>
 
       {/* Competitive landscape */}
