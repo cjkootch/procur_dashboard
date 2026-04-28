@@ -31,12 +31,13 @@ async function runJamaicaSuppliers() {
 }
 
 async function runDrAwardsExtractor(paths: string[]) {
-  if (paths.length === 0) {
-    console.error('usage: scrape awards-dr <bulk1.jsonl.gz> [bulk2.jsonl.gz ...]');
-    process.exit(1);
-  }
-  const extractor = new DrDgcpAwardsExtractor({ bulkFilePaths: paths });
-  console.log(`extracting DR DGCP awards from ${paths.length} bulk file(s)...`);
+  // No args -> remote mode (last 5 years from OCDR). Args -> local files.
+  const extractor =
+    paths.length > 0
+      ? new DrDgcpAwardsExtractor({ bulkFilePaths: paths })
+      : new DrDgcpAwardsExtractor();
+  const sources = paths.length > 0 ? `${paths.length} local file(s)` : 'OCDR (last 5 years)';
+  console.log(`extracting DR DGCP awards from ${sources}...`);
   const result = await extractor.run();
   console.log(JSON.stringify(result, null, 2));
   process.exit(result.status === 'failed' ? 1 : 0);

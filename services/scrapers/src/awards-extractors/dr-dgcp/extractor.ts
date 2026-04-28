@@ -17,10 +17,12 @@
  * classifier). Most DGCP awards are services / construction and we
  * deliberately do not materialize those rows in v1.
  *
- * Operating mode in v1: feed it local .jsonl.gz files. The
- * URL-discovery + remote download path lands in a follow-up; no point
- * scheduling automated downloads until the parse rules are validated
- * against neon.
+ * Two ingest modes:
+ *   - bulkFilePaths: local .jsonl.gz files (manual / dev runs)
+ *   - bulkFileUrls:  remote OCDR URLs streamed via fetch + gunzip
+ * If neither is provided, defaults to fetching the last 5 years from
+ * the OCDR. Both can be passed simultaneously; files are processed in
+ * order.
  */
 import { createReadStream } from 'node:fs';
 import { createGunzip } from 'node:zlib';
@@ -32,6 +34,11 @@ import {
   hasFoodUnspsc,
   type NormalizedAward,
 } from '@procur/scrapers-core';
+import {
+  getDefaultLookbackYears,
+  getDrDgcpYearUrl,
+  streamRemoteJsonlGz,
+} from './download';
 
 const PORTAL = 'dr_dgcp_ocds';
 
@@ -78,12 +85,17 @@ type OcdsRelease = {
 };
 
 export type DrDgcpExtractorOptions = {
-  /** Local path(s) to OCDS bulk .jsonl.gz files. v1 reads from disk;
-   *  remote-fetch path lands in a follow-up. */
-  bulkFilePaths: string[];
+  /** Local path(s) to OCDS bulk .jsonl.gz files. */
+  bulkFilePaths?: string[];
+  /** Remote URLs to OCDS bulk .jsonl.gz files. Streamed via fetch + gunzip
+   *  (no on-disk caching). */
+  bulkFileUrls?: string[];
+  /** When neither bulkFilePaths nor bulkFileUrls is provided, fetch
+   *  the most recent N years from the OCDR. Default 5. */
+  yearsBack?: number;
   /** Filter to commodity classes worth materializing. Defaults to
-   *  fuel + food. Pass an empty array to materialize everything that
-   *  the classifier emits any tag for. */
+   *  fuel + food. Pass ['all'] to materialize everything that the
+   *  classifier emits any tag for. */
   categoryFilters?: Array<'fuel' | 'food' | 'all'>;
 };
 
@@ -91,11 +103,27 @@ export class DrDgcpAwardsExtractor extends AwardsExtractor {
   readonly jurisdictionSlug = 'dominican-republic';
   readonly sourcePortal = PORTAL;
 
-  constructor(private readonly options: DrDgcpExtractorOptions) {
+  constructor(private readonly options: DrDgcpExtractorOptions = {}) {
     super();
-    if (options.bulkFilePaths.length === 0) {
-      throw new Error('DrDgcpAwardsExtractor: at least one bulkFilePath required');
+  }
+
+  /**
+   * Resolved list of remote URLs given the constructor options.
+   * Exposed for inspection/logging — the actual streaming happens
+   * inline in `streamAwards()`.
+   */
+  resolveUrls(): string[] {
+    if (this.options.bulkFileUrls && this.options.bulkFileUrls.length > 0) {
+      return [...this.options.bulkFileUrls];
     }
+    if (
+      (!this.options.bulkFilePaths || this.options.bulkFilePaths.length === 0) &&
+      (!this.options.bulkFileUrls || this.options.bulkFileUrls.length === 0)
+    ) {
+      // Default: fetch last N years from OCDR.
+      return getDefaultLookbackYears(this.options.yearsBack ?? 5).map(getDrDgcpYearUrl);
+    }
+    return [];
   }
 
   async *streamAwards(): AsyncIterable<NormalizedAward> {
@@ -104,112 +132,144 @@ export class DrDgcpAwardsExtractor extends AwardsExtractor {
     const wantFuel = matchAll || filters.includes('fuel');
     const wantFood = matchAll || filters.includes('food');
 
-    for (const path of this.options.bulkFilePaths) {
-      const stream = createReadStream(path).pipe(createGunzip());
-      const rl = createInterface({ input: stream, crlfDelay: Infinity });
-      for await (const line of rl) {
-        if (!line.trim()) continue;
-        let release: OcdsRelease;
-        try {
-          release = JSON.parse(line) as OcdsRelease;
-        } catch {
-          // Malformed line — skip silently. The stream-level error path
-          // belongs to the consumer (the run loop).
+    const localPaths = this.options.bulkFilePaths ?? [];
+    const remoteUrls = this.resolveUrls();
+
+    if (localPaths.length === 0 && remoteUrls.length === 0) {
+      throw new Error(
+        'DrDgcpAwardsExtractor: no sources resolved (provide bulkFilePaths, bulkFileUrls, or rely on the default OCDR fetch).',
+      );
+    }
+
+    // Local files first (deterministic for tests + dev runs), then remote.
+    for (const path of localPaths) {
+      yield* this.processStream(localFileLines(path), { wantFuel, wantFood, matchAll });
+    }
+    for (const url of remoteUrls) {
+      try {
+        yield* this.processStream(streamRemoteJsonlGz(url), { wantFuel, wantFood, matchAll });
+      } catch (err) {
+        // Tolerate missing per-year files (DGCP hasn't published yet,
+        // or the URL pattern changed). Log via the run-level error
+        // path; other URLs in the list still get processed.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('HTTP 404')) {
+          // 404 is expected for not-yet-published years; not a failure.
           continue;
         }
-        const awards = release.awards ?? [];
-        if (awards.length === 0) continue;
-
-        const tenderItems = release.tender?.items ?? [];
-        const tenderUnspscCodes = collectUnspsc(tenderItems);
-        const tenderTouchesFuel = wantFuel && hasFuelUnspsc(tenderUnspscCodes);
-        const tenderTouchesFood = wantFood && hasFoodUnspsc(tenderUnspscCodes);
-
-        // For each award in the release, decide whether it qualifies.
-        for (const award of awards) {
-          if (!award) continue;
-          const awardItems = award.items ?? [];
-          const awardUnspscCodes = collectUnspsc(awardItems);
-          const tags = classifyAwardByUnspsc(awardUnspscCodes);
-
-          // Inheritance rule (mirrors the Python extractor): if the
-          // award has no explicit items but the tender is predominantly
-          // fuel/food, attribute the tender's tags to the award.
-          let effectiveTags = tags;
-          let effectiveCodes = awardUnspscCodes;
-          if (effectiveTags.length === 0 && awardItems.length === 0) {
-            const tenderClassifies =
-              (tenderTouchesFuel || tenderTouchesFood) &&
-              isPredominantlyTracked(tenderUnspscCodes);
-            if (tenderClassifies) {
-              effectiveTags = classifyAwardByUnspsc(tenderUnspscCodes);
-              effectiveCodes = tenderUnspscCodes;
-            }
-          }
-
-          if (effectiveTags.length === 0) continue;
-          if (!matchAll) {
-            // Drop awards that only matched non-target categories
-            // (e.g., minerals-metals when filters=['fuel','food']).
-            const allowed = new Set<string>();
-            if (wantFuel)
-              ['diesel', 'gasoline', 'jet-fuel', 'lpg', 'marine-bunker', 'heating-oil', 'heavy-fuel-oil', 'crude-oil'].forEach((t) => allowed.add(t));
-            if (wantFood) allowed.add('food-commodities');
-            if (!effectiveTags.some((t) => allowed.has(t))) continue;
-          }
-
-          const buyer = resolveBuyer(release);
-          if (!buyer.name) continue; // No buyer = unusable for the supplier-graph queries
-
-          // Award value with the same fallback chain as the Python
-          // script: award.value → matched contract.value → sum of item
-          // unit-prices. Better to have a value than to lose the row.
-          const { value: contractValueNative, currency: contractCurrency } = resolveAwardValue(
-            award,
-            release.contracts ?? [],
-          );
-
-          const awardId = award.id;
-          if (!awardId) continue; // OCDS spec requires it; skip malformed
-
-          const awardees = collectAwardees(award);
-          if (awardees.length === 0) continue;
-
-          yield {
-            award: {
-              sourcePortal: PORTAL,
-              sourceAwardId: awardId,
-              sourceUrl: release.ocid
-                ? `https://www.dgcp.gob.do/contratos/${release.ocid}`
-                : null,
-              rawPayload: { release_ocid: release.ocid, award_id: awardId },
-              buyerName: buyer.name,
-              buyerCountry: 'DO',
-              title: release.tender?.title ?? null,
-              commodityDescription:
-                release.tender?.description ?? release.tender?.title ?? null,
-              unspscCodes: effectiveCodes,
-              categoryTags: effectiveTags,
-              contractValueNative,
-              contractCurrency: contractCurrency ?? 'DOP',
-              contractValueUsd: null, // FX conversion deferred — handled by a later batch task
-              awardDate: normalizeDate(award.date),
-              status: mapAwardStatus(award.status),
-            },
-            awardees: awardees.map((a) => ({
-              supplier: {
-                sourcePortal: PORTAL,
-                sourceReferenceId: a.id ?? `${PORTAL}::name::${a.name}`,
-                organisationName: a.name,
-                country: 'DO',
-              },
-              role: 'prime',
-              aliases: [a.name],
-            })),
-          };
-        }
+        throw err;
       }
     }
+  }
+
+  private async *processStream(
+    lines: AsyncIterable<string>,
+    flags: { wantFuel: boolean; wantFood: boolean; matchAll: boolean },
+  ): AsyncIterable<NormalizedAward> {
+    const { wantFuel, wantFood, matchAll } = flags;
+    for await (const line of lines) {
+      if (!line.trim()) continue;
+      let release: OcdsRelease;
+      try {
+        release = JSON.parse(line) as OcdsRelease;
+      } catch {
+        // Malformed line — skip silently.
+        continue;
+      }
+      const awards = release.awards ?? [];
+      if (awards.length === 0) continue;
+
+      const tenderItems = release.tender?.items ?? [];
+      const tenderUnspscCodes = collectUnspsc(tenderItems);
+      const tenderTouchesFuel = wantFuel && hasFuelUnspsc(tenderUnspscCodes);
+      const tenderTouchesFood = wantFood && hasFoodUnspsc(tenderUnspscCodes);
+
+      for (const award of awards) {
+        if (!award) continue;
+        const awardItems = award.items ?? [];
+        const awardUnspscCodes = collectUnspsc(awardItems);
+        const tags = classifyAwardByUnspsc(awardUnspscCodes);
+
+        // Inheritance rule (mirrors the Python extractor): if the
+        // award has no explicit items but the tender is predominantly
+        // fuel/food, attribute the tender's tags to the award.
+        let effectiveTags = tags;
+        let effectiveCodes = awardUnspscCodes;
+        if (effectiveTags.length === 0 && awardItems.length === 0) {
+          const tenderClassifies =
+            (tenderTouchesFuel || tenderTouchesFood) &&
+            isPredominantlyTracked(tenderUnspscCodes);
+          if (tenderClassifies) {
+            effectiveTags = classifyAwardByUnspsc(tenderUnspscCodes);
+            effectiveCodes = tenderUnspscCodes;
+          }
+        }
+
+        if (effectiveTags.length === 0) continue;
+        if (!matchAll) {
+          const allowed = new Set<string>();
+          if (wantFuel)
+            ['diesel', 'gasoline', 'jet-fuel', 'lpg', 'marine-bunker', 'heating-oil', 'heavy-fuel-oil', 'crude-oil'].forEach((t) => allowed.add(t));
+          if (wantFood) allowed.add('food-commodities');
+          if (!effectiveTags.some((t) => allowed.has(t))) continue;
+        }
+
+        const buyer = resolveBuyer(release);
+        if (!buyer.name) continue;
+
+        const { value: contractValueNative, currency: contractCurrency } = resolveAwardValue(
+          award,
+          release.contracts ?? [],
+        );
+
+        const awardId = award.id;
+        if (!awardId) continue;
+
+        const awardees = collectAwardees(award);
+        if (awardees.length === 0) continue;
+
+        yield {
+          award: {
+            sourcePortal: PORTAL,
+            sourceAwardId: awardId,
+            sourceUrl: release.ocid
+              ? `https://www.dgcp.gob.do/contratos/${release.ocid}`
+              : null,
+            rawPayload: { release_ocid: release.ocid, award_id: awardId },
+            buyerName: buyer.name,
+            buyerCountry: 'DO',
+            title: release.tender?.title ?? null,
+            commodityDescription:
+              release.tender?.description ?? release.tender?.title ?? null,
+            unspscCodes: effectiveCodes,
+            categoryTags: effectiveTags,
+            contractValueNative,
+            contractCurrency: contractCurrency ?? 'DOP',
+            contractValueUsd: null,
+            awardDate: normalizeDate(award.date),
+            status: mapAwardStatus(award.status),
+          },
+          awardees: awardees.map((a) => ({
+            supplier: {
+              sourcePortal: PORTAL,
+              sourceReferenceId: a.id ?? `${PORTAL}::name::${a.name}`,
+              organisationName: a.name,
+              country: 'DO',
+            },
+            role: 'prime',
+            aliases: [a.name],
+          })),
+        };
+      }
+    }
+  }
+}
+
+async function* localFileLines(path: string): AsyncIterable<string> {
+  const stream = createReadStream(path).pipe(createGunzip());
+  const rl = createInterface({ input: stream, crlfDelay: Infinity });
+  for await (const line of rl) {
+    if (line.trim()) yield line;
   }
 }
 
