@@ -18,6 +18,8 @@
     "db:seed": "tsx src/seed.ts",
     "db:seed-supplier-graph": "tsx src/seed-supplier-graph.ts",
     "backfill-usd": "tsx src/backfill-usd.ts",
+    "ingest-wikidata-refineries": "tsx src/ingest-wikidata-refineries.ts",
+    "seed-known-entities": "tsx src/seed-known-entities.ts",
     "type-check": "tsc --noEmit",
     "clean": "rm -rf dist .turbo node_modules"
   },
