@@ -274,6 +274,34 @@
       "when": 1777245000000,
       "tag": "0038_entity_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1777334400000,
+      "tag": "0039_crude_grades",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1777334500000,
+      "tag": "0040_commodity_prices",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1777334600000,
+      "tag": "0041_vessel_intelligence",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1777334700000,
+      "tag": "0042_pricing_analytics_foundation",
+      "breakpoints": true
     }
   ]
 }

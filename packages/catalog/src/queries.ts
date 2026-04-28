@@ -2657,6 +2657,438 @@ export async function lookupKnownEntities(
   }));
 }
 
+// ─── Vessel intelligence — port-call inference ────────────────────
+
+export interface PortCallRow {
+  mmsi: string;
+  vesselName: string | null;
+  imo: string | null;
+  shipTypeLabel: string | null;
+  flagCountry: string | null;
+  portSlug: string;
+  portName: string;
+  portCountry: string;
+  portType: string;
+  /** Earliest position match in the geofence within the lookback window. */
+  arrivalAt: string;
+  /** Latest position match in the geofence within the lookback window. */
+  lastSeenAt: string;
+  /** Slowest speed observed during the call — moored vessels read ~0. */
+  minSpeedKnots: number | null;
+  /** Number of position reports inside the geofence — confidence proxy. */
+  positionCount: number;
+}
+
+/**
+ * Find vessels seen at one or more ports in the last N days. Lazy
+ * inference — derived directly from vessel_positions + ports rather
+ * than a materialized port_calls table. A "call" is any cluster of
+ * positions from the same MMSI inside the port's geofence with
+ * min_speed < 2 knots (slow enough to be moored or anchored).
+ *
+ * Geofence math: equirectangular approximation done in-Postgres for
+ * speed. Acceptable error <0.5 nm at typical port latitudes (30°-50°),
+ * well inside the 1.5–5 nm radius envelope each port carries.
+ *
+ * Pair with lookup_known_entities to map a refinery port-call back
+ * to the buyer entity.
+ */
+export async function findRecentPortCalls(filters: {
+  portSlug?: string;
+  country?: string;
+  portType?: 'crude-loading' | 'refinery' | 'transshipment' | 'mixed';
+  /** Lookback in days. Default 30. */
+  daysBack?: number;
+  /** Cap rows. Default 50, max 500. */
+  limit?: number;
+}): Promise<PortCallRow[]> {
+  const daysBack = filters.daysBack ?? 30;
+  const limit = Math.min(filters.limit ?? 50, 500);
+
+  const result = await db.execute(sql`
+    WITH selected_ports AS (
+      SELECT slug, name, country, port_type,
+             lat::numeric AS lat, lng::numeric AS lng,
+             geofence_radius_nm::numeric AS radius_nm
+      FROM ports
+      WHERE 1=1
+        ${filters.portSlug ? sql`AND slug = ${filters.portSlug}` : sql``}
+        ${filters.country ? sql`AND country = ${filters.country}` : sql``}
+        ${filters.portType ? sql`AND port_type = ${filters.portType}` : sql``}
+    ),
+    matches AS (
+      SELECT
+        p.mmsi,
+        sp.slug    AS port_slug,
+        sp.name    AS port_name,
+        sp.country AS port_country,
+        sp.port_type,
+        p.timestamp,
+        p.speed_knots
+      FROM vessel_positions p
+      JOIN selected_ports sp
+        ON SQRT(
+             POW((p.lat::numeric - sp.lat) * 60, 2) +
+             POW((p.lng::numeric - sp.lng) * 60 * COS(RADIANS(sp.lat)), 2)
+           ) <= sp.radius_nm
+      WHERE p.timestamp >= NOW() - (${daysBack}::int * INTERVAL '1 day')
+        AND (p.speed_knots IS NULL OR p.speed_knots::numeric < 2)
+    ),
+    aggregated AS (
+      SELECT
+        m.mmsi,
+        m.port_slug,
+        MIN(m.port_name)    AS port_name,
+        MIN(m.port_country) AS port_country,
+        MIN(m.port_type)    AS port_type,
+        MIN(m.timestamp)    AS arrival_at,
+        MAX(m.timestamp)    AS last_seen_at,
+        MIN(m.speed_knots::numeric) AS min_speed,
+        COUNT(*)::int       AS position_count
+      FROM matches m
+      GROUP BY m.mmsi, m.port_slug
+    )
+    SELECT
+      a.mmsi,
+      v.name AS vessel_name,
+      v.imo,
+      v.ship_type_label,
+      v.flag_country,
+      a.port_slug, a.port_name, a.port_country, a.port_type,
+      a.arrival_at, a.last_seen_at, a.min_speed, a.position_count
+    FROM aggregated a
+    LEFT JOIN vessels v ON v.mmsi = a.mmsi
+    ORDER BY a.last_seen_at DESC
+    LIMIT ${limit};
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    mmsi: String(r.mmsi),
+    vesselName: r.vessel_name == null ? null : String(r.vessel_name),
+    imo: r.imo == null ? null : String(r.imo),
+    shipTypeLabel: r.ship_type_label == null ? null : String(r.ship_type_label),
+    flagCountry: r.flag_country == null ? null : String(r.flag_country),
+    portSlug: String(r.port_slug),
+    portName: String(r.port_name),
+    portCountry: String(r.port_country),
+    portType: String(r.port_type),
+    arrivalAt: new Date(r.arrival_at as string).toISOString(),
+    lastSeenAt: new Date(r.last_seen_at as string).toISOString(),
+    minSpeedKnots:
+      r.min_speed == null ? null : Number.parseFloat(String(r.min_speed)),
+    positionCount: Number(r.position_count ?? 0),
+  }));
+}
+
+// ─── Commodity price context ──────────────────────────────────────
+
+export interface CommodityPriceContext {
+  seriesSlug: string;
+  unit: string;
+  latest: { date: string; price: number } | null;
+  movingAverage: number | null;
+  windowLow: { date: string; price: number } | null;
+  windowHigh: { date: string; price: number } | null;
+  pctChangeOverWindow: number | null;
+  windowDays: number;
+  /** True when commodity_prices has zero rows for this series — caller
+      should explain the data gap rather than fabricate numbers. */
+  noData: boolean;
+}
+
+/**
+ * Current price + recent context for a commodity series. Used by the
+ * get_commodity_price_context chat tool — the assistant can thread
+ * "Brent today: $82.40, +2.1% on the week" into any reverse-search
+ * or pitch response.
+ *
+ * Series must already be ingested. See ingest-fred-prices (Brent +
+ * WTI) and ingest-eia-prices (refined products).
+ */
+export async function getCommodityPriceContext(
+  seriesSlug: string,
+  windowDays = 30,
+): Promise<CommodityPriceContext> {
+  const result = await db.execute(sql`
+    WITH window_rows AS (
+      SELECT price_date, price::numeric AS price, unit
+      FROM commodity_prices
+      WHERE series_slug = ${seriesSlug}
+        AND contract_type = 'spot'
+        AND price_date >= CURRENT_DATE - ${windowDays}::int
+      ORDER BY price_date DESC
+    ),
+    latest AS (
+      SELECT price_date, price, unit FROM commodity_prices
+      WHERE series_slug = ${seriesSlug} AND contract_type = 'spot'
+      ORDER BY price_date DESC LIMIT 1
+    ),
+    earliest_in_window AS (
+      SELECT price FROM window_rows ORDER BY price_date ASC LIMIT 1
+    ),
+    high AS (
+      SELECT price_date, price FROM window_rows ORDER BY price DESC, price_date DESC LIMIT 1
+    ),
+    low AS (
+      SELECT price_date, price FROM window_rows ORDER BY price ASC, price_date DESC LIMIT 1
+    )
+    SELECT
+      (SELECT price_date FROM latest) AS latest_date,
+      (SELECT price      FROM latest) AS latest_price,
+      (SELECT unit       FROM latest) AS unit,
+      (SELECT AVG(price) FROM window_rows) AS moving_avg,
+      (SELECT price FROM earliest_in_window) AS earliest_price,
+      (SELECT price_date FROM high) AS high_date,
+      (SELECT price      FROM high) AS high_price,
+      (SELECT price_date FROM low)  AS low_date,
+      (SELECT price      FROM low)  AS low_price;
+  `);
+  const row = (result.rows as Array<Record<string, unknown>>)[0];
+  if (!row || row.latest_price == null) {
+    return {
+      seriesSlug,
+      unit: 'usd-bbl',
+      latest: null,
+      movingAverage: null,
+      windowLow: null,
+      windowHigh: null,
+      pctChangeOverWindow: null,
+      windowDays,
+      noData: true,
+    };
+  }
+  const latestPrice = Number.parseFloat(String(row.latest_price));
+  const earliestPrice =
+    row.earliest_price != null ? Number.parseFloat(String(row.earliest_price)) : null;
+  const pctChange =
+    earliestPrice != null && earliestPrice !== 0
+      ? ((latestPrice - earliestPrice) / earliestPrice) * 100
+      : null;
+  return {
+    seriesSlug,
+    unit: row.unit == null ? 'usd-bbl' : String(row.unit),
+    latest: { date: String(row.latest_date), price: latestPrice },
+    movingAverage:
+      row.moving_avg != null ? Number.parseFloat(String(row.moving_avg)) : null,
+    windowHigh:
+      row.high_price != null
+        ? {
+            date: String(row.high_date),
+            price: Number.parseFloat(String(row.high_price)),
+          }
+        : null,
+    windowLow:
+      row.low_price != null
+        ? {
+            date: String(row.low_date),
+            price: Number.parseFloat(String(row.low_price)),
+          }
+        : null,
+    pctChangeOverWindow: pctChange,
+    windowDays,
+    noData: false,
+  };
+}
+
+/**
+ * Spread between two series, both at their most-recent observation.
+ * E.g. Brent–WTI or Brent–Urals. The result's asOfDate is the earlier
+ * of the two latest dates so the caller knows the comparison window.
+ */
+export async function getCommoditySpread(
+  baseSlug: string,
+  targetSlug: string,
+): Promise<{
+  baseSlug: string;
+  targetSlug: string;
+  spread: number | null;
+  basePrice: number | null;
+  targetPrice: number | null;
+  asOfDate: string | null;
+}> {
+  const result = await db.execute(sql`
+    WITH base AS (
+      SELECT price_date, price::numeric AS price
+      FROM commodity_prices
+      WHERE series_slug = ${baseSlug} AND contract_type = 'spot'
+      ORDER BY price_date DESC LIMIT 1
+    ),
+    target AS (
+      SELECT price_date, price::numeric AS price
+      FROM commodity_prices
+      WHERE series_slug = ${targetSlug} AND contract_type = 'spot'
+      ORDER BY price_date DESC LIMIT 1
+    )
+    SELECT
+      (SELECT price FROM base)   AS base_price,
+      (SELECT price FROM target) AS target_price,
+      LEAST(
+        (SELECT price_date FROM base),
+        (SELECT price_date FROM target)
+      ) AS as_of_date;
+  `);
+  const row = (result.rows as Array<Record<string, unknown>>)[0];
+  const basePrice =
+    row?.base_price != null ? Number.parseFloat(String(row.base_price)) : null;
+  const targetPrice =
+    row?.target_price != null ? Number.parseFloat(String(row.target_price)) : null;
+  return {
+    baseSlug,
+    targetSlug,
+    basePrice,
+    targetPrice,
+    spread: basePrice != null && targetPrice != null ? basePrice - targetPrice : null,
+    asOfDate: row?.as_of_date == null ? null : String(row.as_of_date),
+  };
+}
+
+// ─── Crude grades + refinery slate compatibility ──────────────────
+
+export interface CrudeGradeRow {
+  slug: string;
+  name: string;
+  originCountry: string | null;
+  region: string | null;
+  apiGravity: number | null;
+  sulfurPct: number | null;
+  tan: number | null;
+  characterization: string | null;
+  isMarker: boolean;
+  loadingCountry: string | null;
+  notes: string | null;
+}
+
+/**
+ * List crude grades from the reference table. Optionally filter by
+ * region or origin country. Used to drive grade pickers and also as
+ * input to refinery-slate compatibility queries.
+ */
+export async function listCrudeGrades(filters?: {
+  region?: string;
+  originCountry?: string;
+}): Promise<CrudeGradeRow[]> {
+  const result = await db.execute(sql`
+    SELECT
+      slug, name, origin_country, region, api_gravity, sulfur_pct, tan,
+      characterization, is_marker, loading_country, notes
+    FROM crude_grades
+    WHERE 1=1
+      ${filters?.region ? sql`AND region = ${filters.region}` : sql``}
+      ${filters?.originCountry ? sql`AND origin_country = ${filters.originCountry}` : sql``}
+    ORDER BY is_marker DESC, region, name;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    slug: String(r.slug),
+    name: String(r.name),
+    originCountry: r.origin_country == null ? null : String(r.origin_country),
+    region: r.region == null ? null : String(r.region),
+    apiGravity: r.api_gravity == null ? null : Number.parseFloat(String(r.api_gravity)),
+    sulfurPct: r.sulfur_pct == null ? null : Number.parseFloat(String(r.sulfur_pct)),
+    tan: r.tan == null ? null : Number.parseFloat(String(r.tan)),
+    characterization: r.characterization == null ? null : String(r.characterization),
+    isMarker: Boolean(r.is_marker),
+    loadingCountry: r.loading_country == null ? null : String(r.loading_country),
+    notes: r.notes == null ? null : String(r.notes),
+  }));
+}
+
+export interface RefineryCompatibilityRow {
+  slug: string;
+  name: string;
+  country: string;
+  capacityBpd: number | null;
+  operator: string | null;
+  notes: string | null;
+  matchSource: 'tag' | 'slate-window';
+  /** Free-form notes from the refinery's slate metadata (analyst). */
+  slateNotes: string | null;
+}
+
+/**
+ * Find refineries that can run a given crude grade.
+ *
+ * Two match paths, unioned:
+ *   1. Explicit tag — the refinery is tagged `compatible:<grade-slug>`.
+ *      Highest confidence; analyst-curated.
+ *   2. Slate-window — the grade's API + sulfur fits inside the
+ *      refinery's `metadata.slate` window. Lower confidence, but
+ *      catches refineries that haven't been individually annotated.
+ *
+ * Tagged matches always win (matchSource = 'tag') so the chat tool can
+ * surface them first.
+ */
+export async function lookupRefineriesByGrade(
+  gradeSlug: string,
+  filters?: { country?: string; limit?: number },
+): Promise<RefineryCompatibilityRow[]> {
+  const limit = Math.min(filters?.limit ?? 50, 500);
+  const tag = `compatible:${gradeSlug}`;
+
+  // Pull the grade's API + sulfur for the slate-window fallback.
+  const gradeRows = await db.execute(sql`
+    SELECT api_gravity, sulfur_pct FROM crude_grades WHERE slug = ${gradeSlug} LIMIT 1;
+  `);
+  const grade = (gradeRows.rows as Array<Record<string, unknown>>)[0];
+  const apiNum = grade?.api_gravity != null ? Number.parseFloat(String(grade.api_gravity)) : null;
+  const sulfurNum = grade?.sulfur_pct != null ? Number.parseFloat(String(grade.sulfur_pct)) : null;
+
+  const result = await db.execute(sql`
+    WITH tagged AS (
+      SELECT slug, name, country, metadata, notes,
+             'tag'::text AS match_source
+      FROM known_entities
+      WHERE role = 'refiner'
+        AND ${tag} = ANY(tags)
+        ${filters?.country ? sql`AND country = ${filters.country}` : sql``}
+    ),
+    windowed AS (
+      SELECT slug, name, country, metadata, notes,
+             'slate-window'::text AS match_source
+      FROM known_entities
+      WHERE role = 'refiner'
+        AND metadata ? 'slate'
+        AND NOT (${tag} = ANY(COALESCE(tags, ARRAY[]::text[])))
+        ${
+          apiNum != null
+            ? sql`AND (metadata->'slate'->>'min_api')::numeric <= ${apiNum}
+                  AND (metadata->'slate'->>'max_api')::numeric >= ${apiNum}`
+            : sql``
+        }
+        ${
+          sulfurNum != null
+            ? sql`AND (metadata->'slate'->>'max_sulfur_pct')::numeric >= ${sulfurNum}`
+            : sql``
+        }
+        ${filters?.country ? sql`AND country = ${filters.country}` : sql``}
+    )
+    SELECT * FROM tagged
+    UNION ALL
+    SELECT * FROM windowed
+    LIMIT ${limit};
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((r) => {
+    const meta = (r.metadata as Record<string, unknown> | null) ?? {};
+    const slate = (meta.slate as Record<string, unknown> | undefined) ?? {};
+    return {
+      slug: String(r.slug),
+      name: String(r.name),
+      country: String(r.country),
+      capacityBpd: typeof meta.capacity_bpd === 'number' ? meta.capacity_bpd : null,
+      operator:
+        typeof meta.operator === 'string'
+          ? meta.operator
+          : Array.isArray(meta.operators) && typeof meta.operators[0] === 'string'
+            ? (meta.operators[0] as string)
+            : null,
+      notes: r.notes == null ? null : String(r.notes),
+      matchSource: r.match_source === 'tag' ? 'tag' : 'slate-window',
+      slateNotes:
+        typeof slate.source_notes === 'string' ? (slate.source_notes as string) : null,
+    };
+  });
+}
+
 // ─── Entity ownership chain ───────────────────────────────────────
 
 export interface OwnershipNode {
