@@ -34,6 +34,7 @@ import { config as loadEnv } from 'dotenv';
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import * as schema from './schema';
+import { findOrUpsertEntity } from './lib/find-or-upsert-entity';
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -53,11 +54,24 @@ const SPARQL_ENDPOINT = 'https://query.wikidata.org/sparql';
  *   SELECT ?c ?cLabel WHERE { ?c wdt:P279* wd:Q235365 .
  *     SERVICE wikibase:label { bd:serviceParam wikibase:language "en" . } }
  */
+/**
+ * Broad list of Q-IDs Wikidata uses for petroleum / oil / fuel
+ * processing facilities. Hand-picked to maximize coverage without
+ * pulling in unrelated industrial sites. Re-discoverable via:
+ *   SELECT ?c ?cLabel WHERE { ?c wdt:P279* wd:Q235365 .
+ *     SERVICE wikibase:label { bd:serviceParam wikibase:language "en" . } }
+ */
 const REFINERY_CLASSES = [
   'wd:Q235365',   // oil refinery
-  'wd:Q1019358',  // petroleum refinery (most common direct class)
+  'wd:Q1019358',  // petroleum refinery
   'wd:Q1521410',  // petroleum products refinery
   'wd:Q11516670', // crude oil refinery
+  'wd:Q1429218',  // refinery (general)
+  'wd:Q5141029',  // crude oil refinery (alt)
+  'wd:Q19844914', // refinery
+  'wd:Q12029668', // petroleum facility
+  'wd:Q66718883', // oil and gas refining facility
+  'wd:Q1141803',  // petrochemical plant (some refining sites tagged this)
 ];
 
 const SPARQL_QUERY = `
@@ -236,7 +250,8 @@ async function main(): Promise<void> {
   const rows = await fetchWikidata();
   console.log(`  ${rows.length} raw rows`);
 
-  let upserted = 0;
+  let inserted = 0;
+  let merged = 0;
   let skipped = 0;
   for (const raw of rows) {
     const r = normalizeRow(raw);
@@ -244,56 +259,33 @@ async function main(): Promise<void> {
       skipped += 1;
       continue;
     }
-    const notes = buildNotes(r);
-    const tags = buildTags(r);
-
-    await db
-      .insert(schema.knownEntities)
-      .values({
-        slug: r.slug,
-        name: r.name,
-        country: r.country,
-        role: 'refiner',
-        categories: ['crude-oil', 'diesel', 'gasoline', 'jet-fuel'],
-        notes,
-        aliases: [r.name],
-        tags,
-        latitude: r.latitude != null ? String(r.latitude) : null,
-        longitude: r.longitude != null ? String(r.longitude) : null,
-        metadata: {
-          source: 'wikidata',
-          wikidata_id: r.wikidataId,
-          operator: r.operator,
-          owner: r.owner,
-          capacity_bpd: r.capacityBpd,
-          status: r.status,
-          inception_year: r.inceptionYear,
-        },
-      })
-      .onConflictDoUpdate({
-        target: schema.knownEntities.slug,
-        set: {
-          name: r.name,
-          country: r.country,
-          notes,
-          tags,
-          latitude: r.latitude != null ? String(r.latitude) : null,
-          longitude: r.longitude != null ? String(r.longitude) : null,
-          metadata: {
-            source: 'wikidata',
-            wikidata_id: r.wikidataId,
-            operator: r.operator,
-            owner: r.owner,
-            capacity_bpd: r.capacityBpd,
-            status: r.status,
-            inception_year: r.inceptionYear,
-          },
-          updatedAt: new Date(),
-        },
-      });
-    upserted += 1;
+    const result = await findOrUpsertEntity(db, {
+      slug: r.slug,
+      source: 'wikidata',
+      name: r.name,
+      country: r.country,
+      role: 'refiner',
+      categories: ['crude-oil', 'diesel', 'gasoline', 'jet-fuel'],
+      notes: buildNotes(r),
+      aliases: [r.name],
+      tags: buildTags(r),
+      latitude: r.latitude,
+      longitude: r.longitude,
+      metadata: {
+        wikidata_id: r.wikidataId,
+        operator: r.operator,
+        owner: r.owner,
+        capacity_bpd: r.capacityBpd,
+        status: r.status,
+        inception_year: r.inceptionYear,
+      },
+    });
+    if (result.outcome === 'inserted') inserted += 1;
+    else merged += 1;
   }
-  console.log(`Done. upserted=${upserted}, skipped=${skipped} (unlabeled)`);
+  console.log(
+    `Done. inserted=${inserted} (new rows), merged=${merged} (enriched existing curated/prior rows), skipped=${skipped} (unlabeled).`,
+  );
 }
 
 function buildNotes(r: NonNullable<ReturnType<typeof normalizeRow>>): string {
