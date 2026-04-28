@@ -60,6 +60,7 @@ export function Chat({
   const [hydrating, setHydrating] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     const el = scrollerRef.current;
@@ -308,12 +309,12 @@ export function Chat({
           </div>
         )}
         {!hydrating && messages.length === 0 && (
-          <div className="mx-auto max-w-lg py-16 text-center text-sm text-[color:var(--color-muted-foreground)]">
-            <p className="mb-2 text-base font-medium text-[color:var(--color-foreground)]">
-              Ask anything about your pipeline
-            </p>
-            <p>Try: &ldquo;which pursuits are past deadline?&rdquo;, &ldquo;show me IT tenders in Guyana&rdquo;, or &ldquo;draft a differentiator section for pursuit X&rdquo;.</p>
-          </div>
+          <EmptyStatePrompts
+            onPick={(text) => {
+              setInput(text);
+              textareaRef.current?.focus();
+            }}
+          />
         )}
         <div className="mx-auto flex max-w-2xl flex-col gap-4">
           {messages.map((m) => (
@@ -329,6 +330,7 @@ export function Chat({
       <div className="border-t border-[color:var(--color-border)] bg-[color:var(--color-background)] p-3">
         <div className="mx-auto max-w-2xl">
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
@@ -663,6 +665,77 @@ function AssistantMarkdown({ text }: { text: string }) {
       >
         {text}
       </ReactMarkdown>
+    </div>
+  );
+}
+
+
+/**
+ * Click-to-fill prompt tiles shown when the conversation is empty.
+ * Six cards demonstrating the assistant's capabilities for VTC's
+ * commodity-trading workflow — live market data, buyer discovery,
+ * grade-fit refineries, tender hunt, pricing intel, deal economics.
+ *
+ * Tiles set the textarea value and focus it; they don't auto-send,
+ * so the trader can tweak the question (volume, port, grade) before
+ * firing it off.
+ */
+function EmptyStatePrompts({ onPick }: { onPick: (text: string) => void }) {
+  const prompts: Array<{ tag: string; text: string }> = [
+    {
+      tag: 'Live market',
+      text: "What's Brent and WTI doing today, and what's the spread?",
+    },
+    {
+      tag: 'Buyer discovery',
+      text: 'Who would buy 1M bbl of light-sweet crude in the Mediterranean?',
+    },
+    {
+      tag: 'Grade fit',
+      text: 'Which Med refineries can run Es Sider grade?',
+    },
+    {
+      tag: 'Open tenders',
+      text: 'Diesel tenders in the Caribbean closing in the next 14 days',
+    },
+    {
+      tag: 'Pricing intel',
+      text: 'Is $76/bbl net CIF Batumi competitive for Azeri Light?',
+    },
+    {
+      tag: 'Deal economics',
+      text:
+        'Model 3M USG of ULSD: sell $3.10/USG, source $2.05/USG, freight $0.11/USG',
+    },
+  ];
+  return (
+    <div className="mx-auto max-w-2xl px-1 py-8">
+      <div className="mb-4 text-center">
+        <p className="text-base font-medium text-[color:var(--color-foreground)]">
+          Pick up the trade
+        </p>
+        <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+          Tap a tile to start, or type your own. The assistant pulls from live
+          spot prices, the curated rolodex, public tenders, and customs flows.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {prompts.map((p) => (
+          <button
+            key={p.tag}
+            type="button"
+            onClick={() => onPick(p.text)}
+            className="group/tile rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-3 text-left text-xs hover:border-[color:var(--color-foreground)] hover:bg-[color:var(--color-muted)]/30"
+          >
+            <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-muted-foreground)] group-hover/tile:text-[color:var(--color-foreground)]">
+              {p.tag}
+            </div>
+            <div className="text-sm leading-snug text-[color:var(--color-foreground)]">
+              {p.text}
+            </div>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

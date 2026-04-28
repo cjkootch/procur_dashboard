@@ -14,50 +14,54 @@ type NavGroup = {
 };
 
 /**
- * Navigation structure mirrors GovDash's left rail:
- *   - top group is home / lifecycle overview / Discover (public)
- *   - products group is Capture, Proposal, Pricer, Contract
- *   - data group is the content library and past-performance store
- *   - reports group is Insights, Assistant, Search
- *   - account group is settings and billing
+ * Navigation reorganised around a commodity-trading workflow rather than
+ * the broader govcon-shop module set:
+ *
+ *   1. find        — Discover (public), Reverse search, Rolodex
+ *   2. intelligence — Market intelligence, Insights
+ *   3. deals        — Pipeline, Pricer, Contracts
+ *   4. tools        — Assistant, Alerts
+ *   5. account      — Company profile, Billing
+ *
+ * Hidden because they're proposal-shop heavy and not part of the active
+ * trading workflow (the underlying pages still exist and route via direct
+ * URL — only the nav surface is trimmed): /proposal, /past-performance,
+ * /library, /search.
+ *
+ * If the platform later adds multi-tenant company tiers / workflows, this
+ * should switch to a per-company / per-tier nav config.
  */
 const NAV: NavGroup[] = [
   {
+    items: [{ href: '/', label: 'Home' }],
+  },
+  {
+    heading: 'Find',
     items: [
-      { href: '/', label: 'Home' },
       { href: 'https://discover.procur.app', label: 'Discover', external: true },
-    ],
-  },
-  {
-    heading: 'Products',
-    items: [
-      { href: '/capture', label: 'Capture' },
-      { href: '/proposal', label: 'Proposal' },
-      { href: '/pricer', label: 'Pricer' },
-      { href: '/contract', label: 'Contract' },
-    ],
-  },
-  {
-    heading: 'Data',
-    items: [
-      { href: '/library', label: 'Content library' },
-      { href: '/past-performance', label: 'Past performance' },
-    ],
-  },
-  {
-    heading: 'Supplier graph',
-    items: [
       { href: '/suppliers/reverse-search', label: 'Reverse search' },
-      { href: '/suppliers/intelligence', label: 'Intelligence' },
-      { href: '/suppliers/known-entities', label: 'Known entities' },
+      { href: '/suppliers/known-entities', label: 'Rolodex' },
     ],
   },
   {
-    heading: 'Reports',
+    heading: 'Intelligence',
     items: [
-      { href: '/insights', label: 'Insights' },
+      { href: '/suppliers/intelligence', label: 'Market intelligence' },
+      { href: '/insights', label: 'My pipeline' },
+    ],
+  },
+  {
+    heading: 'Deals',
+    items: [
+      { href: '/capture', label: 'Pipeline' },
+      { href: '/pricer', label: 'Pricer' },
+      { href: '/contract', label: 'Contracts' },
+    ],
+  },
+  {
+    heading: 'Tools',
+    items: [
       { href: '/assistant', label: 'Assistant' },
-      { href: '/search', label: 'Search' },
       { href: '/alerts', label: 'Alerts' },
     ],
   },
