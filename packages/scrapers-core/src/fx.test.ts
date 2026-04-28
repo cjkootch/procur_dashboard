@@ -24,8 +24,14 @@ describe('convertToUsd', () => {
   });
 
   it('returns null for unknown currency', () => {
-    assert.equal(convertToUsd(1000, 'EUR', '2024-01-15'), null);
     assert.equal(convertToUsd(1000, 'XYZ', '2024-01-15'), null);
+    assert.equal(convertToUsd(1000, 'GBP', '2024-01-15'), null);
+  });
+
+  it('converts EUR using monthly rate', () => {
+    // 'EUR-2024-06': 1.078 → 1000 EUR ≈ 1078 USD
+    const usd = convertToUsd(1000, 'EUR', '2024-06-15');
+    assert.ok(usd != null && usd > 1070 && usd < 1085, `expected ~1078 USD, got ${usd}`);
   });
 
   it('returns null for null/undefined inputs', () => {
@@ -53,10 +59,12 @@ describe('isSupportedCurrency', () => {
     assert.equal(isSupportedCurrency('DOP'), true);
     assert.equal(isSupportedCurrency('JMD'), true);
     assert.equal(isSupportedCurrency('jmd'), true);
+    assert.equal(isSupportedCurrency('EUR'), true);
   });
 
   it('returns false for unknown / null', () => {
-    assert.equal(isSupportedCurrency('EUR'), false);
+    assert.equal(isSupportedCurrency('GBP'), false);
+    assert.equal(isSupportedCurrency('XYZ'), false);
     assert.equal(isSupportedCurrency(null), false);
     assert.equal(isSupportedCurrency(undefined), false);
   });

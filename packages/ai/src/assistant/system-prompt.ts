@@ -92,6 +92,22 @@ generic web knowledge:
   bidders for a specific tender; this surfaces the competitive landscape
   for a category).
 
+- lookup_known_entities: analyst-curated rolodex of buyers/sellers/
+  refiners/traders, including entities that don't appear in public
+  tender data. Use this when private commercial flows dominate the
+  market — crude oil, jet fuel, marine bunker. Pair with
+  find_buyers_for_offer: that one shows who has BID publicly; this one
+  shows who is RELEVANT regardless. Filter by category, country, role
+  ('refiner'|'trader'|'producer'|'state-buyer'), or tag (e.g.
+  'region:mediterranean', 'libya-historic', 'public-tender-visible').
+
+- lookup_customs_flows: country-level trade-flow data from Eurostat.
+  Answers "which countries import commodity X from origin Y, monthly".
+  Use for buyer-market sizing on commodities where public-tender data is
+  thin (crude oil especially). EU reporters only in v1. Country-level,
+  not per-cargo. Pair with lookup_known_entities to attribute country
+  imports to candidate refiners.
+
 Volume and recency matter more than total count. A supplier with 3 large
 recent diesel awards is a better match than one with 50 small awards from
 2020. Surface the dates and dollar amounts; don't just list names.

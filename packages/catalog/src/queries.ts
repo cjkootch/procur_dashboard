@@ -2310,6 +2310,135 @@ export async function getToolCallStats(
   }));
 }
 
+// ─── Customs flows (Eurostat Comext + future sources) ───────────
+
+export interface CustomsFlowFilters {
+  /** ISO-2 country of origin. e.g. 'LY' for Libya. */
+  partnerCountry: string;
+  /** HS code (2/4/6/8 digits). e.g. '2709' for crude petroleum. */
+  productCode: string;
+  /** Default 12 months. */
+  monthsLookback?: number;
+  /** Filter to a single reporter country (omit for all importers). */
+  reporterCountry?: string;
+}
+
+export interface TopImporterRow {
+  reporterCountry: string;
+  totalQuantityKg: number | null;
+  totalValueUsd: number | null;
+  totalValueEur: number | null;
+  monthsActive: number;
+  mostRecentPeriod: string;
+}
+
+/**
+ * Country-level leaderboard: which countries imported the most of
+ * `productCode` from `partnerCountry` over the lookback window?
+ *
+ * Sample question this answers: "Which EU countries imported the most
+ * crude petroleum from Libya in the last 12 months?"
+ *
+ * Source filtered to 'eurostat-comext' for v1; once UN Comtrade or
+ * other sources are wired in, the query unions across them.
+ */
+export async function getTopImportersByPartner(
+  filters: CustomsFlowFilters,
+  limit = 25,
+): Promise<TopImporterRow[]> {
+  const monthsLookback = filters.monthsLookback ?? 12;
+  const result = await db.execute(sql`
+    SELECT
+      reporter_country,
+      SUM(quantity_kg)        AS total_quantity_kg,
+      SUM(value_usd)          AS total_value_usd,
+      SUM(value_native)       AS total_value_eur,
+      COUNT(DISTINCT period)::int AS months_active,
+      MAX(period)             AS most_recent_period
+    FROM customs_imports
+    WHERE
+      partner_country = ${filters.partnerCountry}
+      AND product_code = ${filters.productCode}
+      AND flow_direction = 'import'
+      AND period >= (NOW() - (${monthsLookback}::int || ' months')::interval)::date
+      ${filters.reporterCountry ? sql`AND reporter_country = ${filters.reporterCountry}` : sql``}
+    GROUP BY reporter_country
+    ORDER BY SUM(value_usd) DESC NULLS LAST, SUM(quantity_kg) DESC NULLS LAST
+    LIMIT ${limit};
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    reporterCountry: String(r.reporter_country),
+    totalQuantityKg:
+      r.total_quantity_kg != null
+        ? Number.parseFloat(String(r.total_quantity_kg))
+        : null,
+    totalValueUsd:
+      r.total_value_usd != null ? Number.parseFloat(String(r.total_value_usd)) : null,
+    totalValueEur:
+      r.total_value_eur != null ? Number.parseFloat(String(r.total_value_eur)) : null,
+    monthsActive: Number(r.months_active ?? 0),
+    mostRecentPeriod:
+      r.most_recent_period instanceof Date
+        ? r.most_recent_period.toISOString().slice(0, 7)
+        : String(r.most_recent_period).slice(0, 7),
+  }));
+}
+
+export interface MonthlyFlowBucket {
+  period: string; // YYYY-MM
+  quantityKg: number | null;
+  valueUsd: number | null;
+  valueEur: number | null;
+}
+
+/**
+ * Time series: monthly flow of `productCode` from `partnerCountry`
+ * (optionally filtered to a single reporter). Empty months render as
+ * zero so a sparkline / bar chart has a consistent baseline.
+ */
+export async function getMonthlyImportFlow(
+  filters: CustomsFlowFilters,
+): Promise<MonthlyFlowBucket[]> {
+  const monthsLookback = filters.monthsLookback ?? 12;
+  const result = await db.execute(sql`
+    WITH series AS (
+      SELECT generate_series(
+        date_trunc('month', NOW() - (${monthsLookback}::int || ' months')::interval),
+        date_trunc('month', NOW()),
+        '1 month'::interval
+      )::date AS period
+    ),
+    buckets AS (
+      SELECT
+        period,
+        SUM(quantity_kg)  AS quantity_kg,
+        SUM(value_usd)    AS value_usd,
+        SUM(value_native) AS value_eur
+      FROM customs_imports
+      WHERE
+        partner_country = ${filters.partnerCountry}
+        AND product_code = ${filters.productCode}
+        AND flow_direction = 'import'
+        ${filters.reporterCountry ? sql`AND reporter_country = ${filters.reporterCountry}` : sql``}
+      GROUP BY period
+    )
+    SELECT
+      to_char(s.period, 'YYYY-MM') AS period,
+      b.quantity_kg,
+      b.value_usd,
+      b.value_eur
+    FROM series s
+    LEFT JOIN buckets b ON b.period = s.period
+    ORDER BY s.period ASC;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    period: String(r.period),
+    quantityKg: r.quantity_kg != null ? Number.parseFloat(String(r.quantity_kg)) : null,
+    valueUsd: r.value_usd != null ? Number.parseFloat(String(r.value_usd)) : null,
+    valueEur: r.value_eur != null ? Number.parseFloat(String(r.value_eur)) : null,
+  }));
+}
+
 // ─── Known entities (analyst-curated rolodex) ───────────────────
 
 export interface KnownEntityFilters {

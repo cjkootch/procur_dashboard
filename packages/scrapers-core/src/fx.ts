@@ -22,7 +22,7 @@
  * (i.e. multiply native by the rate to get USD).
  */
 
-export type SupportedCurrency = 'USD' | 'DOP' | 'JMD';
+export type SupportedCurrency = 'USD' | 'DOP' | 'JMD' | 'EUR';
 
 /**
  * Per-month FX rates keyed by `${currency}-${YYYY-MM}`. Sparse — falls
@@ -71,6 +71,25 @@ const MONTHLY_RATES: Record<string, number> = {
   'JMD-2025-12': 1 / 160.0,
   'JMD-2026-01': 1 / 160.0,
   'JMD-2026-06': 1 / 160.0,
+
+  // Euro (EUR) — ECB monthly reference rates (approximate)
+  'EUR-2021-01': 1.218,
+  'EUR-2021-06': 1.205,
+  'EUR-2021-12': 1.130,
+  'EUR-2022-01': 1.131,
+  'EUR-2022-06': 1.058,
+  'EUR-2022-12': 1.063,
+  'EUR-2023-01': 1.079,
+  'EUR-2023-06': 1.087,
+  'EUR-2023-12': 1.090,
+  'EUR-2024-01': 1.090,
+  'EUR-2024-06': 1.078,
+  'EUR-2024-12': 1.045,
+  'EUR-2025-01': 1.038,
+  'EUR-2025-06': 1.075,
+  'EUR-2025-12': 1.075,
+  'EUR-2026-01': 1.080,
+  'EUR-2026-06': 1.080,
 };
 
 /**
@@ -81,6 +100,7 @@ const BASELINE_RATES: Partial<Record<SupportedCurrency, number>> = {
   USD: 1,
   DOP: 1 / 58,
   JMD: 1 / 155,
+  EUR: 1.07,
 };
 
 /**
