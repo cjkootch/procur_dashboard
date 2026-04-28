@@ -929,3 +929,125 @@ export async function getCompanyProfile(companyId: string): Promise<CompanyProfi
     pastPerformanceTopCategories,
   };
 }
+
+export type BriefOpportunityResult =
+  | { found: false }
+  | {
+      found: true;
+      opportunity: {
+        slug: string | null;
+        title: string;
+        description: string | null;
+        agency: string | null;
+        jurisdiction: string;
+        beneficiaryCountry: string | null;
+        category: string | null;
+        deadlineAt: string | null;
+        publishedAt: string | null;
+        valueEstimate: number | null;
+        valueEstimateUsd: number | null;
+        currency: string | null;
+        status: string;
+        sourceUrl: string | null;
+        discoverUrl: string | null;
+      };
+      companyContext: {
+        companyName: string;
+        capabilityCategoryCounts: Record<string, number>;
+        capabilitySamples: Array<{ name: string; category: string }>;
+        pastPerformanceCount: number;
+        pastPerformanceTopCategories: string[];
+      };
+      pricingContext: {
+        filterDescription: string;
+        totalAwards: number;
+        byCurrency: PricingIntelByCurrency[];
+        topWinners: PricingIntelTopWinner[];
+      };
+    };
+
+/**
+ * One-shot "Should We Bid" briefing payload. Combines opportunity
+ * details, the company's relevant capability/past-performance context,
+ * and recent pricing intel for similar past awards in the same
+ * category/jurisdiction. The assistant turns this into a concrete
+ * fit + price recommendation in a single response, instead of
+ * chaining 4 separate tool calls.
+ *
+ * The pricingContext is scoped to the opportunity's own category +
+ * beneficiary country (or jurisdiction when no country) so the
+ * "what should we bid" anchor reflects comparable contracts. When the
+ * opportunity has no category, pricing context falls back to all
+ * awards in its jurisdiction.
+ */
+export async function briefOpportunity(
+  companyId: string,
+  opportunitySlug: string,
+): Promise<BriefOpportunityResult> {
+  const op = await getOpportunityBySlug(opportunitySlug);
+  if (!op) return { found: false };
+
+  const profile = await getCompanyProfile(companyId);
+
+  const pricing = await pricingIntel({
+    category: op.category ?? undefined,
+    beneficiaryCountry: op.beneficiaryCountry ?? undefined,
+    // Fall back to jurisdiction scope when the opportunity has no
+    // beneficiary country tag — keeps the comparable set non-empty
+    // for portals where we don't infer beneficiaryCountry.
+    jurisdiction:
+      !op.beneficiaryCountry && !op.category ? op.jurisdictionSlug : undefined,
+    withinDays: 730, // 2 years of pricing context
+  });
+
+  return {
+    found: true,
+    opportunity: {
+      slug: op.slug,
+      title: op.title,
+      description: op.description?.slice(0, 4000) ?? null,
+      agency: op.agencyName ?? null,
+      jurisdiction: op.jurisdictionName,
+      beneficiaryCountry: op.beneficiaryCountry ?? null,
+      category: op.category ?? null,
+      deadlineAt: op.deadlineAt?.toISOString() ?? null,
+      publishedAt: op.publishedAt?.toISOString() ?? null,
+      valueEstimate: parseDecimal(
+        (op.valueEstimate as unknown) as string | null,
+      ),
+      valueEstimateUsd: parseDecimal(
+        (op.valueEstimateUsd as unknown) as string | null,
+      ),
+      currency: op.currency ?? null,
+      status: op.status,
+      sourceUrl: op.sourceUrl ?? null,
+      discoverUrl: op.slug ? `https://discover.procur.app/opportunities/${op.slug}` : null,
+    },
+    companyContext: profile
+      ? {
+          companyName: profile.companyName,
+          capabilityCategoryCounts: profile.capabilityCategoryCounts,
+          // Send 10 sample capabilities — enough signal without
+          // dumping the full list.
+          capabilitySamples: profile.capabilities.slice(0, 10).map((c) => ({
+            name: c.name,
+            category: c.category,
+          })),
+          pastPerformanceCount: profile.pastPerformanceCount,
+          pastPerformanceTopCategories: profile.pastPerformanceTopCategories,
+        }
+      : {
+          companyName: 'unknown',
+          capabilityCategoryCounts: {},
+          capabilitySamples: [],
+          pastPerformanceCount: 0,
+          pastPerformanceTopCategories: [],
+        },
+    pricingContext: {
+      filterDescription: pricing.filterDescription,
+      totalAwards: pricing.totalAwards,
+      byCurrency: pricing.byCurrency,
+      topWinners: pricing.topWinners,
+    },
+  };
+}

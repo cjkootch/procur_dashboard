@@ -2,6 +2,7 @@ import 'server-only';
 import { defineTool, type ToolRegistry } from '@procur/ai';
 import { z } from 'zod';
 import {
+  briefOpportunity,
   getCompanyProfile,
   listJurisdictions,
   listOpportunities,
@@ -492,6 +493,29 @@ export function buildDiscoverTools(): ToolRegistry {
         const profile = await getCompanyProfile(ctx.companyId);
         if (!profile) return { found: false };
         return { found: true, ...profile };
+      },
+    }),
+
+    brief_opportunity: defineTool({
+      name: 'brief_opportunity',
+      description:
+        "One-shot 'Should We Bid' briefing — combines opportunity details, the user's company " +
+        'capability/past-performance context, AND comparable past-award pricing for the same ' +
+        'category/country, all in a single call. Use this whenever the user asks for a deeper ' +
+        'evaluation of one opportunity: "should I bid on X", "brief me on X", "tell me everything ' +
+        'about X", "is X worth pursuing", "give me a fit assessment for X". Prefer this over ' +
+        'chaining get_opportunity + get_company_profile + pricing_intel separately — it returns ' +
+        'all three in one call. Format the response as: 1) one-paragraph fit assessment, 2) ' +
+        '"What it is" 2-3 lines, 3) "Pricing context" with median/p90 of comparable awards, ' +
+        '4) "Recommendation" — one of: pursue / borderline / skip with rationale.',
+      kind: 'read',
+      schema: z.object({
+        slug: z
+          .string()
+          .describe('The opportunity slug (the path segment after /opportunities/ in a Discover URL)'),
+      }),
+      handler: async (ctx, input) => {
+        return briefOpportunity(ctx.companyId, input.slug);
       },
     }),
 
