@@ -2622,7 +2622,7 @@ export interface KnownEntityRow {
 export async function lookupKnownEntities(
   filters: KnownEntityFilters,
 ): Promise<KnownEntityRow[]> {
-  const limit = Math.min(filters.limit ?? 100, 500);
+  const limit = Math.min(filters.limit ?? 100, 5000);
   const result = await db.execute(sql`
     SELECT
       id, slug, name, country, role, categories, notes,

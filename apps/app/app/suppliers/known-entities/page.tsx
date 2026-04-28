@@ -61,13 +61,18 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
   const categoryTag = category && category !== 'all' ? category : undefined;
   const activeView: 'list' | 'map' = view === 'map' ? 'map' : 'list';
 
+  // Map clustering handles thousands of points fine; list rendering is the
+  // slower path. Map gets the bigger budget so the user sees the full
+  // geographic footprint after large ingests like GOGPT (~1.7k power plants).
+  const queryLimit = activeView === 'map' ? 5000 : 2000;
   const rows = await lookupKnownEntities({
     categoryTag,
     country: country?.trim() || undefined,
     role: role?.trim() || undefined,
     tag: tag?.trim() || undefined,
-    limit: 200,
+    limit: queryLimit,
   });
+  const truncated = rows.length === queryLimit;
 
   // Group by country for at-a-glance scanning.
   const byCountry = new Map<string, typeof rows>();
@@ -198,11 +203,15 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
 
       <div className="mb-4 flex items-center justify-between gap-4">
         <p className="text-sm text-[color:var(--color-muted-foreground)]">
-          {rows.length} entit{rows.length === 1 ? 'y' : 'ies'} matched
+          {rows.length} entit{rows.length === 1 ? 'y' : 'ies'}
+          {truncated ? '+ (capped)' : ''} matched
           {category && category !== 'all' ? ` in ${category}` : ''}
           {country ? ` (${country})` : ''}
           {role ? `, ${role}` : ''}
           {tag ? `, tagged ${tag}` : ''}.
+          {truncated && (
+            <span className="ml-1">Narrow with role / country / tag filters to see all.</span>
+          )}
         </p>
         <div className="flex gap-1 text-xs">
           <Link
