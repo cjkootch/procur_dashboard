@@ -16,13 +16,18 @@ import {
 } from 'drizzle-orm';
 import {
   agencies,
+  awardAwardees,
+  awards,
   companies,
   companyCapabilities,
   db,
   documents,
+  externalSuppliers,
   jurisdictions,
   opportunities,
   pastPerformance,
+  supplierAliases,
+  supplierSignals,
   taxonomyCategories,
   users,
 } from '@procur/db';
@@ -1182,3 +1187,597 @@ export async function whatsNewForUser(userId: string): Promise<WhatsNewResult> {
     })),
   };
 }
+
+// ─── Supplier graph ──────────────────────────────────────────────────
+//
+// Three queries against the awards / award_awardees / external_suppliers /
+// supplier_aliases tables. Public-domain — no companyId scoping. The
+// supplier_signals branch in analyzeSupplier is currently unscoped
+// because the table is empty for v1; once private behavioral data
+// starts landing there it MUST be filtered by ctx.companyId. See the
+// TENANT SCOPING TODO in packages/db/src/schema/supplier-signals.ts.
+
+export interface CommodityOfferSpec {
+  /** Internal taxonomy tag — e.g. 'crude-oil', 'diesel', 'jet-fuel', 'food-commodities'. */
+  categoryTag: string;
+  /** Optional commodity name keywords to match against commodity_description (ILIKE). */
+  descriptionKeywords?: string[];
+  /** Optional UNSPSC codes to require (any-match). */
+  unspscCodes?: string[];
+  /** Optional ISO-2 country list to filter buyer_country. Empty = all. */
+  buyerCountries?: string[];
+  /** How far back to look. Default: 5 years. */
+  yearsLookback?: number;
+  /** Minimum number of matching awards a buyer must have. Default: 2. */
+  minAwards?: number;
+  /** Page size. Default: 50. */
+  limit?: number;
+}
+
+export interface CandidateBuyer {
+  buyerName: string;
+  buyerCountry: string;
+  awardsCount: number;
+  totalValueUsd: number | null;
+  mostRecentAwardDate: string;
+  agencies: string[];
+  commoditiesBought: string[];
+  beneficiaryCountries: string[];
+  exampleAwardIds: string[];
+}
+
+/**
+ * Reverse search: given a commodity offer, find public buyers who
+ * have demonstrably bought that commodity in recent history. Returns
+ * a ranked list ordered by recency × volume.
+ *
+ * This is THE function VTC runs on every supplier offer. Schema is
+ * stable; the query template should not change without a deliberate
+ * conversation about the strategic implication.
+ */
+export async function findBuyersForCommodityOffer(
+  spec: CommodityOfferSpec,
+): Promise<CandidateBuyer[]> {
+  const yearsLookback = spec.yearsLookback ?? 5;
+  const minAwards = spec.minAwards ?? 2;
+  const limit = spec.limit ?? 50;
+
+  const result = await db.execute(sql`
+    WITH matching_awards AS (
+      SELECT
+        a.id,
+        a.buyer_name,
+        a.buyer_country,
+        a.contract_value_usd,
+        a.award_date,
+        a.commodity_description,
+        a.beneficiary_country,
+        ag.name AS agency_name
+      FROM awards a
+      LEFT JOIN agencies ag ON ag.id = a.agency_id
+      WHERE
+        ${spec.categoryTag} = ANY(a.category_tags)
+        AND a.award_date >= NOW() - (${yearsLookback}::int || ' years')::interval
+        ${
+          spec.descriptionKeywords && spec.descriptionKeywords.length > 0
+            ? sql`AND (${sql.join(
+                spec.descriptionKeywords.map(
+                  (kw) => sql`a.commodity_description ILIKE ${'%' + kw + '%'}`,
+                ),
+                sql` OR `,
+              )})`
+            : sql``
+        }
+        ${
+          spec.unspscCodes && spec.unspscCodes.length > 0
+            ? sql`AND a.unspsc_codes && ${spec.unspscCodes}::text[]`
+            : sql``
+        }
+        ${
+          spec.buyerCountries && spec.buyerCountries.length > 0
+            ? sql`AND a.buyer_country = ANY(${spec.buyerCountries}::text[])`
+            : sql``
+        }
+    )
+    SELECT
+      buyer_name,
+      buyer_country,
+      COUNT(*)::int                                     AS awards_count,
+      SUM(contract_value_usd)                           AS total_value_usd,
+      MAX(award_date)                                   AS most_recent_award_date,
+      ARRAY_AGG(DISTINCT agency_name) FILTER (WHERE agency_name IS NOT NULL) AS agencies,
+      ARRAY_AGG(DISTINCT commodity_description) FILTER (WHERE commodity_description IS NOT NULL) AS commodities_bought,
+      ARRAY_AGG(DISTINCT beneficiary_country) FILTER (WHERE beneficiary_country IS NOT NULL) AS beneficiary_countries,
+      (ARRAY_AGG(id ORDER BY award_date DESC))[1:5]    AS example_award_ids
+    FROM matching_awards
+    GROUP BY buyer_name, buyer_country
+    HAVING COUNT(*) >= ${minAwards}
+    ORDER BY MAX(award_date) DESC, SUM(contract_value_usd) DESC NULLS LAST
+    LIMIT ${limit};
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    buyerName: String(r.buyer_name),
+    buyerCountry: String(r.buyer_country),
+    awardsCount: Number(r.awards_count),
+    totalValueUsd:
+      r.total_value_usd != null ? Number.parseFloat(String(r.total_value_usd)) : null,
+    mostRecentAwardDate:
+      r.most_recent_award_date instanceof Date
+        ? r.most_recent_award_date.toISOString().slice(0, 10)
+        : String(r.most_recent_award_date),
+    agencies: (r.agencies as string[] | null) ?? [],
+    commoditiesBought: (r.commodities_bought as string[] | null) ?? [],
+    beneficiaryCountries: (r.beneficiary_countries as string[] | null) ?? [],
+    exampleAwardIds: (r.example_award_ids as string[] | null) ?? [],
+  }));
+}
+
+export interface FindSuppliersForTenderArgs {
+  /** When provided, the function derives category/keywords/jurisdiction from
+   *  the opportunity record (via opportunities.id lookup). Otherwise the
+   *  caller passes the explicit fields below. */
+  opportunityId?: string;
+  categoryTag?: string;
+  descriptionKeywords?: string[];
+  buyerCountry?: string;
+  beneficiaryCountry?: string;
+  yearsLookback?: number;
+  limit?: number;
+}
+
+export interface CandidateSupplier {
+  supplierId: string;
+  supplierName: string;
+  country: string | null;
+  matchingAwardsCount: number;
+  totalValueUsd: number | null;
+  mostRecentAwardDate: string;
+  recentBuyers: string[];
+  matchReasons: string[];
+}
+
+export interface FindSuppliersForTenderResult {
+  /** Whether the query inputs came from the opportunity record or from explicit args. */
+  derivedFrom: 'opportunity' | 'explicit_args';
+  categoryTag: string | null;
+  suppliers: CandidateSupplier[];
+}
+
+/**
+ * Buy-side recommendation: given a tender (either by opportunity ID
+ * or by explicit category/country fields), return suppliers who have
+ * won similar awards in recent history and are plausible bidders.
+ *
+ * Inverse of findBuyersForCommodityOffer — same JOIN graph, but
+ * groups by supplier instead of buyer, and the filter is the tender's
+ * own category/country instead of an offer spec.
+ *
+ * Match-reason strings explain why a supplier ranked where it did
+ * (e.g. "5 diesel awards in DO since 2023", "won similar contract for
+ * Ministry of Health in 2024"). Generated rule-based for v1; learned
+ * ranker is deferred.
+ */
+export async function findSuppliersForTender(
+  _companyId: string | null,
+  args: FindSuppliersForTenderArgs,
+): Promise<FindSuppliersForTenderResult> {
+  let categoryTag = args.categoryTag ?? null;
+  let descriptionKeywords = args.descriptionKeywords;
+  let buyerCountry = args.buyerCountry;
+  let beneficiaryCountry = args.beneficiaryCountry;
+  let derivedFrom: 'opportunity' | 'explicit_args' = 'explicit_args';
+
+  if (args.opportunityId) {
+    const opp = await db.query.opportunities.findFirst({
+      where: eq(opportunities.id, args.opportunityId),
+      columns: {
+        category: true,
+        beneficiaryCountry: true,
+        jurisdictionId: true,
+        title: true,
+      },
+    });
+    if (opp) {
+      derivedFrom = 'opportunity';
+      categoryTag = categoryTag ?? opp.category ?? null;
+      beneficiaryCountry = beneficiaryCountry ?? opp.beneficiaryCountry ?? undefined;
+      // Buyer country isn't on the opportunity row directly — could be
+      // resolved via jurisdiction.countryCode but skipping for v1 to
+      // keep the implementation lean. Caller can still pass explicitly.
+    }
+  }
+
+  if (!categoryTag) {
+    return { derivedFrom, categoryTag: null, suppliers: [] };
+  }
+
+  const yearsLookback = args.yearsLookback ?? 5;
+  const limit = args.limit ?? 15;
+
+  const result = await db.execute(sql`
+    WITH matching_awards AS (
+      SELECT
+        a.id,
+        a.buyer_name,
+        a.buyer_country,
+        a.beneficiary_country,
+        a.contract_value_usd,
+        a.award_date,
+        a.commodity_description,
+        aa.supplier_id,
+        s.organisation_name,
+        s.country AS supplier_country
+      FROM awards a
+      JOIN award_awardees aa ON aa.award_id = a.id
+      JOIN external_suppliers s ON s.id = aa.supplier_id
+      WHERE
+        ${categoryTag} = ANY(a.category_tags)
+        AND a.award_date >= NOW() - (${yearsLookback}::int || ' years')::interval
+        ${
+          descriptionKeywords && descriptionKeywords.length > 0
+            ? sql`AND (${sql.join(
+                descriptionKeywords.map(
+                  (kw) => sql`a.commodity_description ILIKE ${'%' + kw + '%'}`,
+                ),
+                sql` OR `,
+              )})`
+            : sql``
+        }
+    ),
+    ranked AS (
+      SELECT
+        supplier_id,
+        organisation_name,
+        supplier_country,
+        COUNT(*)::int AS matching_awards_count,
+        SUM(contract_value_usd) AS total_value_usd,
+        MAX(award_date) AS most_recent_award_date,
+        (ARRAY_AGG(DISTINCT buyer_name))[1:5] AS recent_buyers,
+        BOOL_OR(buyer_country = ${buyerCountry ?? ''}) AS buyer_country_match,
+        BOOL_OR(beneficiary_country = ${beneficiaryCountry ?? ''}) AS beneficiary_country_match
+      FROM matching_awards
+      GROUP BY supplier_id, organisation_name, supplier_country
+    )
+    SELECT *
+    FROM ranked
+    ORDER BY
+      -- Geography overlap first (boolean to int via CASE), then volume.
+      (CASE WHEN buyer_country_match THEN 1 ELSE 0 END
+        + CASE WHEN beneficiary_country_match THEN 1 ELSE 0 END) DESC,
+      most_recent_award_date DESC,
+      total_value_usd DESC NULLS LAST
+    LIMIT ${limit};
+  `);
+
+  const suppliers: CandidateSupplier[] = (result.rows as Array<Record<string, unknown>>).map(
+    (r) => {
+      const matchReasons: string[] = [];
+      const count = Number(r.matching_awards_count);
+      matchReasons.push(`${count} ${categoryTag} award${count === 1 ? '' : 's'} in last ${yearsLookback}y`);
+      if (r.buyer_country_match) {
+        matchReasons.push(`previously won in ${buyerCountry}`);
+      }
+      if (r.beneficiary_country_match) {
+        matchReasons.push(`delivered to ${beneficiaryCountry}`);
+      }
+      return {
+        supplierId: String(r.supplier_id),
+        supplierName: String(r.organisation_name),
+        country: r.supplier_country == null ? null : String(r.supplier_country),
+        matchingAwardsCount: count,
+        totalValueUsd:
+          r.total_value_usd != null ? Number.parseFloat(String(r.total_value_usd)) : null,
+        mostRecentAwardDate:
+          r.most_recent_award_date instanceof Date
+            ? r.most_recent_award_date.toISOString().slice(0, 10)
+            : String(r.most_recent_award_date),
+        recentBuyers: (r.recent_buyers as string[] | null) ?? [],
+        matchReasons,
+      };
+    },
+  );
+
+  return { derivedFrom, categoryTag, suppliers };
+}
+
+export type AnalyzeSupplierArgs = {
+  supplierId?: string;
+  supplierName?: string;
+  yearsLookback?: number;
+};
+
+export type SupplierAnalysisDisambig = {
+  kind: 'disambiguation_needed';
+  candidates: Array<{
+    supplierId: string;
+    canonicalName: string;
+    country: string | null;
+    totalAwards: number;
+    similarityScore: number;
+  }>;
+};
+
+export type SupplierAnalysisNotFound = {
+  kind: 'not_found';
+};
+
+export type SupplierAnalysisProfile = {
+  kind: 'profile';
+  supplier: {
+    id: string;
+    canonicalName: string;
+    country: string | null;
+    aliases: string[];
+  };
+  summary: {
+    totalAwards: number;
+    totalValueUsd: number | null;
+    firstAwardDate: string | null;
+    mostRecentAwardDate: string | null;
+    awardsByCategory: Record<string, number>;
+    buyerCountries: string[];
+    beneficiaryCountries: string[];
+  };
+  topBuyers: Array<{ buyerName: string; awardsCount: number; totalValueUsd: number | null }>;
+  recentAwards: Array<{
+    awardDate: string;
+    buyerName: string;
+    buyerCountry: string;
+    title: string | null;
+    contractValueUsd: number | null;
+  }>;
+  signals: Array<{ signalType: string; signalValue: unknown; observedAt: string }>;
+};
+
+export type SupplierAnalysisResult =
+  | SupplierAnalysisDisambig
+  | SupplierAnalysisNotFound
+  | SupplierAnalysisProfile;
+
+/**
+ * Drilldown for a single supplier. Resolves either by ID directly or
+ * by fuzzy name via supplier_aliases (trigram similarity > 0.55).
+ *
+ * Disambiguation: if multiple candidates clear the threshold and no
+ * single one dominates by similarity, returns the candidate list and
+ * lets the caller (LLM) pick. Don't auto-select highest match —
+ * "Total" matches multiple TotalEnergies entities and silently
+ * picking one is worse than asking.
+ *
+ * SIGNALS NOTE: For v1 the supplier_signals branch is unscoped (table
+ * is empty in production). Once private behavioral data starts
+ * landing there, this query MUST filter by the caller's companyId —
+ * see TENANT SCOPING TODO in packages/db/src/schema/supplier-signals.ts.
+ */
+export async function analyzeSupplier(
+  args: AnalyzeSupplierArgs,
+): Promise<SupplierAnalysisResult> {
+  const yearsLookback = args.yearsLookback ?? 10;
+
+  let resolvedSupplierId = args.supplierId ?? null;
+
+  // Fuzzy resolution path
+  if (!resolvedSupplierId && args.supplierName) {
+    const normalized = normalizeSupplierName(args.supplierName);
+    const candidates = await db.execute(sql`
+      WITH alias_matches AS (
+        SELECT
+          sa.supplier_id,
+          MAX(similarity(sa.alias_normalized, ${normalized})) AS sim
+        FROM supplier_aliases sa
+        WHERE sa.alias_normalized % ${normalized}
+        GROUP BY sa.supplier_id
+      )
+      SELECT
+        s.id AS supplier_id,
+        s.organisation_name AS canonical_name,
+        s.country,
+        am.sim AS similarity_score,
+        COALESCE(COUNT(aa.award_id), 0)::int AS total_awards
+      FROM alias_matches am
+      JOIN external_suppliers s ON s.id = am.supplier_id
+      LEFT JOIN award_awardees aa ON aa.supplier_id = s.id
+      WHERE am.sim >= 0.55
+      GROUP BY s.id, s.organisation_name, s.country, am.sim
+      ORDER BY am.sim DESC, total_awards DESC
+      LIMIT 5;
+    `);
+
+    const rows = candidates.rows as Array<Record<string, unknown>>;
+    if (rows.length === 0) {
+      // Trigram similarity required pg_trgm and a populated aliases
+      // table; one cold-start fallback is to direct-match on
+      // organisation_name in case nothing's been aliased yet.
+      const nameMatch = await db.query.externalSuppliers.findFirst({
+        where: eq(externalSuppliers.organisationName, args.supplierName),
+        columns: { id: true },
+      });
+      if (!nameMatch) return { kind: 'not_found' };
+      resolvedSupplierId = nameMatch.id;
+    } else if (rows.length === 1 || Number(rows[0]!.similarity_score) >= 0.85) {
+      resolvedSupplierId = String(rows[0]!.supplier_id);
+    } else {
+      return {
+        kind: 'disambiguation_needed',
+        candidates: rows.map((r) => ({
+          supplierId: String(r.supplier_id),
+          canonicalName: String(r.canonical_name),
+          country: r.country == null ? null : String(r.country),
+          totalAwards: Number(r.total_awards),
+          similarityScore: Number.parseFloat(String(r.similarity_score)),
+        })),
+      };
+    }
+  }
+
+  if (!resolvedSupplierId) return { kind: 'not_found' };
+
+  const supplier = await db.query.externalSuppliers.findFirst({
+    where: eq(externalSuppliers.id, resolvedSupplierId),
+    columns: { id: true, organisationName: true, country: true },
+  });
+  if (!supplier) return { kind: 'not_found' };
+
+  const aliasRows = await db
+    .select({ alias: supplierAliases.alias })
+    .from(supplierAliases)
+    .where(eq(supplierAliases.supplierId, resolvedSupplierId))
+    .limit(20);
+
+  // Summary roll-up — direct over awards (not the materialized view)
+  // so the function works before the nightly refresh has run.
+  const summaryRows = await db.execute(sql`
+    SELECT
+      COUNT(*)::int AS total_awards,
+      SUM(a.contract_value_usd) AS total_value_usd,
+      MIN(a.award_date) AS first_award_date,
+      MAX(a.award_date) AS most_recent_award_date,
+      ARRAY_AGG(DISTINCT a.buyer_country) AS buyer_countries,
+      ARRAY_AGG(DISTINCT a.beneficiary_country) FILTER (WHERE a.beneficiary_country IS NOT NULL)
+        AS beneficiary_countries,
+      jsonb_object_agg(tag, cnt) AS awards_by_category
+    FROM awards a
+    JOIN award_awardees aa ON aa.award_id = a.id
+    LEFT JOIN LATERAL (
+      SELECT unnest(a.category_tags) AS tag
+    ) tags ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS cnt
+      FROM awards a2
+      JOIN award_awardees aa2 ON aa2.award_id = a2.id
+      WHERE aa2.supplier_id = aa.supplier_id
+        AND tags.tag = ANY(a2.category_tags)
+    ) cat_counts ON TRUE
+    WHERE aa.supplier_id = ${resolvedSupplierId}
+      AND a.award_date >= NOW() - (${yearsLookback}::int || ' years')::interval
+    GROUP BY aa.supplier_id;
+  `);
+  const summaryRow = (summaryRows.rows as Array<Record<string, unknown>>)[0];
+
+  const topBuyersRows = await db.execute(sql`
+    SELECT
+      a.buyer_name,
+      COUNT(*)::int AS awards_count,
+      SUM(a.contract_value_usd) AS total_value_usd
+    FROM awards a
+    JOIN award_awardees aa ON aa.award_id = a.id
+    WHERE aa.supplier_id = ${resolvedSupplierId}
+      AND a.award_date >= NOW() - (${yearsLookback}::int || ' years')::interval
+    GROUP BY a.buyer_name
+    ORDER BY COUNT(*) DESC, SUM(a.contract_value_usd) DESC NULLS LAST
+    LIMIT 10;
+  `);
+
+  const recentAwardsRows = await db.execute(sql`
+    SELECT
+      a.award_date,
+      a.buyer_name,
+      a.buyer_country,
+      a.title,
+      a.contract_value_usd
+    FROM awards a
+    JOIN award_awardees aa ON aa.award_id = a.id
+    WHERE aa.supplier_id = ${resolvedSupplierId}
+    ORDER BY a.award_date DESC
+    LIMIT 5;
+  `);
+
+  // SIGNALS — currently public/unscoped (table is empty in v1).
+  // TENANT SCOPING TODO: filter by ctx.companyId when private signal
+  // data starts landing here. See packages/db/src/schema/supplier-signals.ts.
+  const signalRows = await db
+    .select({
+      signalType: supplierSignals.signalType,
+      signalValue: supplierSignals.signalValue,
+      observedAt: supplierSignals.observedAt,
+    })
+    .from(supplierSignals)
+    .where(eq(supplierSignals.supplierId, resolvedSupplierId))
+    .orderBy(desc(supplierSignals.observedAt))
+    .limit(20);
+
+  const awardsByCategory: Record<string, number> = {};
+  if (summaryRow?.awards_by_category && typeof summaryRow.awards_by_category === 'object') {
+    for (const [k, v] of Object.entries(summaryRow.awards_by_category as Record<string, unknown>)) {
+      awardsByCategory[k] = Number(v);
+    }
+  }
+
+  return {
+    kind: 'profile',
+    supplier: {
+      id: supplier.id,
+      canonicalName: supplier.organisationName,
+      country: supplier.country ?? null,
+      aliases: aliasRows.map((r) => r.alias),
+    },
+    summary: {
+      totalAwards: summaryRow?.total_awards != null ? Number(summaryRow.total_awards) : 0,
+      totalValueUsd:
+        summaryRow?.total_value_usd != null
+          ? Number.parseFloat(String(summaryRow.total_value_usd))
+          : null,
+      firstAwardDate:
+        summaryRow?.first_award_date instanceof Date
+          ? summaryRow.first_award_date.toISOString().slice(0, 10)
+          : summaryRow?.first_award_date != null
+            ? String(summaryRow.first_award_date)
+            : null,
+      mostRecentAwardDate:
+        summaryRow?.most_recent_award_date instanceof Date
+          ? summaryRow.most_recent_award_date.toISOString().slice(0, 10)
+          : summaryRow?.most_recent_award_date != null
+            ? String(summaryRow.most_recent_award_date)
+            : null,
+      awardsByCategory,
+      buyerCountries: (summaryRow?.buyer_countries as string[] | null) ?? [],
+      beneficiaryCountries: (summaryRow?.beneficiary_countries as string[] | null) ?? [],
+    },
+    topBuyers: (topBuyersRows.rows as Array<Record<string, unknown>>).map((r) => ({
+      buyerName: String(r.buyer_name),
+      awardsCount: Number(r.awards_count),
+      totalValueUsd:
+        r.total_value_usd != null ? Number.parseFloat(String(r.total_value_usd)) : null,
+    })),
+    recentAwards: (recentAwardsRows.rows as Array<Record<string, unknown>>).map((r) => ({
+      awardDate:
+        r.award_date instanceof Date
+          ? r.award_date.toISOString().slice(0, 10)
+          : String(r.award_date),
+      buyerName: String(r.buyer_name),
+      buyerCountry: String(r.buyer_country),
+      title: r.title == null ? null : String(r.title),
+      contractValueUsd:
+        r.contract_value_usd != null
+          ? Number.parseFloat(String(r.contract_value_usd))
+          : null,
+    })),
+    signals: signalRows.map((s) => ({
+      signalType: s.signalType,
+      signalValue: s.signalValue,
+      observedAt: s.observedAt.toISOString(),
+    })),
+  };
+}
+
+/**
+ * Lowercase, strip common corporate suffixes, collapse whitespace.
+ * Matches the convention the ingestion pipeline uses to populate
+ * `supplier_aliases.alias_normalized`.
+ *
+ * Exported so the assistant tool layer (or future ingestion code)
+ * can normalize the same way before fuzzy-matching.
+ */
+export function normalizeSupplierName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(
+      /\b(s\.?\s?a\.?(\s?s)?|s\.?\s?r\.?\s?l\.?|llc|l\.?l\.?c\.?|inc|inc\.|incorporated|corp|corp\.|corporation|ltd|ltd\.|limited|gmbh|n\.?v\.?|b\.?v\.?|p\.?l\.?c\.?|plc|s\.?p\.?a\.?)\b/g,
+      ' ',
+    )
+    .replace(/[.,&]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+

@@ -16,6 +16,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/seed.ts",
+    "db:seed-supplier-graph": "tsx src/seed-supplier-graph.ts",
     "type-check": "tsc --noEmit",
     "clean": "rm -rf dist .turbo node_modules"
   },

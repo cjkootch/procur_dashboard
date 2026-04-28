@@ -30,3 +30,7 @@ export * from './word-addin-tokens';
 export * from './notifications';
 export * from './webhook-events';
 export * from './external-suppliers';
+export * from './awards';
+export * from './award-awardees';
+export * from './supplier-aliases';
+export * from './supplier-signals';

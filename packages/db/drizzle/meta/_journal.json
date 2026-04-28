@@ -225,6 +225,20 @@
       "when": 1777210000000,
       "tag": "0031_assistant_last_seen",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1777215000000,
+      "tag": "0032_supplier_graph",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1777220000000,
+      "tag": "0033_supplier_capability_summary",
+      "breakpoints": true
     }
   ]
 }
