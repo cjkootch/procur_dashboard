@@ -3363,6 +3363,38 @@ export async function getRolodexCoverage(
 }
 
 /**
+ * Every country that has award data, with the count, optionally
+ * scoped to a category. Drives the dashboard's country picker —
+ * we don't want a hand-edited 10-country strip; the picker lists
+ * everything the data actually has, with counts so the analyst
+ * sees depth before filtering.
+ */
+export async function getCountriesWithAwards(filters?: {
+  categoryTag?: string;
+  monthsLookback?: number;
+}): Promise<Array<{ country: string; awardCount: number }>> {
+  const monthsLookback = filters?.monthsLookback ?? 36;
+  const result = await db.execute(sql`
+    SELECT a.buyer_country AS country, COUNT(*)::int AS award_count
+    FROM awards a
+    WHERE a.award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+      AND a.buyer_country IS NOT NULL
+      AND a.buyer_country <> ''
+      ${
+        filters?.categoryTag && filters.categoryTag !== 'all'
+          ? sql`AND ${filters.categoryTag} = ANY(a.category_tags)`
+          : sql``
+      }
+    GROUP BY a.buyer_country
+    ORDER BY award_count DESC, country ASC;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    country: String(r.country),
+    awardCount: Number(r.award_count ?? 0),
+  }));
+}
+
+/**
  * Period-over-period KPIs for the Intelligence dashboard top strip.
  * Computes current-window totals + prior-window totals so the UI
  * can render a delta badge ("$156M, +8% vs prior 12m").

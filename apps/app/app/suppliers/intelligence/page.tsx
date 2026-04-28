@@ -5,6 +5,7 @@ import {
   getAwardValueHistogram,
   getCommoditySpreadHistory,
   getCommodityTicker,
+  getCountriesWithAwards,
   getDataFreshness,
   getIntelligenceKpis,
   getMarketConcentration,
@@ -19,6 +20,7 @@ import {
   getTopSuppliersByCategory,
 } from '@procur/catalog';
 import { BarChart, type BarDatum } from './_components/BarChart';
+import { CountryPicker } from './_components/CountryPicker';
 import { Heatmap } from './_components/Heatmap';
 import { LineChart, type LinePoint } from './_components/LineChart';
 import { MultiLineChart, type MultiLineSeries } from './_components/MultiLineChart';
@@ -51,19 +53,6 @@ const CATEGORY_OPTIONS = [
   'vehicles',
   'minerals-metals',
 ] as const;
-
-const COUNTRY_QUICK_FILTERS = [
-  { code: 'DO', label: 'Dominican Republic' },
-  { code: 'JM', label: 'Jamaica' },
-  { code: 'TT', label: 'Trinidad' },
-  { code: 'BS', label: 'Bahamas' },
-  { code: 'HT', label: 'Haiti' },
-  { code: 'IT', label: 'Italy' },
-  { code: 'ES', label: 'Spain' },
-  { code: 'GR', label: 'Greece' },
-  { code: 'TR', label: 'Türkiye' },
-  { code: 'IN', label: 'India' },
-];
 
 /**
  * Internal taxonomy → HS code (6-digit where possible). Used to
@@ -191,6 +180,7 @@ export default async function IntelligencePage({ searchParams }: Props) {
     supplierBuyerMatrix,
     rolodexCoverage,
     kpis,
+    countriesWithAwards,
     freshness,
   ] = await Promise.all([
     safe(getTopBuyersByCategory(filters, 10), [], 'top-buyers'),
@@ -289,6 +279,14 @@ export default async function IntelligencePage({ searchParams }: Props) {
         topBuyerSharePct: null,
       },
       'kpis',
+    ),
+    safe(
+      getCountriesWithAwards({
+        categoryTag: categoryTag === 'all' ? undefined : categoryTag,
+        monthsLookback: Math.max(monthsLookback, 36),
+      }),
+      [],
+      'countries-with-awards',
     ),
     safe(
       getDataFreshness(),
@@ -648,28 +646,25 @@ export default async function IntelligencePage({ searchParams }: Props) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[color:var(--color-muted-foreground)]">Country:</span>
-          <Link
-            href={baseHref({ country: null })}
-            className={`rounded-[var(--radius-sm)] border px-2 py-1 hover:border-[color:var(--color-foreground)] ${
-              !buyerCountry
-                ? 'border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40'
-                : 'border-[color:var(--color-border)]'
-            }`}
-          >
-            all
-          </Link>
-          {COUNTRY_QUICK_FILTERS.map((c) => (
+          <CountryPicker
+            countries={countriesWithAwards}
+            selected={buyerCountry}
+            buildHref={(c) => baseHref({ country: c })}
+          />
+          {/* Quick chips for the most-pitched countries — keeps the
+              workflow fast for repeat filters without forcing the
+              picker open every time. */}
+          {['DO', 'JM', 'TT', 'IT', 'IN'].map((code) => (
             <Link
-              key={c.code}
-              href={baseHref({ country: c.code })}
-              title={c.label}
+              key={code}
+              href={baseHref({ country: code })}
               className={`rounded-[var(--radius-sm)] border px-2 py-1 hover:border-[color:var(--color-foreground)] ${
-                buyerCountry === c.code
+                buyerCountry === code
                   ? 'border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40'
                   : 'border-[color:var(--color-border)]'
               }`}
             >
-              {c.code}
+              {code}
             </Link>
           ))}
         </div>
