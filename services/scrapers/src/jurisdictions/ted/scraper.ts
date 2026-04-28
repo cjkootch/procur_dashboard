@@ -256,20 +256,27 @@ export class TedScraper extends TenderScraper {
     // always the same buyer repeated.
     const buyer = pickFirst(n['buyer-name']);
 
-    // Beneficiary country: only set when place-of-performance is in a
-    // KNOWN non-EU destination AND differs from the buyer's country.
-    // TED's `place-of-performance` uses NUTS region codes (e.g., CZ010
-    // for Prague, BG415 for Sofia), not ISO codes — taking the leading
-    // 2 chars gives the country prefix. For intra-EU rows we leave
-    // beneficiaryCountry null since the buyer location is the natural
-    // jurisdiction context. ECHO humanitarian rows pointing to Haiti /
-    // Sahel / etc. surface via the keyword classifier instead.
+    // Beneficiary country: every TED row tags into the buyer's country
+    // by default (Germany / France / Spain / …) so the Discover country
+    // filter offers a meaningful per-EU-member drill-down across the
+    // shared "European Union" jurisdiction. When place-of-performance
+    // points to a non-buyer country (e.g., ECHO humanitarian aid from
+    // Belgium-based EC to Haiti / Sahel / Ukraine), prefer that as the
+    // more useful destination signal — same priority logic UNGM uses.
+    //
+    // TED encodes place-of-performance as NUTS region codes (CZ010,
+    // BG415, …); the leading 2 chars are the country ISO2. Buyer
+    // country comes through as ISO3 (CZE, BGR, …). Mismatched scales,
+    // hence the iso3↔iso2 conversion before comparing.
     const buyerCountry = n['organisation-country-buyer']?.[0];
-    const popCode = n['place-of-performance']?.[0]?.slice(0, 2).toUpperCase();
-    const beneficiaryCountry =
-      popCode && buyerCountry && popCode !== iso3ToIso2(buyerCountry)
-        ? iso2ToName(popCode)
-        : undefined;
+    const buyerIso2 = iso3ToIso2(buyerCountry);
+    const popIso2 = n['place-of-performance']?.[0]?.slice(0, 2).toUpperCase();
+    // Resolve to a canonical country name. Unknown NUTS prefixes (e.g.,
+    // "00" extra-EU, "AN" Antarctica, etc) fall back to the buyer's
+    // country rather than leaking the raw 2-letter code into the
+    // dropdown — same Discover filter quality bar as UNGM.
+    const popName = popIso2 && popIso2 !== buyerIso2 ? iso2ToName(popIso2) : undefined;
+    const beneficiaryCountry = popName ?? iso3ToName(buyerCountry);
 
     const cpvCategory = pickCategoryFromCpv(n['classification-cpv']);
     const category =
@@ -432,6 +439,14 @@ const ISO2_TO_NAME: Record<string, string> = {
 function iso3ToIso2(code: string | undefined): string | undefined {
   if (!code) return undefined;
   return ISO3_TO_ISO2[code.toUpperCase()];
+}
+
+function iso3ToName(code: string | undefined): string | undefined {
+  // Convert ISO3 → ISO2 → name in one step. Anything we can't map
+  // returns undefined and the row leaves beneficiaryCountry null
+  // rather than store a 3-letter code that won't match the country
+  // filter dropdown.
+  return iso2ToName(iso3ToIso2(code));
 }
 
 function iso2ToName(code: string | undefined): string | undefined {
