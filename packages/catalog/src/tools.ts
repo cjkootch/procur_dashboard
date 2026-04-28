@@ -1,5 +1,5 @@
 import 'server-only';
-import { defineTool, type ToolRegistry } from '@procur/ai';
+import { defineTool, withToolTelemetry, type ToolRegistry } from '@procur/ai';
 import { z } from 'zod';
 import {
   analyzeSupplier,
@@ -608,39 +608,54 @@ export function buildCatalogTools(): ToolRegistry {
           ),
         limit: z.number().min(1).max(100).optional(),
       }),
-      handler: async (_ctx, input) => {
-        const buyers = await findBuyersForCommodityOffer({
-          categoryTag: input.categoryTag,
-          descriptionKeywords: input.descriptionKeywords,
-          buyerCountries: input.buyerCountries,
-          yearsLookback: input.yearsLookback,
-          minAwards: input.minAwards,
-          limit: input.limit ?? 30,
-        });
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_buyers_for_offer',
+            args: input,
+            summarize: (out: { count: number }) => ({
+              resultCount: out.count,
+              resultSummary: {
+                categoryTag: input.categoryTag,
+                buyerCountriesCount: input.buyerCountries?.length ?? 0,
+              },
+            }),
+          },
+          async () => {
+            const buyers = await findBuyersForCommodityOffer({
+              categoryTag: input.categoryTag,
+              descriptionKeywords: input.descriptionKeywords,
+              buyerCountries: input.buyerCountries,
+              yearsLookback: input.yearsLookback,
+              minAwards: input.minAwards,
+              limit: input.limit ?? 30,
+            });
 
-        return {
-          count: buyers.length,
-          categoryTag: input.categoryTag,
-          buyers: buyers.map((b) => ({
-            buyerName: b.buyerName,
-            buyerCountry: b.buyerCountry,
-            awardsCount: b.awardsCount,
-            totalValueUsd: b.totalValueUsd,
-            mostRecentAwardDate: b.mostRecentAwardDate,
-            agencies: b.agencies?.slice(0, 5) ?? [],
-            sampleCommodities: b.commoditiesBought?.slice(0, 3) ?? [],
-            beneficiaryCountries: b.beneficiaryCountries ?? [],
-          })),
-          // Hard-coded so the LLM always sees the gap, even when the
-          // system-prompt block isn't present (e.g., the Discover
-          // surfaceContext compresses the static block).
-          caveat:
-            'Public procurement data only. Private commercial flows (major refiner crude purchases, ' +
-            'trader-to-trader) are not represented. For crude grades specifically, augment with ' +
-            'customs data (Kpler/Vortexa) and refinery configuration data (Argus/Platts) before ' +
-            'committing to a buyer list.',
-        };
-      },
+            return {
+              count: buyers.length,
+              categoryTag: input.categoryTag,
+              buyers: buyers.map((b) => ({
+                buyerName: b.buyerName,
+                buyerCountry: b.buyerCountry,
+                awardsCount: b.awardsCount,
+                totalValueUsd: b.totalValueUsd,
+                mostRecentAwardDate: b.mostRecentAwardDate,
+                agencies: b.agencies?.slice(0, 5) ?? [],
+                sampleCommodities: b.commoditiesBought?.slice(0, 3) ?? [],
+                beneficiaryCountries: b.beneficiaryCountries ?? [],
+              })),
+              // Hard-coded so the LLM always sees the gap, even when the
+              // system-prompt block isn't present (e.g., the Discover
+              // surfaceContext compresses the static block).
+              caveat:
+                'Public procurement data only. Private commercial flows (major refiner crude purchases, ' +
+                'trader-to-trader) are not represented. For crude grades specifically, augment with ' +
+                'customs data (Kpler/Vortexa) and refinery configuration data (Argus/Platts) before ' +
+                'committing to a buyer list.',
+            };
+          },
+        ),
     }),
 
     find_suppliers_for_tender: defineTool({
@@ -692,32 +707,47 @@ export function buildCatalogTools(): ToolRegistry {
         yearsLookback: z.number().min(1).max(10).optional(),
         limit: z.number().min(1).max(50).optional(),
       }),
-      handler: async (ctx, input) => {
-        const result = await findSuppliersForTender(ctx.companyId, {
-          opportunityId: input.opportunityId,
-          categoryTag: input.categoryTag,
-          descriptionKeywords: input.descriptionKeywords,
-          buyerCountry: input.buyerCountry,
-          beneficiaryCountry: input.beneficiaryCountry,
-          yearsLookback: input.yearsLookback,
-          limit: input.limit ?? 15,
-        });
-        return {
-          count: result.suppliers.length,
-          derivedFrom: result.derivedFrom,
-          categoryTag: result.categoryTag,
-          suppliers: result.suppliers.map((s) => ({
-            supplierId: s.supplierId,
-            supplierName: s.supplierName,
-            country: s.country,
-            matchingAwardsCount: s.matchingAwardsCount,
-            totalValueUsd: s.totalValueUsd,
-            mostRecentAwardDate: s.mostRecentAwardDate,
-            recentBuyers: s.recentBuyers?.slice(0, 5) ?? [],
-            matchReasons: s.matchReasons,
-          })),
-        };
-      },
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_suppliers_for_tender',
+            args: input,
+            summarize: (out: { count: number; categoryTag: string | null; derivedFrom: string }) => ({
+              resultCount: out.count,
+              resultSummary: {
+                categoryTag: out.categoryTag,
+                derivedFrom: out.derivedFrom,
+              },
+            }),
+          },
+          async () => {
+            const result = await findSuppliersForTender(ctx.companyId, {
+              opportunityId: input.opportunityId,
+              categoryTag: input.categoryTag,
+              descriptionKeywords: input.descriptionKeywords,
+              buyerCountry: input.buyerCountry,
+              beneficiaryCountry: input.beneficiaryCountry,
+              yearsLookback: input.yearsLookback,
+              limit: input.limit ?? 15,
+            });
+            return {
+              count: result.suppliers.length,
+              derivedFrom: result.derivedFrom,
+              categoryTag: result.categoryTag,
+              suppliers: result.suppliers.map((s) => ({
+                supplierId: s.supplierId,
+                supplierName: s.supplierName,
+                country: s.country,
+                matchingAwardsCount: s.matchingAwardsCount,
+                totalValueUsd: s.totalValueUsd,
+                mostRecentAwardDate: s.mostRecentAwardDate,
+                recentBuyers: s.recentBuyers?.slice(0, 5) ?? [],
+                matchReasons: s.matchReasons,
+              })),
+            };
+          },
+        ),
     }),
 
     analyze_supplier: defineTool({
@@ -757,7 +787,17 @@ export function buildCatalogTools(): ToolRegistry {
         .refine((d) => d.supplierId || d.supplierName, {
           message: 'Provide either supplierId or supplierName',
         }),
-      handler: async (_ctx, input) => {
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'analyze_supplier',
+            args: input,
+            summarize: (out: { kind: string }) => ({
+              resultSummary: { kind: out.kind },
+            }),
+          },
+          async () => {
         const result = await analyzeSupplier({
           supplierId: input.supplierId,
           supplierName: input.supplierName,
@@ -823,7 +863,8 @@ export function buildCatalogTools(): ToolRegistry {
           // See packages/db/src/schema/supplier-signals.ts.
           signals: result.signals?.slice(0, 10) ?? [],
         };
-      },
+          },
+        ),
     }),
   };
 }

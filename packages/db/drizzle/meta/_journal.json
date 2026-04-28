@@ -239,6 +239,13 @@
       "when": 1777220000000,
       "tag": "0033_supplier_capability_summary",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1777225000000,
+      "tag": "0034_tool_call_logs",
+      "breakpoints": true
     }
   ]
 }
