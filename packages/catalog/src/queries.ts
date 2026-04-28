@@ -1781,6 +1781,308 @@ export function normalizeSupplierName(name: string): string {
     .trim();
 }
 
+// ─── Intelligence views (leaderboards + time-series) ─────────────
+
+export interface IntelligenceFilters {
+  /** Category tag — required. Use 'all' to skip the category filter. */
+  categoryTag: string;
+  /** Optional ISO-2 country filter on buyer_country. */
+  buyerCountry?: string;
+  /** Default 12 months. */
+  monthsLookback?: number;
+}
+
+export interface TopBuyerRow {
+  buyerName: string;
+  buyerCountry: string;
+  awardsCount: number;
+  totalValueUsd: number | null;
+  mostRecentAwardDate: string;
+}
+
+/**
+ * Leaderboard: top N buyers in a category over the lookback window,
+ * ranked by awards count then total $USD.
+ */
+export async function getTopBuyersByCategory(
+  filters: IntelligenceFilters,
+  limit = 10,
+): Promise<TopBuyerRow[]> {
+  const monthsLookback = filters.monthsLookback ?? 12;
+  const result = await db.execute(sql`
+    SELECT
+      a.buyer_name,
+      a.buyer_country,
+      COUNT(*)::int                  AS awards_count,
+      SUM(a.contract_value_usd)      AS total_value_usd,
+      MAX(a.award_date)              AS most_recent_award_date
+    FROM awards a
+    WHERE
+      a.award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+      ${
+        filters.categoryTag === 'all'
+          ? sql``
+          : sql`AND ${filters.categoryTag} = ANY(a.category_tags)`
+      }
+      ${
+        filters.buyerCountry
+          ? sql`AND a.buyer_country = ${filters.buyerCountry}`
+          : sql``
+      }
+    GROUP BY a.buyer_name, a.buyer_country
+    ORDER BY COUNT(*) DESC, SUM(a.contract_value_usd) DESC NULLS LAST
+    LIMIT ${limit};
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    buyerName: String(r.buyer_name),
+    buyerCountry: String(r.buyer_country),
+    awardsCount: Number(r.awards_count),
+    totalValueUsd:
+      r.total_value_usd != null ? Number.parseFloat(String(r.total_value_usd)) : null,
+    mostRecentAwardDate:
+      r.most_recent_award_date instanceof Date
+        ? r.most_recent_award_date.toISOString().slice(0, 10)
+        : String(r.most_recent_award_date),
+  }));
+}
+
+export interface TopSupplierRow {
+  supplierId: string;
+  supplierName: string;
+  country: string | null;
+  awardsCount: number;
+  totalValueUsd: number | null;
+  mostRecentAwardDate: string;
+}
+
+/**
+ * Leaderboard: top N suppliers winning a category over the lookback
+ * window. Returns supplier_id so rows can deep-link to the profile.
+ */
+export async function getTopSuppliersByCategory(
+  filters: IntelligenceFilters,
+  limit = 10,
+): Promise<TopSupplierRow[]> {
+  const monthsLookback = filters.monthsLookback ?? 12;
+  const result = await db.execute(sql`
+    SELECT
+      s.id                    AS supplier_id,
+      s.organisation_name     AS supplier_name,
+      s.country,
+      COUNT(*)::int           AS awards_count,
+      SUM(a.contract_value_usd) AS total_value_usd,
+      MAX(a.award_date)       AS most_recent_award_date
+    FROM awards a
+    JOIN award_awardees aa ON aa.award_id = a.id
+    JOIN external_suppliers s ON s.id = aa.supplier_id
+    WHERE
+      a.award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+      ${
+        filters.categoryTag === 'all'
+          ? sql``
+          : sql`AND ${filters.categoryTag} = ANY(a.category_tags)`
+      }
+      ${
+        filters.buyerCountry
+          ? sql`AND a.buyer_country = ${filters.buyerCountry}`
+          : sql``
+      }
+    GROUP BY s.id, s.organisation_name, s.country
+    ORDER BY COUNT(*) DESC, SUM(a.contract_value_usd) DESC NULLS LAST
+    LIMIT ${limit};
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    supplierId: String(r.supplier_id),
+    supplierName: String(r.supplier_name),
+    country: r.country == null ? null : String(r.country),
+    awardsCount: Number(r.awards_count),
+    totalValueUsd:
+      r.total_value_usd != null ? Number.parseFloat(String(r.total_value_usd)) : null,
+    mostRecentAwardDate:
+      r.most_recent_award_date instanceof Date
+        ? r.most_recent_award_date.toISOString().slice(0, 10)
+        : String(r.most_recent_award_date),
+  }));
+}
+
+export interface MonthlyAwardsBucket {
+  month: string; // YYYY-MM
+  awardsCount: number;
+  totalValueUsd: number | null;
+}
+
+/**
+ * Time-series: per-month award counts + total $USD. Covers the
+ * lookback window plus enough past months to make a sparkline render
+ * with consistent baseline (renders empty months as 0).
+ */
+export async function getMonthlyAwardsVolume(
+  filters: IntelligenceFilters,
+): Promise<MonthlyAwardsBucket[]> {
+  const monthsLookback = filters.monthsLookback ?? 12;
+  const result = await db.execute(sql`
+    WITH series AS (
+      SELECT generate_series(
+        date_trunc('month', NOW() - (${monthsLookback}::int || ' months')::interval),
+        date_trunc('month', NOW()),
+        '1 month'::interval
+      ) AS month
+    ),
+    buckets AS (
+      SELECT
+        date_trunc('month', a.award_date)::date AS month,
+        COUNT(*)::int AS awards_count,
+        SUM(a.contract_value_usd) AS total_value_usd
+      FROM awards a
+      WHERE
+        a.award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+        ${
+          filters.categoryTag === 'all'
+            ? sql``
+            : sql`AND ${filters.categoryTag} = ANY(a.category_tags)`
+        }
+        ${
+          filters.buyerCountry
+            ? sql`AND a.buyer_country = ${filters.buyerCountry}`
+            : sql``
+        }
+      GROUP BY date_trunc('month', a.award_date)
+    )
+    SELECT
+      to_char(s.month, 'YYYY-MM') AS month,
+      COALESCE(b.awards_count, 0) AS awards_count,
+      b.total_value_usd
+    FROM series s
+    LEFT JOIN buckets b ON b.month = s.month
+    ORDER BY s.month ASC;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    month: String(r.month),
+    awardsCount: Number(r.awards_count),
+    totalValueUsd:
+      r.total_value_usd != null ? Number.parseFloat(String(r.total_value_usd)) : null,
+  }));
+}
+
+export interface NewBuyerRow {
+  buyerName: string;
+  buyerCountry: string;
+  awardsCount: number;
+  firstAwardDate: string;
+}
+
+/**
+ * Diff: buyers active in the recent window who weren't active in the
+ * comparison window before that. The "found a new customer" view.
+ *
+ * Defaults: recent = last 90 days; comparison = the 90 days before
+ * that. Symmetric windows so the diff is meaningful even as the
+ * underlying data slides forward over time.
+ */
+export async function getNewBuyers(
+  filters: IntelligenceFilters,
+  daysWindow = 90,
+  limit = 25,
+): Promise<NewBuyerRow[]> {
+  const result = await db.execute(sql`
+    WITH recent AS (
+      SELECT
+        a.buyer_name,
+        a.buyer_country,
+        COUNT(*)::int     AS awards_count,
+        MIN(a.award_date) AS first_award_date
+      FROM awards a
+      WHERE
+        a.award_date >= NOW() - (${daysWindow}::int || ' days')::interval
+        ${
+          filters.categoryTag === 'all'
+            ? sql``
+            : sql`AND ${filters.categoryTag} = ANY(a.category_tags)`
+        }
+        ${
+          filters.buyerCountry
+            ? sql`AND a.buyer_country = ${filters.buyerCountry}`
+            : sql``
+        }
+      GROUP BY a.buyer_name, a.buyer_country
+    ),
+    prior AS (
+      SELECT DISTINCT a.buyer_name, a.buyer_country
+      FROM awards a
+      WHERE
+        a.award_date < NOW() - (${daysWindow}::int || ' days')::interval
+        AND a.award_date >= NOW() - (${daysWindow * 2}::int || ' days')::interval
+        ${
+          filters.categoryTag === 'all'
+            ? sql``
+            : sql`AND ${filters.categoryTag} = ANY(a.category_tags)`
+        }
+        ${
+          filters.buyerCountry
+            ? sql`AND a.buyer_country = ${filters.buyerCountry}`
+            : sql``
+        }
+    )
+    SELECT r.*
+    FROM recent r
+    LEFT JOIN prior p
+      ON p.buyer_name = r.buyer_name AND p.buyer_country = r.buyer_country
+    WHERE p.buyer_name IS NULL
+    ORDER BY r.awards_count DESC, r.first_award_date DESC
+    LIMIT ${limit};
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    buyerName: String(r.buyer_name),
+    buyerCountry: String(r.buyer_country),
+    awardsCount: Number(r.awards_count),
+    firstAwardDate:
+      r.first_award_date instanceof Date
+        ? r.first_award_date.toISOString().slice(0, 10)
+        : String(r.first_award_date),
+  }));
+}
+
+export interface ToolCallStat {
+  toolName: string;
+  totalCalls: number;
+  zeroResultCalls: number;
+  errorCalls: number;
+  avgLatencyMs: number;
+  p95LatencyMs: number;
+}
+
+/**
+ * Adoption + coverage-gap analytics for the assistant tool surface.
+ * Uses tool_call_logs (added in 0034). companyId-scoped.
+ */
+export async function getToolCallStats(
+  companyId: string,
+  daysLookback = 30,
+): Promise<ToolCallStat[]> {
+  const result = await db.execute(sql`
+    SELECT
+      tool_name,
+      COUNT(*)::int                                              AS total_calls,
+      SUM(CASE WHEN result_count = 0 THEN 1 ELSE 0 END)::int     AS zero_result_calls,
+      SUM(CASE WHEN success = false THEN 1 ELSE 0 END)::int      AS error_calls,
+      AVG(latency_ms)::int                                       AS avg_latency_ms,
+      percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95_latency_ms
+    FROM tool_call_logs
+    WHERE company_id = ${companyId}
+      AND created_at >= NOW() - (${daysLookback}::int || ' days')::interval
+    GROUP BY tool_name
+    ORDER BY COUNT(*) DESC;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    toolName: String(r.tool_name),
+    totalCalls: Number(r.total_calls),
+    zeroResultCalls: Number(r.zero_result_calls ?? 0),
+    errorCalls: Number(r.error_calls ?? 0),
+    avgLatencyMs: Number(r.avg_latency_ms ?? 0),
+    p95LatencyMs: Number(r.p95_latency_ms ?? 0),
+  }));
+}
+
 // ─── Drill-down queries (for the supplier profile + buyer pages) ──
 
 export interface BuyerAwardRow {

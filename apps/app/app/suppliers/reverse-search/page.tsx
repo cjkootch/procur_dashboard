@@ -131,6 +131,11 @@ export default function ReverseSearchPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
+      <nav className="mb-4 text-sm text-[color:var(--color-muted-foreground)]">
+        <Link href="/suppliers/intelligence" className="hover:text-[color:var(--color-foreground)]">
+          Intelligence dashboard →
+        </Link>
+      </nav>
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Reverse search — buyers for an offer</h1>
         <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
