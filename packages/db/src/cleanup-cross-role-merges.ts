@@ -1,28 +1,27 @@
 /**
- * One-shot cleanup for refinery rows that got polluted with power-plant
- * metadata before the matcher was made role-aware.
+ * Diagnose + (optionally) repair entities damaged by the pre-role-aware
+ * matcher. Two failure modes are possible from the original GOGPT run:
  *
- * Background: an early version of `findOrUpsertEntity` matched purely on
- * (country + name trigram ≥ 0.55). When the GOGPT (Global Oil & Gas
- * Plant Tracker) ingest ran for the first time, 581 of its candidates
- * fuzzy-matched into existing refinery / producer rows that happened to
- * share a name fragment ("Eni Sannazzaro Refinery" vs "Eni Sannazzaro
- * Power Plant"), and those rows ended up with power-plant tags and
- * `capacity_mw` / `unit_count` / `start_year` / `fuels` / `statuses`
- * fields layered onto refinery records.
+ *   (a) Power-plant candidate merged into a same-priority refiner row
+ *       (both source='gem'). Role stayed 'refiner', but `capacity_mw`
+ *       and friends got grafted on. Easy to detect: role <> 'power-plant'
+ *       AND metadata.capacity_mw IS NOT NULL.
  *
- * The matcher is now role-aware (see find-or-upsert-entity.ts), but the
- * already-merged rows need to be repaired:
+ *   (b) Power-plant candidate merged into a lower-priority refiner row
+ *       (e.g. existing was 'wikidata', candidate was 'gem'). Higher-
+ *       priority overwrote name / role / notes, so the row now
+ *       *looks* like a normal power plant but its aliases still carry
+ *       the original refinery name and the row's `wikidata_id` /
+ *       wikidata aliases give it away.
  *
- *   1. This script strips the GOGPT-injected fields and tags from any
- *      row whose role is NOT 'power-plant'.
- *   2. After running this, re-run `ingest-gem-power-plants` — the new
- *      role-aware matcher will treat every plant as a fresh insert
- *      (since no power-plant row exists yet) and create proper rows.
+ * Run modes:
+ *   --dry-run   Show counts + samples of (a) and (b). No writes.
+ *   --repair-a  Strip GOGPT-only fields from (a) rows. After: re-run
+ *               `ingest-gem-power-plants` to create proper power-plant
+ *               rows.
+ *   (no flag)   Default to --dry-run for safety.
  *
- * Run:
- *   pnpm --filter @procur/db cleanup-cross-role-merges
- *   pnpm --filter @procur/db cleanup-cross-role-merges --dry-run
+ * Case (b) needs analyst judgment to split — the script just reports.
  */
 import 'dotenv/config';
 import { config as loadEnv } from 'dotenv';
@@ -34,10 +33,7 @@ import * as schema from './schema';
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
 
-// Tags only ever emitted by ingest-gem-power-plants.ts.
 const POWER_PLANT_TAGS = ['power-plant', 'fuel:dual', 'fuel:oil', 'fuel:gas'];
-
-// Metadata keys only ever written by ingest-gem-power-plants.ts.
 const POWER_PLANT_META_KEYS = [
   'capacity_mw',
   'unit_count',
@@ -47,21 +43,22 @@ const POWER_PLANT_META_KEYS = [
 ];
 
 async function main() {
-  const dryRun = process.argv.includes('--dry-run');
+  const repairA = process.argv.includes('--repair-a');
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error('DATABASE_URL not set');
   const client = neon(databaseUrl);
   const db = drizzle(client, { schema });
 
-  const candidates = await db.execute(sql`
-    SELECT slug, name, country, role, tags, metadata
-    FROM known_entities
-    WHERE role <> 'power-plant'
-      AND metadata ? 'capacity_mw'
-    ORDER BY country, name;
-  `);
-
-  const rows = candidates.rows as Array<{
+  // Case A: role didn't flip but metadata leaked in.
+  const caseA = (
+    await db.execute(sql`
+      SELECT slug, name, country, role, tags, metadata
+      FROM known_entities
+      WHERE role <> 'power-plant'
+        AND metadata ? 'capacity_mw'
+      ORDER BY country, name;
+    `)
+  ).rows as Array<{
     slug: string;
     name: string;
     country: string;
@@ -70,39 +67,79 @@ async function main() {
     metadata: Record<string, unknown> | null;
   }>;
 
-  console.log(`Found ${rows.length} cross-role-merged rows to repair.`);
-  if (dryRun) {
-    for (const r of rows.slice(0, 20)) {
-      console.log(`  - [${r.country}] ${r.name} (role=${r.role})`);
-    }
-    if (rows.length > 20) console.log(`  ... and ${rows.length - 20} more`);
-    console.log('Dry run — no writes.');
+  // Case B: role flipped to power-plant, but the row carries refinery
+  // residue. Heuristics:
+  //   - aliases contains a string with "refinery" / "raffineri" / "raffinerie"
+  //   - OR metadata has a wikidata_id / wikidata-source signal
+  // Both heuristics together catch most realistic cases.
+  const caseB = (
+    await db.execute(sql`
+      SELECT slug, name, country, aliases, tags, metadata
+      FROM known_entities
+      WHERE role = 'power-plant'
+        AND (
+          EXISTS (
+            SELECT 1 FROM unnest(aliases) AS a
+            WHERE lower(a) LIKE '%refinery%'
+               OR lower(a) LIKE '%raffineri%'
+          )
+          OR metadata ? 'wikidata_id'
+        )
+      ORDER BY country, name;
+    `)
+  ).rows as Array<{
+    slug: string;
+    name: string;
+    country: string;
+    aliases: string[] | null;
+    tags: string[] | null;
+    metadata: Record<string, unknown> | null;
+  }>;
+
+  console.log(`Case A (refinery row with grafted power-plant data): ${caseA.length}`);
+  for (const r of caseA.slice(0, 10)) {
+    console.log(`  - [${r.country}] ${r.name} (role=${r.role})`);
+  }
+  if (caseA.length > 10) console.log(`  ... and ${caseA.length - 10} more`);
+
+  console.log('');
+  console.log(
+    `Case B (role flipped from refiner→power-plant, refinery residue in aliases): ${caseB.length}`,
+  );
+  for (const r of caseB.slice(0, 10)) {
+    const refineryAliases = (r.aliases ?? []).filter((a) =>
+      /refinery|raffineri/i.test(a),
+    );
+    console.log(
+      `  - [${r.country}] ${r.name} | refinery aliases: ${
+        refineryAliases.slice(0, 2).join(' / ') || '(none — wikidata_id signal)'
+      }`,
+    );
+  }
+  if (caseB.length > 10) console.log(`  ... and ${caseB.length - 10} more`);
+
+  if (!repairA) {
+    console.log('');
+    console.log('Diagnostic only. Pass --repair-a to strip case-A pollution.');
+    console.log('Case B requires analyst judgment to split — not auto-repaired.');
     return;
   }
 
   let cleaned = 0;
-  for (const r of rows) {
-    const newTags = (r.tags ?? []).filter(
-      (t) => !POWER_PLANT_TAGS.includes(t),
-    );
+  for (const r of caseA) {
+    const newTags = (r.tags ?? []).filter((t) => !POWER_PLANT_TAGS.includes(t));
     const newMeta: Record<string, unknown> = { ...(r.metadata ?? {}) };
     for (const k of POWER_PLANT_META_KEYS) delete newMeta[k];
-
     await db
       .update(schema.knownEntities)
-      .set({
-        tags: newTags,
-        metadata: newMeta,
-        updatedAt: new Date(),
-      })
+      .set({ tags: newTags, metadata: newMeta, updatedAt: new Date() })
       .where(sql`slug = ${r.slug}`);
     cleaned++;
   }
-
-  console.log(`Cleaned ${cleaned} rows.`);
+  console.log(`\nRepaired ${cleaned} case-A rows.`);
   console.log(
     'Next: re-run `pnpm --filter @procur/db ingest-gem-power-plants <path>` ' +
-      'to create proper power-plant rows for those plants.',
+      'to materialize fresh power-plant rows for those plants.',
   );
 }
 
@@ -110,3 +147,4 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
