@@ -87,7 +87,9 @@ async function fetchSeries(
     'facets[product][]': series.product,
     'facets[duoarea][]': series.duoarea,
     start: since,
-    sort: 'period:asc',
+    // EIA v2 expects nested sort: sort[0][column]=...&sort[0][direction]=...
+    'sort[0][column]': 'period',
+    'sort[0][direction]': 'asc',
     length: '5000',
   });
   const url = `${EIA_BASE}?${params}`;
