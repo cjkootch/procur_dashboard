@@ -38,6 +38,12 @@ export type StreamTurnInput = {
   userFirstName?: string | null;
   planTier: string;
   maxSteps?: number;
+  /**
+   * Optional surface-specific system addendum (e.g., compact-chat
+   * formatting rules for the Discover floating widget). Threads
+   * through to buildAssistantSystem.
+   */
+  surfaceContext?: string;
 };
 
 /**
@@ -63,6 +69,7 @@ export async function* streamAgentTurn(
       userFirstName: input.userFirstName,
       planTier: input.planTier,
       pageContext: input.ctx.pageContext,
+      surfaceContext: input.surfaceContext,
     });
     const toolParams = buildToolsParam(input.tools);
 

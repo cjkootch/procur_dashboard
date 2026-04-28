@@ -92,9 +92,24 @@ export async function POST(req: Request): Promise<Response> {
   }
   const history: AnthropicMessageParam[] = Array.isArray(body.history) ? body.history : [];
 
-  // 4. Stream agent turn
+  // 4. Stream agent turn — surfaceContext tells the model it's
+  // rendering inside a 384px-wide floating chat panel and should keep
+  // output ultra-compact: short markdown links not URLs, bullets not
+  // tables, no separator dashes or pipe-delimited rows.
   const tools = buildDiscoverTools();
   const encoder = new TextEncoder();
+  const surfaceContext = `
+You are running inside the Procur Discover floating chat widget — a 384px-wide panel anchored to the bottom-right of the page. Your output is rendered as Markdown.
+
+Formatting rules for this surface:
+- Be terse. Match the available width. No preamble.
+- Use Markdown bullet lists for multiple results, never tables, never pipe-delimited rows.
+- For each opportunity, format as: \`- [Short title](https://discover.procur.app/opportunities/<slug>) — agency, deadline, value\`. Only include the metadata that's actually populated; skip dashes/em-dashes for empty fields.
+- Truncate long titles to ~60 chars. Pick the most distinctive part.
+- Use **bold** sparingly (jurisdiction names, key callouts). Don't bold every label.
+- No section dividers (\`---\`), no Notes blocks, no recap of what you searched.
+- Closing line: max one short sentence offering a follow-up. Skip if obvious.
+`.trim();
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -110,6 +125,7 @@ export async function POST(req: Request): Promise<Response> {
           companyName: companyRow.name,
           userFirstName: userRow.firstName ?? null,
           planTier: companyRow.planTier,
+          surfaceContext,
         })) {
           send(event);
         }

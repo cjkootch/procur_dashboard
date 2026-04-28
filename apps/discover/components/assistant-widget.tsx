@@ -2,6 +2,7 @@
 
 import Image from 'next/image';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import {
   buildConnectUrl,
   clearStoredToken,
@@ -296,13 +297,57 @@ function MessageBubble({ role, text }: { role: 'user' | 'assistant'; text: strin
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[85%] whitespace-pre-wrap rounded-[var(--radius-md)] px-3 py-2 text-sm leading-relaxed ${
+        className={`max-w-[92%] rounded-[var(--radius-md)] px-3 py-2 text-sm leading-relaxed ${
           isUser
-            ? 'bg-[color:var(--color-foreground)] text-[color:var(--color-background)]'
+            ? 'whitespace-pre-wrap bg-[color:var(--color-foreground)] text-[color:var(--color-background)]'
             : 'bg-[color:var(--color-muted)]/50 text-[color:var(--color-foreground)]'
         }`}
       >
-        {text || (isUser ? '' : '…')}
+        {isUser ? (
+          text
+        ) : text ? (
+          // Assistant messages are markdown — bullet lists, links, bold,
+          // etc. The compact-typography overrides below tighten the
+          // built-in spacing so multi-row results fit in the panel
+          // without scrolling each individual message.
+          <div className="assistant-md space-y-2">
+            <ReactMarkdown
+              components={{
+                a: ({ href, children }) => (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium underline underline-offset-2 hover:opacity-80"
+                  >
+                    {children}
+                  </a>
+                ),
+                ul: ({ children }) => (
+                  <ul className="ml-4 list-disc space-y-1">{children}</ul>
+                ),
+                ol: ({ children }) => (
+                  <ol className="ml-4 list-decimal space-y-1">{children}</ol>
+                ),
+                li: ({ children }) => <li className="leading-snug">{children}</li>,
+                p: ({ children }) => <p className="leading-snug">{children}</p>,
+                strong: ({ children }) => (
+                  <strong className="font-semibold">{children}</strong>
+                ),
+                code: ({ children }) => (
+                  <code className="rounded bg-[color:var(--color-background)] px-1 py-0.5 text-[12px]">
+                    {children}
+                  </code>
+                ),
+                hr: () => <hr className="my-2 border-[color:var(--color-border)]" />,
+              }}
+            >
+              {text}
+            </ReactMarkdown>
+          </div>
+        ) : (
+          '…'
+        )}
       </div>
     </div>
   );

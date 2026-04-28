@@ -6,6 +6,14 @@ export type SystemPromptInput = {
   userFirstName?: string | null;
   planTier: string;
   pageContext?: PageContext;
+  /**
+   * Optional free-text instructions appended to the per-turn block.
+   * Used by surfaces with non-default rendering constraints — e.g.,
+   * the Discover floating chat panel asks for ultra-compact markdown
+   * with no tables. Kept off the cached static block so each surface
+   * can vary without invalidating the cache.
+   */
+  surfaceContext?: string;
 };
 
 /**
@@ -69,6 +77,9 @@ Protocol:
     contextLines.push(
       `User is currently viewing a ${input.pageContext.kind} (id: ${input.pageContext.id}). Prefer this as the default subject of their question when ambiguous.`,
     );
+  }
+  if (input.surfaceContext) {
+    contextLines.push('', input.surfaceContext.trim());
   }
   blocks.push({ type: 'text', text: contextLines.join('\n') });
 
