@@ -274,6 +274,13 @@
       "when": 1777245000000,
       "tag": "0038_entity_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1777334600000,
+      "tag": "0041_vessel_intelligence",
+      "breakpoints": true
     }
   ]
 }

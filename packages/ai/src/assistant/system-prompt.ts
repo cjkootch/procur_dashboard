@@ -112,6 +112,17 @@ for public-tender history. Surface all three in your response.
   ('refiner'|'trader'|'producer'|'state-buyer'), or tag (e.g.
   'region:mediterranean', 'libya-historic', 'public-tender-visible').
 
+- find_recent_port_calls: vessel intelligence — tankers seen at a
+  port (or set of ports) in the last N days, inferred from AIS
+  positions. Crude-loading ports tell you "who loaded Libyan barrels
+  this month"; refinery ports tell you "who's actively discharging".
+  Use this whenever the user wants live cargo flow rather than
+  customs aggregates. Filter by portSlug, country, or portType. If
+  the result set is empty the AIS worker may not have run recently —
+  say so rather than concluding no traffic. Pair with
+  lookup_known_entities to attribute a refinery call back to the
+  buyer entity.
+
 - lookup_customs_flows: country-level bilateral trade-flow data from
   Eurostat (EU reporters) + UN Comtrade (global). Works in both directions:
     direction='imports' answers "which countries import X from Y" — buy-side
