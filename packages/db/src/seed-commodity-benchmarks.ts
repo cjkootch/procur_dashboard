@@ -6,7 +6,7 @@
  * commodity_prices. Refer to ingest-fred-prices.ts and
  * ingest-eia-prices.ts for the canonical set:
  *   - 'brent', 'wti'                    (FRED, USD/bbl)
- *   - 'usgc-diesel', 'usgc-gasoline',
+ *   - 'nyh-diesel', 'nyh-gasoline',
  *     'nyh-heating-oil'                  (EIA, USD/gal)
  *
  * Phase 2 (the materialized-view build) handles the unit conversion
@@ -43,45 +43,45 @@ type BenchmarkSeed = {
 
 const SEEDS: BenchmarkSeed[] = [
   // ── Diesel ─────────────────────────────────────────────────
-  // Default global benchmark = NY Harbor ULSD (EIA usgc-diesel is GC,
+  // Default global benchmark = NY Harbor ULSD (EIA nyh-diesel is GC,
   // close enough; we accept the regional basis difference for v1).
   {
     category: 'diesel',
     country: 'GLOBAL',
     grade: 'ulsd_50ppm',
-    benchmarkSlug: 'usgc-diesel',
+    benchmarkSlug: 'nyh-diesel',
     benchmarkSource: 'eia',
-    notes: 'US Gulf Coast ULSD as global default',
+    notes: 'NY Harbor ULSD as global default',
   },
   {
     category: 'diesel',
     country: 'GLOBAL',
     grade: 'ulsd_500ppm',
-    benchmarkSlug: 'usgc-diesel',
+    benchmarkSlug: 'nyh-diesel',
     benchmarkSource: 'eia',
     adjustmentUsdBbl: -3.5,
     notes: 'No 2 distillate / 500 ppm trades ~$3.50/bbl below ULSD',
   },
   // Caribbean diesel — default to USGC ULSD (regional supply)
-  { category: 'diesel', country: 'DO', grade: null, benchmarkSlug: 'usgc-diesel', benchmarkSource: 'eia' },
-  { category: 'diesel', country: 'JM', grade: null, benchmarkSlug: 'usgc-diesel', benchmarkSource: 'eia' },
-  { category: 'diesel', country: 'TT', grade: null, benchmarkSlug: 'usgc-diesel', benchmarkSource: 'eia' },
-  { category: 'diesel', country: 'BS', grade: null, benchmarkSlug: 'usgc-diesel', benchmarkSource: 'eia' },
-  { category: 'diesel', country: 'BB', grade: null, benchmarkSlug: 'usgc-diesel', benchmarkSource: 'eia' },
-  { category: 'diesel', country: 'HT', grade: null, benchmarkSlug: 'usgc-diesel', benchmarkSource: 'eia' },
-  { category: 'diesel', country: 'PR', grade: null, benchmarkSlug: 'usgc-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'DO', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'JM', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'TT', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'BS', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'BB', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'HT', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'PR', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
   // LatAm diesel
-  { category: 'diesel', country: 'MX', grade: null, benchmarkSlug: 'usgc-diesel', benchmarkSource: 'eia' },
-  { category: 'diesel', country: 'CO', grade: null, benchmarkSlug: 'usgc-diesel', benchmarkSource: 'eia' },
-  { category: 'diesel', country: 'EC', grade: null, benchmarkSlug: 'usgc-diesel', benchmarkSource: 'eia' },
-  { category: 'diesel', country: 'PE', grade: null, benchmarkSlug: 'usgc-diesel', benchmarkSource: 'eia' },
-  { category: 'diesel', country: 'BR', grade: null, benchmarkSlug: 'usgc-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'MX', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'CO', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'EC', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'PE', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'BR', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
   // Mediterranean diesel — small premium for transatlantic + EU spec
   {
     category: 'diesel',
     country: 'IT',
     grade: null,
-    benchmarkSlug: 'usgc-diesel',
+    benchmarkSlug: 'nyh-diesel',
     benchmarkSource: 'eia',
     adjustmentUsdBbl: 2,
     notes: 'Italian diesel — small premium for transatlantic shipping & EU spec',
@@ -90,7 +90,7 @@ const SEEDS: BenchmarkSeed[] = [
     category: 'diesel',
     country: 'ES',
     grade: null,
-    benchmarkSlug: 'usgc-diesel',
+    benchmarkSlug: 'nyh-diesel',
     benchmarkSource: 'eia',
     adjustmentUsdBbl: 2,
   },
@@ -98,7 +98,7 @@ const SEEDS: BenchmarkSeed[] = [
     category: 'diesel',
     country: 'GR',
     grade: null,
-    benchmarkSlug: 'usgc-diesel',
+    benchmarkSlug: 'nyh-diesel',
     benchmarkSource: 'eia',
     adjustmentUsdBbl: 2,
   },
@@ -107,38 +107,38 @@ const SEEDS: BenchmarkSeed[] = [
     category: 'diesel',
     country: 'IN',
     grade: null,
-    benchmarkSlug: 'usgc-diesel',
+    benchmarkSlug: 'nyh-diesel',
     benchmarkSource: 'eia',
     adjustmentUsdBbl: -1,
   },
   // US diesel — direct
-  { category: 'diesel', country: 'US', grade: null, benchmarkSlug: 'usgc-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'US', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
 
   // ── Gasoline ───────────────────────────────────────────────
   {
     category: 'gasoline',
     country: 'GLOBAL',
     grade: 'rbob_87',
-    benchmarkSlug: 'usgc-gasoline',
+    benchmarkSlug: 'nyh-gasoline',
     benchmarkSource: 'eia',
-    notes: 'US Gulf Coast RBOB regular as global default',
+    notes: 'NY Harbor conventional RBOB regular as global default',
   },
   {
     category: 'gasoline',
     country: 'GLOBAL',
     grade: 'rbob_93',
-    benchmarkSlug: 'usgc-gasoline',
+    benchmarkSlug: 'nyh-gasoline',
     benchmarkSource: 'eia',
     adjustmentUsdBbl: 8,
     notes: 'Premium 93-octane premium ~$8/bbl over regular',
   },
-  { category: 'gasoline', country: 'DO', grade: null, benchmarkSlug: 'usgc-gasoline', benchmarkSource: 'eia' },
-  { category: 'gasoline', country: 'JM', grade: null, benchmarkSlug: 'usgc-gasoline', benchmarkSource: 'eia' },
-  { category: 'gasoline', country: 'TT', grade: null, benchmarkSlug: 'usgc-gasoline', benchmarkSource: 'eia' },
-  { category: 'gasoline', country: 'BS', grade: null, benchmarkSlug: 'usgc-gasoline', benchmarkSource: 'eia' },
-  { category: 'gasoline', country: 'HT', grade: null, benchmarkSlug: 'usgc-gasoline', benchmarkSource: 'eia' },
-  { category: 'gasoline', country: 'US', grade: null, benchmarkSlug: 'usgc-gasoline', benchmarkSource: 'eia' },
-  { category: 'gasoline', country: 'MX', grade: null, benchmarkSlug: 'usgc-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'DO', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'JM', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'TT', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'BS', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'HT', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'US', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'MX', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
 
   // ── Heating oil / No. 2 distillate ─────────────────────────
   {

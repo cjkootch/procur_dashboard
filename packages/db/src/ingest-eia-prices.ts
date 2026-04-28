@@ -39,20 +39,34 @@ type EiaSeries = {
   label: string;
 };
 
+/**
+ * EIA spot-price series we ingest.
+ *
+ * Slugs are kept generic ('diesel-spot', 'gasoline-spot') so future
+ * regional sources (Gulf Coast, LA, Singapore) can extend without
+ * touching the benchmark mapping table. Currently all three are NY
+ * Harbor — the most-published spot location and a defensible proxy
+ * for Caribbean / east-coast US delivery.
+ *
+ * USGC duoarea codes the EIA v2 API exposes are non-obvious from the
+ * docs (Y05/RGC/PA3 all return 0 rows in different combinations).
+ * Tracking USGC-specific series as a follow-up; NY Harbor + a basis
+ * adjustment in commodity_benchmark_mappings is the v1 stand-in.
+ */
 const SERIES: EiaSeries[] = [
   {
-    slug: 'usgc-diesel',
+    slug: 'nyh-diesel',
     product: 'EPD2DXL0',
-    duoarea: 'Y05',
+    duoarea: 'Y35NY',
     unit: 'usd-gal',
-    label: 'US Gulf Coast ULSD diesel',
+    label: 'NY Harbor ULSD diesel',
   },
   {
-    slug: 'usgc-gasoline',
+    slug: 'nyh-gasoline',
     product: 'EPMRR',
-    duoarea: 'Y05',
+    duoarea: 'Y35NY',
     unit: 'usd-gal',
-    label: 'US Gulf Coast RBOB gasoline',
+    label: 'NY Harbor RBOB gasoline (conventional)',
   },
   {
     slug: 'nyh-heating-oil',

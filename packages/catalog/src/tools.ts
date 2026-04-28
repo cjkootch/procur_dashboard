@@ -1217,8 +1217,8 @@ export function buildCatalogTools(): ToolRegistry {
         "Current spot price + 30-day stats for a commodity series. Use this whenever a " +
         "response involves pricing — every reverse-search hit, every pitch question, " +
         "every \"is X a fair offer\" check should anchor against current market context. " +
-        'Series slugs: \'brent\' (Europe spot), \'wti\' (Cushing OK), \'usgc-diesel\' (US ' +
-        "Gulf Coast ULSD, $/gal), 'usgc-gasoline' ($/gal), 'nyh-heating-oil' ($/gal). " +
+        'Series slugs: \'brent\' (Europe spot), \'wti\' (Cushing OK), \'nyh-diesel\' (US ' +
+        "Gulf Coast ULSD, $/gal), 'nyh-gasoline' ($/gal), 'nyh-heating-oil' ($/gal). " +
         'Returns latest price, 30-day moving average, window high/low, and % change. ' +
         "If noData=true, the series hasn't been ingested yet — say so and skip; do not " +
         "fabricate a number. Pair with get_commodity_spread for differentials.",
@@ -1227,8 +1227,8 @@ export function buildCatalogTools(): ToolRegistry {
         seriesSlug: z
           .string()
           .describe(
-            "commodity_prices.series_slug. Common values: 'brent', 'wti', 'usgc-diesel', " +
-              "'usgc-gasoline', 'nyh-heating-oil'.",
+            "commodity_prices.series_slug. Common values: 'brent', 'wti', 'nyh-diesel', " +
+              "'nyh-gasoline', 'nyh-heating-oil'.",
           ),
         windowDays: z
           .number()
