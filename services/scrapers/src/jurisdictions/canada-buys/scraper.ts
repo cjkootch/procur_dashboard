@@ -44,104 +44,54 @@ const CSV_URL =
 const PORTAL = 'https://canadabuys.canada.ca';
 
 /**
- * Word-boundary regex of VTC-category terms. Matched against the row
- * title and the structured `gsinDescription` field (NOT the tender
- * description body — that's a 1-2k char free-text blob where common
- * commodity words show up as incidental noise: "boil"→"oil",
- * "Sandbox"→"sand", "ironing board"→"iron"). Word boundaries also
- * eliminate substring false positives like "service"→"servicing".
+ * Per-category regexes. Each is matched against the row title and the
+ * structured `gsinDescription` field — NOT the tender description body
+ * (1-2k char free-text blob where common commodity words show up as
+ * incidental noise: "boil"→"oil", "Sandbox"→"sand", "ironing"→"iron").
+ * Word boundaries (`\b`) eliminate substring false positives like
+ * "service"→"servicing".
  *
  * Conservative on purpose. Better to miss a borderline VTC row than
- * to flood Discover with IT-services and defense-parts noise that
- * the user has to mentally filter out.
+ * to flood Discover with IT-services and defense-parts noise.
+ *
+ * The slug on the left maps to taxonomy_categories.slug and is set as
+ * `category` on the NormalizedOpportunity at parse time, lighting up
+ * the Discover sidebar filter for VTC commodity buckets.
  */
-const VTC_TERM_RE = new RegExp(
-  '\\b(' +
-    [
-      // Food
-      'food',
-      'foodstuff',
-      'rice',
-      'sugar',
-      'flour',
-      'poultry',
-      'chicken',
-      'beef',
-      'pork',
-      'lamb',
-      'meat',
-      'bread',
-      'bakery',
-      'fruit',
-      'vegetable',
-      'frozen',
-      'ration',
-      'dairy',
-      'wheat',
-      'corn',
-      'maize',
-      'soybean',
-      'soy',
-      'legume',
-      'bean',
-      'lentil',
-      'oat',
-      'rye',
-      'grain',
-      'cereal',
-      'fertilizer',
-      // Fuel
-      'fuel',
-      'fuels',
-      'diesel',
-      'gasoline',
-      'petrol',
-      'kerosene',
-      'jet a-1',
-      'jet fuel',
-      'propane',
-      'lubricant',
-      'lubrication',
-      'petroleum',
-      'lpg',
-      'lng',
-      'heating oil',
-      'marine fuel',
-      'aviation fuel',
-      // Vehicles
-      'vehicle',
-      'vehicles',
-      'vehicular',
-      'automobile',
-      'truck',
-      'trucks',
-      'sedan',
-      'suv',
-      'minibus',
-      'bus',
-      'buses',
-      'motorcycle',
-      'fleet',
-      // Minerals (more conservative — bare "iron" matches too much)
-      'mineral',
-      'minerals',
-      'ore',
-      'ores',
-      'aggregate',
-      'aggregates',
-      'gravel',
-      'limestone',
-      'cement',
-      'iron ore',
-      'copper ore',
-      'zinc ore',
-      'steel beam',
-      'steel rebar',
-      'steel plate',
-    ].join('|') +
-    ')\\b',
-  'i',
-);
+const CATEGORY_REGEXES: Array<[string, RegExp]> = [
+  [
+    'food-commodities',
+    /\b(food|foodstuff|rice|sugar|flour|poultry|chicken|beef|pork|lamb|meat|bread|bakery|fruit|vegetable|frozen|ration|dairy|wheat|corn|maize|soybean|soy|legume|bean|lentil|oat|rye|grain|cereal|fertilizer)\b/i,
+  ],
+  [
+    'petroleum-fuels',
+    /\b(fuel|fuels|diesel|gasoline|petrol|kerosene|jet a-1|jet fuel|propane|lubricant|lubrication|petroleum|lpg|lng|heating oil|marine fuel|aviation fuel)\b/i,
+  ],
+  [
+    'vehicles-fleet',
+    /\b(vehicle|vehicles|vehicular|automobile|truck|trucks|sedan|suv|minibus|bus|buses|motorcycle|fleet)\b/i,
+  ],
+  [
+    'minerals-metals',
+    /\b(mineral|minerals|ore|ores|aggregate|aggregates|gravel|limestone|cement|iron ore|copper ore|zinc ore|steel beam|steel rebar|steel plate)\b/i,
+  ],
+];
+
+/**
+ * First-match wins. Order is food → fuel → vehicles → minerals so that
+ * a row mentioning both "diesel truck" gets tagged petroleum-fuels
+ * (which is a stronger commodity signal for VTC) — adjust the order
+ * here if we discover empirical mis-categorization.
+ *
+ * Returns null when no category matches; caller treats null as
+ * "non-VTC, skip this row".
+ */
+function classifyVtcCategory(haystack: string): string | null {
+  for (const [slug, re] of CATEGORY_REGEXES) {
+    if (re.test(haystack)) return slug;
+  }
+  return null;
+}
 
 const HEADERS: Record<string, string> = {
   accept: 'text/csv,application/octet-stream',
@@ -243,19 +193,26 @@ export class CanadaBuysScraper extends TenderScraper {
       // Skip the 1-2k tender description body — too noisy for substring
       // matching even with word boundaries. allGoods=true bypasses this
       // for occasional full-catalog runs.
-      if (!this.input.allGoods) {
-        const haystack = `${row['title-titre-eng'] ?? ''} ${row['gsinDescription-nibsDescription-eng'] ?? ''}`;
-        if (!VTC_TERM_RE.test(haystack)) continue;
-      }
+      const haystack = `${row['title-titre-eng'] ?? ''} ${row['gsinDescription-nibsDescription-eng'] ?? ''}`;
+      const vtcCategory = classifyVtcCategory(haystack);
+      if (!this.input.allGoods && !vtcCategory) continue;
 
       const noticeUrl = (row['noticeURL-URLavis-eng'] ?? '').trim();
       const ref = (row['referenceNumber-numeroReference'] ?? '').trim();
       const sourceReferenceId = ref ? `CABUYS-${ref}` : `CABUYS-${noticeUrl}`;
 
+      // Stash the resolved category on the row so parse() can emit it
+      // without re-running the regexes. Uses a non-CSV-clashing key
+      // prefixed `_` to make intent obvious.
+      const enriched = {
+        ...row,
+        _vtcCategory: vtcCategory ?? '',
+      };
+
       out.push({
         sourceReferenceId,
         sourceUrl: noticeUrl || PORTAL,
-        rawData: row as unknown as Record<string, unknown>,
+        rawData: enriched as unknown as Record<string, unknown>,
       });
     }
 
@@ -286,7 +243,7 @@ export class CanadaBuysScraper extends TenderScraper {
   }
 
   async parse(raw: RawOpportunity): Promise<NormalizedOpportunity | null> {
-    const r = raw.rawData as unknown as CanadaCsvRow;
+    const r = raw.rawData as unknown as CanadaCsvRow & { _vtcCategory?: string };
     const title = (r['title-titre-eng'] ?? '').trim();
     if (!title) return null;
 
@@ -301,6 +258,11 @@ export class CanadaBuysScraper extends TenderScraper {
     // description — when we see a real distribution of foreign rows
     // we can add country detection like SAM does.
 
+    // VTC commodity bucket: classified at fetch time and stashed on
+    // rawData so parse() doesn't re-run regexes. Empty when allGoods
+    // override pulled in a row that didn't match any keyword bucket.
+    const category = r._vtcCategory && r._vtcCategory.length > 0 ? r._vtcCategory : undefined;
+
     return {
       sourceReferenceId: raw.sourceReferenceId,
       sourceUrl: raw.sourceUrl,
@@ -309,6 +271,7 @@ export class CanadaBuysScraper extends TenderScraper {
       referenceNumber: r['solicitationNumber-numeroSollicitation'] || r['referenceNumber-numeroReference'],
       type: r['noticeType-avisType-eng'],
       agencyName: r['contractingEntityName-nomEntitContractante-eng'] || undefined,
+      category,
       currency: 'CAD',
       publishedAt: parseDate(r['publicationDate-datePublication']),
       deadlineAt: parseDate(r['tenderClosingDate-appelOffresDateCloture']),

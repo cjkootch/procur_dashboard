@@ -80,6 +80,35 @@ const VTC_NAICS_CODES = [
 ];
 
 /**
+ * Map NAICS code → Discover taxonomy slug. Used at parse time so users
+ * can filter the catalog to a single VTC commodity bucket without
+ * scanning everything. Slugs match `taxonomy_categories.slug` (seeded
+ * via 0027 migration).
+ */
+const NAICS_TO_CATEGORY: Record<string, string> = {
+  '424410': 'food-commodities',
+  '424420': 'food-commodities',
+  '424440': 'food-commodities',
+  '424490': 'food-commodities',
+  '424510': 'food-commodities',
+  '424590': 'food-commodities',
+  '311211': 'food-commodities',
+  '311311': 'food-commodities',
+  '311615': 'food-commodities',
+  '424710': 'petroleum-fuels',
+  '424720': 'petroleum-fuels',
+  '486990': 'petroleum-fuels',
+  '423110': 'vehicles-fleet',
+  '423120': 'vehicles-fleet',
+  '441110': 'vehicles-fleet',
+  '423510': 'minerals-metals',
+  '423520': 'minerals-metals',
+  '424690': 'minerals-metals',
+  '212322': 'minerals-metals',
+  '212390': 'minerals-metals',
+};
+
+/**
  * Procurement notice types we care about. SAM publishes ~10 distinct
  * types; for buyers, only solicitations and combined-synopsis-solicitations
  * are immediately actionable. Pre-solicitation gives advance notice. Sources
@@ -464,6 +493,13 @@ export class SamGovScraper extends TenderScraper {
     const awardedAmount =
       award?.amount != null ? Number.parseFloat(String(award.amount)) : undefined;
 
+    // VTC commodity bucket: derive from the row's NAICS code so users
+    // can filter Discover to "Petroleum and Fuels" / "Vehicles and
+    // Fleet" / etc. Returns undefined for any NAICS we didn't include
+    // in the scrape filter (shouldn't happen post-NAICS-filter but
+    // defensive).
+    const category = d.naicsCode ? NAICS_TO_CATEGORY[d.naicsCode] : undefined;
+
     return {
       sourceReferenceId: raw.sourceReferenceId,
       sourceUrl: raw.sourceUrl,
@@ -472,6 +508,7 @@ export class SamGovScraper extends TenderScraper {
       referenceNumber: d.solicitationNumber,
       type: d.type ?? d.baseType,
       agencyName,
+      category,
       currency: 'USD',
       publishedAt: parseSamDate(d.postedDate),
       deadlineAt: parseIsoDate(d.responseDeadLine),
