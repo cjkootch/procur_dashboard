@@ -26,7 +26,11 @@ import { CanadaBuysScraper } from '../../jurisdictions/canada-buys/scraper';
 
 type CanadaBackfillPayload = {
   csvUrl?: string;
-  gsinPrefixes?: string[];
+  /**
+   * When true, ingest every Goods row regardless of VTC keyword filter.
+   * Useful for full-catalog backfills (~250 goods rows per refresh).
+   */
+  allGoods?: boolean;
 };
 
 async function runCanada(opts: CanadaBackfillPayload, triggerRunId: string) {

@@ -44,54 +44,104 @@ const CSV_URL =
 const PORTAL = 'https://canadabuys.canada.ca';
 
 /**
- * GSIN prefix allowlist mirroring SAM's PSC families. Match is on the
- * first 2 chars of the GSIN string (which is consistently 4 digits for
- * Canadian goods). Service codes (R/D/Y/Z series) and construction
- * are excluded — VTC bids on goods.
+ * Word-boundary regex of VTC-category terms. Matched against the row
+ * title and the structured `gsinDescription` field (NOT the tender
+ * description body — that's a 1-2k char free-text blob where common
+ * commodity words show up as incidental noise: "boil"→"oil",
+ * "Sandbox"→"sand", "ironing board"→"iron"). Word boundaries also
+ * eliminate substring false positives like "service"→"servicing".
+ *
+ * Conservative on purpose. Better to miss a borderline VTC row than
+ * to flood Discover with IT-services and defense-parts noise that
+ * the user has to mentally filter out.
  */
-const GSIN_PREFIXES = [
-  '89', // Subsistence (food)
-  '91', // Fuels and lubricants
-  '23', // Vehicles
-  '96', // Ores and minerals
-];
-
-/**
- * Backstop for rows where the GSIN code didn't classify cleanly but
- * the text description still matches a VTC category. Whole-word match
- * is overkill; a simple substring search keeps the scope small and
- * auditable. All-lowercase comparison.
- */
-const KEYWORD_FALLBACK = [
-  'food',
-  'rice',
-  'sugar',
-  'flour',
-  'poultry',
-  'beef',
-  'bread',
-  'fruit',
-  'vegetable',
-  'beverage',
-  'fuel',
-  'diesel',
-  'gasoline',
-  'lubricant',
-  'petroleum',
-  'kerosene',
-  'jet a',
-  'propane',
-  'vehicle',
-  'truck',
-  'bus',
-  'sedan',
-  'mineral',
-  'ore',
-  'aggregate',
-  'sand',
-  'gravel',
-  'limestone',
-];
+const VTC_TERM_RE = new RegExp(
+  '\\b(' +
+    [
+      // Food
+      'food',
+      'foodstuff',
+      'rice',
+      'sugar',
+      'flour',
+      'poultry',
+      'chicken',
+      'beef',
+      'pork',
+      'lamb',
+      'meat',
+      'bread',
+      'bakery',
+      'fruit',
+      'vegetable',
+      'frozen',
+      'ration',
+      'dairy',
+      'wheat',
+      'corn',
+      'maize',
+      'soybean',
+      'soy',
+      'legume',
+      'bean',
+      'lentil',
+      'oat',
+      'rye',
+      'grain',
+      'cereal',
+      'fertilizer',
+      // Fuel
+      'fuel',
+      'fuels',
+      'diesel',
+      'gasoline',
+      'petrol',
+      'kerosene',
+      'jet a-1',
+      'jet fuel',
+      'propane',
+      'lubricant',
+      'lubrication',
+      'petroleum',
+      'lpg',
+      'lng',
+      'heating oil',
+      'marine fuel',
+      'aviation fuel',
+      // Vehicles
+      'vehicle',
+      'vehicles',
+      'vehicular',
+      'automobile',
+      'truck',
+      'trucks',
+      'sedan',
+      'suv',
+      'minibus',
+      'bus',
+      'buses',
+      'motorcycle',
+      'fleet',
+      // Minerals (more conservative — bare "iron" matches too much)
+      'mineral',
+      'minerals',
+      'ore',
+      'ores',
+      'aggregate',
+      'aggregates',
+      'gravel',
+      'limestone',
+      'cement',
+      'iron ore',
+      'copper ore',
+      'zinc ore',
+      'steel beam',
+      'steel rebar',
+      'steel plate',
+    ].join('|') +
+    ')\\b',
+  'i',
+);
 
 const HEADERS: Record<string, string> = {
   accept: 'text/csv,application/octet-stream',
@@ -138,11 +188,11 @@ type CanadaInput = {
   /** Pre-fetched CSV text (test fixtures). Skips the HTTP fetch entirely. */
   fixtureCsv?: string;
   /**
-   * Override the GSIN prefix allowlist. Default is VTC's commodity set
-   * (food/fuel/vehicles/minerals). Pass `[]` to ingest everything (huge —
-   * the CSV has ~30K rows).
+   * Disable the VTC-keyword filter and ingest every Goods row instead.
+   * Useful for one-off backfills when we want the full goods catalog
+   * regardless of category. Caps out ~250 rows per CSV refresh.
    */
-  gsinPrefixes?: string[];
+  allGoods?: boolean;
 };
 
 export class CanadaBuysScraper extends TenderScraper {
@@ -169,43 +219,34 @@ export class CanadaBuysScraper extends TenderScraper {
 
     log.info('canada.csv.parsed', { totalRows: rows.length });
 
-    const prefixes = this.input.gsinPrefixes ?? GSIN_PREFIXES;
     const out: RawOpportunity[] = [];
-    let matchedByPrefix = 0;
-    let matchedByKeyword = 0;
-    let skippedClosed = 0;
+    let goodsRows = 0;
+    let skippedCancelled = 0;
 
     for (const row of rows) {
-      // Status filter — the CSV is ostensibly "open" only but defensive
-      // anyway. We accept Open / Active / Awarded; skip Cancelled.
+      // Status filter — CSV is ostensibly "open" only but defensive anyway.
       const status = (row['tenderStatus-appelOffresStatut-eng'] ?? '').toLowerCase();
       if (status === 'cancelled') {
-        skippedClosed += 1;
+        skippedCancelled += 1;
         continue;
       }
 
-      const gsin = (row['gsin-nibs'] ?? '').trim();
-      const gsinDesc = (row['gsinDescription-nibsDescription-eng'] ?? '').toLowerCase();
-      const title = (row['title-titre-eng'] ?? '').toLowerCase();
-      const tenderDesc = (
-        row['tenderDescription-descriptionAppelOffres-eng'] ?? ''
-      ).toLowerCase();
+      // Primary filter: procurementCategory must indicate Goods. CanadaBuys
+      // emits codes `*GD` (Goods), `*SRV` (Services), `*CNST` (Construction),
+      // and combos like `*GD\n*SRV` for mixed lots. We match the substring
+      // "GD" anywhere in the field.
+      const category = row['procurementCategory-categorieApprovisionnement'] ?? '';
+      if (!/\bGD\b|\*GD/i.test(category)) continue;
+      goodsRows += 1;
 
-      const prefixMatch = prefixes.length === 0
-        || prefixes.some((p) => gsin.startsWith(p));
-
-      const keywordMatch =
-        !prefixMatch &&
-        (row['procurementCategory-categorieApprovisionnement'] ?? '')
-          .toUpperCase()
-          .includes('GOOD') &&
-        KEYWORD_FALLBACK.some(
-          (kw) => gsinDesc.includes(kw) || title.includes(kw) || tenderDesc.includes(kw),
-        );
-
-      if (!prefixMatch && !keywordMatch) continue;
-      if (prefixMatch) matchedByPrefix += 1;
-      else matchedByKeyword += 1;
+      // Secondary filter: keyword match in title or structured GSIN desc.
+      // Skip the 1-2k tender description body — too noisy for substring
+      // matching even with word boundaries. allGoods=true bypasses this
+      // for occasional full-catalog runs.
+      if (!this.input.allGoods) {
+        const haystack = `${row['title-titre-eng'] ?? ''} ${row['gsinDescription-nibsDescription-eng'] ?? ''}`;
+        if (!VTC_TERM_RE.test(haystack)) continue;
+      }
 
       const noticeUrl = (row['noticeURL-URLavis-eng'] ?? '').trim();
       const ref = (row['referenceNumber-numeroReference'] ?? '').trim();
@@ -220,10 +261,10 @@ export class CanadaBuysScraper extends TenderScraper {
 
     log.info('canada.fetch.filtered', {
       total: rows.length,
-      matchedByPrefix,
-      matchedByKeyword,
+      goodsRows,
       kept: out.length,
-      skippedClosed,
+      skippedCancelled,
+      mode: this.input.allGoods ? 'all-goods' : 'vtc-keywords',
     });
     return out;
   }
