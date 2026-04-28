@@ -23,6 +23,7 @@ import { config as loadEnv } from 'dotenv';
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import * as schema from './schema';
+import { findOrUpsertEntity } from './lib/find-or-upsert-entity';
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -477,41 +478,28 @@ async function main(): Promise<void> {
   const client = neon(url);
   const db = drizzle(client, { schema, casing: 'snake_case' });
 
-  console.log(`Seeding ${ALL_SEEDS.length} known entities...`);
+  console.log(`Seeding ${ALL_SEEDS.length} known entities (curated source — highest priority)...`);
+  let inserted = 0;
+  let merged = 0;
   for (const s of ALL_SEEDS) {
-    await db
-      .insert(schema.knownEntities)
-      .values({
-        slug: s.slug,
-        name: s.name,
-        country: s.country,
-        role: s.role,
-        categories: s.categories,
-        notes: s.notes,
-        aliases: s.aliases ?? [s.name],
-        tags: s.tags ?? [],
-        latitude: s.latitude != null ? String(s.latitude) : null,
-        longitude: s.longitude != null ? String(s.longitude) : null,
-        metadata: { source: 'curated', ...(s.metadata ?? {}) },
-      })
-      .onConflictDoUpdate({
-        target: schema.knownEntities.slug,
-        set: {
-          name: s.name,
-          country: s.country,
-          role: s.role,
-          categories: s.categories,
-          notes: s.notes,
-          aliases: s.aliases ?? [s.name],
-          tags: s.tags ?? [],
-          latitude: s.latitude != null ? String(s.latitude) : null,
-          longitude: s.longitude != null ? String(s.longitude) : null,
-          metadata: { source: 'curated', ...(s.metadata ?? {}) },
-          updatedAt: new Date(),
-        },
-      });
+    const result = await findOrUpsertEntity(db, {
+      slug: s.slug,
+      source: 'curated',
+      name: s.name,
+      country: s.country,
+      role: s.role,
+      categories: s.categories,
+      notes: s.notes,
+      aliases: s.aliases ?? [s.name],
+      tags: s.tags ?? [],
+      latitude: s.latitude ?? null,
+      longitude: s.longitude ?? null,
+      metadata: s.metadata ?? {},
+    });
+    if (result.outcome === 'inserted') inserted += 1;
+    else merged += 1;
   }
-  console.log('Done.');
+  console.log(`Done. inserted=${inserted}, merged=${merged} (collapsed onto existing rows from prior ingests).`);
 }
 
 main().catch((err: unknown) => {
