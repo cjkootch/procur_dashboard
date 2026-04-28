@@ -1,20 +1,49 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { Chat } from './Chat';
 import type { PageContextInput } from './types';
 
 /**
+ * localStorage key for the active drawer thread. Persisting it lets the
+ * conversation survive a hard reload, a new tab, or a navigation —
+ * matching every other chat product the user has used.
+ *
+ * Versioned so a future shape change can invalidate stale entries.
+ */
+const THREAD_STORAGE_KEY = 'procur:assistant-drawer:threadId:v1';
+
+/**
  * Global Cmd+K (or Ctrl+K) launcher that opens the Procur Assistant in a
  * right-side drawer over the current page. Auto-derives page context from
  * the current URL so the assistant defaults to the right subject when
  * the user asks ambiguous questions ("what's the deadline?").
+ *
+ * Conversation persistence: the active threadId is mirrored into
+ * localStorage so the chat survives across page navigations, drawer
+ * close/reopen, hard reloads, and new tabs. Per-turn `pageContext`
+ * still updates as the user navigates — the assistant always knows
+ * what the user is currently looking at; only the conversation
+ * history persists.
  */
 export function AssistantDrawer() {
   const [open, setOpen] = useState(false);
   const [threadId, setThreadId] = useState<string | undefined>(undefined);
+  // Hydrate threadId from localStorage on mount. Done in an effect
+  // (not useState initializer) so SSR and the first client render
+  // agree on `undefined` before the client-only storage read runs.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const saved = window.localStorage.getItem(THREAD_STORAGE_KEY);
+      if (saved) setThreadId(saved);
+    } catch {
+      // localStorage unavailable (private browsing, disabled) —
+      // fall back to ephemeral session state.
+    }
+  }, []);
   const backdropRef = useRef<HTMLDivElement | null>(null);
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -35,11 +64,23 @@ export function AssistantDrawer() {
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
-  // Reset the thread when the drawer reopens on a different page so the
-  // user doesn't carry pursuit-X context into a conversation about pursuit-Y.
-  useEffect(() => {
-    if (open) setThreadId(undefined);
-  }, [open, pathname]);
+  const persistThread = useCallback((id: string) => {
+    setThreadId(id);
+    try {
+      window.localStorage.setItem(THREAD_STORAGE_KEY, id);
+    } catch {
+      // Storage unavailable — keep state ephemeral.
+    }
+  }, []);
+
+  const clearThread = useCallback(() => {
+    setThreadId(undefined);
+    try {
+      window.localStorage.removeItem(THREAD_STORAGE_KEY);
+    } catch {
+      // Same fallback as above.
+    }
+  }, []);
 
   if (!open) return <LauncherButton onOpen={() => setOpen(true)} />;
 
@@ -68,6 +109,16 @@ export function AssistantDrawer() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {threadId && (
+              <button
+                type="button"
+                onClick={clearThread}
+                className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-muted-foreground)] hover:border-[color:var(--color-foreground)] hover:text-[color:var(--color-foreground)]"
+                title="Start a new conversation (current one stays in /assistant history)"
+              >
+                New chat
+              </button>
+            )}
             {threadId ? (
               <Link
                 href={`/assistant/${threadId}`}
@@ -97,8 +148,10 @@ export function AssistantDrawer() {
         </header>
         <div className="flex-1 overflow-hidden">
           <Chat
+            initialThreadId={threadId}
             pageContext={pageContext}
-            onThreadChange={setThreadId}
+            onThreadChange={persistThread}
+            onThreadCleared={clearThread}
             autoFocus
             placeholder="Ask the assistant…"
           />

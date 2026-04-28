@@ -25,6 +25,13 @@ export type ChatProps = {
   initialMessages?: RenderedMessage[];
   pageContext?: PageContextInput;
   onThreadChange?: (threadId: string) => void;
+  /**
+   * Called when the component starts a fresh conversation — either
+   * because the parent passed `undefined` initially or because a
+   * rehydration fetch returned 404 (saved thread no longer exists).
+   * The drawer uses this to clear its persisted threadId.
+   */
+  onThreadCleared?: () => void;
   placeholder?: string;
   autoFocus?: boolean;
 };
@@ -41,6 +48,7 @@ export function Chat({
   initialMessages,
   pageContext,
   onThreadChange,
+  onThreadCleared,
   placeholder,
   autoFocus,
 }: ChatProps) {
@@ -49,6 +57,7 @@ export function Chat({
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hydrating, setHydrating] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
@@ -61,6 +70,71 @@ export function Chat({
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
+
+  // Rehydrate when the drawer reopens with a saved threadId but no
+  // messages baked in (initialMessages is omitted by the drawer
+  // because it can't run server queries). The /assistant/[threadId]
+  // page passes initialMessages directly so this effect no-ops there.
+  //
+  // Tracks the last hydrated id so prop-driven thread changes
+  // (drawer clears via "New chat", or a future "open another
+  // conversation") refetch as expected.
+  const lastHydratedRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!initialThreadId) {
+      // Nothing to hydrate. If we'd previously loaded a different
+      // thread, clear messages so the surface shows a clean slate.
+      if (lastHydratedRef.current !== undefined) {
+        lastHydratedRef.current = undefined;
+        setMessages([]);
+        setThreadId(undefined);
+      }
+      return;
+    }
+    if (initialMessages !== undefined) {
+      // Server-rendered hydration path — no fetch needed.
+      lastHydratedRef.current = initialThreadId;
+      return;
+    }
+    if (lastHydratedRef.current === initialThreadId) return;
+
+    let cancelled = false;
+    setHydrating(true);
+    setError(null);
+    fetch(`/api/assistant/threads/${initialThreadId}`, {
+      headers: { Accept: 'application/json' },
+    })
+      .then(async (res) => {
+        if (cancelled) return;
+        if (res.status === 404) {
+          // Thread was deleted (or belongs to a different user after
+          // a sign-out / sign-in). Drop it and start fresh.
+          lastHydratedRef.current = undefined;
+          setThreadId(undefined);
+          setMessages([]);
+          onThreadCleared?.();
+          return;
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = (await res.json()) as { rendered: RenderedMessage[] };
+        if (cancelled) return;
+        lastHydratedRef.current = initialThreadId;
+        setThreadId(initialThreadId);
+        setMessages(body.rendered ?? []);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : 'Failed to load conversation';
+        setError(msg);
+      })
+      .finally(() => {
+        if (!cancelled) setHydrating(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialThreadId, initialMessages, onThreadCleared]);
 
   const send = useCallback(async () => {
     const userText = input.trim();
@@ -228,7 +302,12 @@ export function Chat({
   return (
     <div className="flex h-full flex-col">
       <div ref={scrollerRef} className="flex-1 overflow-y-auto px-4 py-4">
-        {messages.length === 0 && (
+        {hydrating && messages.length === 0 && (
+          <div className="mx-auto max-w-lg py-16 text-center text-sm text-[color:var(--color-muted-foreground)]">
+            Loading conversation…
+          </div>
+        )}
+        {!hydrating && messages.length === 0 && (
           <div className="mx-auto max-w-lg py-16 text-center text-sm text-[color:var(--color-muted-foreground)]">
             <p className="mb-2 text-base font-medium text-[color:var(--color-foreground)]">
               Ask anything about your pipeline
