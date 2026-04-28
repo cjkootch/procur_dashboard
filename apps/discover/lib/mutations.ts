@@ -1,5 +1,6 @@
 import 'server-only';
-import { db, alertProfiles } from '@procur/db';
+import { and, eq } from 'drizzle-orm';
+import { db, alertProfiles, opportunities, pursuits } from '@procur/db';
 
 /**
  * Discover-side mutations for the AI assistant write tools.
@@ -88,5 +89,86 @@ export async function createAlertProfile(
     frequency: row.frequency,
     active: row.active,
     manageUrl: `${appUrl}/alerts`,
+  };
+}
+
+export type AddOpportunityToPursuitInput = {
+  companyId: string;
+  opportunitySlug: string;
+};
+
+export type AddOpportunityToPursuitResult = {
+  pursuitId: string;
+  opportunityTitle: string;
+  alreadyExisted: boolean;
+  manageUrl: string;
+};
+
+/**
+ * Save a Discover opportunity to the user's company pursuit pipeline.
+ *
+ * Idempotent — pursuits has a UNIQUE INDEX on (companyId, opportunityId)
+ * so re-adding the same opportunity returns the existing pursuit row
+ * with alreadyExisted=true, rather than failing or creating a duplicate.
+ *
+ * The new pursuit lands in stage='identification' (the default) — the
+ * user can advance it through the capture flow in the main app. Notes,
+ * stage advancement, capture answers etc. all live in the main app's
+ * capture UI; this tool just creates the pipeline entry.
+ *
+ * Refuses to add a private uploaded opportunity that's NOT owned by
+ * the calling company — preserves Discover's privacy boundary
+ * (uploaded RFPs are tenant-scoped).
+ */
+export async function addOpportunityToPursuit(
+  input: AddOpportunityToPursuitInput,
+): Promise<AddOpportunityToPursuitResult> {
+  const opp = await db.query.opportunities.findFirst({
+    where: eq(opportunities.slug, input.opportunitySlug),
+    columns: { id: true, title: true, companyId: true },
+  });
+  if (!opp) throw new Error(`opportunity not found: ${input.opportunitySlug}`);
+  if (opp.companyId && opp.companyId !== input.companyId) {
+    throw new Error('cannot pursue another tenant\'s private uploaded opportunity');
+  }
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.procur.app';
+
+  // Insert; on dup-key conflict, do nothing and re-fetch.
+  const [inserted] = await db
+    .insert(pursuits)
+    .values({
+      companyId: input.companyId,
+      opportunityId: opp.id,
+    })
+    .onConflictDoNothing({
+      target: [pursuits.companyId, pursuits.opportunityId],
+    })
+    .returning({ id: pursuits.id });
+
+  if (inserted) {
+    return {
+      pursuitId: inserted.id,
+      opportunityTitle: opp.title,
+      alreadyExisted: false,
+      manageUrl: `${appUrl}/capture/pursuits/${inserted.id}`,
+    };
+  }
+
+  const existing = await db.query.pursuits.findFirst({
+    where: and(
+      eq(pursuits.companyId, input.companyId),
+      eq(pursuits.opportunityId, opp.id),
+    ),
+    columns: { id: true },
+  });
+  if (!existing) {
+    throw new Error('pursuit insert returned no row and no existing row found');
+  }
+  return {
+    pursuitId: existing.id,
+    opportunityTitle: opp.title,
+    alreadyExisted: true,
+    manageUrl: `${appUrl}/capture/pursuits/${existing.id}`,
   };
 }

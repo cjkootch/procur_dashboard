@@ -9,7 +9,7 @@ import {
   summarizeCatalog,
   type OpportunityScope,
 } from './queries';
-import { createAlertProfile } from './mutations';
+import { addOpportunityToPursuit, createAlertProfile } from './mutations';
 
 const DISCOVER_BASE = 'https://discover.procur.app';
 
@@ -443,6 +443,33 @@ export function buildDiscoverTools(): ToolRegistry {
           minValueUsd: input.minValueUsd,
           maxValueUsd: input.maxValueUsd,
           frequency: input.frequency,
+        });
+      },
+    }),
+
+    add_to_pursuit_pipeline: defineTool({
+      name: 'add_to_pursuit_pipeline',
+      description:
+        'Save an opportunity to the user\'s company pursuit pipeline so they can work it ' +
+        'in the main app (capture answers, bid/no-bid, proposal drafting). Use when the ' +
+        'user says things like "save this", "track this for me", "add to my pipeline", ' +
+        '"I\'ll bid on this", "I want to pursue this", "let me work this one". Idempotent — ' +
+        'returns the existing pursuit if the opportunity is already in the pipeline. ' +
+        'Confirm the user\'s intent in plain language BEFORE calling — this writes to their ' +
+        'account. After creation, surface the returned manageUrl as a "Open in Capture →" link.',
+      kind: 'write',
+      schema: z.object({
+        opportunitySlug: z
+          .string()
+          .describe(
+            'The opportunity slug (the path segment after /opportunities/ in a Discover URL). ' +
+              'Get from a prior search_opportunities or get_opportunity call.',
+          ),
+      }),
+      handler: async (ctx, input) => {
+        return addOpportunityToPursuit({
+          companyId: ctx.companyId,
+          opportunitySlug: input.opportunitySlug,
         });
       },
     }),
