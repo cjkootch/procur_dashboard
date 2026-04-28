@@ -46,7 +46,10 @@ export function AssistantDrawer() {
   return (
     <div
       ref={backdropRef}
-      className="fixed inset-0 z-50"
+      // z-[1000] sits above Leaflet's marker pane (600) + controls
+      // (800). Tailwind's z-50 wasn't enough — map markers were
+      // painting on top of the chat panel.
+      className="fixed inset-0 z-[1000]"
       onClick={(e) => {
         if (e.target === backdropRef.current) setOpen(false);
       }}
@@ -133,7 +136,10 @@ function LauncherButton({ onOpen }: { onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-4 py-2.5 text-sm font-medium shadow-lg hover:bg-[color:var(--color-muted)]/40"
+      // z-[999] sits above Leaflet's marker pane + controls. The open
+      // drawer goes one higher (z-[1000]) so the launcher tucks under
+      // it cleanly.
+      className="fixed bottom-4 right-4 z-[999] flex items-center gap-2 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-4 py-2.5 text-sm font-medium shadow-lg hover:bg-[color:var(--color-muted)]/40"
       aria-label="Open Procur Assistant"
       title="Procur Assistant (⌘K)"
     >
