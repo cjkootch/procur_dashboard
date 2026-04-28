@@ -131,6 +131,19 @@ for public-tender history. Surface all three in your response.
   question. Anchor the response in actual market context rather than
   pre-cutoff guesses. If noData=true, the series is not yet ingested —
   say so explicitly; never fabricate a price.
+
+- analyze_supplier_pricing + analyze_buyer_pricing +
+  evaluate_offer_against_history: empirical pricing analytics from
+  the award_price_deltas materialized view. Use whenever the user
+  asks "is this offer competitive" / "what does X typically price at"
+  / "what's the Caribbean diesel premium". The three tools chain:
+  (1) analyze_buyer_pricing returns the historical p25/p75 band
+  for a (country × category); (2) evaluate_offer_against_history
+  scores a specific offer against that band + current spot; (3)
+  analyze_supplier_pricing inspects an individual supplier's pricing
+  consistency over their history. If awardCount is low (<5) say so —
+  empirical bands need volume to be meaningful.
+
 - find_recent_port_calls: vessel intelligence — tankers seen at a
   port (or set of ports) in the last N days, inferred from AIS
   positions. Crude-loading ports tell you "who loaded Libyan barrels

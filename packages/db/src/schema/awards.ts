@@ -79,6 +79,32 @@ export const awards = pgTable(
     performanceStart: date('performance_start'),
     performanceEnd: date('performance_end'),
 
+    // ─── Quantity (extracted) ────────────────────────────────────
+    /**
+     * Award quantity normalized to barrels (bbl). Populated by
+     * `backfill-award-quantities.ts` via regex extraction from
+     * commodity_description, unit-converted using category-typical
+     * specific gravity. NULL when extraction failed or units were
+     * ambiguous; pricing-analytics queries skip those rows.
+     */
+    quantityBbl: numeric('quantity_bbl', { precision: 20, scale: 4 }),
+    /**
+     * Where quantity_bbl came from: 'explicit-bbl' | 'mt-converted' |
+     * 'gallons-converted' | 'liters-converted' | 'm3-converted' |
+     * 'extracted-fail' | NULL (not yet processed).
+     */
+    quantityExtractionMethod: text('quantity_extraction_method'),
+    /**
+     * 0–1 confidence in the extracted quantity. 1.0 = explicit "X bbl"
+     * with unambiguous unit; 0.7 = converted from MT with category-
+     * typical SG; 0.4 = best-effort guess. Pricing-analytics filters
+     * confidence ≥ 0.6 by default.
+     */
+    quantityExtractionConfidence: numeric('quantity_extraction_confidence', {
+      precision: 3,
+      scale: 2,
+    }),
+
     // ─── Lifecycle ───────────────────────────────────────────────
     status: text('status').default('active').notNull(),    // active | terminated | expired | unknown
     scrapedAt: timestamp('scraped_at').defaultNow().notNull(),
