@@ -19,7 +19,22 @@ export type PageContext =
   | { kind: 'pursuit'; id: string }
   | { kind: 'proposal'; id: string }
   | { kind: 'opportunity'; id: string }
-  | { kind: 'contract'; id: string };
+  | { kind: 'contract'; id: string }
+  /**
+   * Analyst is viewing the curated rolodex (`/suppliers/known-entities`)
+   * with these filters applied. The assistant should reuse them as
+   * defaults on any tool call that accepts the same dimensions —
+   * lookup_known_entities, find_recent_port_calls, etc.
+   */
+  | {
+      kind: 'rolodex';
+      filters: {
+        category?: string;
+        country?: string;
+        role?: string;
+        tag?: string;
+      };
+    };
 
 /**
  * A tool definition. The handler is always called server-side with the

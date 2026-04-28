@@ -179,9 +179,27 @@ a buyer-list recommendation.`;
   ];
   if (input.userFirstName) contextLines.push(`Current user: ${input.userFirstName}`);
   if (input.pageContext) {
-    contextLines.push(
-      `User is currently viewing a ${input.pageContext.kind} (id: ${input.pageContext.id}). Prefer this as the default subject of their question when ambiguous.`,
-    );
+    if (input.pageContext.kind === 'rolodex') {
+      const f = input.pageContext.filters;
+      const parts: string[] = [];
+      if (f.role) parts.push(`role=${f.role}`);
+      if (f.country) parts.push(`country=${f.country}`);
+      if (f.category) parts.push(`category=${f.category}`);
+      if (f.tag) parts.push(`tag=${f.tag}`);
+      const filterDesc =
+        parts.length > 0 ? parts.join(' · ') : 'no active filters';
+      contextLines.push(
+        `User is currently viewing the curated rolodex (/suppliers/known-entities) with: ${filterDesc}. ` +
+          'When they ask "tell me more about these" / "show recent calls at these refineries" / ' +
+          '"who runs Es Sider here" / similar, default to these same filters in your tool calls ' +
+          '(lookup_known_entities, find_recent_port_calls, lookup_refineries_compatible_with_grade). ' +
+          'If the user asks the assistant to show a refinery profile, link the entity slug.',
+      );
+    } else {
+      contextLines.push(
+        `User is currently viewing a ${input.pageContext.kind} (id: ${input.pageContext.id}). Prefer this as the default subject of their question when ambiguous.`,
+      );
+    }
   }
   if (input.surfaceContext) {
     contextLines.push('', input.surfaceContext.trim());
