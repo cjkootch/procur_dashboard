@@ -36,7 +36,7 @@ export function Heatmap({
   if (max === 0) max = 1;
 
   return (
-    <div className="overflow-x-auto rounded-[var(--radius-lg)] border border-[color:var(--color-border)]">
+    <div className="overflow-x-auto rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] shadow-sm">
       <table className="w-full text-left text-xs">
         <thead>
           <tr className="border-b border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30">

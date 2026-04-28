@@ -3363,6 +3363,123 @@ export async function getRolodexCoverage(
 }
 
 /**
+ * Period-over-period KPIs for the Intelligence dashboard top strip.
+ * Computes current-window totals + prior-window totals so the UI
+ * can render a delta badge ("$156M, +8% vs prior 12m").
+ */
+export async function getIntelligenceKpis(filters: {
+  categoryTag?: string;
+  buyerCountry?: string;
+  monthsLookback?: number;
+}): Promise<{
+  awardsCurrent: number;
+  awardsPrior: number;
+  totalUsdCurrent: number | null;
+  totalUsdPrior: number | null;
+  uniqueBuyers: number;
+  uniqueSuppliers: number;
+  topBuyerName: string | null;
+  topBuyerSharePct: number | null;
+}> {
+  const monthsLookback = filters.monthsLookback ?? 12;
+  const result = await db.execute(sql`
+    WITH base AS (
+      SELECT
+        a.id, a.buyer_name, a.contract_value_usd::numeric AS v,
+        a.award_date, aa.supplier_id
+      FROM awards a
+      LEFT JOIN award_awardees aa ON aa.award_id = a.id
+      WHERE a.award_date >= NOW() - (${monthsLookback * 2}::int || ' months')::interval
+        ${
+          filters.categoryTag && filters.categoryTag !== 'all'
+            ? sql`AND ${filters.categoryTag} = ANY(a.category_tags)`
+            : sql``
+        }
+        ${filters.buyerCountry ? sql`AND a.buyer_country = ${filters.buyerCountry}` : sql``}
+    ),
+    cur AS (
+      SELECT * FROM base
+      WHERE award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+    ),
+    prior AS (
+      SELECT * FROM base
+      WHERE award_date < NOW() - (${monthsLookback}::int || ' months')::interval
+    ),
+    cur_buyer_share AS (
+      SELECT buyer_name, SUM(v) AS s
+      FROM cur WHERE v IS NOT NULL
+      GROUP BY buyer_name
+      ORDER BY s DESC
+      LIMIT 1
+    ),
+    cur_total AS (
+      SELECT SUM(v) AS s FROM cur WHERE v IS NOT NULL
+    )
+    SELECT
+      (SELECT COUNT(*) FROM cur)::int                                    AS awards_current,
+      (SELECT COUNT(*) FROM prior)::int                                  AS awards_prior,
+      (SELECT SUM(v) FROM cur)                                           AS total_usd_current,
+      (SELECT SUM(v) FROM prior)                                         AS total_usd_prior,
+      (SELECT COUNT(DISTINCT buyer_name) FROM cur)::int                  AS unique_buyers,
+      (SELECT COUNT(DISTINCT supplier_id) FROM cur
+        WHERE supplier_id IS NOT NULL)::int                              AS unique_suppliers,
+      (SELECT buyer_name FROM cur_buyer_share)                           AS top_buyer_name,
+      (SELECT (s / NULLIF((SELECT s FROM cur_total), 0)) * 100
+        FROM cur_buyer_share)                                            AS top_buyer_share;
+  `);
+  const row = (result.rows as Array<Record<string, unknown>>)[0] ?? {};
+  const num = (k: string): number | null =>
+    row[k] != null ? Number.parseFloat(String(row[k])) : null;
+  return {
+    awardsCurrent: Number(row.awards_current ?? 0),
+    awardsPrior: Number(row.awards_prior ?? 0),
+    totalUsdCurrent: num('total_usd_current'),
+    totalUsdPrior: num('total_usd_prior'),
+    uniqueBuyers: Number(row.unique_buyers ?? 0),
+    uniqueSuppliers: Number(row.unique_suppliers ?? 0),
+    topBuyerName: row.top_buyer_name == null ? null : String(row.top_buyer_name),
+    topBuyerSharePct: num('top_buyer_share'),
+  };
+}
+
+/**
+ * Data-freshness probe — last update across the major signal layers.
+ * Drives the "as-of" status strip at the top of the dashboard.
+ */
+export async function getDataFreshness(): Promise<{
+  awards: { latest: string | null; count: number };
+  commodityPrices: { latest: string | null; count: number };
+  vesselPositions: { latest: string | null; count: number };
+  customsImports: { latest: string | null; count: number };
+}> {
+  const result = await db.execute(sql`
+    SELECT
+      (SELECT MAX(scraped_at) FROM awards)                               AS awards_latest,
+      (SELECT COUNT(*) FROM awards)::bigint                              AS awards_count,
+      (SELECT MAX(price_date) FROM commodity_prices)                     AS prices_latest,
+      (SELECT COUNT(*) FROM commodity_prices)::bigint                    AS prices_count,
+      (SELECT MAX(timestamp) FROM vessel_positions)                      AS positions_latest,
+      (SELECT COUNT(*) FROM vessel_positions)::bigint                    AS positions_count,
+      (SELECT MAX(period::date) FROM customs_imports)                    AS customs_latest,
+      (SELECT COUNT(*) FROM customs_imports)::bigint                     AS customs_count;
+  `);
+  const row = (result.rows as Array<Record<string, unknown>>)[0] ?? {};
+  const ts = (k: string): string | null => {
+    const v = row[k];
+    return v == null ? null : new Date(String(v)).toISOString();
+  };
+  return {
+    awards: { latest: ts('awards_latest'), count: Number(row.awards_count ?? 0) },
+    commodityPrices: { latest: ts('prices_latest'), count: Number(row.prices_count ?? 0) },
+    vesselPositions: {
+      latest: ts('positions_latest'),
+      count: Number(row.positions_count ?? 0),
+    },
+    customsImports: { latest: ts('customs_latest'), count: Number(row.customs_count ?? 0) },
+  };
+}
+
+/**
  * Buyer-side + supplier-side concentration for the selected
  * (category × country × window). Returns Herfindahl-Hirschman Index
  * (sum of squared market shares, 0–10,000) for each side plus the

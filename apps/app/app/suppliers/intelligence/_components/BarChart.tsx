@@ -56,7 +56,7 @@ export function BarChart({
   const ticks = [0, max / 2, max];
 
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4">
+    <div className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-4 shadow-sm">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none">
         {/* Y-axis grid lines */}
         {ticks.map((t, i) => {
