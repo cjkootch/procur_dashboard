@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
@@ -93,12 +93,21 @@ export function MapView({
   totalCount?: number;
 }) {
   const [fullscreen, setFullscreen] = useState(false);
+  const [, startTransition] = useTransition();
+
+  // Wrap the fullscreen toggle in startTransition so the click handler
+  // returns immediately. Without this, React commits the layout change +
+  // Leaflet re-cluster of 1500+ markers synchronously, blocking input
+  // for ~270ms (Chrome INP warning).
+  const toggleFullscreen = () => {
+    startTransition(() => setFullscreen((v) => !v));
+  };
 
   // Esc closes fullscreen so the user isn't trapped.
   useEffect(() => {
     if (!fullscreen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setFullscreen(false);
+      if (e.key === 'Escape') startTransition(() => setFullscreen(false));
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -142,7 +151,7 @@ export function MapView({
         </span>
         <button
           type="button"
-          onClick={() => setFullscreen((v) => !v)}
+          onClick={toggleFullscreen}
           className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-xs hover:border-[color:var(--color-foreground)]"
           title={fullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen map'}
         >
@@ -164,7 +173,7 @@ export function MapView({
           // that's always reachable. z-[1000] sits above Leaflet's controls.
           <button
             type="button"
-            onClick={() => setFullscreen(false)}
+            onClick={() => startTransition(() => setFullscreen(false))}
             className="absolute right-4 top-4 z-[1000] rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-3 py-1.5 text-xs font-medium shadow-md hover:bg-[color:var(--color-muted)]/40"
           >
             Exit fullscreen (Esc)
