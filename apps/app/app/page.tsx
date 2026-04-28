@@ -1,5 +1,4 @@
 import { getCurrentCompany, getCurrentUser } from '@procur/auth';
-import { UserButton } from '@clerk/nextjs';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { listCompanyActivity } from '../lib/activity-feed';
@@ -9,6 +8,7 @@ import { getRecommendedOpportunities } from '../lib/recommended-queries';
 import { flagFor, formatDate, formatMoney, timeUntil } from '../lib/format';
 import { ActivityFeed } from '../components/home/ActivityFeed';
 import { SetupChecklist } from '../components/home/SetupChecklist';
+import { AppShell } from '../components/shell/AppShell';
 import { db, users } from '@procur/db';
 import { eq, sql } from 'drizzle-orm';
 
@@ -34,14 +34,16 @@ export default async function DashboardPage() {
 
   if (!company) {
     return (
-      <main className="mx-auto max-w-3xl px-6 py-12">
-        <h1 className="text-3xl font-semibold tracking-tight">Welcome, {displayName}</h1>
-        <p className="mt-4 text-sm text-[color:var(--color-muted-foreground)]">
-          <Link className="underline" href="/onboarding">
-            Complete onboarding to create your organization
-          </Link>
-        </p>
-      </main>
+      <AppShell title="Home">
+        <div className="mx-auto max-w-3xl px-6 py-12">
+          <h1 className="text-3xl font-semibold tracking-tight">Welcome, {displayName}</h1>
+          <p className="mt-4 text-sm text-[color:var(--color-muted-foreground)]">
+            <Link className="underline" href="/onboarding">
+              Complete onboarding to create your organization
+            </Link>
+          </p>
+        </div>
+      </AppShell>
     );
   }
 
@@ -60,20 +62,14 @@ export default async function DashboardPage() {
     process.env.NEXT_PUBLIC_DISCOVER_URL ?? 'https://discover.procur.app';
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-10">
-      <header className="mb-8 flex items-start justify-between gap-4">
-        <div>
+    <AppShell title="Home">
+      <div className="mx-auto max-w-6xl px-6 py-10">
+        <header className="mb-8">
           <p className="text-sm text-[color:var(--color-muted-foreground)]">Welcome back,</p>
           <h1 className="text-3xl font-semibold tracking-tight">{displayName}</h1>
-          <p className="mt-2 text-sm text-[color:var(--color-muted-foreground)]">
-            {company.name} · Plan:{' '}
-            <span className="font-medium capitalize">{company.planTier}</span>
-          </p>
-        </div>
-        <UserButton afterSignOutUrl="/sign-in" />
-      </header>
+        </header>
 
-      <SetupChecklist progress={onboarding} />
+        <SetupChecklist progress={onboarding} />
 
       <section className="mb-8 grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-6 md:grid-cols-4">
         <Fact label="Open pursuits" value={data.openPursuits} linkHref="/capture/pipeline" />
@@ -342,7 +338,8 @@ export default async function DashboardPage() {
           <ProductLink href="/insights" name="Insights" desc="Win rate, pipeline health" />
         </div>
       </section>
-    </main>
+      </div>
+    </AppShell>
   );
 }
 
