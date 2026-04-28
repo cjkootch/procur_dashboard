@@ -7,6 +7,7 @@
  *   pnpm --filter @procur/scrapers scrape trinidad-and-tobago
  *   pnpm --filter @procur/scrapers scrape jamaica-suppliers
  *   pnpm --filter @procur/scrapers scrape awards-dr <bulk1.jsonl.gz> [bulk2.jsonl.gz ...]
+ *   pnpm --filter @procur/scrapers scrape awards-jm
  *
  * Loads .env.local from repo root, runs the requested scraper against
  * the live portal, upserts into Neon, and prints the run summary.
@@ -17,6 +18,7 @@ import { getScraper, scrapers } from './registry';
 import { JamaicaGojepSuppliersScraper } from './jurisdictions/jamaica-gojep-suppliers/scraper';
 import { upsertSuppliers } from './jurisdictions/jamaica-gojep-suppliers/upsert';
 import { DrDgcpAwardsExtractor } from './awards-extractors/dr-dgcp/extractor';
+import { JamaicaGojepAwardsExtractor } from './awards-extractors/jamaica-gojep/extractor';
 
 config({ path: '../../.env.local' });
 config({ path: '../../.env' });
@@ -43,13 +45,21 @@ async function runDrAwardsExtractor(paths: string[]) {
   process.exit(result.status === 'failed' ? 1 : 0);
 }
 
+async function runJamaicaAwardsExtractor() {
+  console.log('extracting Jamaica GOJEP awards (HTML pagination + PDF parsing)...');
+  const extractor = new JamaicaGojepAwardsExtractor();
+  const result = await extractor.run();
+  console.log(JSON.stringify(result, null, 2));
+  process.exit(result.status === 'failed' ? 1 : 0);
+}
+
 async function main() {
   const slug = process.argv[2];
   if (!slug) {
-    console.error('usage: scrape <jurisdiction-slug | jamaica-suppliers | awards-dr [paths...]>');
+    console.error('usage: scrape <jurisdiction-slug | jamaica-suppliers | awards-dr [paths...] | awards-jm>');
     console.error(`available tender scrapers: ${Object.keys(scrapers).join(', ')}`);
     console.error('supplier scrapers: jamaica-suppliers');
-    console.error('awards extractors: awards-dr');
+    console.error('awards extractors: awards-dr, awards-jm');
     process.exit(1);
   }
 
@@ -60,6 +70,11 @@ async function main() {
 
   if (slug === 'awards-dr') {
     await runDrAwardsExtractor(process.argv.slice(3));
+    return;
+  }
+
+  if (slug === 'awards-jm') {
+    await runJamaicaAwardsExtractor();
     return;
   }
 
