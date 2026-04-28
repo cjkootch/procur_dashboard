@@ -5,6 +5,7 @@ import {
   listJurisdictions,
   listOpportunities,
   getOpportunityBySlug,
+  pricingIntel,
   type OpportunityScope,
 } from './queries';
 
@@ -108,6 +109,38 @@ export function buildDiscoverTools(): ToolRegistry {
           .enum(['open', 'past'])
           .optional()
           .describe('"open" for active tenders (default), "past" for awarded/closed'),
+        closingWithinDays: z
+          .number()
+          .int()
+          .min(1)
+          .max(365)
+          .optional()
+          .describe(
+            'Limit to tenders whose deadline is within the next N days. ' +
+              'Use this for "closes this week" (7), "next 14 days" (14), urgency queries.',
+          ),
+        postedWithinDays: z
+          .number()
+          .int()
+          .min(1)
+          .max(365)
+          .optional()
+          .describe(
+            'Limit to tenders posted (or first ingested) within the last N days. ' +
+              'Use for "new today" (1), "posted this week" (7), recency queries.',
+          ),
+        minValueUsd: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Minimum estimated value in USD'),
+        maxValueUsd: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Maximum estimated value in USD'),
         limit: z
           .number()
           .int()
@@ -118,11 +151,22 @@ export function buildDiscoverTools(): ToolRegistry {
       }),
       handler: async (_ctx, input) => {
         const scope: OpportunityScope = input.scope ?? 'open';
+        const now = Date.now();
+        const deadlineBefore = input.closingWithinDays
+          ? new Date(now + input.closingWithinDays * 24 * 60 * 60 * 1000)
+          : undefined;
+        const publishedAfter = input.postedWithinDays
+          ? new Date(now - input.postedWithinDays * 24 * 60 * 60 * 1000)
+          : undefined;
         const { rows, total } = await listOpportunities({
           q: input.query,
           jurisdiction: input.jurisdiction,
           category: input.category,
           beneficiaryCountry: input.country,
+          minValueUsd: input.minValueUsd,
+          maxValueUsd: input.maxValueUsd,
+          deadlineBefore,
+          publishedAfter,
           page: 1,
           perPage: input.limit ?? 10,
           sort: scope === 'past' ? 'deadline-desc' : 'deadline-asc',
@@ -223,6 +267,53 @@ export function buildDiscoverTools(): ToolRegistry {
         });
         const description = describeFilters(input);
         return { url, description };
+      },
+    }),
+
+    pricing_intel: defineTool({
+      name: 'pricing_intel',
+      description:
+        'Aggregate competitive pricing intel from past awards in the catalog. Returns ' +
+        'median / p90 / mean / total awarded values grouped by currency, plus the top 5 ' +
+        'winning suppliers and recent award examples. Use this when the user asks "what do ' +
+        'these go for", "what should I bid", "who wins these contracts", "competitive ' +
+        'pricing", or any market-research / pricing-context question. Filters work the ' +
+        'same as search_opportunities. Currencies are kept separate (no FX conversion) ' +
+        'so users see real numbers in the right unit.',
+      kind: 'read',
+      schema: z.object({
+        jurisdiction: z
+          .string()
+          .optional()
+          .describe('Jurisdiction slug (us-federal, canada-federal, eu-ted, uk-fts, un, …)'),
+        category: z
+          .string()
+          .optional()
+          .describe(
+            'Category slug ("food-commodities", "petroleum-fuels", "vehicles-fleet", "minerals-metals")',
+          ),
+        country: z
+          .string()
+          .optional()
+          .describe('Beneficiary country name (e.g. "Jamaica", "Haiti", "Germany")'),
+        withinDays: z
+          .number()
+          .int()
+          .min(1)
+          .max(3650)
+          .optional()
+          .describe(
+            'Limit to awards in the last N days. Default = all-time. ' +
+              'Use 365 for "last year", 90 for "last quarter", etc.',
+          ),
+      }),
+      handler: async (_ctx, input) => {
+        return pricingIntel({
+          jurisdiction: input.jurisdiction,
+          category: input.category,
+          beneficiaryCountry: input.country,
+          withinDays: input.withinDays,
+        });
       },
     }),
 
