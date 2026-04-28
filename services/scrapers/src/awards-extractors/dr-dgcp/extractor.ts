@@ -144,18 +144,22 @@ export class DrDgcpAwardsExtractor extends AwardsExtractor {
 
     // Local files first (deterministic for tests + dev runs), then remote.
     for (const path of localPaths) {
+      console.log(`  reading local file: ${path}`);
       yield* this.processStream(localFileLines(path), { wantFuel, wantFood, matchAll });
     }
     for (const url of remoteUrls) {
+      // Each per-year .jsonl.gz from OCDR is ~50-80MB compressed,
+      // ~500MB uncompressed. Streaming + filtering takes 1-3 min per
+      // file on typical broadband. Log start so the run doesn't look
+      // stalled.
+      console.log(`  fetching ${url}`);
       try {
         yield* this.processStream(streamRemoteJsonlGz(url), { wantFuel, wantFood, matchAll });
+        console.log(`    finished ${url}`);
       } catch (err) {
-        // Tolerate missing per-year files (DGCP hasn't published yet,
-        // or the URL pattern changed). Log via the run-level error
-        // path; other URLs in the list still get processed.
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes('HTTP 404')) {
-          // 404 is expected for not-yet-published years; not a failure.
+          console.log(`    404 (not yet published) — skipping`);
           continue;
         }
         throw err;
