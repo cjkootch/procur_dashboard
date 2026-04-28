@@ -1,4 +1,14 @@
-import { pgTable, uuid, text, timestamp, jsonb, integer, index, vector } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  jsonb,
+  integer,
+  index,
+  vector,
+  type AnyPgColumn,
+} from 'drizzle-orm/pg-core';
 import { companies } from './companies';
 
 export const contentLibrary = pgTable(
@@ -23,7 +33,13 @@ export const contentLibrary = pgTable(
     useCount: integer('use_count').default(0),
 
     version: integer('version').default(1),
-    previousVersionId: uuid('previous_version_id'),
+    // Self-FK so version-history pointers can't dangle. ON DELETE SET
+    // NULL keeps a row alive when its predecessor is deleted, with the
+    // version chain visibly truncated rather than pointing into space.
+    previousVersionId: uuid('previous_version_id').references(
+      (): AnyPgColumn => contentLibrary.id,
+      { onDelete: 'set null' },
+    ),
 
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),

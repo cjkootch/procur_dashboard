@@ -16,8 +16,12 @@ export const alertProfiles = pgTable('alert_profiles', {
   categories: text('categories').array(),
   keywords: text('keywords').array(),
   excludeKeywords: text('exclude_keywords').array(),
-  minValue: numeric('min_value'),
-  maxValue: numeric('max_value'),
+  // Standardized to numeric(20, 2) to match every other money column
+  // in the schema (opportunities.value*, contracts.totalValue, etc).
+  // Default-precision numeric() works but trips reviewers and is easy
+  // to forget when grepping for monetary fields.
+  minValue: numeric('min_value', { precision: 20, scale: 2 }),
+  maxValue: numeric('max_value', { precision: 20, scale: 2 }),
 
   frequency: alertFrequencyEnum('frequency').default('daily').notNull(),
   emailEnabled: boolean('email_enabled').default(true).notNull(),
