@@ -2657,6 +2657,168 @@ export async function lookupKnownEntities(
   }));
 }
 
+// ─── Commodity price context ──────────────────────────────────────
+
+export interface CommodityPriceContext {
+  seriesSlug: string;
+  unit: string;
+  latest: { date: string; price: number } | null;
+  movingAverage: number | null;
+  windowLow: { date: string; price: number } | null;
+  windowHigh: { date: string; price: number } | null;
+  pctChangeOverWindow: number | null;
+  windowDays: number;
+  /** True when commodity_prices has zero rows for this series — caller
+      should explain the data gap rather than fabricate numbers. */
+  noData: boolean;
+}
+
+/**
+ * Current price + recent context for a commodity series. Used by the
+ * get_commodity_price_context chat tool — the assistant can thread
+ * "Brent today: $82.40, +2.1% on the week" into any reverse-search
+ * or pitch response.
+ *
+ * Series must already be ingested. See ingest-fred-prices (Brent +
+ * WTI) and ingest-eia-prices (refined products).
+ */
+export async function getCommodityPriceContext(
+  seriesSlug: string,
+  windowDays = 30,
+): Promise<CommodityPriceContext> {
+  const result = await db.execute(sql`
+    WITH window_rows AS (
+      SELECT price_date, price::numeric AS price, unit
+      FROM commodity_prices
+      WHERE series_slug = ${seriesSlug}
+        AND contract_type = 'spot'
+        AND price_date >= CURRENT_DATE - ${windowDays}::int
+      ORDER BY price_date DESC
+    ),
+    latest AS (
+      SELECT price_date, price, unit FROM commodity_prices
+      WHERE series_slug = ${seriesSlug} AND contract_type = 'spot'
+      ORDER BY price_date DESC LIMIT 1
+    ),
+    earliest_in_window AS (
+      SELECT price FROM window_rows ORDER BY price_date ASC LIMIT 1
+    ),
+    high AS (
+      SELECT price_date, price FROM window_rows ORDER BY price DESC, price_date DESC LIMIT 1
+    ),
+    low AS (
+      SELECT price_date, price FROM window_rows ORDER BY price ASC, price_date DESC LIMIT 1
+    )
+    SELECT
+      (SELECT price_date FROM latest) AS latest_date,
+      (SELECT price      FROM latest) AS latest_price,
+      (SELECT unit       FROM latest) AS unit,
+      (SELECT AVG(price) FROM window_rows) AS moving_avg,
+      (SELECT price FROM earliest_in_window) AS earliest_price,
+      (SELECT price_date FROM high) AS high_date,
+      (SELECT price      FROM high) AS high_price,
+      (SELECT price_date FROM low)  AS low_date,
+      (SELECT price      FROM low)  AS low_price;
+  `);
+  const row = (result.rows as Array<Record<string, unknown>>)[0];
+  if (!row || row.latest_price == null) {
+    return {
+      seriesSlug,
+      unit: 'usd-bbl',
+      latest: null,
+      movingAverage: null,
+      windowLow: null,
+      windowHigh: null,
+      pctChangeOverWindow: null,
+      windowDays,
+      noData: true,
+    };
+  }
+  const latestPrice = Number.parseFloat(String(row.latest_price));
+  const earliestPrice =
+    row.earliest_price != null ? Number.parseFloat(String(row.earliest_price)) : null;
+  const pctChange =
+    earliestPrice != null && earliestPrice !== 0
+      ? ((latestPrice - earliestPrice) / earliestPrice) * 100
+      : null;
+  return {
+    seriesSlug,
+    unit: row.unit == null ? 'usd-bbl' : String(row.unit),
+    latest: { date: String(row.latest_date), price: latestPrice },
+    movingAverage:
+      row.moving_avg != null ? Number.parseFloat(String(row.moving_avg)) : null,
+    windowHigh:
+      row.high_price != null
+        ? {
+            date: String(row.high_date),
+            price: Number.parseFloat(String(row.high_price)),
+          }
+        : null,
+    windowLow:
+      row.low_price != null
+        ? {
+            date: String(row.low_date),
+            price: Number.parseFloat(String(row.low_price)),
+          }
+        : null,
+    pctChangeOverWindow: pctChange,
+    windowDays,
+    noData: false,
+  };
+}
+
+/**
+ * Spread between two series, both at their most-recent observation.
+ * E.g. Brent–WTI or Brent–Urals. The result's asOfDate is the earlier
+ * of the two latest dates so the caller knows the comparison window.
+ */
+export async function getCommoditySpread(
+  baseSlug: string,
+  targetSlug: string,
+): Promise<{
+  baseSlug: string;
+  targetSlug: string;
+  spread: number | null;
+  basePrice: number | null;
+  targetPrice: number | null;
+  asOfDate: string | null;
+}> {
+  const result = await db.execute(sql`
+    WITH base AS (
+      SELECT price_date, price::numeric AS price
+      FROM commodity_prices
+      WHERE series_slug = ${baseSlug} AND contract_type = 'spot'
+      ORDER BY price_date DESC LIMIT 1
+    ),
+    target AS (
+      SELECT price_date, price::numeric AS price
+      FROM commodity_prices
+      WHERE series_slug = ${targetSlug} AND contract_type = 'spot'
+      ORDER BY price_date DESC LIMIT 1
+    )
+    SELECT
+      (SELECT price FROM base)   AS base_price,
+      (SELECT price FROM target) AS target_price,
+      LEAST(
+        (SELECT price_date FROM base),
+        (SELECT price_date FROM target)
+      ) AS as_of_date;
+  `);
+  const row = (result.rows as Array<Record<string, unknown>>)[0];
+  const basePrice =
+    row?.base_price != null ? Number.parseFloat(String(row.base_price)) : null;
+  const targetPrice =
+    row?.target_price != null ? Number.parseFloat(String(row.target_price)) : null;
+  return {
+    baseSlug,
+    targetSlug,
+    basePrice,
+    targetPrice,
+    spread: basePrice != null && targetPrice != null ? basePrice - targetPrice : null,
+    asOfDate: row?.as_of_date == null ? null : String(row.as_of_date),
+  };
+}
+
 // ─── Crude grades + refinery slate compatibility ──────────────────
 
 export interface CrudeGradeRow {

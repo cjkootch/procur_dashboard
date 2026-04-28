@@ -123,6 +123,15 @@ for public-tender history. Surface all three in your response.
   whenever the question is grade-fit specific. Use list_crude_grades
   first if you need to confirm a slug or surface comparable grades.
 
+- get_commodity_price_context + get_commodity_spread: current spot
+  prices + 30-day moving average + window high/low for the major
+  energy benchmarks (brent, wti, usgc-diesel, usgc-gasoline,
+  nyh-heating-oil). Use whenever pricing matters — every reverse-
+  search hit, every "is this offer fair", every Urals-discount
+  question. Anchor the response in actual market context rather than
+  pre-cutoff guesses. If noData=true, the series is not yet ingested —
+  say so explicitly; never fabricate a price.
+
 - lookup_customs_flows: country-level bilateral trade-flow data from
   Eurostat (EU reporters) + UN Comtrade (global). Works in both directions:
     direction='imports' answers "which countries import X from Y" — buy-side
