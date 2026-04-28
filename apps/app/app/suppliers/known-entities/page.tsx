@@ -13,8 +13,8 @@ import type { MapEntity } from './_components/MapView';
  * URL params drive filters (server-side, no client state):
  *   ?category=crude-oil
  *   ?country=IT
- *   ?role=refiner|trader|producer|state-buyer
- *   ?tag=region:mediterranean
+ *   ?role=refiner|trader|producer|state-buyer|power-plant
+ *   ?tag=region:mediterranean | compatible:es-sider | …
  */
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +35,7 @@ const ROLE_OPTIONS = [
   { value: 'trader', label: 'traders' },
   { value: 'producer', label: 'producers' },
   { value: 'state-buyer', label: 'state buyers' },
+  { value: 'power-plant', label: 'power plants' },
 ];
 
 const TAG_QUICK_FILTERS = [
@@ -46,6 +47,22 @@ const TAG_QUICK_FILTERS = [
   'top-tier',
 ];
 
+/**
+ * Crude-grade compatibility quick filters. The analyst slate-seed
+ * tags refineries with `compatible:<grade-slug>` based on their
+ * configured diet — surface the most-pitched grades here.
+ */
+const COMPATIBILITY_QUICK_FILTERS = [
+  { tag: 'compatible:es-sider', label: 'Es Sider (LY)' },
+  { tag: 'compatible:sirtica', label: 'Sirtica (LY)' },
+  { tag: 'compatible:brega', label: 'Brega (LY)' },
+  { tag: 'compatible:sharara', label: 'Sharara (LY)' },
+  { tag: 'compatible:bonny-light', label: 'Bonny Light (NG)' },
+  { tag: 'compatible:azeri-light', label: 'Azeri Light' },
+  { tag: 'compatible:arab-light', label: 'Arab Light' },
+  { tag: 'compatible:urals', label: 'Urals' },
+];
+
 interface Props {
   searchParams: Promise<{
     category?: string;
@@ -54,6 +71,63 @@ interface Props {
     tag?: string;
     view?: string;
   }>;
+}
+
+const REGION_NAMES = new Intl.DisplayNames(['en'], { type: 'region' });
+
+/** ISO-2 → full English country name; falls back to the ISO code on
+ *  unknown values (private orgs, "XX" sentinel). */
+function formatCountry(iso2: string): string {
+  try {
+    return REGION_NAMES.of(iso2) ?? iso2;
+  } catch {
+    return iso2;
+  }
+}
+
+/**
+ * Split the `·`-joined notes string into structured key/value pairs.
+ * Drops `Source: …` lines (analyst-irrelevant); leaves anything that
+ * doesn't follow the `Key: value` pattern as a free-text line.
+ */
+function parseNotes(
+  notes: string | null,
+): { kind: 'kv'; key: string; value: string }[] | null {
+  if (!notes) return null;
+  const segments = notes
+    .split(/\s+·\s+|\s+\|\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const kv: { kind: 'kv'; key: string; value: string }[] = [];
+  for (const seg of segments) {
+    if (/^Source:/i.test(seg)) continue;
+    const m = seg.match(/^([A-Za-z][A-Za-z _-]{0,30}?):\s*(.+)$/);
+    if (m) {
+      kv.push({ kind: 'kv', key: m[1]!.trim(), value: m[2]!.trim() });
+    } else {
+      kv.push({ kind: 'kv', key: '', value: seg });
+    }
+  }
+  return kv.length > 0 ? kv : null;
+}
+
+/** Tags that duplicate info already shown elsewhere in the row.
+ *  Hidden from the Tags column but still queryable by URL. */
+const ROLE_TAG_SET = new Set([
+  'refiner',
+  'refinery',
+  'trader',
+  'producer',
+  'state-buyer',
+  'power-plant',
+]);
+function isNoiseTag(t: string): boolean {
+  if (ROLE_TAG_SET.has(t)) return true;
+  if (t.startsWith('source:')) return true; // ingest provenance — not analyst-meaningful
+  if (t.startsWith('size:')) return true; // shown in stats
+  if (t.startsWith('status:')) return true; // shown in stats
+  if (t.startsWith('fuel:')) return true; // shown in stats
+  return false;
 }
 
 export default async function KnownEntitiesPage({ searchParams }: Props) {
@@ -81,7 +155,11 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
     list.push(r);
     byCountry.set(r.country, list);
   }
-  const countries = [...byCountry.keys()].sort();
+  // Sort by full country name so "United Arab Emirates" lands near U,
+  // not at the top under "AE".
+  const countries = [...byCountry.keys()].sort((a, b) =>
+    formatCountry(a).localeCompare(formatCountry(b)),
+  );
 
   const baseHref = (
     override: Partial<{
@@ -121,12 +199,14 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
       longitude: r.longitude as number,
     }));
 
-  // Map view benefits from a much wider canvas; list view stays at the
-  // narrower reading width.
   const containerClass =
     activeView === 'map'
       ? 'mx-auto max-w-screen-2xl px-4 py-6'
       : 'mx-auto max-w-6xl px-6 py-10';
+
+  // When filtered to a single role, the Role column repeats N times —
+  // hide it.
+  const showRoleColumn = !role;
 
   return (
     <div className={containerClass}>
@@ -183,6 +263,23 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[color:var(--color-muted-foreground)]">Crude grade:</span>
+          {COMPATIBILITY_QUICK_FILTERS.map((c) => (
+            <Link
+              key={c.tag}
+              href={baseHref({ tag: c.tag })}
+              title={c.tag}
+              className={`rounded-[var(--radius-sm)] border px-2 py-1 hover:border-[color:var(--color-foreground)] ${
+                tag === c.tag
+                  ? 'border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40'
+                  : 'border-[color:var(--color-border)]'
+              }`}
+            >
+              {c.label}
+            </Link>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-[color:var(--color-muted-foreground)]">Tags:</span>
           {TAG_QUICK_FILTERS.map((t) => (
             <Link
@@ -213,7 +310,7 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
           {rows.length} entit{rows.length === 1 ? 'y' : 'ies'}
           {truncated ? '+ (capped)' : ''} matched
           {category && category !== 'all' ? ` in ${category}` : ''}
-          {country ? ` (${country})` : ''}
+          {country ? ` in ${formatCountry(country)}` : ''}
           {role ? `, ${role}` : ''}
           {tag ? `, tagged ${tag}` : ''}.
           {truncated && (
@@ -253,9 +350,12 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
       ) : (
         countries.map((c) => (
           <section key={c} className="mb-6">
-            <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-              {c}
-              <span className="ml-2 font-normal text-[color:var(--color-muted-foreground)]">
+            <h2 className="mb-2 flex items-baseline gap-2 text-sm font-medium tracking-tight">
+              <span>{formatCountry(c)}</span>
+              <span className="font-mono text-[10px] uppercase text-[color:var(--color-muted-foreground)]">
+                {c}
+              </span>
+              <span className="text-xs font-normal text-[color:var(--color-muted-foreground)]">
                 ({byCountry.get(c)!.length})
               </span>
             </h2>
@@ -266,9 +366,11 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
                     <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
                       Name
                     </th>
-                    <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                      Role
-                    </th>
+                    {showRoleColumn && (
+                      <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                        Role
+                      </th>
+                    )}
                     <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
                       Notes
                     </th>
@@ -278,50 +380,79 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {byCountry.get(c)!.map((e) => (
-                    <tr
-                      key={e.id}
-                      className="border-b border-[color:var(--color-border)] last:border-b-0"
-                    >
-                      <td className="px-3 py-2 align-top">
-                        <Link
-                          href={`/entities/${encodeURIComponent(e.slug)}`}
-                          className="font-medium hover:underline"
-                        >
-                          {e.name}
-                        </Link>
-                        {e.aliases.length > 1 && (
-                          <div className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-                            aka {e.aliases.filter((a) => a !== e.name).slice(0, 2).join(', ')}
-                          </div>
+                  {byCountry.get(c)!.map((e) => {
+                    const noteKv = parseNotes(e.notes);
+                    const visibleTags = e.tags.filter((t) => !isNoiseTag(t));
+                    return (
+                      <tr
+                        key={e.id}
+                        className="border-b border-[color:var(--color-border)] last:border-b-0"
+                      >
+                        <td className="px-3 py-2 align-top">
+                          <Link
+                            href={`/entities/${encodeURIComponent(e.slug)}`}
+                            className="font-medium hover:underline"
+                          >
+                            {e.name}
+                          </Link>
+                          {e.aliases.length > 1 && (
+                            <div className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
+                              aka {e.aliases.filter((a) => a !== e.name).slice(0, 2).join(', ')}
+                            </div>
+                          )}
+                        </td>
+                        {showRoleColumn && (
+                          <td className="px-3 py-2 align-top text-[color:var(--color-muted-foreground)]">
+                            {e.role}
+                          </td>
                         )}
-                      </td>
-                      <td className="px-3 py-2 align-top text-[color:var(--color-muted-foreground)]">
-                        {e.role}
-                      </td>
-                      <td className="px-3 py-2 align-top">
-                        <div className="text-sm">{e.notes ?? '—'}</div>
-                        {e.contactEntity && (
-                          <div className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
-                            Contact: {e.contactEntity}
+                        <td className="px-3 py-2 align-top">
+                          {noteKv == null ? (
+                            <span className="text-[color:var(--color-muted-foreground)]">—</span>
+                          ) : (
+                            <dl className="space-y-0.5">
+                              {noteKv.slice(0, 6).map((kv, i) => (
+                                <div
+                                  key={i}
+                                  className="flex flex-wrap gap-1 leading-snug"
+                                >
+                                  {kv.key && (
+                                    <dt className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                                      {kv.key}:
+                                    </dt>
+                                  )}
+                                  <dd className="text-sm">{kv.value}</dd>
+                                </div>
+                              ))}
+                              {noteKv.length > 6 && (
+                                <div className="text-[11px] text-[color:var(--color-muted-foreground)]">
+                                  +{noteKv.length - 6} more
+                                </div>
+                              )}
+                            </dl>
+                          )}
+                          {e.contactEntity && (
+                            <div className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+                              Contact: {e.contactEntity}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 align-top">
+                          <div className="flex flex-wrap gap-1">
+                            {visibleTags.slice(0, 5).map((t) => (
+                              <Link
+                                key={t}
+                                href={baseHref({ tag: t })}
+                                className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1.5 py-0.5 text-xs hover:border-[color:var(--color-foreground)]"
+                              >
+                                {t}
+                              </Link>
+                            ))}
                           </div>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 align-top">
-                        <div className="flex flex-wrap gap-1">
-                          {e.tags.slice(0, 4).map((t) => (
-                            <Link
-                              key={t}
-                              href={baseHref({ tag: t })}
-                              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1.5 py-0.5 text-xs hover:border-[color:var(--color-foreground)]"
-                            >
-                              {t}
-                            </Link>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -330,10 +461,9 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
       )}
 
       <footer className="mt-10 border-t border-[color:var(--color-border)] pt-4 text-xs text-[color:var(--color-muted-foreground)]">
-        Curated by analyst research + augmented from Wikidata via{' '}
-        <code>pnpm --filter @procur/db ingest-wikidata-refineries</code>. Not a substitute for
-        customs/AIS data when current import flows matter. The notes field captures editorial; treat
-        it as a starting point.
+        Curated by analyst research + augmented from Wikidata, GEM, Wikipedia, OSM, and FracTracker.
+        Slate compatibility (<code>compatible:&lt;grade&gt;</code> tags) is analyst-curated. Not a
+        substitute for customs / AIS data when current import flows matter.
       </footer>
     </div>
   );
