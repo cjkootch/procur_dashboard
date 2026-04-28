@@ -1,9 +1,11 @@
 import Link from 'next/link';
 import {
   findCompetingSellers,
+  findRecentPortCalls,
   getAwardValueHistogram,
   getCommoditySpreadHistory,
   getCommodityTicker,
+  getMarketConcentration,
   getMonthlyAvgAwardValue,
   getMonthlyAwardsVolume,
   getNewBuyers,
@@ -122,6 +124,21 @@ export default async function IntelligencePage({ searchParams }: Props) {
   // the category doesn't map to an HS code we recognize).
   const productCode = CATEGORY_HS_CODES[categoryTag];
 
+  /**
+   * Run a query, returning fallback if it throws. Keeps the dashboard
+   * rendering when one section's data source is missing or the query
+   * has an issue — section shows its own empty-state instead of the
+   * whole page erroring.
+   */
+  async function safe<T>(p: Promise<T>, fallback: T, label: string): Promise<T> {
+    try {
+      return await p;
+    } catch (err) {
+      console.error(`[intelligence] ${label} failed:`, err);
+      return fallback;
+    }
+  }
+
   const [
     topBuyers,
     topSuppliers,
@@ -134,34 +151,111 @@ export default async function IntelligencePage({ searchParams }: Props) {
     customsImports,
     customsExports,
     spreadHistory,
+    concentration,
+    portCalls,
   ] = await Promise.all([
-    getTopBuyersByCategory(filters, 10),
-    getTopSuppliersByCategory(filters, 10),
-    getMonthlyAwardsVolume(filters),
-    getNewBuyers(filters, 90, 15),
+    safe(getTopBuyersByCategory(filters, 10), [], 'top-buyers'),
+    safe(getTopSuppliersByCategory(filters, 10), [], 'top-suppliers'),
+    safe(getMonthlyAwardsVolume(filters), [], 'monthly-volume'),
+    safe(getNewBuyers(filters, 90, 15), [], 'new-buyers'),
     categoryTag === 'all'
       ? Promise.resolve(null)
-      : findCompetingSellers(competingArgs),
-    getCommodityTicker(TICKER_SERIES.map((s) => s.slug)),
-    getAwardValueHistogram(valueFilters),
-    getMonthlyAvgAwardValue(valueFilters),
-    // Customs flows: only meaningful when both country + productCode
-    // are set. Both queries return empty when the data isn't there.
+      : safe(findCompetingSellers(competingArgs), null, 'competing-sellers'),
+    safe(getCommodityTicker(TICKER_SERIES.map((s) => s.slug)), [], 'ticker'),
+    safe(getAwardValueHistogram(valueFilters), [], 'value-hist'),
+    safe(getMonthlyAvgAwardValue(valueFilters), [], 'monthly-avg-value'),
     buyerCountry && productCode
-      ? getTopSourcesForReporter(
-          { reporterCountry: buyerCountry, productCode, monthsLookback },
-          10,
+      ? safe(
+          getTopSourcesForReporter(
+            { reporterCountry: buyerCountry, productCode, monthsLookback },
+            10,
+          ),
+          [],
+          'customs-sources',
         )
       : Promise.resolve([]),
     buyerCountry && productCode
-      ? getTopImportersByPartner(
-          { partnerCountry: buyerCountry, productCode, monthsLookback },
-          10,
+      ? safe(
+          getTopImportersByPartner(
+            { partnerCountry: buyerCountry, productCode, monthsLookback },
+            10,
+          ),
+          [],
+          'customs-destinations',
         )
       : Promise.resolve([]),
-    // Brent–WTI spread over the window.
-    getCommoditySpreadHistory('brent', 'wti', monthsLookback),
+    safe(
+      getCommoditySpreadHistory('brent', 'wti', monthsLookback),
+      [],
+      'spread-history',
+    ),
+    safe(
+      getMarketConcentration(valueFilters),
+      {
+        buyerHhi: null,
+        supplierHhi: null,
+        top3BuyerSharePct: null,
+        top3SupplierSharePct: null,
+        totalValueUsd: null,
+        buyerCount: 0,
+        supplierCount: 0,
+      },
+      'concentration',
+    ),
+    buyerCountry
+      ? safe(
+          findRecentPortCalls({ country: buyerCountry, daysBack: 30, limit: 200 }),
+          [],
+          'port-calls',
+        )
+      : Promise.resolve([]),
   ]);
+
+  // Aggregate port calls into per-port distinct-vessel counts.
+  type PortAgg = {
+    portSlug: string;
+    portName: string;
+    portCountry: string;
+    portType: string;
+    vesselCount: number;
+    lastCallAt: string;
+  };
+  const portAgg: PortAgg[] = (() => {
+    const byPort = new Map<string, PortAgg>();
+    const seen = new Map<string, Set<string>>();
+    for (const c of portCalls) {
+      const slug = c.portSlug;
+      if (!seen.has(slug)) seen.set(slug, new Set());
+      seen.get(slug)!.add(c.mmsi);
+      const existing = byPort.get(slug);
+      if (!existing) {
+        byPort.set(slug, {
+          portSlug: c.portSlug,
+          portName: c.portName,
+          portCountry: c.portCountry,
+          portType: c.portType,
+          vesselCount: 0,
+          lastCallAt: c.lastSeenAt,
+        });
+      } else if (c.lastSeenAt > existing.lastCallAt) {
+        existing.lastCallAt = c.lastSeenAt;
+      }
+    }
+    for (const [slug, agg] of byPort) {
+      agg.vesselCount = seen.get(slug)!.size;
+    }
+    return [...byPort.values()].sort((a, b) =>
+      a.lastCallAt < b.lastCallAt ? 1 : -1,
+    );
+  })();
+
+  const hhiLabel = (h: number | null) => {
+    if (h == null) return '—';
+    if (h < 1500) return `${Math.round(h)} (unconcentrated)`;
+    if (h < 2500) return `${Math.round(h)} (moderately concentrated)`;
+    return `${Math.round(h)} (highly concentrated)`;
+  };
+  const fmtPct = (n: number | null) => (n == null ? '—' : `${n.toFixed(1)}%`);
 
   const baseHref = (
     override: Partial<{ category: string; country: string | null; months: string }>,
@@ -411,6 +505,97 @@ export default async function IntelligencePage({ searchParams }: Props) {
           />
         </div>
       </section>
+
+      {/* Market concentration (HHI) */}
+      <section className="mb-8">
+        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          Market concentration ({monthsLookback}m)
+        </h2>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Stat
+            label={`Buyer HHI (${concentration.buyerCount} buyers)`}
+            value={hhiLabel(concentration.buyerHhi)}
+          />
+          <Stat
+            label="Top 3 buyers"
+            value={fmtPct(concentration.top3BuyerSharePct)}
+          />
+          <Stat
+            label={`Supplier HHI (${concentration.supplierCount} suppliers)`}
+            value={hhiLabel(concentration.supplierHhi)}
+          />
+          <Stat
+            label="Top 3 suppliers"
+            value={fmtPct(concentration.top3SupplierSharePct)}
+          />
+        </div>
+        <p className="mt-2 text-xs text-[color:var(--color-muted-foreground)]">
+          Herfindahl-Hirschman Index = Σ(share%)². Reads:{' '}
+          <span className="font-medium">&lt;1500</span> unconcentrated ·{' '}
+          <span className="font-medium">1500–2500</span> moderate ·{' '}
+          <span className="font-medium">≥2500</span> highly concentrated.
+        </p>
+      </section>
+
+      {/* Active tanker activity at country ports — only when country filter is set */}
+      {buyerCountry && (
+        <section className="mb-8">
+          <div className="mb-2 flex items-baseline justify-between gap-4">
+            <h2 className="text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+              Recent tanker calls — {fmtCountry(buyerCountry)} (last 30d)
+            </h2>
+            <span className="text-xs text-[color:var(--color-muted-foreground)]">
+              {portAgg.reduce((s, p) => s + p.vesselCount, 0)} distinct vessels
+              across {portAgg.length} ports
+            </span>
+          </div>
+          {portAgg.length === 0 ? (
+            <p className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-4 text-sm text-[color:var(--color-muted-foreground)]">
+              No port-call activity for {fmtCountry(buyerCountry)} in the last 30 days.
+              Either AISStream hasn&apos;t run recently or no tankers have called this country&apos;s ports
+              in the window.
+            </p>
+          ) : (
+            <div className="overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)]">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30">
+                  <tr>
+                    <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                      Port
+                    </th>
+                    <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                      Type
+                    </th>
+                    <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                      Vessels (30d)
+                    </th>
+                    <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                      Last call
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {portAgg.map((p) => (
+                    <tr
+                      key={p.portSlug}
+                      className="border-b border-[color:var(--color-border)] last:border-b-0"
+                    >
+                      <td className="px-3 py-2">{p.portName}</td>
+                      <td className="px-3 py-2 text-[color:var(--color-muted-foreground)]">
+                        {p.portType}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums">{p.vesselCount}</td>
+                      <td className="px-3 py-2 text-[color:var(--color-muted-foreground)] tabular-nums">
+                        {p.lastCallAt.slice(0, 10)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Brent–WTI spread chart */}
       <section className="mb-8">

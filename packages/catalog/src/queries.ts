@@ -3125,6 +3125,100 @@ export async function getCommodityTicker(
 }
 
 /**
+ * Buyer-side + supplier-side concentration for the selected
+ * (category × country × window). Returns Herfindahl-Hirschman Index
+ * (sum of squared market shares, 0–10,000) for each side plus the
+ * top-3 cumulative share so the dashboard can show "the top 3 buyers
+ * control 68% of spend" alongside the raw HHI.
+ *
+ * Reads:
+ *   HHI < 1500           — unconcentrated
+ *   1500 ≤ HHI < 2500    — moderately concentrated
+ *   HHI ≥ 2500           — highly concentrated
+ *
+ * Buyer share: contract_value_usd grouped by buyer_name.
+ * Supplier share: contract_value_usd grouped by award_awardees.supplier_id.
+ */
+export async function getMarketConcentration(filters: {
+  categoryTag?: string;
+  buyerCountry?: string;
+  monthsLookback?: number;
+}): Promise<{
+  buyerHhi: number | null;
+  supplierHhi: number | null;
+  top3BuyerSharePct: number | null;
+  top3SupplierSharePct: number | null;
+  totalValueUsd: number | null;
+  buyerCount: number;
+  supplierCount: number;
+}> {
+  const monthsLookback = filters.monthsLookback ?? 12;
+  const result = await db.execute(sql`
+    WITH base AS (
+      SELECT
+        a.id, a.buyer_name, a.contract_value_usd::numeric AS v, aa.supplier_id
+      FROM awards a
+      LEFT JOIN award_awardees aa ON aa.award_id = a.id
+      WHERE a.award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+        AND a.contract_value_usd IS NOT NULL
+        AND a.contract_value_usd > 0
+        ${
+          filters.categoryTag && filters.categoryTag !== 'all'
+            ? sql`AND ${filters.categoryTag} = ANY(a.category_tags)`
+            : sql``
+        }
+        ${filters.buyerCountry ? sql`AND a.buyer_country = ${filters.buyerCountry}` : sql``}
+    ),
+    totals AS (
+      SELECT SUM(v) AS total_v FROM base
+    ),
+    buyer_shares AS (
+      SELECT buyer_name,
+        SUM(v) / NULLIF((SELECT total_v FROM totals), 0) * 100 AS pct
+      FROM base
+      GROUP BY buyer_name
+    ),
+    supplier_shares AS (
+      SELECT supplier_id,
+        SUM(v) / NULLIF((SELECT total_v FROM totals), 0) * 100 AS pct
+      FROM base
+      WHERE supplier_id IS NOT NULL
+      GROUP BY supplier_id
+    ),
+    buyer_top3 AS (
+      SELECT SUM(pct) AS top3_pct FROM (
+        SELECT pct FROM buyer_shares ORDER BY pct DESC LIMIT 3
+      ) t
+    ),
+    supplier_top3 AS (
+      SELECT SUM(pct) AS top3_pct FROM (
+        SELECT pct FROM supplier_shares ORDER BY pct DESC LIMIT 3
+      ) t
+    )
+    SELECT
+      (SELECT total_v FROM totals)                       AS total_v,
+      (SELECT SUM(POWER(pct, 2)) FROM buyer_shares)      AS buyer_hhi,
+      (SELECT SUM(POWER(pct, 2)) FROM supplier_shares)   AS supplier_hhi,
+      (SELECT top3_pct FROM buyer_top3)                  AS buyer_top3,
+      (SELECT top3_pct FROM supplier_top3)               AS supplier_top3,
+      (SELECT COUNT(*) FROM buyer_shares)::int           AS buyer_count,
+      (SELECT COUNT(*) FROM supplier_shares)::int        AS supplier_count;
+  `);
+  const row = (result.rows as Array<Record<string, unknown>>)[0] ?? {};
+  const num = (k: string): number | null =>
+    row[k] != null ? Number.parseFloat(String(row[k])) : null;
+  return {
+    buyerHhi: num('buyer_hhi'),
+    supplierHhi: num('supplier_hhi'),
+    top3BuyerSharePct: num('buyer_top3'),
+    top3SupplierSharePct: num('supplier_top3'),
+    totalValueUsd: num('total_v'),
+    buyerCount: Number(row.buyer_count ?? 0),
+    supplierCount: Number(row.supplier_count ?? 0),
+  };
+}
+
+/**
  * Time series of the spread between two commodity series. Used by
  * the Intelligence dashboard to plot Brent–WTI (or any pair) over
  * the selected window.
