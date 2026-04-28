@@ -1781,3 +1781,233 @@ export function normalizeSupplierName(name: string): string {
     .trim();
 }
 
+// ─── Drill-down queries (for the supplier profile + buyer pages) ──
+
+export interface BuyerAwardRow {
+  awardId: string;
+  awardDate: string;
+  title: string | null;
+  commodityDescription: string | null;
+  categoryTags: string[];
+  contractValueNative: number | null;
+  contractCurrency: string | null;
+  contractValueUsd: number | null;
+  status: string;
+  supplierId: string;
+  supplierName: string;
+  supplierCountry: string | null;
+  sourceUrl: string | null;
+  sourcePortal: string;
+}
+
+export interface BuyerAwardHistoryArgs {
+  buyerName: string;
+  buyerCountry: string;
+  /** Optional category filter — restricts to awards whose category_tags include this value. */
+  categoryTag?: string;
+  /** Default 10 years back. */
+  yearsLookback?: number;
+  /** Default 200; uncapped pagination is deferred. */
+  limit?: number;
+}
+
+/**
+ * Drill-down query: full award history for a single buyer.
+ *
+ * Buyers are identified by (buyerName, buyerCountry) — the same
+ * composite the reverse-search aggregations use. Returns one row per
+ * (award, supplier) pair so consortium awards show each member.
+ *
+ * Joins awards → award_awardees → external_suppliers so the response
+ * carries supplier_id for linking to the supplier-profile page.
+ */
+export async function getBuyerAwardHistory(
+  args: BuyerAwardHistoryArgs,
+): Promise<BuyerAwardRow[]> {
+  const yearsLookback = args.yearsLookback ?? 10;
+  const limit = args.limit ?? 200;
+
+  const result = await db.execute(sql`
+    SELECT
+      a.id                    AS award_id,
+      a.award_date,
+      a.title,
+      a.commodity_description,
+      a.category_tags,
+      a.contract_value_native,
+      a.contract_currency,
+      a.contract_value_usd,
+      a.status,
+      a.source_url,
+      a.source_portal,
+      s.id                    AS supplier_id,
+      s.organisation_name     AS supplier_name,
+      s.country               AS supplier_country
+    FROM awards a
+    JOIN award_awardees aa ON aa.award_id = a.id
+    JOIN external_suppliers s ON s.id = aa.supplier_id
+    WHERE
+      a.buyer_name = ${args.buyerName}
+      AND a.buyer_country = ${args.buyerCountry}
+      AND a.award_date >= NOW() - (${yearsLookback}::int || ' years')::interval
+      ${
+        args.categoryTag
+          ? sql`AND ${args.categoryTag} = ANY(a.category_tags)`
+          : sql``
+      }
+    ORDER BY a.award_date DESC, a.contract_value_usd DESC NULLS LAST
+    LIMIT ${limit};
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    awardId: String(r.award_id),
+    awardDate:
+      r.award_date instanceof Date
+        ? r.award_date.toISOString().slice(0, 10)
+        : String(r.award_date),
+    title: r.title == null ? null : String(r.title),
+    commodityDescription:
+      r.commodity_description == null ? null : String(r.commodity_description),
+    categoryTags: (r.category_tags as string[] | null) ?? [],
+    contractValueNative:
+      r.contract_value_native != null
+        ? Number.parseFloat(String(r.contract_value_native))
+        : null,
+    contractCurrency: r.contract_currency == null ? null : String(r.contract_currency),
+    contractValueUsd:
+      r.contract_value_usd != null
+        ? Number.parseFloat(String(r.contract_value_usd))
+        : null,
+    status: String(r.status ?? 'active'),
+    supplierId: String(r.supplier_id),
+    supplierName: String(r.supplier_name),
+    supplierCountry: r.supplier_country == null ? null : String(r.supplier_country),
+    sourceUrl: r.source_url == null ? null : String(r.source_url),
+    sourcePortal: String(r.source_portal),
+  }));
+}
+
+/**
+ * Aggregated stats for a buyer over the lookback window. Cheap
+ * roll-up that mirrors the reverse-search response shape so the
+ * buyer-drilldown page can render the same headline numbers without
+ * the caller having to scan the full row list.
+ */
+export interface BuyerStats {
+  totalAwards: number;
+  totalValueUsd: number | null;
+  firstAwardDate: string | null;
+  mostRecentAwardDate: string | null;
+  topSupplier: { supplierId: string; supplierName: string; awardsCount: number } | null;
+  awardsByCategory: Record<string, number>;
+}
+
+export async function getBuyerStats(
+  args: Omit<BuyerAwardHistoryArgs, 'limit'>,
+): Promise<BuyerStats> {
+  const yearsLookback = args.yearsLookback ?? 10;
+
+  const summaryRows = await db.execute(sql`
+    SELECT
+      COUNT(*)::int                                  AS total_awards,
+      SUM(a.contract_value_usd)                      AS total_value_usd,
+      MIN(a.award_date)                              AS first_award_date,
+      MAX(a.award_date)                              AS most_recent_award_date
+    FROM awards a
+    WHERE
+      a.buyer_name = ${args.buyerName}
+      AND a.buyer_country = ${args.buyerCountry}
+      AND a.award_date >= NOW() - (${yearsLookback}::int || ' years')::interval
+      ${
+        args.categoryTag
+          ? sql`AND ${args.categoryTag} = ANY(a.category_tags)`
+          : sql``
+      };
+  `);
+
+  const summary = (summaryRows.rows as Array<Record<string, unknown>>)[0];
+
+  const topSupplierRows = await db.execute(sql`
+    SELECT
+      s.id                AS supplier_id,
+      s.organisation_name AS supplier_name,
+      COUNT(*)::int       AS awards_count
+    FROM awards a
+    JOIN award_awardees aa ON aa.award_id = a.id
+    JOIN external_suppliers s ON s.id = aa.supplier_id
+    WHERE
+      a.buyer_name = ${args.buyerName}
+      AND a.buyer_country = ${args.buyerCountry}
+      AND a.award_date >= NOW() - (${yearsLookback}::int || ' years')::interval
+      ${
+        args.categoryTag
+          ? sql`AND ${args.categoryTag} = ANY(a.category_tags)`
+          : sql``
+      }
+    GROUP BY s.id, s.organisation_name
+    ORDER BY COUNT(*) DESC
+    LIMIT 1;
+  `);
+  const topSupplier = (topSupplierRows.rows as Array<Record<string, unknown>>)[0];
+
+  const categoryRows = await db.execute(sql`
+    SELECT tag, COUNT(*)::int AS cnt
+    FROM (
+      SELECT unnest(a.category_tags) AS tag
+      FROM awards a
+      WHERE
+        a.buyer_name = ${args.buyerName}
+        AND a.buyer_country = ${args.buyerCountry}
+        AND a.award_date >= NOW() - (${yearsLookback}::int || ' years')::interval
+    ) t
+    GROUP BY tag
+    ORDER BY cnt DESC;
+  `);
+
+  const awardsByCategory: Record<string, number> = {};
+  for (const row of categoryRows.rows as Array<Record<string, unknown>>) {
+    awardsByCategory[String(row.tag)] = Number(row.cnt);
+  }
+
+  return {
+    totalAwards: summary?.total_awards != null ? Number(summary.total_awards) : 0,
+    totalValueUsd:
+      summary?.total_value_usd != null
+        ? Number.parseFloat(String(summary.total_value_usd))
+        : null,
+    firstAwardDate:
+      summary?.first_award_date instanceof Date
+        ? summary.first_award_date.toISOString().slice(0, 10)
+        : summary?.first_award_date != null
+          ? String(summary.first_award_date)
+          : null,
+    mostRecentAwardDate:
+      summary?.most_recent_award_date instanceof Date
+        ? summary.most_recent_award_date.toISOString().slice(0, 10)
+        : summary?.most_recent_award_date != null
+          ? String(summary.most_recent_award_date)
+          : null,
+    topSupplier: topSupplier
+      ? {
+          supplierId: String(topSupplier.supplier_id),
+          supplierName: String(topSupplier.supplier_name),
+          awardsCount: Number(topSupplier.awards_count),
+        }
+      : null,
+    awardsByCategory,
+  };
+}
+
+/**
+ * Thin wrapper around analyzeSupplier — fixes the supplierId-only path
+ * for the supplier-profile page. The richer fuzzy-name resolution lives
+ * in analyzeSupplier itself; pages that already have a UUID just call
+ * this.
+ */
+export async function getSupplierProfile(
+  supplierId: string,
+  yearsLookback?: number,
+): Promise<SupplierAnalysisResult> {
+  return analyzeSupplier({ supplierId, yearsLookback });
+}
+
