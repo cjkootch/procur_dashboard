@@ -16,6 +16,7 @@ import {
   lookupRefineriesByGrade,
   getCommodityPriceContext,
   getCommoditySpread,
+  findRecentPortCalls,
   getCompanyProfile,
   listJurisdictions,
   listOpportunities,
@@ -1143,7 +1144,10 @@ export function buildCatalogTools(): ToolRegistry {
               region: input.region,
               originCountry: input.originCountry,
             });
-            return { count: rows.length, grades: rows };
+            return {
+              count: rows.length,
+              grades: rows,
+            };
           },
         ),
     }),
@@ -1281,6 +1285,78 @@ export function buildCatalogTools(): ToolRegistry {
             }),
           },
           async () => getCommoditySpread(input.baseSlug, input.targetSlug),
+        ),
+    }),
+
+    find_recent_port_calls: defineTool({
+      name: 'find_recent_port_calls',
+      description:
+        "Vessel intelligence: find tankers seen at a port (or set of ports) in the last N " +
+        "days. Inferred from AIS positions — a 'call' is any cluster of slow-moving (<2 " +
+        "kn) tanker positions inside a port's geofence. Use whenever the user asks 'who " +
+        "loaded at Es Sider this month', 'which tankers visited Sannazzaro', or 'is X " +
+        "refinery actively receiving cargoes today'. Filter by portSlug (single port), " +
+        "country (all ports in a country), or portType ('crude-loading' | 'refinery' | " +
+        "'transshipment' | 'mixed'). Returns vessels with name, MMSI, flag, ship type, " +
+        "arrival/last-seen timestamps, and a positionCount confidence proxy. Pair with " +
+        "lookup_known_entities to map refinery calls back to the buyer entity. If the " +
+        "result set is empty, the AISStream worker may not have run recently — say so " +
+        "rather than concluding no traffic.",
+      kind: 'read',
+      schema: z.object({
+        portSlug: z
+          .string()
+          .optional()
+          .describe(
+            "ports.slug — e.g. 'es-sider', 'sannazzaro-refinery', 'paradip-port'.",
+          ),
+        country: z
+          .string()
+          .length(2)
+          .optional()
+          .describe('ISO-2 country code — restricts to ports in that country.'),
+        portType: z
+          .enum(['crude-loading', 'refinery', 'transshipment', 'mixed'])
+          .optional()
+          .describe(
+            "Restrict to one port category. 'crude-loading' for export-side " +
+              "(\"who loaded crude in Libya\"); 'refinery' for buy-side (\"who's " +
+              'discharging at refineries").',
+          ),
+        daysBack: z
+          .number()
+          .int()
+          .min(1)
+          .max(365)
+          .optional()
+          .describe('Lookback in days. Default 30.'),
+        limit: z.number().int().min(1).max(200).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_recent_port_calls',
+            args: input,
+            summarize: (out: { count: number }) => ({
+              resultCount: out.count,
+              resultSummary: {
+                portSlug: input.portSlug,
+                country: input.country,
+                portType: input.portType,
+              },
+            }),
+          },
+          async () => {
+            const rows = await findRecentPortCalls({
+              portSlug: input.portSlug,
+              country: input.country,
+              portType: input.portType,
+              daysBack: input.daysBack ?? 30,
+              limit: input.limit,
+            });
+            return { count: rows.length, calls: rows };
+          },
         ),
     }),
 

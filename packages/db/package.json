@@ -33,6 +33,8 @@
     "seed-refinery-slate": "tsx src/seed-refinery-slate.ts",
     "ingest-fred-prices": "tsx src/ingest-fred-prices.ts",
     "ingest-eia-prices": "tsx src/ingest-eia-prices.ts",
+    "ingest-aisstream": "tsx src/ingest-aisstream.ts",
+    "seed-ports": "tsx src/seed-ports.ts",
     "cleanup-cross-role-merges": "tsx src/cleanup-cross-role-merges.ts",
     "type-check": "tsc --noEmit",
     "test": "node --import tsx --test 'src/**/*.test.ts'",

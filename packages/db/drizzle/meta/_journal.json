@@ -288,6 +288,13 @@
       "when": 1777334500000,
       "tag": "0040_commodity_prices",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1777334600000,
+      "tag": "0041_vessel_intelligence",
+      "breakpoints": true
     }
   ]
 }

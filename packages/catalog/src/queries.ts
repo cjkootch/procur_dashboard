@@ -2657,6 +2657,129 @@ export async function lookupKnownEntities(
   }));
 }
 
+// ─── Vessel intelligence — port-call inference ────────────────────
+
+export interface PortCallRow {
+  mmsi: string;
+  vesselName: string | null;
+  imo: string | null;
+  shipTypeLabel: string | null;
+  flagCountry: string | null;
+  portSlug: string;
+  portName: string;
+  portCountry: string;
+  portType: string;
+  /** Earliest position match in the geofence within the lookback window. */
+  arrivalAt: string;
+  /** Latest position match in the geofence within the lookback window. */
+  lastSeenAt: string;
+  /** Slowest speed observed during the call — moored vessels read ~0. */
+  minSpeedKnots: number | null;
+  /** Number of position reports inside the geofence — confidence proxy. */
+  positionCount: number;
+}
+
+/**
+ * Find vessels seen at one or more ports in the last N days. Lazy
+ * inference — derived directly from vessel_positions + ports rather
+ * than a materialized port_calls table. A "call" is any cluster of
+ * positions from the same MMSI inside the port's geofence with
+ * min_speed < 2 knots (slow enough to be moored or anchored).
+ *
+ * Geofence math: equirectangular approximation done in-Postgres for
+ * speed. Acceptable error <0.5 nm at typical port latitudes (30°-50°),
+ * well inside the 1.5–5 nm radius envelope each port carries.
+ *
+ * Pair with lookup_known_entities to map a refinery port-call back
+ * to the buyer entity.
+ */
+export async function findRecentPortCalls(filters: {
+  portSlug?: string;
+  country?: string;
+  portType?: 'crude-loading' | 'refinery' | 'transshipment' | 'mixed';
+  /** Lookback in days. Default 30. */
+  daysBack?: number;
+  /** Cap rows. Default 50, max 500. */
+  limit?: number;
+}): Promise<PortCallRow[]> {
+  const daysBack = filters.daysBack ?? 30;
+  const limit = Math.min(filters.limit ?? 50, 500);
+
+  const result = await db.execute(sql`
+    WITH selected_ports AS (
+      SELECT slug, name, country, port_type,
+             lat::numeric AS lat, lng::numeric AS lng,
+             geofence_radius_nm::numeric AS radius_nm
+      FROM ports
+      WHERE 1=1
+        ${filters.portSlug ? sql`AND slug = ${filters.portSlug}` : sql``}
+        ${filters.country ? sql`AND country = ${filters.country}` : sql``}
+        ${filters.portType ? sql`AND port_type = ${filters.portType}` : sql``}
+    ),
+    matches AS (
+      SELECT
+        p.mmsi,
+        sp.slug    AS port_slug,
+        sp.name    AS port_name,
+        sp.country AS port_country,
+        sp.port_type,
+        p.timestamp,
+        p.speed_knots
+      FROM vessel_positions p
+      JOIN selected_ports sp
+        ON SQRT(
+             POW((p.lat::numeric - sp.lat) * 60, 2) +
+             POW((p.lng::numeric - sp.lng) * 60 * COS(RADIANS(sp.lat)), 2)
+           ) <= sp.radius_nm
+      WHERE p.timestamp >= NOW() - (${daysBack}::int * INTERVAL '1 day')
+        AND (p.speed_knots IS NULL OR p.speed_knots::numeric < 2)
+    ),
+    aggregated AS (
+      SELECT
+        m.mmsi,
+        m.port_slug,
+        MIN(m.port_name)    AS port_name,
+        MIN(m.port_country) AS port_country,
+        MIN(m.port_type)    AS port_type,
+        MIN(m.timestamp)    AS arrival_at,
+        MAX(m.timestamp)    AS last_seen_at,
+        MIN(m.speed_knots::numeric) AS min_speed,
+        COUNT(*)::int       AS position_count
+      FROM matches m
+      GROUP BY m.mmsi, m.port_slug
+    )
+    SELECT
+      a.mmsi,
+      v.name AS vessel_name,
+      v.imo,
+      v.ship_type_label,
+      v.flag_country,
+      a.port_slug, a.port_name, a.port_country, a.port_type,
+      a.arrival_at, a.last_seen_at, a.min_speed, a.position_count
+    FROM aggregated a
+    LEFT JOIN vessels v ON v.mmsi = a.mmsi
+    ORDER BY a.last_seen_at DESC
+    LIMIT ${limit};
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    mmsi: String(r.mmsi),
+    vesselName: r.vessel_name == null ? null : String(r.vessel_name),
+    imo: r.imo == null ? null : String(r.imo),
+    shipTypeLabel: r.ship_type_label == null ? null : String(r.ship_type_label),
+    flagCountry: r.flag_country == null ? null : String(r.flag_country),
+    portSlug: String(r.port_slug),
+    portName: String(r.port_name),
+    portCountry: String(r.port_country),
+    portType: String(r.port_type),
+    arrivalAt: new Date(r.arrival_at as string).toISOString(),
+    lastSeenAt: new Date(r.last_seen_at as string).toISOString(),
+    minSpeedKnots:
+      r.min_speed == null ? null : Number.parseFloat(String(r.min_speed)),
+    positionCount: Number(r.position_count ?? 0),
+  }));
+}
+
 // ─── Commodity price context ──────────────────────────────────────
 
 export interface CommodityPriceContext {
