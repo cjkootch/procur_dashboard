@@ -9,6 +9,7 @@ import {
   summarizeCatalog,
   type OpportunityScope,
 } from './queries';
+import { createAlertProfile } from './mutations';
 
 const DISCOVER_BASE = 'https://discover.procur.app';
 
@@ -368,6 +369,81 @@ export function buildDiscoverTools(): ToolRegistry {
           },
           input.groupBy,
         );
+      },
+    }),
+
+    create_alert_profile: defineTool({
+      name: 'create_alert_profile',
+      description:
+        'Create a new alert so the user gets notified when matching opportunities are ' +
+        'posted. Use when the user says things like "alert me when X gets posted", ' +
+        '"notify me about Y", "set up a daily digest for Z", "watch for new fuel tenders". ' +
+        'Profile is active + email-enabled by default; user can manage in the main app ' +
+        'after creation. Match logic mirrors search_opportunities filter slugs (jurisdiction, ' +
+        'category, country) plus arbitrary keywords. Confirm the user\'s intent in plain ' +
+        'language BEFORE calling — this writes to their account.',
+      kind: 'write',
+      schema: z.object({
+        name: z
+          .string()
+          .min(1)
+          .max(200)
+          .describe(
+            'Short human-readable name the user will see in their alerts list. ' +
+              'Default to a description of the filters (e.g. "Caribbean fuel tenders").',
+          ),
+        jurisdictions: z
+          .array(z.string())
+          .optional()
+          .describe('Array of jurisdiction slugs to match (us-federal, eu-ted, jamaica, …)'),
+        categories: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Array of category slugs to match (food-commodities, petroleum-fuels, ' +
+              'vehicles-fleet, minerals-metals)',
+          ),
+        keywords: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Free-text keywords; opportunity matches if any keyword appears in title or ' +
+              'description (case-insensitive)',
+          ),
+        excludeKeywords: z
+          .array(z.string())
+          .optional()
+          .describe('Keywords that DISQUALIFY a match — e.g., ["consultancy", "advisory"]'),
+        minValueUsd: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Skip opportunities below this estimated USD value'),
+        maxValueUsd: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Skip opportunities above this estimated USD value'),
+        frequency: z
+          .enum(['instant', 'daily', 'weekly'])
+          .optional()
+          .describe('How often to receive the digest. Default: daily.'),
+      }),
+      handler: async (ctx, input) => {
+        return createAlertProfile({
+          userId: ctx.userId,
+          companyId: ctx.companyId,
+          name: input.name,
+          jurisdictions: input.jurisdictions,
+          categories: input.categories,
+          keywords: input.keywords,
+          excludeKeywords: input.excludeKeywords,
+          minValueUsd: input.minValueUsd,
+          maxValueUsd: input.maxValueUsd,
+          frequency: input.frequency,
+        });
       },
     }),
 
