@@ -24,6 +24,7 @@
     "ingest-un-comtrade": "tsx src/ingest-un-comtrade.ts",
     "ingest-gem-refineries": "tsx src/ingest-gem-refineries.ts",
     "ingest-gem-extraction": "tsx src/ingest-gem-extraction.ts",
+    "ingest-gem-ownership": "tsx src/ingest-gem-ownership.ts",
     "ingest-osm-refineries": "tsx src/ingest-osm-refineries.ts",
     "type-check": "tsc --noEmit",
     "test": "node --import tsx --test 'src/**/*.test.ts'",

@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getEntityProfile } from '@procur/catalog';
+import { getDirectOwners, getEntityProfile, getOwnershipChain } from '@procur/catalog';
 
 /**
  * Unified entity profile — accepts either a known_entities.slug or
@@ -29,9 +29,19 @@ export default async function EntityProfilePage({ params }: Props) {
     notFound();
   }
 
+  // Walk the ownership chain. Try the operator first (refineries usually
+  // store operator in metadata.operator and that's the one whose parents
+  // matter for sovereign-backing analysis); fall back to the entity name
+  // itself for traders / NOCs whose primary identity IS the operator.
+  const cap = profile.capabilities;
+  const ownershipQueryName = cap.operator ?? profile.name;
+  const [directOwners, ownershipChain] = await Promise.all([
+    getDirectOwners(ownershipQueryName),
+    getOwnershipChain(ownershipQueryName, 5),
+  ]);
+
   const fmtUsd = (n: number | null) =>
     n != null ? `$${Math.round(n).toLocaleString()}` : '—';
-  const cap = profile.capabilities;
   const tender = profile.publicTenderActivity;
   const sortedCategories = tender
     ? Object.entries(tender.awardsByCategory).sort((a, b) => b[1] - a[1])
@@ -143,6 +153,72 @@ export default async function EntityProfilePage({ params }: Props) {
           </h2>
           <p className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-4 text-sm leading-relaxed">
             {profile.notes}
+          </p>
+        </section>
+      )}
+
+      {(directOwners.length > 0 || ownershipChain.length > 1) && (
+        <section className="mb-6">
+          <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Ownership
+            {cap.operator && cap.operator !== profile.name && (
+              <span className="ml-2 font-normal normal-case tracking-normal text-[color:var(--color-muted-foreground)]">
+                (resolved via operator: {cap.operator})
+              </span>
+            )}
+          </h2>
+
+          {directOwners.length > 0 && (
+            <div className="mb-3">
+              <h3 className="mb-1 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                Direct owners
+              </h3>
+              <ul className="space-y-1 text-sm">
+                {directOwners.map((o) => (
+                  <li key={o.gemId} className="flex justify-between gap-3">
+                    <span>
+                      {o.name}
+                      {o.shareImputed && (
+                        <span className="ml-2 text-xs text-[color:var(--color-muted-foreground)]">
+                          (imputed)
+                        </span>
+                      )}
+                    </span>
+                    <span className="shrink-0 text-[color:var(--color-muted-foreground)] tabular-nums">
+                      {o.sharePct != null ? `${o.sharePct.toFixed(1)}%` : '—'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {ownershipChain.length > 1 && (
+            <div>
+              <h3 className="mb-1 text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                Ultimate-parent chain
+              </h3>
+              <p className="text-sm leading-relaxed">
+                {ownershipChain.map((node, i) => (
+                  <span key={`${node.gemId}-${i}`}>
+                    {i > 0 && (
+                      <span className="text-[color:var(--color-muted-foreground)]">
+                        {' '}→{' '}
+                        {node.sharePct != null && (
+                          <span className="tabular-nums">[{node.sharePct.toFixed(0)}%] </span>
+                        )}
+                      </span>
+                    )}
+                    <span className={i === 0 ? 'font-medium' : ''}>{node.name}</span>
+                  </span>
+                ))}
+              </p>
+            </div>
+          )}
+
+          <p className="mt-2 text-xs text-[color:var(--color-muted-foreground)]">
+            Source: GEM Global Energy Ownership Tracker (CC-BY-4.0). Imputed shares are GEM
+            estimates from public records; direct shares are published values.
           </p>
         </section>
       )}

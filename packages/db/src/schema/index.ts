@@ -37,3 +37,4 @@ export * from './supplier-signals';
 export * from './tool-call-logs';
 export * from './known-entities';
 export * from './customs-imports';
+export * from './entity-ownership';
