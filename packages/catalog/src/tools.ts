@@ -17,6 +17,7 @@ import {
   getCommodityPriceContext,
   getCommoditySpread,
   findRecentPortCalls,
+  findRecentSimilarAwards,
   analyzeSupplierPricing,
   analyzeBuyerPricing,
   evaluateOfferAgainstHistory,
@@ -1288,6 +1289,50 @@ export function buildCatalogTools(): ToolRegistry {
             }),
           },
           async () => getCommoditySpread(input.baseSlug, input.targetSlug),
+        ),
+    }),
+
+    find_recent_similar_awards: defineTool({
+      name: 'find_recent_similar_awards',
+      description:
+        'Recent past awards filtered to (buyerCountry × categoryTag). Use as a bid-' +
+        'amount anchor when composing a deal package or evaluating an offer — "the ' +
+        "last 5 DR diesel awards averaged $X across these suppliers\". Returns " +
+        'award_date, buyer, supplier, title, commodity_description, and ' +
+        'contract_value_usd. Order is recency-then-value.',
+      kind: 'read',
+      schema: z.object({
+        buyerCountry: z
+          .string()
+          .length(2)
+          .optional()
+          .describe('ISO-2 country code. Omit to scan globally.'),
+        categoryTag: z
+          .string()
+          .optional()
+          .describe(
+            "Internal category tag — 'diesel', 'gasoline', 'crude-oil', etc. Omit to scan all categories.",
+          ),
+        daysBack: z.number().int().min(7).max(1825).optional()
+          .describe('Lookback window in days. Default 365.'),
+        limit: z.number().int().min(1).max(50).optional()
+          .describe('Max rows. Default 10.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_recent_similar_awards',
+            args: input,
+            summarize: (out: Array<unknown>) => ({
+              resultCount: out.length,
+              resultSummary: {
+                buyerCountry: input.buyerCountry,
+                categoryTag: input.categoryTag,
+              },
+            }),
+          },
+          async () => findRecentSimilarAwards(input),
         ),
     }),
 

@@ -2657,6 +2657,73 @@ export async function lookupKnownEntities(
   }));
 }
 
+/**
+ * Recent past awards in a similar (buyer_country × category) bucket.
+ * Used by the deal-composition workflow as price anchors — *"the last
+ * 5 DR diesel awards averaged $X with these suppliers"* gives the
+ * analyst a defensible bid range.
+ *
+ * Distinct from `findCompetingSellers` (which surfaces supplier-side
+ * landscape) and `analyzeSupplier` (which deep-dives one entity).
+ * This is the "what did this market just pay" snapshot.
+ */
+export async function findRecentSimilarAwards(filters: {
+  buyerCountry?: string;
+  categoryTag?: string;
+  daysBack?: number;
+  limit?: number;
+}): Promise<
+  Array<{
+    awardId: string;
+    awardDate: string;
+    buyerName: string;
+    buyerCountry: string;
+    title: string | null;
+    commodityDescription: string | null;
+    contractValueUsd: number | null;
+    supplierName: string | null;
+    supplierId: string | null;
+  }>
+> {
+  const daysBack = filters.daysBack ?? 365;
+  const limit = Math.min(filters.limit ?? 10, 50);
+  const result = await db.execute(sql`
+    SELECT
+      a.id, a.award_date, a.buyer_name, a.buyer_country,
+      a.title, a.commodity_description, a.contract_value_usd,
+      s.organisation_name AS supplier_name, aa.supplier_id
+    FROM awards a
+    LEFT JOIN award_awardees aa ON aa.award_id = a.id
+    LEFT JOIN external_suppliers s ON s.id = aa.supplier_id
+    WHERE a.award_date >= NOW() - (${daysBack}::int || ' days')::interval
+      AND a.contract_value_usd IS NOT NULL
+      AND a.contract_value_usd > 0
+      ${
+        filters.categoryTag && filters.categoryTag !== 'all'
+          ? sql`AND ${filters.categoryTag} = ANY(a.category_tags)`
+          : sql``
+      }
+      ${filters.buyerCountry ? sql`AND a.buyer_country = ${filters.buyerCountry}` : sql``}
+    ORDER BY a.award_date DESC, a.contract_value_usd DESC
+    LIMIT ${limit};
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    awardId: String(r.id),
+    awardDate: String(r.award_date).slice(0, 10),
+    buyerName: String(r.buyer_name),
+    buyerCountry: String(r.buyer_country),
+    title: r.title == null ? null : String(r.title),
+    commodityDescription:
+      r.commodity_description == null ? null : String(r.commodity_description),
+    contractValueUsd:
+      r.contract_value_usd != null
+        ? Number.parseFloat(String(r.contract_value_usd))
+        : null,
+    supplierName: r.supplier_name == null ? null : String(r.supplier_name),
+    supplierId: r.supplier_id == null ? null : String(r.supplier_id),
+  }));
+}
+
 // ─── Pricing analytics — delta-vs-benchmark ───────────────────────
 
 export interface SupplierPricingProfile {
