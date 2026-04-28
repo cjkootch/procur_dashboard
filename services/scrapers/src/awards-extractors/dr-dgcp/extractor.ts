@@ -30,6 +30,7 @@ import { createInterface } from 'node:readline';
 import {
   AwardsExtractor,
   classifyAwardByUnspsc,
+  convertToUsd,
   hasFuelUnspsc,
   hasFoodUnspsc,
   type NormalizedAward,
@@ -228,6 +229,8 @@ export class DrDgcpAwardsExtractor extends AwardsExtractor {
         const awardees = collectAwardees(award);
         if (awardees.length === 0) continue;
 
+        const awardDate = normalizeDate(award.date);
+        const effectiveCurrency = contractCurrency ?? 'DOP';
         yield {
           award: {
             sourcePortal: PORTAL,
@@ -244,9 +247,9 @@ export class DrDgcpAwardsExtractor extends AwardsExtractor {
             unspscCodes: effectiveCodes,
             categoryTags: effectiveTags,
             contractValueNative,
-            contractCurrency: contractCurrency ?? 'DOP',
-            contractValueUsd: null,
-            awardDate: normalizeDate(award.date),
+            contractCurrency: effectiveCurrency,
+            contractValueUsd: convertToUsd(contractValueNative, effectiveCurrency, awardDate),
+            awardDate,
             status: mapAwardStatus(award.status),
           },
           awardees: awardees.map((a) => ({
