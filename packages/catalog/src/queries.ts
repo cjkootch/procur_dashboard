@@ -2956,6 +2956,174 @@ export async function evaluateOfferAgainstHistory(input: {
   };
 }
 
+/**
+ * Histogram of per-bbl deltas for a (country × category) — bucketed
+ * for an SVG histogram on the intelligence dashboard. Empty buckets
+ * are excluded; caller fills gaps for the visualization.
+ */
+export async function getPriceDeltaHistogram(filters: {
+  buyerCountry?: string;
+  categoryTag?: string;
+  minConfidence?: number;
+  monthsLookback?: number;
+  /** Bucket size in $/bbl. Default 5. */
+  bucketUsd?: number;
+  /** Trim outliers beyond ±$max. Default 80. */
+  maxAbsUsd?: number;
+}): Promise<Array<{ bucketStart: number; bucketEnd: number; awardsCount: number }>> {
+  const minConfidence = filters.minConfidence ?? 0.6;
+  const monthsLookback = filters.monthsLookback ?? 12;
+  const bucket = filters.bucketUsd ?? 5;
+  const maxAbs = filters.maxAbsUsd ?? 80;
+
+  const result = await db.execute(sql`
+    WITH window_rows AS (
+      SELECT delta_usd_per_bbl
+      FROM award_price_deltas
+      WHERE overall_confidence >= ${minConfidence}::numeric
+        AND award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+        AND delta_usd_per_bbl IS NOT NULL
+        AND delta_usd_per_bbl >= ${-maxAbs}::numeric
+        AND delta_usd_per_bbl <= ${maxAbs}::numeric
+        ${filters.buyerCountry ? sql`AND buyer_country = ${filters.buyerCountry}` : sql``}
+        ${filters.categoryTag ? sql`AND ${filters.categoryTag} = ANY(category_tags)` : sql``}
+    ),
+    bucketed AS (
+      SELECT
+        FLOOR(delta_usd_per_bbl / ${bucket}::numeric)::int * ${bucket}::int AS bucket_start,
+        COUNT(*)::int AS awards_count
+      FROM window_rows
+      GROUP BY 1
+    )
+    SELECT bucket_start, awards_count FROM bucketed ORDER BY bucket_start ASC;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => {
+    const start = Number(r.bucket_start);
+    return {
+      bucketStart: start,
+      bucketEnd: start + bucket,
+      awardsCount: Number(r.awards_count),
+    };
+  });
+}
+
+/**
+ * Monthly avg + median delta vs benchmark — input for line chart.
+ */
+export async function getMonthlyAvgDelta(filters: {
+  buyerCountry?: string;
+  categoryTag?: string;
+  minConfidence?: number;
+  monthsLookback?: number;
+}): Promise<
+  Array<{
+    month: string;
+    avgDeltaUsdPerBbl: number | null;
+    medianDeltaUsdPerBbl: number | null;
+    awardsCount: number;
+  }>
+> {
+  const minConfidence = filters.minConfidence ?? 0.6;
+  const monthsLookback = filters.monthsLookback ?? 12;
+  const result = await db.execute(sql`
+    WITH series AS (
+      SELECT generate_series(
+        date_trunc('month', NOW() - (${monthsLookback}::int || ' months')::interval),
+        date_trunc('month', NOW()),
+        '1 month'::interval
+      ) AS month
+    ),
+    buckets AS (
+      SELECT
+        date_trunc('month', award_date)::date AS month,
+        AVG(delta_usd_per_bbl) AS avg_delta,
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY delta_usd_per_bbl) AS median_delta,
+        COUNT(*)::int AS awards_count
+      FROM award_price_deltas
+      WHERE overall_confidence >= ${minConfidence}::numeric
+        AND award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+        AND delta_usd_per_bbl IS NOT NULL
+        ${filters.buyerCountry ? sql`AND buyer_country = ${filters.buyerCountry}` : sql``}
+        ${filters.categoryTag ? sql`AND ${filters.categoryTag} = ANY(category_tags)` : sql``}
+      GROUP BY 1
+    )
+    SELECT
+      to_char(s.month, 'YYYY-MM') AS month,
+      b.avg_delta,
+      b.median_delta,
+      COALESCE(b.awards_count, 0) AS awards_count
+    FROM series s
+    LEFT JOIN buckets b ON b.month = s.month
+    ORDER BY s.month ASC;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    month: String(r.month),
+    avgDeltaUsdPerBbl:
+      r.avg_delta != null ? Number.parseFloat(String(r.avg_delta)) : null,
+    medianDeltaUsdPerBbl:
+      r.median_delta != null ? Number.parseFloat(String(r.median_delta)) : null,
+    awardsCount: Number(r.awards_count ?? 0),
+  }));
+}
+
+/**
+ * Lightweight ticker — most-recent spot price for a list of series
+ * + 30-day pct change. Used for the price strip on dashboards.
+ */
+export async function getCommodityTicker(
+  seriesSlugs: string[],
+): Promise<
+  Array<{
+    seriesSlug: string;
+    latestPrice: number | null;
+    latestDate: string | null;
+    unit: string | null;
+    pctChange30d: number | null;
+  }>
+> {
+  if (seriesSlugs.length === 0) return [];
+  const result = await db.execute(sql`
+    WITH latest AS (
+      SELECT DISTINCT ON (series_slug)
+        series_slug, price::numeric AS price, unit, price_date
+      FROM commodity_prices
+      WHERE series_slug = ANY(${seriesSlugs}::text[])
+        AND contract_type = 'spot'
+      ORDER BY series_slug, price_date DESC
+    ),
+    earlier AS (
+      SELECT DISTINCT ON (series_slug)
+        series_slug, price::numeric AS price
+      FROM commodity_prices
+      WHERE series_slug = ANY(${seriesSlugs}::text[])
+        AND contract_type = 'spot'
+        AND price_date <= NOW() - INTERVAL '30 days'
+      ORDER BY series_slug, price_date DESC
+    )
+    SELECT
+      l.series_slug, l.price AS latest_price, l.unit, l.price_date AS latest_date,
+      e.price AS earlier_price
+    FROM latest l
+    LEFT JOIN earlier e ON e.series_slug = l.series_slug;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => {
+    const latest =
+      r.latest_price != null ? Number.parseFloat(String(r.latest_price)) : null;
+    const earlier =
+      r.earlier_price != null ? Number.parseFloat(String(r.earlier_price)) : null;
+    return {
+      seriesSlug: String(r.series_slug),
+      latestPrice: latest,
+      latestDate: r.latest_date == null ? null : String(r.latest_date).slice(0, 10),
+      unit: r.unit == null ? null : String(r.unit),
+      pctChange30d:
+        latest != null && earlier != null && earlier !== 0
+          ? ((latest - earlier) / earlier) * 100
+          : null,
+    };
+  });
+}
+
 // ─── Vessel intelligence — port-call inference ────────────────────
 
 export interface PortCallRow {
