@@ -2657,6 +2657,123 @@ export async function lookupKnownEntities(
   }));
 }
 
+// ─── Entity ownership chain ───────────────────────────────────────
+
+export interface OwnershipNode {
+  /** GEM entity ID (E1xxxxxxxxxxx) */
+  gemId: string;
+  name: string;
+  /** Share % the parent owns of this entity (in the chain). Null at the root. */
+  sharePct: number | null;
+  /** True if the share value was imputed by GEM rather than directly published. */
+  shareImputed: boolean;
+  /** Source URLs (comma-joined verbatim from GEM). */
+  sourceUrls: string | null;
+}
+
+/**
+ * Walk the ownership chain upward from `entityName`. Returns a list
+ * starting at the queried entity and ending at its ultimate parent
+ * (or the deepest ancestor reached within `maxDepth` hops).
+ *
+ * Lookup is fuzzy on subject_name (trigram similarity ≥ 0.55) for
+ * the initial match — callers don't typically have GEM IDs. Once
+ * the chain is rooted, traversal uses GEM IDs (exact joins).
+ *
+ * Returns empty array if the entity isn't in entity_ownership at all.
+ *
+ * Use case: given a refinery's operator (e.g., "Eni S.p.A."), surface
+ * who ultimately controls that operator (Italian government / public /
+ * NOC / etc.). Pair with known_entities.metadata.operator on the
+ * profile page to render "Ultimately X% state-owned" labels.
+ */
+export async function getOwnershipChain(
+  entityName: string,
+  maxDepth = 5,
+): Promise<OwnershipNode[]> {
+  const chain: OwnershipNode[] = [];
+  const seen = new Set<string>();
+
+  // Initial fuzzy match: find the best subject_name match.
+  const seedRows = await db.execute(sql`
+    SELECT
+      subject_gem_id, subject_name, parent_gem_id, parent_name,
+      share_pct, share_imputed, source_urls,
+      similarity(subject_name, ${entityName}) AS sim
+    FROM entity_ownership
+    WHERE subject_name % ${entityName}
+    ORDER BY sim DESC, share_pct DESC NULLS LAST
+    LIMIT 1;
+  `);
+
+  const seed = (seedRows.rows as Array<Record<string, unknown>>)[0];
+  if (!seed) return chain;
+
+  let currentSubjectId = String(seed.subject_gem_id);
+  chain.push({
+    gemId: currentSubjectId,
+    name: String(seed.subject_name),
+    sharePct: null,
+    shareImputed: false,
+    sourceUrls: null,
+  });
+
+  // Walk upward: subject → parent (highest-share parent first).
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    if (seen.has(currentSubjectId)) break; // cycle guard
+    seen.add(currentSubjectId);
+
+    const upRows = await db.execute(sql`
+      SELECT
+        parent_gem_id, parent_name, share_pct, share_imputed, source_urls
+      FROM entity_ownership
+      WHERE subject_gem_id = ${currentSubjectId}
+      ORDER BY share_pct DESC NULLS LAST
+      LIMIT 1;
+    `);
+    const up = (upRows.rows as Array<Record<string, unknown>>)[0];
+    if (!up) break;
+
+    chain.push({
+      gemId: String(up.parent_gem_id),
+      name: String(up.parent_name),
+      sharePct:
+        up.share_pct != null ? Number.parseFloat(String(up.share_pct)) : null,
+      shareImputed: Boolean(up.share_imputed),
+      sourceUrls: up.source_urls == null ? null : String(up.source_urls),
+    });
+    currentSubjectId = String(up.parent_gem_id);
+  }
+
+  return chain;
+}
+
+/**
+ * Get the FULL ownership of an entity — every parent that owns ANY
+ * share of it. Ordered by share descending. Useful for cases like
+ * "Eni S.p.A. is 30% Italian govt + 70% public" (multiple parents
+ * at the same level).
+ */
+export async function getDirectOwners(entityName: string): Promise<OwnershipNode[]> {
+  const result = await db.execute(sql`
+    SELECT
+      parent_gem_id, parent_name, share_pct, share_imputed, source_urls,
+      similarity(subject_name, ${entityName}) AS sim
+    FROM entity_ownership
+    WHERE subject_name % ${entityName}
+      AND similarity(subject_name, ${entityName}) >= 0.55
+    ORDER BY sim DESC, share_pct DESC NULLS LAST
+    LIMIT 20;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    gemId: String(r.parent_gem_id),
+    name: String(r.parent_name),
+    sharePct: r.share_pct != null ? Number.parseFloat(String(r.share_pct)) : null,
+    shareImputed: Boolean(r.share_imputed),
+    sourceUrls: r.source_urls == null ? null : String(r.source_urls),
+  }));
+}
+
 // ─── Unified entity profile (cross-table lookup) ──────────────────
 
 export interface EntityProfileResult {
