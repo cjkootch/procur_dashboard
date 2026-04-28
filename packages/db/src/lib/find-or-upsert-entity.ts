@@ -63,9 +63,16 @@ type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
 /**
  * Find an existing entity matching the candidate, or insert it.
  *
- * Match rule: same country + trigram similarity ≥ 0.55 against name
- * OR any alias. Returns the canonical entity slug (existing or new)
- * and whether the row was 'inserted' or 'merged'.
+ * Match rule: same country + same role + trigram similarity ≥ 0.55
+ * against name OR any alias. Role equality is required because a
+ * refinery and a power plant in the same country can share a name
+ * fragment ("Eni Sannazzaro") without being the same site — collapsing
+ * those into one row destroys analyst-relevant distinctions. If genuine
+ * cross-role aliasing is needed (e.g., refiner that also burns its own
+ * residue for power), prefer manual curation over fuzzy matching.
+ *
+ * Returns the canonical entity slug (existing or new) and whether the
+ * row was 'inserted' or 'merged'.
  */
 export async function findOrUpsertEntity(
   db: DrizzleDb,
@@ -93,6 +100,7 @@ export async function findOrUpsertEntity(
       ) AS sim
     FROM known_entities
     WHERE country = ${candidate.country}
+      AND role = ${candidate.role}
       AND (
         name % ${candidate.name}
         OR EXISTS (
