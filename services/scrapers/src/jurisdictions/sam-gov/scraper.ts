@@ -25,6 +25,7 @@
  */
 import {
   TenderScraper,
+  classifyVtcCategory,
   fetchWithRetry,
   loadHtml,
   type NormalizedOpportunity,
@@ -493,12 +494,14 @@ export class SamGovScraper extends TenderScraper {
     const awardedAmount =
       award?.amount != null ? Number.parseFloat(String(award.amount)) : undefined;
 
-    // VTC commodity bucket: derive from the row's NAICS code so users
-    // can filter Discover to "Petroleum and Fuels" / "Vehicles and
-    // Fleet" / etc. Returns undefined for any NAICS we didn't include
-    // in the scrape filter (shouldn't happen post-NAICS-filter but
-    // defensive).
-    const category = d.naicsCode ? NAICS_TO_CATEGORY[d.naicsCode] : undefined;
+    // VTC commodity bucket: prefer the NAICS-driven mapping (precise),
+    // fall back to keyword classifier on title + description (catches
+    // ad-hoc backfills with custom NAICS lists, or any future NAICS we
+    // forgot to add to NAICS_TO_CATEGORY).
+    const category =
+      (d.naicsCode ? NAICS_TO_CATEGORY[d.naicsCode] : undefined) ??
+      classifyVtcCategory(`${d.title} ${description ?? ''}`) ??
+      undefined;
 
     return {
       sourceReferenceId: raw.sourceReferenceId,

@@ -28,6 +28,7 @@ import {
   textOf,
   type NormalizedOpportunity,
   type RawOpportunity,
+  classifyVtcCategory,
 } from '@procur/scrapers-core';
 
 const PORTAL = 'https://gisbarbados.gov.bb';
@@ -118,6 +119,7 @@ export class BarbadosGisScraper extends TenderScraper {
       description: d.bodyText.slice(0, 2000),
       referenceNumber: d.referenceHint,
       agencyName: d.agencyGuess,
+      category: classifyVtcCategory(`${d.title} ${d.bodyText.slice(0, 500)}`) ?? undefined,
       currency,
       valueEstimate: value,
       publishedAt: parseTenderDate(d.publishedText, 'America/Barbados') ?? undefined,

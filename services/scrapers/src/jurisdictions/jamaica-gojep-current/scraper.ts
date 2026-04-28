@@ -31,6 +31,7 @@ import {
   textOf,
   type NormalizedOpportunity,
   type RawOpportunity,
+  classifyVtcCategory,
 } from '@procur/scrapers-core';
 import { log } from '@procur/utils/logger';
 import { fromZonedTime } from 'date-fns-tz';
@@ -199,7 +200,10 @@ export class JamaicaGojepCurrentScraper extends TenderScraper {
       // resourceId in the URL is the only stable identifier.
       referenceNumber: d.resourceId,
       type: d.procedureType,
-      category: d.category,
+      category:
+        d.category ??
+        classifyVtcCategory(`${d.title} ${d.description ?? ''}`) ??
+        undefined,
       agencyName: d.agency,
       currency: 'JMD',
       publishedAt: parseGojepCurrentDate(d.publishedDateText),

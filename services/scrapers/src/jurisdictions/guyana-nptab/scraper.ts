@@ -34,6 +34,7 @@ import {
   textOf,
   type NormalizedOpportunity,
   type RawOpportunity,
+  classifyVtcCategory,
 } from '@procur/scrapers-core';
 
 const PORTAL = 'https://npta.gov.gy';
@@ -104,6 +105,7 @@ export class GuyanaNptabScraper extends TenderScraper {
       description: d.title,
       referenceNumber,
       agencyName: d.agency,
+      category: classifyVtcCategory(d.title) ?? undefined,
       currency: 'GYD',
       valueEstimate: value,
       deadlineAt: parseTenderDate(d.deadlineText, 'America/Guyana') ?? undefined,

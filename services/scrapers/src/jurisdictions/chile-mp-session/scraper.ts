@@ -27,6 +27,7 @@ import {
   textOf,
   type NormalizedOpportunity,
   type RawOpportunity,
+  classifyVtcCategory,
 } from '@procur/scrapers-core';
 import { log } from '@procur/utils/logger';
 
@@ -169,6 +170,8 @@ export class ChileMpSessionScraper extends TenderScraper {
       title: r.title.slice(0, 500),
       referenceNumber: r.codigoExterno,
       agencyName: r.agency,
+      // Spanish-language source; cross-language keywords only.
+      category: classifyVtcCategory(r.title) ?? undefined,
       currency: 'CLP',
       valueEstimate,
       publishedAt: parseTenderDate(normalizeDate(r.publishedText), TZ) ?? undefined,

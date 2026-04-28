@@ -22,6 +22,7 @@ import {
   textOf,
   type NormalizedOpportunity,
   type RawOpportunity,
+  classifyVtcCategory,
 } from '@procur/scrapers-core';
 
 const PORTAL = 'https://egp.gov.tt';
@@ -94,6 +95,7 @@ export class TrinidadEgpScraper extends TenderScraper {
       referenceNumber: d.referenceNumber,
       type: d.type,
       agencyName: d.agency,
+      category: classifyVtcCategory(`${d.title} ${d.description ?? ''}`) ?? undefined,
       currency: 'TTD',
       valueEstimate: value ?? undefined,
       publishedAt: parseTenderDate(d.publishedText, 'America/Port_of_Spain') ?? undefined,

@@ -23,6 +23,7 @@ import {
   parseTenderDate,
   type NormalizedOpportunity,
   type RawOpportunity,
+  classifyVtcCategory,
 } from '@procur/scrapers-core';
 
 const RESOURCE_URL = 'https://www.datos.gov.co/resource/p6dx-8zbt.json';
@@ -130,6 +131,13 @@ export class ColombiaSecopScraper extends TenderScraper {
       referenceNumber: r.referencia_del_proceso ?? r.id_del_proceso,
       type: r.tipo_de_contrato ?? r.modalidad_de_contratacion,
       agencyName: r.entidad,
+      // Spanish-language source — only the cross-language keywords
+      // (diesel, fuel, lpg, lng) tag here. Spanish-specific terms
+      // are a follow-up; for now Spanish rows mostly leave category null.
+      category:
+        classifyVtcCategory(
+          `${r.nombre_del_procedimiento} ${r.descripci_n_del_procedimiento ?? ''}`,
+        ) ?? undefined,
       currency: 'COP',
       valueEstimate,
       publishedAt: parseTenderDate(r.fecha_de_publicacion_del ?? null, TZ) ?? undefined,
