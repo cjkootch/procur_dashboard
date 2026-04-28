@@ -21,6 +21,12 @@ import { DrDgcpAwardsExtractor } from './awards-extractors/dr-dgcp/extractor';
 import { JamaicaGojepAwardsExtractor } from './awards-extractors/jamaica-gojep/extractor';
 import { TedAwardsExtractor } from './awards-extractors/ted/extractor';
 import { UngmAwardsExtractor } from './awards-extractors/ungm/extractor';
+import { OcdsBulkAwardsExtractor } from './awards-extractors/ocds-bulk/extractor';
+import {
+  OCDS_PUBLISHERS,
+  buildOcdrYearUrls,
+  getPublisherPreset,
+} from './awards-extractors/ocds-bulk/publishers';
 
 config({ path: '../../.env.local' });
 config({ path: '../../.env' });
@@ -72,6 +78,32 @@ async function runUngmAwardsExtractor() {
   process.exit(result.status === 'failed' ? 1 : 0);
 }
 
+async function runOcdsBulkExtractor(publisherKey: string, yearsArg: string | undefined) {
+  const preset = getPublisherPreset(publisherKey);
+  if (!preset) {
+    console.error(
+      `unknown publisher: ${publisherKey}\navailable: ${Object.keys(OCDS_PUBLISHERS).join(', ')}`,
+    );
+    process.exit(2);
+  }
+  const yearsBack = yearsArg ? Math.max(1, Number.parseInt(yearsArg, 10)) : 5;
+  const currentYear = new Date().getUTCFullYear();
+  const years: number[] = [];
+  for (let i = 0; i < yearsBack; i += 1) years.push(currentYear - i);
+  const urls = buildOcdrYearUrls(preset.publicationId, years);
+
+  console.log(
+    `extracting OCDS awards from ${publisherKey} (publication ${preset.publicationId}, last ${yearsBack}y)...`,
+  );
+  const extractor = new OcdsBulkAwardsExtractor({
+    ...preset,
+    bulkFileUrls: urls,
+  });
+  const result = await extractor.run();
+  console.log(JSON.stringify(result, null, 2));
+  process.exit(result.status === 'failed' ? 1 : 0);
+}
+
 async function main() {
   const slug = process.argv[2];
   if (!slug) {
@@ -79,6 +111,9 @@ async function main() {
     console.error(`available tender scrapers: ${Object.keys(scrapers).join(', ')}`);
     console.error('supplier scrapers: jamaica-suppliers');
     console.error('awards extractors: awards-dr, awards-jm, awards-ted [days], awards-un');
+    console.error(
+      `OCDS bulk: awards-ocds <publisher> [yearsBack=5]; publishers: ${Object.keys(OCDS_PUBLISHERS).join(', ')}`,
+    );
     process.exit(1);
   }
 
@@ -104,6 +139,18 @@ async function main() {
 
   if (slug === 'awards-un') {
     await runUngmAwardsExtractor();
+    return;
+  }
+
+  if (slug === 'awards-ocds') {
+    const publisher = process.argv[3];
+    if (!publisher) {
+      console.error(
+        `awards-ocds requires a publisher key.\navailable: ${Object.keys(OCDS_PUBLISHERS).join(', ')}`,
+      );
+      process.exit(2);
+    }
+    await runOcdsBulkExtractor(publisher, process.argv[4]);
     return;
   }
 
