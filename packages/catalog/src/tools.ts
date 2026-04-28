@@ -7,6 +7,8 @@ import {
   findBuyersForCommodityOffer,
   findCompetingSellers,
   findSuppliersForTender,
+  getMonthlyImportFlow,
+  getTopImportersByPartner,
   lookupKnownEntities,
   getCompanyProfile,
   listJurisdictions,
@@ -841,6 +843,96 @@ export function buildCatalogTools(): ToolRegistry {
                 'Public procurement data only. Private commercial flows (refiner-to-refiner, ' +
                 'trader-to-trader) are not represented. Dormant flagging is by public-tender ' +
                 'inactivity — a supplier may be active in private channels we can’t see.',
+            };
+          },
+        ),
+    }),
+
+    lookup_customs_flows: defineTool({
+      name: 'lookup_customs_flows',
+      description:
+        'Customs trade-flow data: which countries imported a commodity from a given origin, ' +
+        'monthly. Sourced from Eurostat Comext (free, EU reporters only in v1; UN Comtrade ' +
+        'extension planned for global coverage). COUNTRY-LEVEL granularity, not per-cargo — ' +
+        'good for sizing buyer markets and ranking candidate countries; not a replacement for ' +
+        'AIS/customs commercial sources (Kpler/Vortexa) when per-cargo attribution matters. Use ' +
+        "this tool when the user asks 'which countries import Libyan crude', 'how much diesel " +
+        "does Italy buy from where', or any 'commodity X from origin Y' flow question. Returns " +
+        'top importers with totals + monthly time series. Pair with lookup_known_entities to ' +
+        'attribute country imports to candidate refiners.',
+      kind: 'read',
+      schema: z.object({
+        partnerCountry: z
+          .string()
+          .length(2)
+          .describe(
+            "ISO-2 country of origin. e.g. 'LY' for Libya, 'IQ' for Iraq, 'NG' for Nigeria.",
+          ),
+        productCode: z
+          .string()
+          .describe(
+            "HS code (2/4/6/8 digits). Common: '2709' = crude petroleum, '2710' = refined, " +
+              "'2711' = LNG/LPG. Use 4-digit HS to keep results aggregated.",
+          ),
+        monthsLookback: z
+          .number()
+          .min(1)
+          .max(60)
+          .optional()
+          .describe('Default 12 months.'),
+        reporterCountry: z
+          .string()
+          .length(2)
+          .optional()
+          .describe('Optional ISO-2 to filter to a single importing country.'),
+        limit: z.number().min(1).max(50).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_customs_flows',
+            args: input,
+            summarize: (out: { topImporters: { length: number } }) => ({
+              resultCount: out.topImporters.length,
+              resultSummary: {
+                partnerCountry: input.partnerCountry,
+                productCode: input.productCode,
+              },
+            }),
+          },
+          async () => {
+            const filters = {
+              partnerCountry: input.partnerCountry,
+              productCode: input.productCode,
+              monthsLookback: input.monthsLookback,
+              reporterCountry: input.reporterCountry,
+            };
+            const [topImporters, monthly] = await Promise.all([
+              getTopImportersByPartner(filters, input.limit ?? 25),
+              getMonthlyImportFlow(filters),
+            ]);
+            return {
+              partnerCountry: input.partnerCountry,
+              productCode: input.productCode,
+              topImporters: topImporters.map((r) => ({
+                reporterCountry: r.reporterCountry,
+                totalKt: r.totalQuantityKg != null ? Math.round(r.totalQuantityKg / 1_000) : null,
+                totalUsd: r.totalValueUsd,
+                totalEur: r.totalValueEur,
+                monthsActive: r.monthsActive,
+                mostRecentPeriod: r.mostRecentPeriod,
+              })),
+              monthlyFlow: monthly.map((b) => ({
+                period: b.period,
+                quantityKt: b.quantityKg != null ? Math.round(b.quantityKg / 1_000) : null,
+                valueUsd: b.valueUsd,
+              })),
+              caveat:
+                'Eurostat Comext: EU reporters only, monthly, country-level. Does not capture ' +
+                'non-EU importers (India, China, Indonesia, etc) or per-cargo / per-refinery ' +
+                'detail. For full global coverage layer in UN Comtrade. For per-cargo buyer ' +
+                'attribution, paid AIS/customs services (Kpler, Vortexa) are required.',
             };
           },
         ),

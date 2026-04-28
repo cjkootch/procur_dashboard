@@ -20,6 +20,7 @@
     "backfill-usd": "tsx src/backfill-usd.ts",
     "ingest-wikidata-refineries": "tsx src/ingest-wikidata-refineries.ts",
     "seed-known-entities": "tsx src/seed-known-entities.ts",
+    "ingest-eurostat-comext": "tsx src/ingest-eurostat-comext.ts",
     "type-check": "tsc --noEmit",
     "clean": "rm -rf dist .turbo node_modules"
   },
