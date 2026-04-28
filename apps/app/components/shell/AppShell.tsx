@@ -45,6 +45,14 @@ const NAV: NavGroup[] = [
     ],
   },
   {
+    heading: 'Supplier graph',
+    items: [
+      { href: '/suppliers/reverse-search', label: 'Reverse search' },
+      { href: '/suppliers/intelligence', label: 'Intelligence' },
+      { href: '/suppliers/known-entities', label: 'Known entities' },
+    ],
+  },
+  {
     heading: 'Reports',
     items: [
       { href: '/insights', label: 'Insights' },
