@@ -49,7 +49,7 @@ const SPARQL_ENDPOINT = 'https://query.wikidata.org/sparql';
  */
 const SPARQL_QUERY = `
 SELECT ?refinery ?refineryLabel ?countryCode ?operatorLabel ?ownerLabel
-       ?capacity ?capacityUnit ?statusLabel ?inception
+       ?capacity ?capacityUnit ?statusLabel ?inception ?coord
 WHERE {
   ?refinery wdt:P31 wd:Q235365 .
   OPTIONAL {
@@ -66,6 +66,7 @@ WHERE {
   }
   OPTIONAL { ?refinery wdt:P5817 ?status . }
   OPTIONAL { ?refinery wdt:P571 ?inception . }
+  OPTIONAL { ?refinery wdt:P625 ?coord . }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en" . }
 }
 LIMIT 1500
@@ -82,6 +83,7 @@ type SparqlRow = {
   capacityUnit?: SparqlBinding<string>;
   statusLabel?: SparqlBinding<string>;
   inception?: SparqlBinding<string>;
+  coord?: SparqlBinding<string>;
 };
 
 async function fetchWikidata(): Promise<SparqlRow[]> {
@@ -128,6 +130,8 @@ function normalizeRow(row: SparqlRow): {
   status: string | null;
   inceptionYear: number | null;
   wikidataId: string;
+  latitude: number | null;
+  longitude: number | null;
 } | null {
   const wikidataId = row.refinery.value.replace('http://www.wikidata.org/entity/', '');
   const name = row.refineryLabel?.value;
@@ -156,6 +160,22 @@ function normalizeRow(row: SparqlRow): {
     if (Number.isFinite(y) && y > 1850 && y < 2100) inceptionYear = y;
   }
 
+  // Wikidata P625 returns WKT format "Point(longitude latitude)".
+  // Note longitude FIRST per WKT/GeoJSON convention.
+  let latitude: number | null = null;
+  let longitude: number | null = null;
+  if (row.coord?.value) {
+    const m = row.coord.value.match(/^Point\(\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*\)/);
+    if (m) {
+      const lng = Number.parseFloat(m[1]!);
+      const lat = Number.parseFloat(m[2]!);
+      if (Number.isFinite(lng) && Number.isFinite(lat) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+        longitude = lng;
+        latitude = lat;
+      }
+    }
+  }
+
   return {
     slug: slugify(name, country || 'xx'),
     name,
@@ -166,6 +186,8 @@ function normalizeRow(row: SparqlRow): {
     status: row.statusLabel?.value ?? null,
     inceptionYear,
     wikidataId,
+    latitude,
+    longitude,
   };
 }
 
@@ -202,6 +224,8 @@ async function main(): Promise<void> {
         notes,
         aliases: [r.name],
         tags,
+        latitude: r.latitude != null ? String(r.latitude) : null,
+        longitude: r.longitude != null ? String(r.longitude) : null,
         metadata: {
           source: 'wikidata',
           wikidata_id: r.wikidataId,
@@ -219,6 +243,8 @@ async function main(): Promise<void> {
           country: r.country,
           notes,
           tags,
+          latitude: r.latitude != null ? String(r.latitude) : null,
+          longitude: r.longitude != null ? String(r.longitude) : null,
           metadata: {
             source: 'wikidata',
             wikidata_id: r.wikidataId,

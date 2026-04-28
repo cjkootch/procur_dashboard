@@ -1,5 +1,7 @@
 import Link from 'next/link';
 import { lookupKnownEntities } from '@procur/catalog';
+import { MapViewClient } from './_components/MapViewClient';
+import type { MapEntity } from './_components/MapView';
 
 /**
  * Known-entities rolodex page — analyst-curated buyers / sellers /
@@ -50,12 +52,14 @@ interface Props {
     country?: string;
     role?: string;
     tag?: string;
+    view?: string;
   }>;
 }
 
 export default async function KnownEntitiesPage({ searchParams }: Props) {
-  const { category, country, role, tag } = await searchParams;
+  const { category, country, role, tag, view } = await searchParams;
   const categoryTag = category && category !== 'all' ? category : undefined;
+  const activeView: 'list' | 'map' = view === 'map' ? 'map' : 'list';
 
   const rows = await lookupKnownEntities({
     categoryTag,
@@ -75,7 +79,13 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
   const countries = [...byCountry.keys()].sort();
 
   const baseHref = (
-    override: Partial<{ category: string; country: string; role: string; tag: string }>,
+    override: Partial<{
+      category: string;
+      country: string;
+      role: string;
+      tag: string;
+      view: string;
+    }>,
   ) => {
     const next = new URLSearchParams();
     const cat = override.category ?? category ?? 'all';
@@ -86,8 +96,25 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
     if (r) next.set('role', r);
     const t = override.tag ?? tag;
     if (t) next.set('tag', t);
+    const v = override.view ?? activeView;
+    if (v && v !== 'list') next.set('view', v);
     return `/suppliers/known-entities?${next.toString()}`;
   };
+
+  const mapEntities: MapEntity[] = rows
+    .filter((r) => r.latitude != null && r.longitude != null)
+    .map((r) => ({
+      slug: r.slug,
+      name: r.name,
+      country: r.country,
+      role: r.role,
+      categories: r.categories,
+      tags: r.tags,
+      notes: r.notes,
+      metadata: r.metadata,
+      latitude: r.latitude as number,
+      longitude: r.longitude as number,
+    }));
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
@@ -169,15 +196,41 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
         </div>
       </section>
 
-      <p className="mb-4 text-sm text-[color:var(--color-muted-foreground)]">
-        {rows.length} entit{rows.length === 1 ? 'y' : 'ies'} matched
-        {category && category !== 'all' ? ` in ${category}` : ''}
-        {country ? ` (${country})` : ''}
-        {role ? `, ${role}` : ''}
-        {tag ? `, tagged ${tag}` : ''}.
-      </p>
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <p className="text-sm text-[color:var(--color-muted-foreground)]">
+          {rows.length} entit{rows.length === 1 ? 'y' : 'ies'} matched
+          {category && category !== 'all' ? ` in ${category}` : ''}
+          {country ? ` (${country})` : ''}
+          {role ? `, ${role}` : ''}
+          {tag ? `, tagged ${tag}` : ''}.
+        </p>
+        <div className="flex gap-1 text-xs">
+          <Link
+            href={baseHref({ view: 'list' })}
+            className={`rounded-[var(--radius-sm)] border px-3 py-1 hover:border-[color:var(--color-foreground)] ${
+              activeView === 'list'
+                ? 'border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40'
+                : 'border-[color:var(--color-border)]'
+            }`}
+          >
+            List
+          </Link>
+          <Link
+            href={baseHref({ view: 'map' })}
+            className={`rounded-[var(--radius-sm)] border px-3 py-1 hover:border-[color:var(--color-foreground)] ${
+              activeView === 'map'
+                ? 'border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40'
+                : 'border-[color:var(--color-border)]'
+            }`}
+          >
+            Map
+          </Link>
+        </div>
+      </div>
 
-      {rows.length === 0 ? (
+      {activeView === 'map' ? (
+        <MapViewClient entities={mapEntities} />
+      ) : rows.length === 0 ? (
         <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-8 text-center text-sm text-[color:var(--color-muted-foreground)]">
           No entities match these filters. Try widening the category or clearing tags.
         </div>

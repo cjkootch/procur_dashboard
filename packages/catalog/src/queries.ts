@@ -2608,6 +2608,8 @@ export interface KnownEntityRow {
   aliases: string[];
   tags: string[];
   metadata: Record<string, unknown> | null;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 /**
@@ -2624,7 +2626,7 @@ export async function lookupKnownEntities(
   const result = await db.execute(sql`
     SELECT
       id, slug, name, country, role, categories, notes,
-      contact_entity, aliases, tags, metadata
+      contact_entity, aliases, tags, metadata, latitude, longitude
     FROM known_entities
     WHERE 1=1
       ${
@@ -2650,6 +2652,8 @@ export async function lookupKnownEntities(
     aliases: (r.aliases as string[] | null) ?? [],
     tags: (r.tags as string[] | null) ?? [],
     metadata: r.metadata as Record<string, unknown> | null,
+    latitude: r.latitude != null ? Number.parseFloat(String(r.latitude)) : null,
+    longitude: r.longitude != null ? Number.parseFloat(String(r.longitude)) : null,
   }));
 }
 
