@@ -43,12 +43,11 @@
 
 import 'dotenv/config';
 import { config as loadEnv } from 'dotenv';
-import { readFile } from 'node:fs/promises';
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
-import { parse } from 'csv-parse/sync';
 import * as schema from './schema';
 import { findOrUpsertEntity } from './lib/find-or-upsert-entity';
+import { readTabular, pickCol, parseNumberSafe } from './lib/read-tabular';
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -99,47 +98,24 @@ function slugify(name: string, country: string): string {
   return `gem-${country.toLowerCase() || 'xx'}-${base}`;
 }
 
-/** Pick the first non-empty value from a list of column-name candidates
- *  (case-insensitive) so we tolerate GEM renaming columns across releases. */
-function pick(row: Record<string, string>, ...names: string[]): string | null {
-  const lc: Record<string, string> = {};
-  for (const [k, v] of Object.entries(row)) lc[k.toLowerCase()] = v;
-  for (const n of names) {
-    const v = lc[n.toLowerCase()];
-    if (v != null && String(v).trim().length > 0) return String(v).trim();
-  }
-  return null;
-}
-
-function parseNumber(s: string | null): number | null {
-  if (!s) return null;
-  const cleaned = s.replace(/[, ]/g, '');
-  const n = Number.parseFloat(cleaned);
-  return Number.isFinite(n) ? n : null;
-}
-
 async function main(): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL not set');
 
-  const csvPath = process.argv[2] ?? process.env.GEM_REFINERY_CSV_PATH;
-  if (!csvPath) {
+  const path = process.argv[2] ?? process.env.GEM_REFINERY_CSV_PATH;
+  if (!path) {
     console.error(
-      'Usage: pnpm --filter @procur/db ingest-gem-refineries <path-to-gort.csv>\n' +
+      'Usage: pnpm --filter @procur/db ingest-gem-refineries <path-to-refineries.xlsx-or-csv>\n' +
         'Or set GEM_REFINERY_CSV_PATH env var.\n' +
-        'Download GORT from: https://globalenergymonitor.org/projects/global-oil-refinery-tracker/',
+        'Download from https://globalenergymonitor.org/trackers/ — look for an "Oil Refineries"\n' +
+        'or "GORT" file. Pipelines and extraction are separate downloads.',
     );
     process.exit(1);
   }
 
-  console.log(`Reading GEM GORT data from ${csvPath}...`);
-  const csvText = await readFile(csvPath, 'utf8');
-  const records = parse(csvText, {
-    columns: true,
-    skip_empty_lines: true,
-    trim: true,
-  }) as Array<Record<string, string>>;
-  console.log(`  ${records.length} CSV rows`);
+  console.log(`Reading GEM refineries from ${path}...`);
+  const records = await readTabular(path);
+  console.log(`  ${records.length} rows`);
 
   const client = neon(url);
   const db = drizzle(client, { schema, casing: 'snake_case' });
@@ -149,23 +125,23 @@ async function main(): Promise<void> {
   let skipped = 0;
 
   for (const row of records) {
-    const name = pick(row, 'Plant Name', 'Refinery Name', 'Project Name', 'Name');
-    const countryName = pick(row, 'Country');
+    const name = pickCol(row, 'Plant Name', 'Refinery Name', 'Project Name', 'Name');
+    const countryName = pickCol(row, 'Country');
     if (!name || !countryName) {
       skipped += 1;
       continue;
     }
     const country = nameToIso2(countryName);
-    const operator = pick(row, 'Operator', 'Operator Name');
-    const owner = pick(row, 'Owner', 'Owner Name');
-    const capacityBpd = parseNumber(
-      pick(row, 'Capacity (bbl/d)', 'Atmospheric Capacity (bbl/d)', 'CDU Capacity (bbl/d)'),
+    const operator = pickCol(row, 'Operator', 'Operator Name');
+    const owner = pickCol(row, 'Owner', 'Owner Name');
+    const capacityBpd = parseNumberSafe(
+      pickCol(row, 'Capacity (bbl/d)', 'Atmospheric Capacity (bbl/d)', 'CDU Capacity (bbl/d)'),
     );
-    const status = pick(row, 'Status', 'Operating Status');
-    const startYear = parseNumber(pick(row, 'Start Year', 'Year Built', 'Year Started'));
-    const lat = parseNumber(pick(row, 'Latitude', 'Lat'));
-    const lng = parseNumber(pick(row, 'Longitude', 'Lng', 'Lon'));
-    const gemId = pick(row, 'Plant ID', 'GORT ID', 'GEM ID', 'ID');
+    const status = pickCol(row, 'Status', 'Operating Status');
+    const startYear = parseNumberSafe(pickCol(row, 'Start Year', 'Year Built', 'Year Started'));
+    const lat = parseNumberSafe(pickCol(row, 'Latitude', 'Lat'));
+    const lng = parseNumberSafe(pickCol(row, 'Longitude', 'Lng', 'Lon'));
+    const gemId = pickCol(row, 'Plant ID', 'GORT ID', 'GEM ID', 'ID');
 
     const noteParts: string[] = [];
     if (operator) noteParts.push(`Operator: ${operator}`);
