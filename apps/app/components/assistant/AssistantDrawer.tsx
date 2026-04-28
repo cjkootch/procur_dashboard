@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { Chat } from './Chat';
 import type { PageContextInput } from './types';
 
@@ -17,7 +17,8 @@ export function AssistantDrawer() {
   const [threadId, setThreadId] = useState<string | undefined>(undefined);
   const backdropRef = useRef<HTMLDivElement | null>(null);
   const pathname = usePathname();
-  const pageContext = derivePageContext(pathname);
+  const searchParams = useSearchParams();
+  const pageContext = derivePageContext(pathname, searchParams);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -59,7 +60,7 @@ export function AssistantDrawer() {
             <div className="text-sm font-semibold">Procur Assistant</div>
             {pageContext && (
               <div className="text-[11px] text-[color:var(--color-muted-foreground)]">
-                Context: {pageContext.kind}
+                Context: {describeContext(pageContext)}
               </div>
             )}
           </div>
@@ -105,6 +106,24 @@ export function AssistantDrawer() {
 }
 
 /**
+ * Human-readable description of the current page context for the
+ * drawer header. The full filter set goes to the LLM via the system
+ * prompt; this is just the user-visible "we know what you're looking
+ * at" affordance.
+ */
+function describeContext(ctx: PageContextInput): string {
+  if (ctx.kind === 'rolodex') {
+    const parts: string[] = [];
+    if (ctx.filters.role) parts.push(ctx.filters.role);
+    if (ctx.filters.country) parts.push(ctx.filters.country);
+    if (ctx.filters.category) parts.push(ctx.filters.category);
+    if (ctx.filters.tag) parts.push(ctx.filters.tag);
+    return parts.length > 0 ? `rolodex — ${parts.join(' / ')}` : 'rolodex';
+  }
+  return ctx.kind;
+}
+
+/**
  * Floating launcher pinned to the bottom-right corner. Always visible so
  * the assistant is one click away on every authenticated page (the
  * Cmd/Ctrl+K shortcut is great for power users but invisible otherwise).
@@ -127,11 +146,34 @@ function LauncherButton({ onOpen }: { onOpen: () => void }) {
 }
 
 /**
- * Route → PageContext mapping. Picks up common entity URLs. Returns undefined
- * for non-entity pages so the assistant defaults to whole-pipeline scope.
+ * Route → PageContext mapping. Picks up common entity URLs + the
+ * known-entities rolodex (where filters live in search params, not
+ * the path). Returns undefined for non-entity pages so the assistant
+ * defaults to whole-pipeline scope.
  */
-function derivePageContext(pathname: string | null): PageContextInput | undefined {
+function derivePageContext(
+  pathname: string | null,
+  searchParams: URLSearchParams | null,
+): PageContextInput | undefined {
   if (!pathname) return undefined;
+
+  // Rolodex page: /suppliers/known-entities — filters carried in
+  // search params (?category=…&country=…&role=…&tag=…).
+  if (pathname.startsWith('/suppliers/known-entities')) {
+    const filters: NonNullable<
+      Extract<PageContextInput, { kind: 'rolodex' }>['filters']
+    > = {};
+    const cat = searchParams?.get('category');
+    if (cat && cat !== 'all') filters.category = cat;
+    const c = searchParams?.get('country');
+    if (c) filters.country = c;
+    const r = searchParams?.get('role');
+    if (r) filters.role = r;
+    const t = searchParams?.get('tag');
+    if (t) filters.tag = t;
+    return { kind: 'rolodex', filters };
+  }
+
   const m =
     pathname.match(/^\/capture\/pursuits\/([0-9a-f-]{36})/) ??
     pathname.match(/^\/proposal\/([0-9a-f-]{36})/) ??
