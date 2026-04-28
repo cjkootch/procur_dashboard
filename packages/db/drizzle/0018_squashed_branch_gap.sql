@@ -1,0 +1,11 @@
+-- Intentionally empty placeholder.
+--
+-- Migrations 0018 and 0019 were generated locally on a feature branch
+-- that was squashed before merge — the .sql files never made it to
+-- main, but the next migration (0020_external_suppliers.sql) numbered
+-- itself off the local sequence, leaving a gap.
+--
+-- Re-creating these as no-ops so the numeric sequence is contiguous
+-- and so the journal entries that reference 0018/0019 have something
+-- to anchor against. Safe to apply on any DB — empty SQL is a no-op.
+SELECT 1;
