@@ -80,6 +80,10 @@ export type OpportunityFilters = {
   maxValueUsd?: number;
   deadlineBefore?: Date;
   deadlineAfter?: Date;
+  /** Filter to rows whose publishedAt (or firstSeenAt fallback) is on
+   *  or after this instant. Powers "posted in the last 24 hours" /
+   *  "new since yesterday" type queries. */
+  publishedAfter?: Date;
 };
 
 /**
@@ -171,6 +175,17 @@ const base = (filters: OpportunityFilters, scope: OpportunityScope = 'open') => 
   }
   if (filters.deadlineAfter) {
     conds.push(gte(opportunities.deadlineAt, filters.deadlineAfter));
+  }
+  if (filters.publishedAfter) {
+    // Coalesce on firstSeenAt so rows whose source omitted publishedAt
+    // (common for several portals) still hit the "new in last N days"
+    // window via when Procur first ingested them.
+    conds.push(
+      gte(
+        sql`coalesce(${opportunities.publishedAt}, ${opportunities.firstSeenAt})`,
+        filters.publishedAfter,
+      ),
+    );
   }
   return and(...conds);
 };
@@ -456,4 +471,183 @@ export async function listActiveCategories() {
     )
     .orderBy(asc(taxonomyCategories.sortOrder));
   return rows.map(({ sortOrder: _sortOrder, ...rest }) => rest);
+}
+
+export type PricingIntelFilters = {
+  jurisdiction?: string;
+  category?: string;
+  beneficiaryCountry?: string;
+  /** Limit to awards in the last N days. Default = no limit. */
+  withinDays?: number;
+};
+
+export type PricingIntelByCurrency = {
+  currency: string;
+  awardCount: number;
+  medianAmount: number | null;
+  p90Amount: number | null;
+  averageAmount: number | null;
+  totalAmount: number | null;
+};
+
+export type PricingIntelTopWinner = {
+  name: string;
+  awardCount: number;
+};
+
+export type PricingIntelRecentAward = {
+  slug: string | null;
+  title: string;
+  jurisdiction: string;
+  awardedToCompanyName: string | null;
+  awardedAmount: number | null;
+  currency: string | null;
+  awardedAt: string | null;
+};
+
+export type PricingIntelResult = {
+  filterDescription: string;
+  totalAwards: number;
+  byCurrency: PricingIntelByCurrency[];
+  topWinners: PricingIntelTopWinner[];
+  recentAwards: PricingIntelRecentAward[];
+};
+
+/**
+ * Aggregate past-award statistics for competitive pricing intel.
+ *
+ * Procurement bidders need to know what number to bid, not just what
+ * was published. This rolls up awarded amounts (median + p90 + mean +
+ * total) grouped by currency, plus the top 5 winning suppliers and a
+ * preview of the last 5 awards. All filters are optional; no filter =
+ * pricing intel across the entire awarded catalog.
+ *
+ * Currencies are kept separate (no FX conversion) so users see real
+ * numbers in the right unit. The model can stitch together a "median
+ * EU fuel award: €450K, median US fuel award: $1.2M" narrative from
+ * the byCurrency rows.
+ */
+export async function pricingIntel(
+  filters: PricingIntelFilters,
+): Promise<PricingIntelResult> {
+  const conds = [
+    eq(opportunities.status, 'awarded'),
+    isNull(opportunities.companyId),
+    isNotNull(opportunities.awardedAmount),
+  ];
+  if (filters.jurisdiction) {
+    conds.push(eq(jurisdictions.slug, filters.jurisdiction));
+  }
+  if (filters.category) {
+    conds.push(eq(opportunities.category, filters.category));
+  }
+  if (filters.beneficiaryCountry) {
+    conds.push(eq(opportunities.beneficiaryCountry, filters.beneficiaryCountry));
+  }
+  if (filters.withinDays && filters.withinDays > 0) {
+    conds.push(
+      gte(
+        opportunities.awardedAt,
+        sql`now() - interval '${sql.raw(String(filters.withinDays))} days'`,
+      ),
+    );
+  }
+  const where = and(...conds);
+
+  // Per-currency percentile aggregation. Postgres percentile_cont() is
+  // a continuous percentile from a sorted set — closest matches the
+  // "what's the typical award?" question we want answered.
+  const byCurrency = (await db
+    .select({
+      currency: opportunities.currency,
+      awardCount: sql<number>`count(*)::int`,
+      medianAmount: sql<string | null>`percentile_cont(0.5) within group (order by ${opportunities.awardedAmount}::numeric)::text`,
+      p90Amount: sql<string | null>`percentile_cont(0.9) within group (order by ${opportunities.awardedAmount}::numeric)::text`,
+      averageAmount: sql<string | null>`avg(${opportunities.awardedAmount}::numeric)::text`,
+      totalAmount: sql<string | null>`sum(${opportunities.awardedAmount}::numeric)::text`,
+    })
+    .from(opportunities)
+    .innerJoin(jurisdictions, eq(opportunities.jurisdictionId, jurisdictions.id))
+    .where(where)
+    .groupBy(opportunities.currency)
+    .orderBy(desc(sql<number>`count(*)`))) as Array<{
+    currency: string | null;
+    awardCount: number;
+    medianAmount: string | null;
+    p90Amount: string | null;
+    averageAmount: string | null;
+    totalAmount: string | null;
+  }>;
+
+  const topWinners = (await db
+    .select({
+      name: opportunities.awardedToCompanyName,
+      awardCount: sql<number>`count(*)::int`,
+    })
+    .from(opportunities)
+    .innerJoin(jurisdictions, eq(opportunities.jurisdictionId, jurisdictions.id))
+    .where(and(where, isNotNull(opportunities.awardedToCompanyName))!)
+    .groupBy(opportunities.awardedToCompanyName)
+    .orderBy(desc(sql<number>`count(*)`))
+    .limit(5)) as Array<{ name: string | null; awardCount: number }>;
+
+  const recentAwards = await db
+    .select({
+      slug: opportunities.slug,
+      title: opportunities.title,
+      jurisdictionName: jurisdictions.name,
+      awardedToCompanyName: opportunities.awardedToCompanyName,
+      awardedAmount: opportunities.awardedAmount,
+      currency: opportunities.currency,
+      awardedAt: opportunities.awardedAt,
+    })
+    .from(opportunities)
+    .innerJoin(jurisdictions, eq(opportunities.jurisdictionId, jurisdictions.id))
+    .where(where)
+    .orderBy(desc(opportunities.awardedAt))
+    .limit(5);
+
+  const totalAwards = byCurrency.reduce((acc, c) => acc + c.awardCount, 0);
+
+  const filterDescription = [
+    filters.jurisdiction ? `jurisdiction=${filters.jurisdiction}` : null,
+    filters.category ? `category=${filters.category}` : null,
+    filters.beneficiaryCountry ? `country=${filters.beneficiaryCountry}` : null,
+    filters.withinDays ? `last ${filters.withinDays} days` : 'all-time',
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+  return {
+    filterDescription,
+    totalAwards,
+    byCurrency: byCurrency
+      .filter((c): c is typeof c & { currency: string } => c.currency != null)
+      .map((c) => ({
+        currency: c.currency,
+        awardCount: c.awardCount,
+        medianAmount: parseDecimal(c.medianAmount),
+        p90Amount: parseDecimal(c.p90Amount),
+        averageAmount: parseDecimal(c.averageAmount),
+        totalAmount: parseDecimal(c.totalAmount),
+      })),
+    topWinners: topWinners
+      .filter((w): w is typeof w & { name: string } => w.name != null)
+      .map((w) => ({ name: w.name, awardCount: w.awardCount })),
+    recentAwards: recentAwards.map((r) => ({
+      slug: r.slug,
+      title: r.title,
+      jurisdiction: r.jurisdictionName,
+      awardedToCompanyName: r.awardedToCompanyName ?? null,
+      awardedAmount: parseDecimal(r.awardedAmount as string | null),
+      currency: r.currency ?? null,
+      awardedAt: r.awardedAt?.toISOString() ?? null,
+    })),
+  };
+}
+
+function parseDecimal(s: string | null | undefined): number | null {
+  if (s == null) return null;
+  const n = Number.parseFloat(s);
+  return Number.isFinite(n) ? n : null;
 }
