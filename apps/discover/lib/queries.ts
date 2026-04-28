@@ -24,6 +24,7 @@ import {
   opportunities,
   pastPerformance,
   taxonomyCategories,
+  users,
 } from '@procur/db';
 
 /**
@@ -1049,5 +1050,135 @@ export async function briefOpportunity(
       byCurrency: pricing.byCurrency,
       topWinners: pricing.topWinners,
     },
+  };
+}
+
+export type WhatsNewResult = {
+  since: string;
+  /** True when this is the user's first ever call (no prior lastAssistantSeenAt). */
+  firstCall: boolean;
+  totalNew: number;
+  /** Counts grouped by jurisdiction so the model can summarize the
+   *  shape of what's new ("12 from EU, 5 from UK, 3 from SAM"). */
+  byJurisdiction: Array<{ jurisdiction: string; count: number }>;
+  byCategory: Array<{ category: string; count: number }>;
+  /** Top N most-recent opportunities for inline preview. */
+  topNew: Array<{
+    slug: string | null;
+    title: string;
+    jurisdiction: string;
+    category: string | null;
+    publishedAt: string | null;
+    url: string | null;
+  }>;
+};
+
+/**
+ * "What's new for me" digest. Returns opportunities posted (or first
+ * ingested) after the user's last_assistant_seen_at, then bumps that
+ * timestamp atomically so the next call yields a fresh delta.
+ *
+ * On the first call (last_assistant_seen_at IS NULL), falls back to
+ * a 7-day window so the user gets something useful immediately
+ * instead of an empty result.
+ *
+ * Bumps the timestamp BEFORE serializing the response so a slow
+ * client doesn't double-count rows on retry. The trade-off is that
+ * a server-side error after the bump but before the user sees the
+ * data could lose a delta — acceptable for a passive digest.
+ */
+export async function whatsNewForUser(userId: string): Promise<WhatsNewResult> {
+  const userRow = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+    columns: { lastAssistantSeenAt: true },
+  });
+  const lastSeen = userRow?.lastAssistantSeenAt ?? null;
+  const firstCall = lastSeen == null;
+  const since = lastSeen ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const now = new Date();
+
+  // Bump first; on a slow / dropped response the user just sees this
+  // delta on the next call instead of getting it twice.
+  await db
+    .update(users)
+    .set({ lastAssistantSeenAt: now })
+    .where(eq(users.id, userId));
+
+  const where = and(
+    isNull(opportunities.companyId),
+    eq(opportunities.status, 'active'),
+    gte(
+      sql`coalesce(${opportunities.publishedAt}, ${opportunities.firstSeenAt})`,
+      since,
+    ),
+  );
+
+  const totalRows = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(opportunities)
+    .innerJoin(jurisdictions, eq(opportunities.jurisdictionId, jurisdictions.id))
+    .where(where);
+  const totalNew = totalRows[0]?.count ?? 0;
+
+  const byJurisdiction = await db
+    .select({
+      jurisdiction: jurisdictions.name,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(opportunities)
+    .innerJoin(jurisdictions, eq(opportunities.jurisdictionId, jurisdictions.id))
+    .where(where)
+    .groupBy(jurisdictions.name)
+    .orderBy(desc(sql<number>`count(*)`))
+    .limit(10);
+
+  const byCategory = await db
+    .select({
+      category: opportunities.category,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(opportunities)
+    .innerJoin(jurisdictions, eq(opportunities.jurisdictionId, jurisdictions.id))
+    .where(and(where, isNotNull(opportunities.category))!)
+    .groupBy(opportunities.category)
+    .orderBy(desc(sql<number>`count(*)`))
+    .limit(10);
+
+  const topNew = await db
+    .select({
+      slug: opportunities.slug,
+      title: opportunities.title,
+      jurisdictionName: jurisdictions.name,
+      category: opportunities.category,
+      publishedAt: opportunities.publishedAt,
+      firstSeenAt: opportunities.firstSeenAt,
+    })
+    .from(opportunities)
+    .innerJoin(jurisdictions, eq(opportunities.jurisdictionId, jurisdictions.id))
+    .where(where)
+    .orderBy(
+      desc(sql`coalesce(${opportunities.publishedAt}, ${opportunities.firstSeenAt})`),
+    )
+    .limit(10);
+
+  return {
+    since: since.toISOString(),
+    firstCall,
+    totalNew,
+    byJurisdiction: byJurisdiction.map((r) => ({
+      jurisdiction: r.jurisdiction,
+      count: r.count,
+    })),
+    byCategory: byCategory
+      .filter((r): r is typeof r & { category: string } => r.category != null)
+      .map((r) => ({ category: r.category, count: r.count })),
+    topNew: topNew.map((r) => ({
+      slug: r.slug,
+      title: r.title,
+      jurisdiction: r.jurisdictionName,
+      category: r.category ?? null,
+      publishedAt: (r.publishedAt ?? r.firstSeenAt)?.toISOString() ?? null,
+      url: r.slug ? `https://discover.procur.app/opportunities/${r.slug}` : null,
+    })),
   };
 }

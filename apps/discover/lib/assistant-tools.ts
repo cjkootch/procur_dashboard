@@ -9,6 +9,7 @@ import {
   getOpportunityBySlug,
   pricingIntel,
   summarizeCatalog,
+  whatsNewForUser,
   type OpportunityScope,
 } from './queries';
 import { addOpportunityToPursuit, createAlertProfile } from './mutations';
@@ -516,6 +517,24 @@ export function buildDiscoverTools(): ToolRegistry {
       }),
       handler: async (ctx, input) => {
         return briefOpportunity(ctx.companyId, input.slug);
+      },
+    }),
+
+    whats_new_for_me: defineTool({
+      name: 'whats_new_for_me',
+      description:
+        "Personalized what's-new digest. Returns opportunities posted (or first ingested) " +
+        "since the LAST time the user invoked this tool — automatically tracked per-user " +
+        "via the lastAssistantSeenAt timestamp on their account. First call falls back to " +
+        'the past 7 days. Use when the user says "what\'s new", "catch me up", "anything new ' +
+        'since I last looked", "new since yesterday/last week", or starts a fresh session and ' +
+        'asks "what should I look at first". Returns total count + breakdowns by jurisdiction ' +
+        'and category + top 10 most-recent opportunities. Bumps the lastAssistantSeenAt ' +
+        'timestamp atomically — safe to call once per session at the start.',
+      kind: 'read',
+      schema: z.object({}),
+      handler: async (ctx) => {
+        return whatsNewForUser(ctx.userId);
       },
     }),
 
