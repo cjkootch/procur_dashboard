@@ -2657,6 +2657,305 @@ export async function lookupKnownEntities(
   }));
 }
 
+// ─── Pricing analytics — delta-vs-benchmark ───────────────────────
+
+export interface SupplierPricingProfile {
+  supplierId: string;
+  awardCount: number;
+  /** Average per-bbl delta (positive = priced above benchmark). */
+  avgDeltaUsdPerBbl: number | null;
+  avgDeltaPct: number | null;
+  /** Median per-bbl delta — robust to outliers. */
+  medianDeltaUsdPerBbl: number | null;
+  /** Standard deviation of per-bbl delta. High = inconsistent pricing. */
+  stddevDeltaUsdPerBbl: number | null;
+  /** Most-recent award sample for narrative context. */
+  recentSamples: Array<{
+    awardId: string;
+    awardDate: string;
+    buyerCountry: string;
+    categoryTags: string[];
+    unitPriceUsdPerBbl: number;
+    benchmarkPriceUsdPerBbl: number;
+    deltaUsdPerBbl: number;
+    deltaPct: number;
+    confidence: number;
+  }>;
+}
+
+/**
+ * Per-supplier pricing profile vs. their relevant benchmarks. Filters
+ * to confidence ≥ 0.6 by default — anything lower is too noisy to
+ * trust. Used by analyze_supplier_pricing chat tool.
+ */
+export async function analyzeSupplierPricing(filters: {
+  supplierId: string;
+  /** Minimum overall_confidence. Default 0.6. */
+  minConfidence?: number;
+  /** Lookback window in days. Default 1095 (~3y). */
+  daysBack?: number;
+}): Promise<SupplierPricingProfile> {
+  const minConfidence = filters.minConfidence ?? 0.6;
+  const daysBack = filters.daysBack ?? 1095;
+  const result = await db.execute(sql`
+    WITH window_rows AS (
+      SELECT *
+      FROM award_price_deltas
+      WHERE supplier_id = ${filters.supplierId}::uuid
+        AND overall_confidence >= ${minConfidence}::numeric
+        AND award_date >= CURRENT_DATE - (${daysBack}::int * INTERVAL '1 day')
+        AND delta_usd_per_bbl IS NOT NULL
+    )
+    SELECT
+      (SELECT COUNT(*) FROM window_rows)::int AS award_count,
+      (SELECT AVG(delta_usd_per_bbl) FROM window_rows) AS avg_delta_usd,
+      (SELECT AVG(delta_pct) FROM window_rows) AS avg_delta_pct,
+      (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY delta_usd_per_bbl)
+         FROM window_rows) AS median_delta_usd,
+      (SELECT STDDEV(delta_usd_per_bbl) FROM window_rows) AS stddev_delta_usd,
+      (SELECT json_agg(row_to_json(s) ORDER BY s.award_date DESC)
+         FROM (
+           SELECT award_id, award_date, buyer_country, category_tags,
+                  unit_price_usd_per_bbl, benchmark_price_usd_per_bbl,
+                  delta_usd_per_bbl, delta_pct, overall_confidence
+           FROM window_rows
+           ORDER BY award_date DESC LIMIT 5
+         ) s) AS recent_samples;
+  `);
+  const row = (result.rows as Array<Record<string, unknown>>)[0] ?? {};
+  type Sample = {
+    award_id: string;
+    award_date: string;
+    buyer_country: string;
+    category_tags: string[] | null;
+    unit_price_usd_per_bbl: number | string;
+    benchmark_price_usd_per_bbl: number | string;
+    delta_usd_per_bbl: number | string;
+    delta_pct: number | string;
+    overall_confidence: number | string;
+  };
+  const samples = (row.recent_samples as Sample[] | null) ?? [];
+  return {
+    supplierId: filters.supplierId,
+    awardCount: Number(row.award_count ?? 0),
+    avgDeltaUsdPerBbl:
+      row.avg_delta_usd != null ? Number.parseFloat(String(row.avg_delta_usd)) : null,
+    avgDeltaPct:
+      row.avg_delta_pct != null ? Number.parseFloat(String(row.avg_delta_pct)) : null,
+    medianDeltaUsdPerBbl:
+      row.median_delta_usd != null
+        ? Number.parseFloat(String(row.median_delta_usd))
+        : null,
+    stddevDeltaUsdPerBbl:
+      row.stddev_delta_usd != null
+        ? Number.parseFloat(String(row.stddev_delta_usd))
+        : null,
+    recentSamples: samples.map((s) => ({
+      awardId: String(s.award_id),
+      awardDate: String(s.award_date).slice(0, 10),
+      buyerCountry: String(s.buyer_country),
+      categoryTags: s.category_tags ?? [],
+      unitPriceUsdPerBbl: Number.parseFloat(String(s.unit_price_usd_per_bbl)),
+      benchmarkPriceUsdPerBbl: Number.parseFloat(
+        String(s.benchmark_price_usd_per_bbl),
+      ),
+      deltaUsdPerBbl: Number.parseFloat(String(s.delta_usd_per_bbl)),
+      deltaPct: Number.parseFloat(String(s.delta_pct)),
+      confidence: Number.parseFloat(String(s.overall_confidence)),
+    })),
+  };
+}
+
+export interface BuyerPricingProfile {
+  country: string;
+  category: string;
+  awardCount: number;
+  /** Distribution of per-bbl deltas paid by this buyer pool. */
+  avgDeltaUsdPerBbl: number | null;
+  medianDeltaUsdPerBbl: number | null;
+  /** P25 / P75 — empirical pricing band. */
+  p25DeltaUsdPerBbl: number | null;
+  p75DeltaUsdPerBbl: number | null;
+  /** Typical premium paid above benchmark, expressed as % of benchmark. */
+  avgDeltaPct: number | null;
+}
+
+/**
+ * Per-(buyer_country × category) pricing profile. The empirical
+ * "Caribbean diesel premium over NY Harbor" answer.
+ */
+export async function analyzeBuyerPricing(filters: {
+  buyerCountry: string;
+  categoryTag: string;
+  minConfidence?: number;
+  daysBack?: number;
+}): Promise<BuyerPricingProfile> {
+  const minConfidence = filters.minConfidence ?? 0.6;
+  const daysBack = filters.daysBack ?? 1095;
+  const result = await db.execute(sql`
+    WITH window_rows AS (
+      SELECT *
+      FROM award_price_deltas
+      WHERE buyer_country = ${filters.buyerCountry}
+        AND ${filters.categoryTag} = ANY(category_tags)
+        AND overall_confidence >= ${minConfidence}::numeric
+        AND award_date >= CURRENT_DATE - (${daysBack}::int * INTERVAL '1 day')
+        AND delta_usd_per_bbl IS NOT NULL
+    )
+    SELECT
+      COUNT(*)::int AS award_count,
+      AVG(delta_usd_per_bbl) AS avg_delta_usd,
+      percentile_cont(0.5) WITHIN GROUP (ORDER BY delta_usd_per_bbl) AS median_delta_usd,
+      percentile_cont(0.25) WITHIN GROUP (ORDER BY delta_usd_per_bbl) AS p25_delta_usd,
+      percentile_cont(0.75) WITHIN GROUP (ORDER BY delta_usd_per_bbl) AS p75_delta_usd,
+      AVG(delta_pct) AS avg_delta_pct
+    FROM window_rows;
+  `);
+  const row = (result.rows as Array<Record<string, unknown>>)[0] ?? {};
+  return {
+    country: filters.buyerCountry,
+    category: filters.categoryTag,
+    awardCount: Number(row.award_count ?? 0),
+    avgDeltaUsdPerBbl:
+      row.avg_delta_usd != null ? Number.parseFloat(String(row.avg_delta_usd)) : null,
+    medianDeltaUsdPerBbl:
+      row.median_delta_usd != null
+        ? Number.parseFloat(String(row.median_delta_usd))
+        : null,
+    p25DeltaUsdPerBbl:
+      row.p25_delta_usd != null ? Number.parseFloat(String(row.p25_delta_usd)) : null,
+    p75DeltaUsdPerBbl:
+      row.p75_delta_usd != null ? Number.parseFloat(String(row.p75_delta_usd)) : null,
+    avgDeltaPct:
+      row.avg_delta_pct != null ? Number.parseFloat(String(row.avg_delta_pct)) : null,
+  };
+}
+
+export interface OfferEvaluation {
+  buyerCountry: string;
+  categoryTag: string;
+  offerPriceUsdPerBbl: number;
+  /** Matching benchmark slug + current spot. NULL if not yet ingested. */
+  benchmarkSlug: string | null;
+  benchmarkSpotUsdPerBbl: number | null;
+  /** Expected delta from the buyer-pool's empirical distribution. */
+  expectedDeltaUsdPerBbl: number | null;
+  /** Implied price the buyer's history would predict. */
+  expectedPriceUsdPerBbl: number | null;
+  /** How many standard deviations off from the historical mean. */
+  zScore: number | null;
+  /** Above / below / inside band, p25–p75 the historical spread. */
+  verdict: 'inside-band' | 'above-band' | 'below-band' | 'no-history' | 'no-benchmark';
+  historyAwardCount: number;
+}
+
+/**
+ * "Is this offer competitive?" — given a buyer + category + offer
+ * price, score it against the empirical distribution of deltas. Uses
+ * the analyzeBuyerPricing distribution and current benchmark spot.
+ */
+export async function evaluateOfferAgainstHistory(input: {
+  buyerCountry: string;
+  categoryTag: string;
+  offerPriceUsdPerBbl: number;
+  minConfidence?: number;
+  daysBack?: number;
+}): Promise<OfferEvaluation> {
+  const buyerProfile = await analyzeBuyerPricing(input);
+
+  // Resolve current benchmark spot (most recent commodity_prices row).
+  const benchResult = await db.execute(sql`
+    SELECT
+      cbm.benchmark_slug,
+      cp.price::numeric AS price,
+      cp.unit AS unit,
+      COALESCE(cbm.benchmark_adjustment_usd_bbl, 0)::numeric AS adj
+    FROM commodity_benchmark_mappings cbm
+    LEFT JOIN LATERAL (
+      SELECT price, unit FROM commodity_prices
+      WHERE series_slug = cbm.benchmark_slug AND contract_type = 'spot'
+      ORDER BY price_date DESC LIMIT 1
+    ) cp ON TRUE
+    WHERE cbm.category_tag = ${input.categoryTag}
+      AND (cbm.country_code = ${input.buyerCountry} OR cbm.country_code = 'GLOBAL')
+      AND cbm.grade IS NULL
+    ORDER BY (cbm.country_code = ${input.buyerCountry}) DESC
+    LIMIT 1;
+  `);
+  const benchRow = (benchResult.rows as Array<Record<string, unknown>>)[0];
+  const benchmarkSlug = benchRow?.benchmark_slug == null ? null : String(benchRow.benchmark_slug);
+  const rawPrice = benchRow?.price != null ? Number.parseFloat(String(benchRow.price)) : null;
+  const unit = benchRow?.unit == null ? null : String(benchRow.unit);
+  const adj = benchRow?.adj != null ? Number.parseFloat(String(benchRow.adj)) : 0;
+  const benchmarkSpotUsdPerBbl =
+    rawPrice == null || unit == null
+      ? null
+      : (unit === 'usd-gal' ? rawPrice * 42 : rawPrice) + adj;
+
+  if (benchmarkSpotUsdPerBbl == null) {
+    return {
+      buyerCountry: input.buyerCountry,
+      categoryTag: input.categoryTag,
+      offerPriceUsdPerBbl: input.offerPriceUsdPerBbl,
+      benchmarkSlug,
+      benchmarkSpotUsdPerBbl: null,
+      expectedDeltaUsdPerBbl: null,
+      expectedPriceUsdPerBbl: null,
+      zScore: null,
+      verdict: 'no-benchmark',
+      historyAwardCount: buyerProfile.awardCount,
+    };
+  }
+
+  if (buyerProfile.awardCount === 0 || buyerProfile.medianDeltaUsdPerBbl == null) {
+    return {
+      buyerCountry: input.buyerCountry,
+      categoryTag: input.categoryTag,
+      offerPriceUsdPerBbl: input.offerPriceUsdPerBbl,
+      benchmarkSlug,
+      benchmarkSpotUsdPerBbl,
+      expectedDeltaUsdPerBbl: null,
+      expectedPriceUsdPerBbl: null,
+      zScore: null,
+      verdict: 'no-history',
+      historyAwardCount: buyerProfile.awardCount,
+    };
+  }
+
+  const expectedDelta = buyerProfile.medianDeltaUsdPerBbl;
+  const expectedPrice = benchmarkSpotUsdPerBbl + expectedDelta;
+  const offerDelta = input.offerPriceUsdPerBbl - benchmarkSpotUsdPerBbl;
+
+  // Z-score using the buyer's historical mean + p25/p75 (proxy for std).
+  const p25 = buyerProfile.p25DeltaUsdPerBbl;
+  const p75 = buyerProfile.p75DeltaUsdPerBbl;
+  const iqrSigma =
+    p25 != null && p75 != null ? (p75 - p25) / 1.349 : null; // IQR → σ approx
+  const z =
+    iqrSigma != null && iqrSigma > 0
+      ? (offerDelta - expectedDelta) / iqrSigma
+      : null;
+
+  let verdict: OfferEvaluation['verdict'] = 'inside-band';
+  if (p25 != null && p75 != null) {
+    if (offerDelta < p25) verdict = 'below-band';
+    else if (offerDelta > p75) verdict = 'above-band';
+  }
+
+  return {
+    buyerCountry: input.buyerCountry,
+    categoryTag: input.categoryTag,
+    offerPriceUsdPerBbl: input.offerPriceUsdPerBbl,
+    benchmarkSlug,
+    benchmarkSpotUsdPerBbl,
+    expectedDeltaUsdPerBbl: expectedDelta,
+    expectedPriceUsdPerBbl: expectedPrice,
+    zScore: z,
+    verdict,
+    historyAwardCount: buyerProfile.awardCount,
+  };
+}
+
 // ─── Vessel intelligence — port-call inference ────────────────────
 
 export interface PortCallRow {

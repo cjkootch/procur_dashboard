@@ -17,6 +17,9 @@ import {
   getCommodityPriceContext,
   getCommoditySpread,
   findRecentPortCalls,
+  analyzeSupplierPricing,
+  analyzeBuyerPricing,
+  evaluateOfferAgainstHistory,
   getCompanyProfile,
   listJurisdictions,
   listOpportunities,
@@ -1357,6 +1360,134 @@ export function buildCatalogTools(): ToolRegistry {
             });
             return { count: rows.length, calls: rows };
           },
+        ),
+    }),
+
+    analyze_supplier_pricing: defineTool({
+      name: 'analyze_supplier_pricing',
+      description:
+        'Per-supplier pricing pattern vs. benchmark, derived from the award_price_deltas ' +
+        'materialized view. Answers "does this supplier price high or low" / "is their ' +
+        'pricing consistent". Returns the supplier\'s award count, average + median delta ' +
+        'over benchmark in $/bbl, standard deviation, and 5 most-recent samples for ' +
+        'narrative grounding. Confidence ≥0.6 by default. If awardCount is 0, the ' +
+        'supplier has no awards we could price against — say so explicitly rather than ' +
+        'fabricating a profile.',
+      kind: 'read',
+      schema: z.object({
+        supplierId: z
+          .string()
+          .uuid()
+          .describe('external_suppliers.id — get this from analyze_supplier or find_buyers_for_offer.'),
+        minConfidence: z.number().min(0).max(1).optional()
+          .describe('Minimum overall_confidence threshold. Default 0.6.'),
+        daysBack: z.number().int().min(30).max(3650).optional()
+          .describe('Lookback window in days. Default 1095 (~3y).'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'analyze_supplier_pricing',
+            args: input,
+            summarize: (out: { awardCount: number }) => ({
+              resultCount: out.awardCount,
+              resultSummary: { supplierId: input.supplierId },
+            }),
+          },
+          async () =>
+            analyzeSupplierPricing({
+              supplierId: input.supplierId,
+              minConfidence: input.minConfidence,
+              daysBack: input.daysBack,
+            }),
+        ),
+    }),
+
+    analyze_buyer_pricing: defineTool({
+      name: 'analyze_buyer_pricing',
+      description:
+        'Per-(country × category) pricing distribution — the empirical premium a buyer ' +
+        'pool pays over the relevant benchmark. Answers "what does the Caribbean diesel ' +
+        'premium over NY Harbor look like" / "what does Italy typically pay over Brent". ' +
+        'Returns p25/median/p75 + average delta in $/bbl. The (p25, p75) pair is the ' +
+        'empirical pricing band — anything inside it is "normal market", outside is ' +
+        'flagged. Use this before evaluate_offer_against_history to anchor the user on ' +
+        'what historical pricing looks like.',
+      kind: 'read',
+      schema: z.object({
+        buyerCountry: z.string().length(2).describe('ISO-2 country code.'),
+        categoryTag: z.string().describe(
+          "Internal category tag — 'diesel', 'gasoline', 'jet-fuel', 'heating-oil', 'crude-oil', etc.",
+        ),
+        minConfidence: z.number().min(0).max(1).optional(),
+        daysBack: z.number().int().min(30).max(3650).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'analyze_buyer_pricing',
+            args: input,
+            summarize: (out: { awardCount: number }) => ({
+              resultCount: out.awardCount,
+              resultSummary: { buyerCountry: input.buyerCountry, categoryTag: input.categoryTag },
+            }),
+          },
+          async () =>
+            analyzeBuyerPricing({
+              buyerCountry: input.buyerCountry,
+              categoryTag: input.categoryTag,
+              minConfidence: input.minConfidence,
+              daysBack: input.daysBack,
+            }),
+        ),
+    }),
+
+    evaluate_offer_against_history: defineTool({
+      name: 'evaluate_offer_against_history',
+      description:
+        '"Is this offer competitive?" — given a buyer + category + offer price ($/bbl), ' +
+        'score it against the empirical historical distribution. Returns the current ' +
+        'benchmark spot, the expected price the buyer\'s history predicts, the actual ' +
+        'offer\'s delta, a z-score (using IQR-derived sigma), and a verdict: ' +
+        '\'inside-band\' | \'above-band\' | \'below-band\' | \'no-history\' | ' +
+        '\'no-benchmark\'. \'no-history\' = the buyer pool has no priced awards in the ' +
+        'window; \'no-benchmark\' = no commodity_prices ingested for the category. ' +
+        'Always quote the verdict + the dollar amounts, not just z-score.',
+      kind: 'read',
+      schema: z.object({
+        buyerCountry: z.string().length(2),
+        categoryTag: z.string(),
+        offerPriceUsdPerBbl: z.number().positive().describe(
+          'Offer price in USD per barrel. Convert from $/gal × 42 or $/MT ÷ category-SG before passing.',
+        ),
+        minConfidence: z.number().min(0).max(1).optional(),
+        daysBack: z.number().int().min(30).max(3650).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'evaluate_offer_against_history',
+            args: input,
+            summarize: (out: { verdict: string }) => ({
+              resultCount: 1,
+              resultSummary: {
+                buyerCountry: input.buyerCountry,
+                categoryTag: input.categoryTag,
+                verdict: out.verdict,
+              },
+            }),
+          },
+          async () =>
+            evaluateOfferAgainstHistory({
+              buyerCountry: input.buyerCountry,
+              categoryTag: input.categoryTag,
+              offerPriceUsdPerBbl: input.offerPriceUsdPerBbl,
+              minConfidence: input.minConfidence,
+              daysBack: input.daysBack,
+            }),
         ),
     }),
 
