@@ -2,11 +2,14 @@ import Link from 'next/link';
 import {
   findCompetingSellers,
   getAwardValueHistogram,
+  getCommoditySpreadHistory,
   getCommodityTicker,
   getMonthlyAvgAwardValue,
   getMonthlyAwardsVolume,
   getNewBuyers,
   getTopBuyersByCategory,
+  getTopImportersByPartner,
+  getTopSourcesForReporter,
   getTopSuppliersByCategory,
 } from '@procur/catalog';
 import { BarChart, type BarDatum } from './_components/BarChart';
@@ -53,6 +56,23 @@ const COUNTRY_QUICK_FILTERS = [
   { code: 'IN', label: 'India' },
 ];
 
+/**
+ * Internal taxonomy → HS code (6-digit where possible). Used to
+ * pull customs-flow data for the selected category. When a category
+ * doesn't map cleanly to an HS chapter, we just skip the customs
+ * section.
+ */
+const CATEGORY_HS_CODES: Record<string, string> = {
+  'crude-oil': '2709',
+  diesel: '271019',
+  gasoline: '271012',
+  'jet-fuel': '271019',
+  'heating-oil': '271019',
+  'heavy-fuel-oil': '271019',
+  'marine-bunker': '271019',
+  lpg: '271111',
+};
+
 /** Commodity series shown in the top-of-page ticker. */
 const TICKER_SERIES = [
   { slug: 'brent', label: 'Brent', short: 'BRT' },
@@ -98,6 +118,10 @@ export default async function IntelligencePage({ searchParams }: Props) {
     monthsLookback,
   };
 
+  // Customs-flow product code for the selected category (skips when
+  // the category doesn't map to an HS code we recognize).
+  const productCode = CATEGORY_HS_CODES[categoryTag];
+
   const [
     topBuyers,
     topSuppliers,
@@ -107,6 +131,9 @@ export default async function IntelligencePage({ searchParams }: Props) {
     ticker,
     valueHist,
     avgAwardMonthly,
+    customsImports,
+    customsExports,
+    spreadHistory,
   ] = await Promise.all([
     getTopBuyersByCategory(filters, 10),
     getTopSuppliersByCategory(filters, 10),
@@ -118,6 +145,22 @@ export default async function IntelligencePage({ searchParams }: Props) {
     getCommodityTicker(TICKER_SERIES.map((s) => s.slug)),
     getAwardValueHistogram(valueFilters),
     getMonthlyAvgAwardValue(valueFilters),
+    // Customs flows: only meaningful when both country + productCode
+    // are set. Both queries return empty when the data isn't there.
+    buyerCountry && productCode
+      ? getTopSourcesForReporter(
+          { reporterCountry: buyerCountry, productCode, monthsLookback },
+          10,
+        )
+      : Promise.resolve([]),
+    buyerCountry && productCode
+      ? getTopImportersByPartner(
+          { partnerCountry: buyerCountry, productCode, monthsLookback },
+          10,
+        )
+      : Promise.resolve([]),
+    // Brent–WTI spread over the window.
+    getCommoditySpreadHistory('brent', 'wti', monthsLookback),
   ]);
 
   const baseHref = (
@@ -157,6 +200,16 @@ export default async function IntelligencePage({ searchParams }: Props) {
     label: m.month.slice(2, 7),
     value: m.medianValueUsd,
   }));
+
+  // Brent–WTI spread series (downsample to weekly to keep the line
+  // chart readable when the window spans 2-3 years of daily data).
+  const spreadStride = Math.max(1, Math.floor(spreadHistory.length / 60));
+  const spreadData: LinePoint[] = spreadHistory
+    .filter((_, i) => i % spreadStride === 0)
+    .map((p) => ({ label: p.priceDate.slice(2, 7), value: p.spread }));
+  const latestSpread = spreadHistory.length
+    ? spreadHistory[spreadHistory.length - 1]!
+    : null;
 
   return (
     <div className="mx-auto max-w-screen-2xl px-6 py-8">
@@ -358,6 +411,108 @@ export default async function IntelligencePage({ searchParams }: Props) {
           />
         </div>
       </section>
+
+      {/* Brent–WTI spread chart */}
+      <section className="mb-8">
+        <div className="mb-2 flex items-baseline justify-between gap-4">
+          <h2 className="text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Brent − WTI spread (USD/bbl)
+          </h2>
+          {latestSpread && (
+            <span className="text-xs text-[color:var(--color-muted-foreground)] tabular-nums">
+              Brent ${latestSpread.basePrice.toFixed(2)} ·{' '}
+              WTI ${latestSpread.targetPrice.toFixed(2)} ·{' '}
+              <span className="font-medium text-[color:var(--color-foreground)]">
+                {latestSpread.spread >= 0 ? '+' : ''}${latestSpread.spread.toFixed(2)}
+              </span>{' '}
+              ({latestSpread.priceDate})
+            </span>
+          )}
+        </div>
+        <LineChart
+          points={spreadData}
+          yLabel="$/bbl"
+          formatY={(n) => `${n >= 0 ? '+' : ''}$${n.toFixed(2)}`}
+          emptyMessage="No price data in this window. Run ingest-fred-prices to populate Brent + WTI."
+        />
+      </section>
+
+      {/* Customs flows — only when a country filter is active */}
+      {buyerCountry && productCode && (
+        <section className="mb-8 grid gap-6 md:grid-cols-2">
+          <div>
+            <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+              Top sources of {categoryTag} for {fmtCountry(buyerCountry)} (HS {productCode})
+            </h2>
+            {customsImports.length === 0 ? (
+              <p className="text-sm text-[color:var(--color-muted-foreground)]">
+                No customs-import rows for {buyerCountry} × {productCode} in this window.
+                Eurostat covers EU reporters; UN Comtrade covers the rest. Some
+                countries publish at coarser HS granularity.
+              </p>
+            ) : (
+              <ol className="space-y-1.5 text-sm">
+                {customsImports.map((r, i) => (
+                  <li key={r.partnerCountry} className="flex items-baseline justify-between gap-3">
+                    <span>
+                      <span className="text-[color:var(--color-muted-foreground)]">
+                        {String(i + 1).padStart(2, '0')}.{' '}
+                      </span>
+                      {fmtCountry(r.partnerCountry)}{' '}
+                      <span className="text-[color:var(--color-muted-foreground)]">
+                        {r.partnerCountry}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[color:var(--color-muted-foreground)] tabular-nums">
+                      {fmtUsd(r.totalValueUsd)}
+                      {r.totalQuantityKg != null && (
+                        <span> · {(r.totalQuantityKg / 1_000_000).toFixed(1)}k MT</span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+          <div>
+            <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+              Top destinations of {categoryTag} from {fmtCountry(buyerCountry)} (HS {productCode})
+            </h2>
+            {customsExports.length === 0 ? (
+              <p className="text-sm text-[color:var(--color-muted-foreground)]">
+                No customs rows showing {buyerCountry} as the partner (origin) for{' '}
+                {productCode} in this window. {buyerCountry} may be primarily an importer
+                for this category, or its exports aren&apos;t captured by EU/UN reporters.
+              </p>
+            ) : (
+              <ol className="space-y-1.5 text-sm">
+                {customsExports.map((r, i) => (
+                  <li
+                    key={r.reporterCountry}
+                    className="flex items-baseline justify-between gap-3"
+                  >
+                    <span>
+                      <span className="text-[color:var(--color-muted-foreground)]">
+                        {String(i + 1).padStart(2, '0')}.{' '}
+                      </span>
+                      {fmtCountry(r.reporterCountry)}{' '}
+                      <span className="text-[color:var(--color-muted-foreground)]">
+                        {r.reporterCountry}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[color:var(--color-muted-foreground)] tabular-nums">
+                      {fmtUsd(r.totalValueUsd)}
+                      {r.totalQuantityKg != null && (
+                        <span> · {(r.totalQuantityKg / 1_000_000).toFixed(1)}k MT</span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Competitive landscape */}
       {competing && (

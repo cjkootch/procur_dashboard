@@ -3125,6 +3125,51 @@ export async function getCommodityTicker(
 }
 
 /**
+ * Time series of the spread between two commodity series. Used by
+ * the Intelligence dashboard to plot Brent–WTI (or any pair) over
+ * the selected window.
+ *
+ * Joins on common price_date so the spread is well-defined; days
+ * where one series is missing are dropped. Returns most-recent N
+ * dates ordered ascending for charting.
+ */
+export async function getCommoditySpreadHistory(
+  baseSlug: string,
+  targetSlug: string,
+  monthsLookback = 12,
+): Promise<
+  Array<{
+    priceDate: string;
+    basePrice: number;
+    targetPrice: number;
+    spread: number;
+  }>
+> {
+  const result = await db.execute(sql`
+    SELECT
+      base.price_date,
+      base.price::numeric AS base_price,
+      target.price::numeric AS target_price,
+      (base.price::numeric - target.price::numeric) AS spread
+    FROM commodity_prices base
+    JOIN commodity_prices target
+      ON base.price_date = target.price_date
+      AND target.series_slug = ${targetSlug}
+      AND target.contract_type = 'spot'
+    WHERE base.series_slug = ${baseSlug}
+      AND base.contract_type = 'spot'
+      AND base.price_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+    ORDER BY base.price_date ASC;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    priceDate: String(r.price_date).slice(0, 10),
+    basePrice: Number.parseFloat(String(r.base_price)),
+    targetPrice: Number.parseFloat(String(r.target_price)),
+    spread: Number.parseFloat(String(r.spread)),
+  }));
+}
+
+/**
  * Histogram of award contract values (USD) — log-bucketed because
  * award sizes span 4-5 orders of magnitude (small fleet refuels at
  * $5k vs. national tenders at $10M+). Buckets are powers of 10
