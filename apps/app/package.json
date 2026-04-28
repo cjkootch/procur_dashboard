@@ -18,6 +18,7 @@
     "@procur/catalog": "workspace:*",
     "@procur/db": "workspace:*",
     "@procur/payments": "workspace:*",
+    "@procur/pricing": "workspace:*",
     "@procur/ui": "workspace:*",
     "@procur/utils": "workspace:*",
     "@sentry/nextjs": "^8.47.0",

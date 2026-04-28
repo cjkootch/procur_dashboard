@@ -105,6 +105,9 @@ importers:
       '@procur/payments':
         specifier: workspace:*
         version: link:../../packages/payments
+      '@procur/pricing':
+        specifier: workspace:*
+        version: link:../../packages/pricing
       '@procur/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -429,6 +432,9 @@ importers:
       '@procur/db':
         specifier: workspace:*
         version: link:../db
+      '@procur/pricing':
+        specifier: workspace:*
+        version: link:../pricing
       drizzle-orm:
         specifier: ^0.38.3
         version: 0.38.4(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.11.6)(@types/react@19.2.14)(postgres@3.4.9)(react@19.2.5)
