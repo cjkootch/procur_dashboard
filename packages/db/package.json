@@ -21,7 +21,9 @@
     "ingest-wikidata-refineries": "tsx src/ingest-wikidata-refineries.ts",
     "seed-known-entities": "tsx src/seed-known-entities.ts",
     "ingest-eurostat-comext": "tsx src/ingest-eurostat-comext.ts",
+    "ingest-un-comtrade": "tsx src/ingest-un-comtrade.ts",
     "type-check": "tsc --noEmit",
+    "test": "node --import tsx --test 'src/**/*.test.ts'",
     "clean": "rm -rf dist .turbo node_modules"
   },
   "dependencies": {

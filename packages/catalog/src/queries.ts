@@ -2347,21 +2347,48 @@ export async function getTopImportersByPartner(
   limit = 25,
 ): Promise<TopImporterRow[]> {
   const monthsLookback = filters.monthsLookback ?? 12;
+  // Dedup across sources: same reporter+period appearing in both
+  // Eurostat AND UN Comtrade would double-count under a naive SUM.
+  // Use ROW_NUMBER over (reporter, period) with priority: EU
+  // reporters → prefer Eurostat (more granular, less lagged); non-EU
+  // → prefer UN Comtrade. Aggregation runs over rank=1 only.
   const result = await db.execute(sql`
+    WITH ranked AS (
+      SELECT
+        reporter_country,
+        period,
+        quantity_kg,
+        value_usd,
+        value_native,
+        value_currency,
+        source,
+        ROW_NUMBER() OVER (
+          PARTITION BY reporter_country, period
+          ORDER BY
+            CASE
+              WHEN reporter_country IN ('AT','BE','BG','HR','CY','CZ','DK','EE','FI','FR','DE','GR','HU','IE','IT','LV','LT','LU','MT','NL','PL','PT','RO','SK','SI','ES','SE')
+                AND source = 'eurostat-comext' THEN 1
+              WHEN source = 'un-comtrade' THEN 2
+              ELSE 3
+            END
+        ) AS rn
+      FROM customs_imports
+      WHERE
+        partner_country = ${filters.partnerCountry}
+        AND product_code = ${filters.productCode}
+        AND flow_direction = 'import'
+        AND period >= (NOW() - (${monthsLookback}::int || ' months')::interval)::date
+        ${filters.reporterCountry ? sql`AND reporter_country = ${filters.reporterCountry}` : sql``}
+    )
     SELECT
       reporter_country,
-      SUM(quantity_kg)        AS total_quantity_kg,
-      SUM(value_usd)          AS total_value_usd,
-      SUM(value_native)       AS total_value_eur,
+      SUM(quantity_kg)            AS total_quantity_kg,
+      SUM(value_usd)              AS total_value_usd,
+      SUM(CASE WHEN value_currency = 'EUR' THEN value_native END) AS total_value_eur,
       COUNT(DISTINCT period)::int AS months_active,
-      MAX(period)             AS most_recent_period
-    FROM customs_imports
-    WHERE
-      partner_country = ${filters.partnerCountry}
-      AND product_code = ${filters.productCode}
-      AND flow_direction = 'import'
-      AND period >= (NOW() - (${monthsLookback}::int || ' months')::interval)::date
-      ${filters.reporterCountry ? sql`AND reporter_country = ${filters.reporterCountry}` : sql``}
+      MAX(period)                 AS most_recent_period
+    FROM ranked
+    WHERE rn = 1
     GROUP BY reporter_country
     ORDER BY SUM(value_usd) DESC NULLS LAST, SUM(quantity_kg) DESC NULLS LAST
     LIMIT ${limit};
@@ -2408,18 +2435,41 @@ export async function getMonthlyImportFlow(
         '1 month'::interval
       )::date AS period
     ),
-    buckets AS (
+    ranked AS (
       SELECT
         period,
-        SUM(quantity_kg)  AS quantity_kg,
-        SUM(value_usd)    AS value_usd,
-        SUM(value_native) AS value_eur
+        reporter_country,
+        quantity_kg,
+        value_usd,
+        value_native,
+        value_currency,
+        source,
+        ROW_NUMBER() OVER (
+          PARTITION BY reporter_country, period
+          ORDER BY
+            CASE
+              WHEN reporter_country IN ('AT','BE','BG','HR','CY','CZ','DK','EE','FI','FR','DE','GR','HU','IE','IT','LV','LT','LU','MT','NL','PL','PT','RO','SK','SI','ES','SE')
+                AND source = 'eurostat-comext' THEN 1
+              WHEN source = 'un-comtrade' THEN 2
+              ELSE 3
+            END
+        ) AS rn
       FROM customs_imports
       WHERE
         partner_country = ${filters.partnerCountry}
         AND product_code = ${filters.productCode}
         AND flow_direction = 'import'
         ${filters.reporterCountry ? sql`AND reporter_country = ${filters.reporterCountry}` : sql``}
+    ),
+    buckets AS (
+      SELECT
+        period,
+        SUM(quantity_kg)                                           AS quantity_kg,
+        SUM(value_usd)                                             AS value_usd,
+        SUM(CASE WHEN value_currency = 'EUR' THEN value_native END) AS value_eur
+      FROM ranked
+      WHERE rn = 1
+        AND period IS NOT NULL
       GROUP BY period
     )
     SELECT
