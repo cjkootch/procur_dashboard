@@ -43,3 +43,6 @@ export * from './commodity-prices';
 export * from './vessels';
 export * from './vessel-positions';
 export * from './ports';
+export * from './commodity-benchmark-mappings';
+export * from './country-default-currencies';
+export * from './fx-rates';

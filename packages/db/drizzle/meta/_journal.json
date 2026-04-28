@@ -295,6 +295,13 @@
       "when": 1777334600000,
       "tag": "0041_vessel_intelligence",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1777334700000,
+      "tag": "0042_pricing_analytics_foundation",
+      "breakpoints": true
     }
   ]
 }
