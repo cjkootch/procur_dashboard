@@ -4,6 +4,8 @@ import { ClerkProvider } from '@clerk/nextjs';
 import { Montserrat } from 'next/font/google';
 import { SiteHeader } from '../components/site-header';
 import { SiteFooter } from '../components/site-footer';
+import { AssistantBootstrap } from '../components/assistant-bootstrap';
+import { AssistantWidget } from '../components/assistant-widget';
 import './globals.css';
 
 const montserrat = Montserrat({
@@ -45,6 +47,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <SiteHeader />
           <main className="flex-1">{children}</main>
           <SiteFooter />
+          {/* AssistantBootstrap reads any handshake token from the URL
+              hash on first paint. AssistantWidget renders the floating
+              launcher; it self-gates to the connected/disconnected state
+              based on localStorage rather than Clerk session, since
+              Discover lives on a different subdomain than the App and
+              dev-key Clerk sessions don't share cross-origin. */}
+          <AssistantBootstrap />
+          <AssistantWidget />
         </body>
       </html>
     </ClerkProvider>
