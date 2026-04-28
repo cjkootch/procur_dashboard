@@ -12,8 +12,8 @@
  * which is a server-only module. The calculator + domain pieces are
  * pure and safe to import anywhere.
  */
-export * from './calculator.js';
-export * from './benchmarks.js';
+export * from './calculator';
+export * from './benchmarks';
 export {
   ProductType,
   IncotermType,
@@ -23,4 +23,4 @@ export {
   LITRES_PER_USG,
   usgToBbl,
   usgToMt,
-} from './domain.js';
+} from './domain';

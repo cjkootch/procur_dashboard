@@ -19,7 +19,7 @@ import 'server-only';
 import { and, desc, eq, lte } from 'drizzle-orm';
 import { commodityPrices, type Db } from '@procur/db';
 
-import { ProductType, USG_PER_BBL, type ProductType as Product } from './domain.js';
+import { ProductType, USG_PER_BBL, type ProductType as Product } from './domain';
 
 export type BenchmarkSource = 'fred' | 'eia';
 

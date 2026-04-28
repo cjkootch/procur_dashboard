@@ -1,4 +1,4 @@
-import { describe, expect, it } from './_test-shim.js';
+import { describe, expect, it } from './_test-shim';
 import {
   calculateFuelDeal,
   computeFreightCost,
@@ -8,7 +8,7 @@ import {
   type FuelDealInputs,
   type PortSpec,
   type VesselSpec,
-} from './calculator.js';
+} from './calculator';
 
 const baseInputs: FuelDealInputs = {
   dealRef: "TEST-001",
