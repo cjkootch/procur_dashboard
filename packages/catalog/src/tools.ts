@@ -9,6 +9,7 @@ import {
   findSuppliersForTender,
   getMonthlyImportFlow,
   getTopImportersByPartner,
+  getTopSourcesForReporter,
   lookupKnownEntities,
   getCompanyProfile,
   listJurisdictions,
@@ -851,28 +852,47 @@ export function buildCatalogTools(): ToolRegistry {
     lookup_customs_flows: defineTool({
       name: 'lookup_customs_flows',
       description:
-        'Customs trade-flow data: which countries imported a commodity from a given origin, ' +
-        'monthly. Sourced from Eurostat Comext (free, EU reporters only in v1; UN Comtrade ' +
-        'extension planned for global coverage). COUNTRY-LEVEL granularity, not per-cargo — ' +
-        'good for sizing buyer markets and ranking candidate countries; not a replacement for ' +
-        'AIS/customs commercial sources (Kpler/Vortexa) when per-cargo attribution matters. Use ' +
-        "this tool when the user asks 'which countries import Libyan crude', 'how much diesel " +
-        "does Italy buy from where', or any 'commodity X from origin Y' flow question. Returns " +
-        'top importers with totals + monthly time series. Pair with lookup_known_entities to ' +
-        'attribute country imports to candidate refiners.',
+        'Customs trade-flow data — works in both directions:\n' +
+        '  • direction="imports" (default): given a partner country, returns top countries ' +
+        'IMPORTING from it. Use for buy-side market sizing — "which countries import Libyan ' +
+        'crude" tells you the buyer universe.\n' +
+        '  • direction="sources": given a reporter country, returns top countries SUPPLYING ' +
+        'it. Use for SELL-SIDE / sourcing — "Italy needs diesel for a tender; which countries ' +
+        "currently supply Italy with diesel?\".\n" +
+        'Sources: Eurostat Comext (EU reporters, monthly, EUR) + UN Comtrade (global, monthly, ' +
+        'USD, ~3-month lag). Cross-source dedup prefers Eurostat for EU reporters. ' +
+        'COUNTRY-LEVEL granularity, not per-cargo — pair with lookup_known_entities to drill ' +
+        'down to specific refineries / suppliers within a candidate country. Not a replacement ' +
+        'for paid AIS sources (Kpler/Vortexa) when per-cargo attribution matters.',
       kind: 'read',
       schema: z.object({
+        direction: z
+          .enum(['imports', 'sources'])
+          .optional()
+          .describe(
+            "'imports' (default) ranks countries that IMPORT from partnerCountry. 'sources' " +
+              'ranks countries that SUPPLY reporterCountry. Pick based on which direction the ' +
+              'user is asking about — buy-side question = imports, sell-side / sourcing question = sources.',
+          ),
         partnerCountry: z
           .string()
           .length(2)
+          .optional()
           .describe(
-            "ISO-2 country of origin. e.g. 'LY' for Libya, 'IQ' for Iraq, 'NG' for Nigeria.",
+            "ISO-2 country of origin. Required when direction='imports'. e.g. 'LY' for Libya.",
+          ),
+        reporterCountry: z
+          .string()
+          .length(2)
+          .optional()
+          .describe(
+            "ISO-2 country importing. Required when direction='sources'. e.g. 'IT' for Italy.",
           ),
         productCode: z
           .string()
           .describe(
-            "HS code (2/4/6/8 digits). Common: '2709' = crude petroleum, '2710' = refined, " +
-              "'2711' = LNG/LPG. Use 4-digit HS to keep results aggregated.",
+            "HS code (2/4/6/8 digits). Common: '2709' = crude petroleum, '2710' = refined " +
+              "fuel, '2711' = LNG/LPG. Use 4-digit HS to keep results aggregated.",
           ),
         monthsLookback: z
           .number()
@@ -880,30 +900,67 @@ export function buildCatalogTools(): ToolRegistry {
           .max(60)
           .optional()
           .describe('Default 12 months.'),
-        reporterCountry: z
-          .string()
-          .length(2)
-          .optional()
-          .describe('Optional ISO-2 to filter to a single importing country.'),
         limit: z.number().min(1).max(50).optional(),
-      }),
+      }).refine(
+        (d) =>
+          (d.direction === 'sources' && d.reporterCountry) ||
+          (d.direction !== 'sources' && d.partnerCountry),
+        {
+          message:
+            "direction='imports' requires partnerCountry; direction='sources' requires reporterCountry.",
+        },
+      ),
       handler: async (ctx, input) =>
         withToolTelemetry(
           {
             ctx,
             toolName: 'lookup_customs_flows',
             args: input,
-            summarize: (out: { topImporters: { length: number } }) => ({
-              resultCount: out.topImporters.length,
+            summarize: (out: { rankedCountries: { length: number } }) => ({
+              resultCount: out.rankedCountries.length,
               resultSummary: {
-                partnerCountry: input.partnerCountry,
+                direction: input.direction ?? 'imports',
                 productCode: input.productCode,
+                pivotCountry: input.partnerCountry ?? input.reporterCountry,
               },
             }),
           },
           async () => {
+            const direction = input.direction ?? 'imports';
+
+            if (direction === 'sources') {
+              const reporterCountry = input.reporterCountry!;
+              const sources = await getTopSourcesForReporter(
+                {
+                  reporterCountry,
+                  productCode: input.productCode,
+                  monthsLookback: input.monthsLookback,
+                  partnerCountry: input.partnerCountry,
+                },
+                input.limit ?? 25,
+              );
+              return {
+                direction,
+                reporterCountry,
+                productCode: input.productCode,
+                rankedCountries: sources.map((r) => ({
+                  country: r.partnerCountry,
+                  role: 'source',
+                  totalKt: r.totalQuantityKg != null ? Math.round(r.totalQuantityKg / 1_000) : null,
+                  totalUsd: r.totalValueUsd,
+                  monthsActive: r.monthsActive,
+                  mostRecentPeriod: r.mostRecentPeriod,
+                })),
+                caveat:
+                  'Country-level supply view. The countries listed are where the importer has ' +
+                  'historically sourced from — pair with lookup_known_entities filtered by those ' +
+                  "countries (and role='refiner' or 'producer') to surface candidate counterparties.",
+              };
+            }
+
+            const partnerCountry = input.partnerCountry!;
             const filters = {
-              partnerCountry: input.partnerCountry,
+              partnerCountry,
               productCode: input.productCode,
               monthsLookback: input.monthsLookback,
               reporterCountry: input.reporterCountry,
@@ -913,10 +970,12 @@ export function buildCatalogTools(): ToolRegistry {
               getMonthlyImportFlow(filters),
             ]);
             return {
-              partnerCountry: input.partnerCountry,
+              direction,
+              partnerCountry,
               productCode: input.productCode,
-              topImporters: topImporters.map((r) => ({
-                reporterCountry: r.reporterCountry,
+              rankedCountries: topImporters.map((r) => ({
+                country: r.reporterCountry,
+                role: 'importer',
                 totalKt: r.totalQuantityKg != null ? Math.round(r.totalQuantityKg / 1_000) : null,
                 totalUsd: r.totalValueUsd,
                 totalEur: r.totalValueEur,
@@ -929,10 +988,10 @@ export function buildCatalogTools(): ToolRegistry {
                 valueUsd: b.valueUsd,
               })),
               caveat:
-                'Eurostat Comext: EU reporters only, monthly, country-level. Does not capture ' +
-                'non-EU importers (India, China, Indonesia, etc) or per-cargo / per-refinery ' +
-                'detail. For full global coverage layer in UN Comtrade. For per-cargo buyer ' +
-                'attribution, paid AIS/customs services (Kpler, Vortexa) are required.',
+                'Eurostat Comext (EU reporters) + UN Comtrade (global) merged with source-' +
+                'priority dedup. Country-level, not per-cargo. For per-cargo buyer attribution, ' +
+                'paid AIS/customs services (Kpler/Vortexa) are required. Pair with ' +
+                'lookup_known_entities to attribute country imports to candidate refineries.',
             };
           },
         ),

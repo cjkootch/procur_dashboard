@@ -2489,6 +2489,98 @@ export async function getMonthlyImportFlow(
   }));
 }
 
+// ─── Supplier-side pivot of customs flows ─────────────────────────
+
+export interface SourcesForReporterFilters {
+  /** ISO-2 country buying / importing. e.g. 'IT' for Italy. */
+  reporterCountry: string;
+  /** HS code (2/4/6/8 digits). e.g. '2709' for crude petroleum. */
+  productCode: string;
+  /** Default 12 months. */
+  monthsLookback?: number;
+  /** Filter to a single source country (omit for all). */
+  partnerCountry?: string;
+}
+
+export interface TopSourceRow {
+  partnerCountry: string;
+  totalQuantityKg: number | null;
+  totalValueUsd: number | null;
+  monthsActive: number;
+  mostRecentPeriod: string;
+}
+
+/**
+ * Supplier-side pivot of the customs-flows data: which countries does
+ * reporter X import `productCode` FROM?
+ *
+ * Inverse framing of getTopImportersByPartner. Same underlying table,
+ * different result perspective. Use when sourcing supply for a tender
+ * response: "Italy's diesel tender — which countries currently supply
+ * Italy with diesel?"
+ *
+ * Same source-priority dedup as the import-side query (Eurostat for
+ * EU reporters, UN Comtrade for the rest).
+ */
+export async function getTopSourcesForReporter(
+  filters: SourcesForReporterFilters,
+  limit = 25,
+): Promise<TopSourceRow[]> {
+  const monthsLookback = filters.monthsLookback ?? 12;
+  const result = await db.execute(sql`
+    WITH ranked AS (
+      SELECT
+        partner_country,
+        period,
+        quantity_kg,
+        value_usd,
+        source,
+        ROW_NUMBER() OVER (
+          PARTITION BY partner_country, period
+          ORDER BY
+            CASE
+              WHEN ${filters.reporterCountry} IN ('AT','BE','BG','HR','CY','CZ','DK','EE','FI','FR','DE','GR','HU','IE','IT','LV','LT','LU','MT','NL','PL','PT','RO','SK','SI','ES','SE')
+                AND source = 'eurostat-comext' THEN 1
+              WHEN source = 'un-comtrade' THEN 2
+              ELSE 3
+            END
+        ) AS rn
+      FROM customs_imports
+      WHERE
+        reporter_country = ${filters.reporterCountry}
+        AND product_code = ${filters.productCode}
+        AND flow_direction = 'import'
+        AND period >= (NOW() - (${monthsLookback}::int || ' months')::interval)::date
+        ${filters.partnerCountry ? sql`AND partner_country = ${filters.partnerCountry}` : sql``}
+    )
+    SELECT
+      partner_country,
+      SUM(quantity_kg)            AS total_quantity_kg,
+      SUM(value_usd)              AS total_value_usd,
+      COUNT(DISTINCT period)::int AS months_active,
+      MAX(period)                 AS most_recent_period
+    FROM ranked
+    WHERE rn = 1
+    GROUP BY partner_country
+    ORDER BY SUM(value_usd) DESC NULLS LAST, SUM(quantity_kg) DESC NULLS LAST
+    LIMIT ${limit};
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    partnerCountry: String(r.partner_country),
+    totalQuantityKg:
+      r.total_quantity_kg != null
+        ? Number.parseFloat(String(r.total_quantity_kg))
+        : null,
+    totalValueUsd:
+      r.total_value_usd != null ? Number.parseFloat(String(r.total_value_usd)) : null,
+    monthsActive: Number(r.months_active ?? 0),
+    mostRecentPeriod:
+      r.most_recent_period instanceof Date
+        ? r.most_recent_period.toISOString().slice(0, 7)
+        : String(r.most_recent_period).slice(0, 7),
+  }));
+}
+
 // ─── Known entities (analyst-curated rolodex) ───────────────────
 
 export interface KnownEntityFilters {
