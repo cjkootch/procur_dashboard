@@ -211,6 +211,13 @@
       "when": 1777200000000,
       "tag": "0029_uk_fts_jurisdiction",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1777205000000,
+      "tag": "0030_schema_cleanup",
+      "breakpoints": true
     }
   ]
 }
