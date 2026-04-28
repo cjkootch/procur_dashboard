@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   analyzeSupplier,
   briefOpportunity,
+  buildEntityProfileUrl,
   findBuyersForCommodityOffer,
   findCompetingSellers,
   findSuppliersForTender,
@@ -743,6 +744,7 @@ export function buildCatalogTools(): ToolRegistry {
               suppliers: result.suppliers.map((s) => ({
                 supplierId: s.supplierId,
                 supplierName: s.supplierName,
+                profileUrl: buildEntityProfileUrl({ kind: 'supplier', id: s.supplierId }),
                 country: s.country,
                 matchingAwardsCount: s.matchingAwardsCount,
                 totalValueUsd: s.totalValueUsd,
@@ -838,8 +840,14 @@ export function buildCatalogTools(): ToolRegistry {
             return {
               categoryTag: result.categoryTag,
               marketStats: result.marketStats,
-              activeSellers: result.activeSellers,
-              dormantSellers: result.dormantSellers,
+              activeSellers: result.activeSellers.map((s) => ({
+                ...s,
+                profileUrl: buildEntityProfileUrl({ kind: 'supplier', id: s.supplierId }),
+              })),
+              dormantSellers: result.dormantSellers.map((s) => ({
+                ...s,
+                profileUrl: buildEntityProfileUrl({ kind: 'supplier', id: s.supplierId }),
+              })),
               caveat:
                 'Public procurement data only. Private commercial flows (refiner-to-refiner, ' +
                 'trader-to-trader) are not represented. Dormant flagging is by public-tender ' +
@@ -1068,6 +1076,7 @@ export function buildCatalogTools(): ToolRegistry {
               entities: rows.map((r) => ({
                 id: r.id,
                 name: r.name,
+                profileUrl: buildEntityProfileUrl({ kind: 'known_entity', slug: r.slug }),
                 country: r.country,
                 role: r.role,
                 categories: r.categories,
@@ -1146,6 +1155,7 @@ export function buildCatalogTools(): ToolRegistry {
             candidates: result.candidates.map((c) => ({
               supplierId: c.supplierId,
               supplierName: c.canonicalName,
+              profileUrl: buildEntityProfileUrl({ kind: 'supplier', id: c.supplierId }),
               country: c.country,
               totalAwards: c.totalAwards,
               similarityScore: c.similarityScore,
@@ -1172,6 +1182,7 @@ export function buildCatalogTools(): ToolRegistry {
           supplier: {
             id: result.supplier.id,
             canonicalName: result.supplier.canonicalName,
+            profileUrl: buildEntityProfileUrl({ kind: 'supplier', id: result.supplier.id }),
             country: result.supplier.country,
             aliases: result.supplier.aliases?.slice(0, 5) ?? [],
           },
