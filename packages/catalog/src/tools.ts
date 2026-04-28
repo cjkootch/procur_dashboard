@@ -16,6 +16,7 @@ import {
   lookupRefineriesByGrade,
   getCommodityPriceContext,
   getCommoditySpread,
+  getCommodityTicker,
   findRecentPortCalls,
   findRecentSimilarAwards,
   analyzeSupplierPricing,
@@ -1218,14 +1219,16 @@ export function buildCatalogTools(): ToolRegistry {
     get_commodity_price_context: defineTool({
       name: 'get_commodity_price_context',
       description:
-        "Current spot price + 30-day stats for a commodity series. Use this whenever a " +
-        "response involves pricing — every reverse-search hit, every pitch question, " +
-        "every \"is X a fair offer\" check should anchor against current market context. " +
-        'Series slugs: \'brent\' (Europe spot), \'wti\' (Cushing OK), \'nyh-diesel\' (US ' +
-        "Gulf Coast ULSD, $/gal), 'nyh-gasoline' ($/gal), 'nyh-heating-oil' ($/gal). " +
-        'Returns latest price, 30-day moving average, window high/low, and % change. ' +
-        "If noData=true, the series hasn't been ingested yet — say so and skip; do not " +
-        "fabricate a number. Pair with get_commodity_spread for differentials.",
+        'MANDATORY before quoting any spot, benchmark level, or differential. ' +
+        'Returns latest spot + 30-day moving average + window high/low + ' +
+        '% change for one commodity series. Series slugs: \'brent\' (Europe ' +
+        'spot), \'wti\' (Cushing OK), \'nyh-diesel\' (NY Harbor ULSD, $/gal), ' +
+        "'nyh-gasoline' ($/gal), 'nyh-heating-oil' ($/gal). " +
+        'For multi-series narratives (any answer touching more than one ' +
+        'benchmark, or a "current market" framing) call get_market_snapshot ' +
+        'first, then drill in here only if you need MA / window stats. ' +
+        'If noData=true, say so explicitly — do not fabricate a price from ' +
+        'training data; pre-cutoff prices are wrong by default.',
       kind: 'read',
       schema: z.object({
         seriesSlug: z
@@ -1289,6 +1292,73 @@ export function buildCatalogTools(): ToolRegistry {
             }),
           },
           async () => getCommoditySpread(input.baseSlug, input.targetSlug),
+        ),
+    }),
+
+    get_market_snapshot: defineTool({
+      name: 'get_market_snapshot',
+      description:
+        'PRIMARY pricing primer. One round-trip returns the latest spot for ' +
+        'every major energy benchmark we ingest (brent, wti, nyh-diesel, ' +
+        'nyh-gasoline, nyh-heating-oil) plus the Brent–WTI spread, each with ' +
+        'the as-of date and 30-day % change. Call this first for any ' +
+        'response that touches pricing, market commentary, "is this fair", ' +
+        'crude/refined differentials, or a deal-composition pricing-context ' +
+        'section. Cheap, no arguments, idempotent. Drill into ' +
+        "get_commodity_price_context only if you need a single series' MA " +
+        'or 30-day high/low; use get_commodity_spread for non-Brent–WTI ' +
+        'spreads. If a series shows latestPrice=null it has not been ' +
+        'ingested yet — say so; never substitute a training-data price.',
+      kind: 'read',
+      schema: z.object({}),
+      handler: async (ctx, _input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'get_market_snapshot',
+            args: {},
+            summarize: (out: { series: Array<{ latestPrice: number | null }> }) => ({
+              resultCount: out.series.filter((s) => s.latestPrice != null).length,
+              resultSummary: { totalSeries: out.series.length },
+            }),
+          },
+          async () => {
+            const ticker = await getCommodityTicker([
+              'brent',
+              'wti',
+              'nyh-diesel',
+              'nyh-gasoline',
+              'nyh-heating-oil',
+            ]);
+            const bySlug = new Map(ticker.map((t) => [t.seriesSlug, t]));
+            const brent = bySlug.get('brent');
+            const wti = bySlug.get('wti');
+            const brentWtiSpread =
+              brent?.latestPrice != null && wti?.latestPrice != null
+                ? {
+                    base: 'brent',
+                    target: 'wti',
+                    spread: brent.latestPrice - wti.latestPrice,
+                    asOf: brent.latestDate,
+                  }
+                : null;
+            return {
+              series: ticker.map((t) => ({
+                seriesSlug: t.seriesSlug,
+                latestPrice: t.latestPrice,
+                asOf: t.latestDate,
+                unit: t.unit,
+                pctChange30d: t.pctChange30d,
+              })),
+              brentWtiSpread,
+              note:
+                'Procur ingests FRED (Brent/WTI, $/bbl) and EIA NY Harbor ' +
+                '(diesel/gasoline/heating-oil, $/gal). Crude grades not in ' +
+                'this list (Azeri Light, Urals, Es Sider, etc.) are commercial ' +
+                'differentials to a marker — quote them as a typical premium/' +
+                'discount range over the live marker price returned here.',
+            };
+          },
         ),
     }),
 
