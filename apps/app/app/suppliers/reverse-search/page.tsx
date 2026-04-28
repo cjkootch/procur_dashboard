@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useState } from 'react';
 import type { CandidateBuyer, CommodityOfferSpec } from '@procur/catalog';
 
@@ -273,8 +274,22 @@ export default function ReverseSearchPage() {
                 </thead>
                 <tbody>
                   {results.map((b) => (
-                    <tr key={`${b.buyerName}-${b.buyerCountry}`} className="border-b border-[color:var(--color-border)] last:border-b-0">
-                      <Td>{b.buyerName}</Td>
+                    <tr
+                      key={`${b.buyerName}-${b.buyerCountry}`}
+                      className="border-b border-[color:var(--color-border)] last:border-b-0 hover:bg-[color:var(--color-muted)]/20"
+                    >
+                      <Td>
+                        <Link
+                          href={`/suppliers/reverse-search/buyer?name=${encodeURIComponent(
+                            b.buyerName,
+                          )}&country=${encodeURIComponent(
+                            b.buyerCountry,
+                          )}&category=${encodeURIComponent(submittedSpec?.categoryTag ?? '')}`}
+                          className="font-medium hover:underline"
+                        >
+                          {b.buyerName}
+                        </Link>
+                      </Td>
                       <Td>{b.buyerCountry}</Td>
                       <Td>{b.awardsCount}</Td>
                       <Td>{b.totalValueUsd != null ? `$${Math.round(b.totalValueUsd).toLocaleString()}` : '—'}</Td>
