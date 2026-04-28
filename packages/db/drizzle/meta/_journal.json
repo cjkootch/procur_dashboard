@@ -274,6 +274,13 @@
       "when": 1777245000000,
       "tag": "0038_entity_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1777334500000,
+      "tag": "0040_commodity_prices",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,8 @@ import {
   getTopImportersByPartner,
   getTopSourcesForReporter,
   lookupKnownEntities,
+  getCommodityPriceContext,
+  getCommoditySpread,
   getCompanyProfile,
   listJurisdictions,
   listOpportunities,
@@ -1092,6 +1094,83 @@ export function buildCatalogTools(): ToolRegistry {
                 'starting point, not ground truth.',
             };
           },
+        ),
+    }),
+
+    get_commodity_price_context: defineTool({
+      name: 'get_commodity_price_context',
+      description:
+        "Current spot price + 30-day stats for a commodity series. Use this whenever a " +
+        "response involves pricing — every reverse-search hit, every pitch question, " +
+        "every \"is X a fair offer\" check should anchor against current market context. " +
+        'Series slugs: \'brent\' (Europe spot), \'wti\' (Cushing OK), \'usgc-diesel\' (US ' +
+        "Gulf Coast ULSD, $/gal), 'usgc-gasoline' ($/gal), 'nyh-heating-oil' ($/gal). " +
+        'Returns latest price, 30-day moving average, window high/low, and % change. ' +
+        "If noData=true, the series hasn't been ingested yet — say so and skip; do not " +
+        "fabricate a number. Pair with get_commodity_spread for differentials.",
+      kind: 'read',
+      schema: z.object({
+        seriesSlug: z
+          .string()
+          .describe(
+            "commodity_prices.series_slug. Common values: 'brent', 'wti', 'usgc-diesel', " +
+              "'usgc-gasoline', 'nyh-heating-oil'.",
+          ),
+        windowDays: z
+          .number()
+          .int()
+          .min(1)
+          .max(365)
+          .optional()
+          .describe('Lookback window for moving avg / high / low. Default 30.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'get_commodity_price_context',
+            args: input,
+            summarize: (out: { noData: boolean }) => ({
+              resultCount: out.noData ? 0 : 1,
+              resultSummary: { seriesSlug: input.seriesSlug, windowDays: input.windowDays ?? 30 },
+            }),
+          },
+          async () => getCommodityPriceContext(input.seriesSlug, input.windowDays ?? 30),
+        ),
+    }),
+
+    get_commodity_spread: defineTool({
+      name: 'get_commodity_spread',
+      description:
+        "Today's spread between two commodity series — e.g. Brent–WTI, Brent–Urals. Use " +
+        "when the user asks about differentials, when explaining a Russian-crude discount, " +
+        "or when quoting where a non-marker grade trades relative to its benchmark. " +
+        "Returns base_price - target_price along with both raw prices and the as-of date. " +
+        "Returns null spread if either series hasn't been ingested.",
+      kind: 'read',
+      schema: z.object({
+        baseSlug: z
+          .string()
+          .describe("Reference series. Typically 'brent' or 'wti'."),
+        targetSlug: z
+          .string()
+          .describe(
+            "Series to subtract — the spread is base_price - target_price. " +
+              "For Urals discount: base='brent', target='urals' (positive = Urals trades below Brent).",
+          ),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'get_commodity_spread',
+            args: input,
+            summarize: (out: { spread: number | null }) => ({
+              resultCount: out.spread != null ? 1 : 0,
+              resultSummary: input,
+            }),
+          },
+          async () => getCommoditySpread(input.baseSlug, input.targetSlug),
         ),
     }),
 

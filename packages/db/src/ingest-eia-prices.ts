@@ -1,0 +1,173 @@
+/**
+ * EIA daily refined-product price ingest — US Gulf Coast diesel +
+ * gasoline + NY Harbor heating oil.
+ *
+ * Source: https://api.eia.gov/v2/  (US Energy Information Administration)
+ * Free API key required: set EIA_API_KEY in .env.local. Sign up at
+ *   https://www.eia.gov/opendata/register.php
+ *
+ * Without EIA_API_KEY this script no-ops with a warning — the FRED
+ * ingest covers Brent + WTI without auth, so the user can still get
+ * crude price context immediately.
+ *
+ * EIA returns prices in USD/gallon for refined products and USD/bbl
+ * for crude. We store unit verbatim so downstream callers convert
+ * explicitly.
+ *
+ * Run: pnpm --filter @procur/db ingest-eia-prices
+ *      pnpm --filter @procur/db ingest-eia-prices --since=2020-01-01
+ */
+import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { neon } from '@neondatabase/serverless';
+import { drizzle } from 'drizzle-orm/neon-http';
+import { sql } from 'drizzle-orm';
+import * as schema from './schema';
+
+loadEnv({ path: '../../.env.local' });
+loadEnv({ path: '../../.env' });
+
+const EIA_BASE = 'https://api.eia.gov/v2/petroleum/pri/spt/data';
+
+type EiaSeries = {
+  slug: string;
+  /** EIA product code: 'EPD2DXL0' (ULSD), 'EPMRU' (RBOB gasoline), etc. */
+  product: string;
+  /** EIA duoarea: 'Y35NY' (NY Harbor), 'PF4_RGC' (Gulf Coast). */
+  duoarea: string;
+  unit: string;
+  label: string;
+};
+
+const SERIES: EiaSeries[] = [
+  {
+    slug: 'usgc-diesel',
+    product: 'EPD2DXL0',
+    duoarea: 'Y05',
+    unit: 'usd-gal',
+    label: 'US Gulf Coast ULSD diesel',
+  },
+  {
+    slug: 'usgc-gasoline',
+    product: 'EPMRR',
+    duoarea: 'Y05',
+    unit: 'usd-gal',
+    label: 'US Gulf Coast RBOB gasoline',
+  },
+  {
+    slug: 'nyh-heating-oil',
+    product: 'EPD2F',
+    duoarea: 'Y35NY',
+    unit: 'usd-gal',
+    label: 'NY Harbor heating oil',
+  },
+];
+
+type EiaResponse = {
+  response?: {
+    data?: Array<{
+      period: string;
+      product: string;
+      'duoarea': string;
+      value: number | string | null;
+    }>;
+    total?: number;
+  };
+};
+
+async function fetchSeries(
+  apiKey: string,
+  series: EiaSeries,
+  since: string,
+): Promise<Array<{ priceDate: string; price: number }>> {
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    frequency: 'daily',
+    'data[0]': 'value',
+    'facets[product][]': series.product,
+    'facets[duoarea][]': series.duoarea,
+    start: since,
+    sort: 'period:asc',
+    length: '5000',
+  });
+  const url = `${EIA_BASE}?${params}`;
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'procur-research/1.0 (cole@vectortradecapital.com)' },
+  });
+  if (!res.ok) throw new Error(`EIA ${res.status} for ${series.slug}: ${await res.text()}`);
+  const json = (await res.json()) as EiaResponse;
+  const rows = json.response?.data ?? [];
+  return rows
+    .filter((r) => r.value != null)
+    .map((r) => ({
+      priceDate: r.period,
+      price: typeof r.value === 'number' ? r.value : Number.parseFloat(String(r.value)),
+    }))
+    .filter((r) => Number.isFinite(r.price));
+}
+
+async function main() {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error('DATABASE_URL not set');
+
+  const apiKey = process.env.EIA_API_KEY;
+  if (!apiKey) {
+    console.warn(
+      'EIA_API_KEY not set — skipping refined-product ingest. Sign up at ' +
+        'https://www.eia.gov/opendata/register.php and add the key to .env.local.',
+    );
+    return;
+  }
+
+  const sinceArg = process.argv.find((a) => a.startsWith('--since='))?.split('=')[1];
+  const sinceDate = sinceArg ?? '2022-01-01';
+
+  const client = neon(url);
+  const db = drizzle(client, { schema, casing: 'snake_case' });
+
+  for (const series of SERIES) {
+    console.log(`Fetching ${series.label}...`);
+    const rows = await fetchSeries(apiKey, series, sinceDate);
+    console.log(`  ${rows.length} rows since ${sinceDate}. Upserting...`);
+    if (rows.length === 0) continue;
+
+    let upserted = 0;
+    const chunkSize = 500;
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const chunk = rows.slice(i, i + chunkSize);
+      const values = chunk.map((r) => ({
+        seriesSlug: series.slug,
+        contractType: 'spot',
+        source: 'eia',
+        priceDate: r.priceDate,
+        price: String(r.price),
+        unit: series.unit,
+        metadata: { eia_product: series.product, eia_duoarea: series.duoarea },
+      }));
+      const res = await db
+        .insert(schema.commodityPrices)
+        .values(values)
+        .onConflictDoUpdate({
+          target: [
+            schema.commodityPrices.seriesSlug,
+            schema.commodityPrices.contractType,
+            schema.commodityPrices.priceDate,
+          ],
+          set: {
+            price: sql`excluded.price`,
+            source: sql`excluded.source`,
+            unit: sql`excluded.unit`,
+            metadata: sql`excluded.metadata`,
+          },
+        })
+        .returning({ id: schema.commodityPrices.id });
+      upserted += res.length;
+    }
+    console.log(`  ${series.label}: ${upserted} rows upserted.`);
+  }
+}
+
+main().catch((err: unknown) => {
+  console.error(err);
+  process.exit(1);
+});
