@@ -3125,6 +3125,146 @@ export async function getCommodityTicker(
 }
 
 /**
+ * Top suppliers × top buyer countries award-count matrix. Reveals
+ * geographic specialization — "Vitol sells almost exclusively into
+ * IT/ES, Glencore is more diversified, Trafigura concentrated on IN".
+ *
+ * Returns a flat list of (supplier, buyerCountry, awardCount) cells
+ * for the top N suppliers (by total awards in window) × top M buyer
+ * countries (by total awards in window). Caller renders as a heatmap.
+ */
+export async function getSupplierBuyerMatrix(filters: {
+  categoryTag?: string;
+  monthsLookback?: number;
+  topSuppliers?: number;
+  topBuyerCountries?: number;
+}): Promise<{
+  suppliers: Array<{ supplierId: string; supplierName: string; total: number }>;
+  buyerCountries: Array<{ country: string; total: number }>;
+  cells: Array<{ supplierId: string; buyerCountry: string; awardCount: number }>;
+}> {
+  const monthsLookback = filters.monthsLookback ?? 12;
+  const topSuppliers = filters.topSuppliers ?? 10;
+  const topCountries = filters.topBuyerCountries ?? 10;
+
+  const result = await db.execute(sql`
+    WITH base AS (
+      SELECT
+        a.id, a.buyer_country, aa.supplier_id, s.organisation_name AS supplier_name
+      FROM awards a
+      JOIN award_awardees aa ON aa.award_id = a.id
+      JOIN external_suppliers s ON s.id = aa.supplier_id
+      WHERE a.award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+        AND aa.supplier_id IS NOT NULL
+        ${
+          filters.categoryTag && filters.categoryTag !== 'all'
+            ? sql`AND ${filters.categoryTag} = ANY(a.category_tags)`
+            : sql``
+        }
+    ),
+    top_suppliers AS (
+      SELECT supplier_id, MIN(supplier_name) AS supplier_name, COUNT(*) AS total
+      FROM base
+      GROUP BY supplier_id
+      ORDER BY total DESC
+      LIMIT ${topSuppliers}
+    ),
+    top_countries AS (
+      SELECT buyer_country, COUNT(*) AS total
+      FROM base
+      GROUP BY buyer_country
+      ORDER BY total DESC
+      LIMIT ${topCountries}
+    ),
+    cells AS (
+      SELECT b.supplier_id, b.buyer_country, COUNT(*)::int AS award_count
+      FROM base b
+      WHERE b.supplier_id IN (SELECT supplier_id FROM top_suppliers)
+        AND b.buyer_country IN (SELECT buyer_country FROM top_countries)
+      GROUP BY b.supplier_id, b.buyer_country
+    )
+    SELECT
+      (SELECT json_agg(t ORDER BY t.total DESC) FROM (
+        SELECT supplier_id, supplier_name, total FROM top_suppliers
+      ) t) AS suppliers,
+      (SELECT json_agg(t ORDER BY t.total DESC) FROM (
+        SELECT buyer_country, total FROM top_countries
+      ) t) AS countries,
+      (SELECT json_agg(t) FROM cells t) AS cells;
+  `);
+  const row = (result.rows as Array<Record<string, unknown>>)[0] ?? {};
+  type SupplierRow = {
+    supplier_id: string;
+    supplier_name: string;
+    total: number | string;
+  };
+  type CountryRow = { buyer_country: string; total: number | string };
+  type CellRow = {
+    supplier_id: string;
+    buyer_country: string;
+    award_count: number;
+  };
+  const suppliers = ((row.suppliers as SupplierRow[] | null) ?? []).map((s) => ({
+    supplierId: String(s.supplier_id),
+    supplierName: String(s.supplier_name ?? ''),
+    total: Number(s.total),
+  }));
+  const buyerCountries = ((row.countries as CountryRow[] | null) ?? []).map(
+    (c) => ({ country: String(c.buyer_country), total: Number(c.total) }),
+  );
+  const cells = ((row.cells as CellRow[] | null) ?? []).map((c) => ({
+    supplierId: String(c.supplier_id),
+    buyerCountry: String(c.buyer_country),
+    awardCount: Number(c.award_count),
+  }));
+  return { suppliers, buyerCountries, cells };
+}
+
+/**
+ * Rolodex coverage stats for a country — how much analyst-curated
+ * data depth is there for the selected jurisdiction. Surfaces the
+ * "should I trust this dashboard" question with a simple read:
+ * lots of refineries with slate metadata = high confidence; few
+ * known entities = thin data, treat conclusions cautiously.
+ */
+export async function getRolodexCoverage(
+  country: string,
+): Promise<{
+  total: number;
+  byRole: Record<string, number>;
+  withCoords: number;
+  withSlate: number;
+}> {
+  const result = await db.execute(sql`
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE latitude IS NOT NULL)::int AS with_coords,
+      COUNT(*) FILTER (WHERE metadata ? 'slate')::int AS with_slate,
+      role,
+      COUNT(*)::int AS role_count
+    FROM known_entities
+    WHERE country = ${country}
+    GROUP BY GROUPING SETS ((role), ());
+  `);
+  const rows = result.rows as Array<Record<string, unknown>>;
+  let total = 0;
+  let withCoords = 0;
+  let withSlate = 0;
+  const byRole: Record<string, number> = {};
+  for (const r of rows) {
+    if (r.role == null) {
+      // The rollup row.
+      total = Number(r.total ?? 0);
+      withCoords = Number(r.with_coords ?? 0);
+      withSlate = Number(r.with_slate ?? 0);
+    } else {
+      byRole[String(r.role)] = Number(r.role_count ?? 0);
+    }
+  }
+  return { total, byRole, withCoords, withSlate };
+}
+
+/**
  * Buyer-side + supplier-side concentration for the selected
  * (category × country × window). Returns Herfindahl-Hirschman Index
  * (sum of squared market shares, 0–10,000) for each side plus the
