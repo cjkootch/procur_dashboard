@@ -249,7 +249,12 @@ export class TedScraper extends TenderScraper {
       pickEnglish(n['description-part']);
 
     const language = preferredLanguage(n['notice-title']) ?? 'en';
-    const buyer = pickEnglish(n['buyer-name']);
+    // Buyer-name on TED can be `string[]` (per lot) — when a notice
+    // has 50 lots all naming the same buying entity, joining everything
+    // produces a 5KB string that blows past the btree index limit on
+    // `agencies.slug`. Take the first element only since it's almost
+    // always the same buyer repeated.
+    const buyer = pickFirst(n['buyer-name']);
 
     // Beneficiary country: only set when place-of-performance is in a
     // KNOWN non-EU destination AND differs from the buyer's country.
@@ -328,6 +333,32 @@ function pickCategoryFromCpv(cpvs: string[] | undefined): string | undefined {
  * are arrays (one entry per lot); we join them with newlines so all
  * lot-level text shows up in one description blob.
  */
+/**
+ * Like `pickEnglish`, but for fields that should resolve to a single
+ * value rather than a paragraph join — buyer-name being the canonical
+ * example, where TED returns the buyer once per lot. Joining all lot
+ * entries produces 5KB+ strings that blow past the agencies.slug
+ * btree index limit when slugified.
+ */
+function pickFirst(field: MultilingualField | undefined): string | undefined {
+  if (!field) return undefined;
+  const entries = Object.entries(field);
+  if (entries.length === 0) return undefined;
+  const englishKey = entries.find(([k]) => k.toLowerCase() === 'eng');
+  const chosen = englishKey ?? entries[0]!;
+  const value = chosen[1];
+  if (value == null) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const first = value[0];
+  if (typeof first !== 'string') return undefined;
+  const trimmed = first.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function pickEnglish(field: MultilingualField | undefined): string | undefined {
   if (!field) return undefined;
   const entries = Object.entries(field);

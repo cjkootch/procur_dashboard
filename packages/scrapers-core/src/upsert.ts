@@ -26,27 +26,39 @@ async function resolveAgencyId(
 ): Promise<string | null> {
   if (!agencyName && !agencySlug) return null;
 
+  // Cap incoming free-text agency names so scrapers that pass long /
+  // multilingual / multi-lot strings don't blow past the btree index
+  // limit on `(jurisdiction_id, slug)` (Postgres caps at ~2704 bytes
+  // for a btree v4 row). 200 chars is plenty — anything longer is
+  // probably a join of multi-lingual variants or repeated lot text
+  // and not a real distinct agency.
+  const cappedName = agencyName ? agencyName.slice(0, 200).trim() : undefined;
+
   const existing = await db.query.agencies.findFirst({
     where: agencySlug
       ? and(eq(agencies.jurisdictionId, jurisdictionId), eq(agencies.slug, agencySlug))
-      : and(eq(agencies.jurisdictionId, jurisdictionId), eq(agencies.name, agencyName ?? '')),
+      : and(eq(agencies.jurisdictionId, jurisdictionId), eq(agencies.name, cappedName ?? '')),
   });
   if (existing) return existing.id;
 
-  if (!agencyName) return null;
-  const slugToUse =
+  if (!cappedName) return null;
+  const rawSlug =
     agencySlug ??
-    agencyName
+    cappedName
       .toLowerCase()
       .replace(/&/g, 'and')
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '');
+  // Belt-and-braces — slug from a 200-char source can still hit ~200
+  // chars; the index works fine well below that, but cap explicitly so
+  // the limit is documented in the code rather than an empirical surprise.
+  const slugToUse = rawSlug.slice(0, 180);
 
   const [inserted] = await db
     .insert(agencies)
     .values({
       jurisdictionId,
-      name: agencyName,
+      name: cappedName,
       slug: slugToUse,
     })
     .onConflictDoNothing({ target: [agencies.jurisdictionId, agencies.slug] })
