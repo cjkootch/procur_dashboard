@@ -2695,16 +2695,19 @@ export async function getOwnershipChain(
   const seen = new Set<string>();
 
   // Initial fuzzy match: find the best subject_name match.
-  const seedRows = await db.execute(sql`
-    SELECT
-      subject_gem_id, subject_name, parent_gem_id, parent_name,
-      share_pct, share_imputed, source_urls,
-      similarity(subject_name, ${entityName}) AS sim
-    FROM entity_ownership
-    WHERE subject_name % ${entityName}
-    ORDER BY sim DESC, share_pct DESC NULLS LAST
-    LIMIT 1;
-  `);
+  const seedRows = await runOwnershipQuery(() =>
+    db.execute(sql`
+      SELECT
+        subject_gem_id, subject_name, parent_gem_id, parent_name,
+        share_pct, share_imputed, source_urls,
+        similarity(subject_name, ${entityName}) AS sim
+      FROM entity_ownership
+      WHERE subject_name % ${entityName}
+      ORDER BY sim DESC, share_pct DESC NULLS LAST
+      LIMIT 1;
+    `),
+  );
+  if (!seedRows) return chain;
 
   const seed = (seedRows.rows as Array<Record<string, unknown>>)[0];
   if (!seed) return chain;
@@ -2723,14 +2726,17 @@ export async function getOwnershipChain(
     if (seen.has(currentSubjectId)) break; // cycle guard
     seen.add(currentSubjectId);
 
-    const upRows = await db.execute(sql`
-      SELECT
-        parent_gem_id, parent_name, share_pct, share_imputed, source_urls
-      FROM entity_ownership
-      WHERE subject_gem_id = ${currentSubjectId}
-      ORDER BY share_pct DESC NULLS LAST
-      LIMIT 1;
-    `);
+    const upRows = await runOwnershipQuery(() =>
+      db.execute(sql`
+        SELECT
+          parent_gem_id, parent_name, share_pct, share_imputed, source_urls
+        FROM entity_ownership
+        WHERE subject_gem_id = ${currentSubjectId}
+        ORDER BY share_pct DESC NULLS LAST
+        LIMIT 1;
+      `),
+    );
+    if (!upRows) break;
     const up = (upRows.rows as Array<Record<string, unknown>>)[0];
     if (!up) break;
 
@@ -2755,16 +2761,19 @@ export async function getOwnershipChain(
  * at the same level).
  */
 export async function getDirectOwners(entityName: string): Promise<OwnershipNode[]> {
-  const result = await db.execute(sql`
-    SELECT
-      parent_gem_id, parent_name, share_pct, share_imputed, source_urls,
-      similarity(subject_name, ${entityName}) AS sim
-    FROM entity_ownership
-    WHERE subject_name % ${entityName}
-      AND similarity(subject_name, ${entityName}) >= 0.55
-    ORDER BY sim DESC, share_pct DESC NULLS LAST
-    LIMIT 20;
-  `);
+  const result = await runOwnershipQuery(() =>
+    db.execute(sql`
+      SELECT
+        parent_gem_id, parent_name, share_pct, share_imputed, source_urls,
+        similarity(subject_name, ${entityName}) AS sim
+      FROM entity_ownership
+      WHERE subject_name % ${entityName}
+        AND similarity(subject_name, ${entityName}) >= 0.55
+      ORDER BY sim DESC, share_pct DESC NULLS LAST
+      LIMIT 20;
+    `),
+  );
+  if (!result) return [];
   return (result.rows as Array<Record<string, unknown>>).map((r) => ({
     gemId: String(r.parent_gem_id),
     name: String(r.parent_name),
@@ -2773,6 +2782,39 @@ export async function getDirectOwners(entityName: string): Promise<OwnershipNode
     sourceUrls: r.source_urls == null ? null : String(r.source_urls),
   }));
 }
+
+/**
+ * Wrap an entity_ownership query so a missing-table error returns null
+ * instead of crashing the caller. Local environments that haven't run
+ * `pnpm --filter @procur/db ingest-gem-ownership` yet won't have the
+ * table — surface "no ownership data" instead of a 500.
+ *
+ * Postgres SQLSTATE 42P01 = undefined_table.
+ */
+async function runOwnershipQuery<T>(fn: () => Promise<T>): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    const message = (err as { message?: string }).message ?? '';
+    const isMissingTable =
+      code === '42P01' || /relation .* does not exist/i.test(message);
+    if (isMissingTable) {
+      // Log once-ish so it's discoverable but not noisy.
+      if (!loggedMissingOwnership) {
+        console.warn(
+          '[catalog] entity_ownership table not present — ownership lookups will return empty. ' +
+            'Run `pnpm --filter @procur/db ingest-gem-ownership <path>` to populate.',
+        );
+        loggedMissingOwnership = true;
+      }
+      return null;
+    }
+    throw err;
+  }
+}
+
+let loggedMissingOwnership = false;
 
 // ─── Unified entity profile (cross-table lookup) ──────────────────
 
