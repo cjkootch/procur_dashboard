@@ -25,8 +25,8 @@ import type {
   OfacScreeningStatus,
   PaymentTermsType,
   ProductType,
-} from './domain.js';
-import { usgToBbl, usgToMt } from './domain.js';
+} from './domain';
+import { usgToBbl, usgToMt } from './domain';
 
 // ===========================================================================
 // Types
