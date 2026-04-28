@@ -8,6 +8,54 @@ import {
   type OpportunityScope,
 } from './queries';
 
+const DISCOVER_BASE = 'https://discover.procur.app';
+
+/**
+ * Build a Discover catalog URL with the given filters pre-applied.
+ * Mirrors the URL params accepted by /opportunities/page.tsx so a
+ * user clicking the link lands on the same view they'd build by
+ * clicking through the sidebar manually.
+ *
+ * Empty / nullish filters are omitted (cleaner URLs, no `?q=&jurisdiction=`).
+ */
+/**
+ * Human-readable summary of which filters got applied — gives the
+ * model something to verbalize alongside the URL ("Applied: Jamaica
+ * + Petroleum and Fuels"). Empty when no filters are set.
+ */
+function describeFilters(input: {
+  query?: string | null;
+  jurisdiction?: string | null;
+  category?: string | null;
+  country?: string | null;
+  scope?: 'open' | 'past' | null;
+}): string {
+  const parts: string[] = [];
+  if (input.country) parts.push(input.country);
+  if (input.jurisdiction) parts.push(`jurisdiction: ${input.jurisdiction}`);
+  if (input.category) parts.push(`category: ${input.category}`);
+  if (input.query) parts.push(`search: "${input.query}"`);
+  if (input.scope === 'past') parts.push('past awards');
+  return parts.join(' + ');
+}
+
+function buildFilterUrl(filters: {
+  query?: string | null;
+  jurisdiction?: string | null;
+  category?: string | null;
+  country?: string | null;
+  scope?: 'open' | 'past' | null;
+}): string {
+  const params = new URLSearchParams();
+  if (filters.query) params.set('q', filters.query);
+  if (filters.jurisdiction) params.set('jurisdiction', filters.jurisdiction);
+  if (filters.category) params.set('category', filters.category);
+  if (filters.country) params.set('country', filters.country);
+  if (filters.scope === 'past') params.set('view', 'past');
+  const qs = params.toString();
+  return `${DISCOVER_BASE}/opportunities${qs ? `?${qs}` : ''}`;
+}
+
 /**
  * Discover-side tool registry for the AI assistant.
  *
@@ -83,6 +131,17 @@ export function buildDiscoverTools(): ToolRegistry {
         return {
           total,
           shown: rows.length,
+          // URL the user can click to land on Discover with these
+          // exact filters applied — surface alongside individual
+          // opportunity links when total > shown so the user can
+          // browse beyond what fits in the chat panel.
+          filterUrl: buildFilterUrl({
+            query: input.query,
+            jurisdiction: input.jurisdiction,
+            category: input.category,
+            country: input.country,
+            scope,
+          }),
           opportunities: rows.map((o) => ({
             slug: o.slug,
             title: o.title,
@@ -92,7 +151,7 @@ export function buildDiscoverTools(): ToolRegistry {
             deadlineAt: o.deadlineAt?.toISOString() ?? null,
             valueUsd: o.valueEstimateUsd ?? null,
             category: o.category ?? null,
-            url: o.slug ? `https://discover.procur.app/opportunities/${o.slug}` : null,
+            url: o.slug ? `${DISCOVER_BASE}/opportunities/${o.slug}` : null,
           })),
         };
       },
@@ -129,8 +188,41 @@ export function buildDiscoverTools(): ToolRegistry {
           category: op.category ?? null,
           status: op.status,
           sourceUrl: op.sourceUrl ?? null,
-          discoverUrl: op.slug ? `https://discover.procur.app/opportunities/${op.slug}` : null,
+          discoverUrl: op.slug ? `${DISCOVER_BASE}/opportunities/${op.slug}` : null,
         };
+      },
+    }),
+
+    build_filter_url: defineTool({
+      name: 'build_filter_url',
+      description:
+        'Build a Discover catalog URL with the given filters pre-applied. Use this when the user wants to BROWSE rather than read a list — phrases like "take me to", "open", "filter to", "narrow to", "show the catalog filtered to". The returned URL lands the user on the Discover sidebar view with the same filters checked. Prefer this over search_opportunities when the user clearly wants to explore the catalog UI rather than have the assistant summarize results in chat.',
+      kind: 'read',
+      schema: z.object({
+        query: z.string().optional().describe('Free-text search keyword'),
+        jurisdiction: z
+          .string()
+          .optional()
+          .describe('Jurisdiction slug (e.g. "us-federal", "canada-federal", "eu-ted", "uk-fts", "un")'),
+        category: z
+          .string()
+          .optional()
+          .describe(
+            '"food-commodities", "petroleum-fuels", "vehicles-fleet", "minerals-metals", or other taxonomy slug',
+          ),
+        country: z.string().optional().describe('Beneficiary country name (e.g. "Jamaica", "Haiti", "Germany")'),
+        scope: z.enum(['open', 'past']).optional().describe('"open" (default) or "past" awards'),
+      }),
+      handler: async (_ctx, input) => {
+        const url = buildFilterUrl({
+          query: input.query,
+          jurisdiction: input.jurisdiction,
+          category: input.category,
+          country: input.country,
+          scope: input.scope,
+        });
+        const description = describeFilters(input);
+        return { url, description };
       },
     }),
 
