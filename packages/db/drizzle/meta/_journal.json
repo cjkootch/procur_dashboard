@@ -323,6 +323,13 @@
       "when": 1777335000000,
       "tag": "0045_ocds_publisher_jurisdictions",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1777335100000,
+      "tag": "0046_more_ocds_jurisdictions",
+      "breakpoints": true
     }
   ]
 }

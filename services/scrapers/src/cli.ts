@@ -90,7 +90,7 @@ async function runOcdsBulkExtractor(publisherKey: string, yearsArg: string | und
   const currentYear = new Date().getUTCFullYear();
   const years: number[] = [];
   for (let i = 0; i < yearsBack; i += 1) years.push(currentYear - i);
-  const urls = buildOcdrYearUrls(preset.publicationId, years);
+  const urls = buildOcdrYearUrls(preset, years);
 
   console.log(
     `extracting OCDS awards from ${publisherKey} (publication ${preset.publicationId}, last ${yearsBack}y)...`,
