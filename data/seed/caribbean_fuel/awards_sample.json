@@ -1,0 +1,2924 @@
+[
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-OGTIC-CCC-LPN-2024-0001",
+    "tender_id": "OGTIC-CCC-LPN-2024-0001",
+    "tender_title": "Adquisici\u00f3n de tickets de combustible (Gasolina y Gasoil) para la operatividad de la OGTIC y sus dependencias durante el a\u00f1o 2024.",
+    "buyer": "Oficina Gubernamental de Tecnolog\u00eda de la Informaci\u00f3n y la Comunicaci\u00f3n (OGTIC)",
+    "buyer_country": "DOM",
+    "supplier_name": "PETROMOVIL, S.A.",
+    "supplier_name_normalized": "petromovil",
+    "supplier_id": "DO-RPE-110",
+    "award_id": "DO1.AWD.1592218",
+    "award_date": "2024-06-21",
+    "award_status": "active",
+    "value_native": 624300,
+    "value_currency": "DOP",
+    "value_usd": 10405.0,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-HSLM-DAF-CM-2024-0034",
+    "tender_id": "HSLM-DAF-CM-2024-0034",
+    "tender_title": "GASOIL ",
+    "buyer": "Hospital Materno Infantil San Lorenzo de Los Minas",
+    "buyer_country": "DOM",
+    "supplier_name": "Tu Amigo, SRL",
+    "supplier_name_normalized": "tu amigo",
+    "supplier_id": "DO-RPE-13920",
+    "award_id": "DO1.AWD.1516717",
+    "award_date": "2024-01-25",
+    "award_status": "active",
+    "value_native": 664800,
+    "value_currency": "DOP",
+    "value_usd": 11080.0,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-POLICIA NACIONAL-CCC-LPN-2023-0001",
+    "tender_id": "POLICIA NACIONAL-CCC-LPN-2023-0001",
+    "tender_title": "COMPRA DE EQUIPOS Y ACCESORIOS DE TRANSPORTE, COMBUSTIBLES, ALIMENTOS Y DESECHABLES",
+    "buyer": "Policia Nacional",
+    "buyer_country": "DOM",
+    "supplier_name": "Ipema, SRL",
+    "supplier_name_normalized": "ipema",
+    "supplier_id": "DO-RPE-2175",
+    "award_id": "DO1.AWD.1362402",
+    "award_date": "2023-04-22",
+    "award_status": "active",
+    "value_native": 11341068,
+    "value_currency": "DOP",
+    "value_usd": 189017.8,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-HGDVC-DAF-CM-2021-0122",
+    "tender_id": "HGDVC-DAF-CM-2021-0122",
+    "tender_title": "COMPRA DE TICKETS DE COMBUSTIBLE",
+    "buyer": "Hospital General Dr. Vinicio Calventi",
+    "buyer_country": "DOM",
+    "supplier_name": "Sunix Petroleum, SRL",
+    "supplier_name_normalized": "sunix petroleum",
+    "supplier_id": "DO-RPE-1419",
+    "award_id": "DO1.AWD.1064205",
+    "award_date": "2021-10-05",
+    "award_status": "active",
+    "value_native": 300000,
+    "value_currency": "DOP",
+    "value_usd": 5000.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-DIRECCION G. MINERIA-CCC-CP-2024-0001",
+    "tender_id": "DIRECCION G. MINERIA-CCC-CP-2024-0001",
+    "tender_title": "Adquisici\u00f3n de Tickets de Combustible",
+    "buyer": "DIRECCION GENERAL DE MINERIA",
+    "buyer_country": "DOM",
+    "supplier_name": "Gulfstream Petroleum Dominicana, S de RL",
+    "supplier_name_normalized": "gulfstream petroleum dominicana",
+    "supplier_id": "DO-RPE-238",
+    "award_id": "DO1.AWD.1536130",
+    "award_date": "2024-02-28",
+    "award_status": "active",
+    "value_native": 3900000,
+    "value_currency": "DOP",
+    "value_usd": 65000.0,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101505",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-PRODUCCION CUNARIA-CCC-CP-2022-0002",
+    "tender_id": "PRODUCCION CUNARIA-CCC-CP-2022-0002",
+    "tender_title": "Adquisici\u00f3n de tickets prepago de combustible",
+    "buyer": "Direcci\u00f3n General de Promoci\u00f3n de las Comunidades Fronterizas",
+    "buyer_country": "DOM",
+    "supplier_name": "S\u00faper Estaci\u00f3n de Servicios M\u00faltiples On The Boulevard, SRL",
+    "supplier_name_normalized": "s\u00faper estaci\u00f3n de servicios m\u00faltiples on the boulevard",
+    "supplier_id": "DO-RPE-1370",
+    "award_id": "DO1.AWD.1202916",
+    "award_date": "2022-07-07",
+    "award_status": "active",
+    "value_native": 2400000,
+    "value_currency": "DOP",
+    "value_usd": 40000.0,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-SRSN-DAF-CM-2025-0013",
+    "tender_id": "SRSN-DAF-CM-2025-0013",
+    "tender_title": "COMPRA DE COMBUSTIBLE Y GAS LICUADO DE PETROLEO  PARA LAS 4 PROVINCIAS ",
+    "buyer": "Servicio Regional de Salud Cibao Nordeste",
+    "buyer_country": "DOM",
+    "supplier_name": "Estaci\u00f3n De Servicio De Le\u00f3n Crucey, San Francisco, SRL",
+    "supplier_name_normalized": "estaci\u00f3n de servicio de le\u00f3n crucey, san francisco",
+    "supplier_id": "DO-RPE-118990",
+    "award_id": "DO1.AWD.1741004",
+    "award_date": "2025-03-31",
+    "award_status": "active",
+    "value_native": 530400,
+    "value_currency": "DOP",
+    "value_usd": 8840.0,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101505",
+      "15101505",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-GANADERIA-DAF-CM-2022-0008",
+    "tender_id": "GANADERIA-DAF-CM-2022-0008",
+    "tender_title": "ADQUISICI\u00d3N DE COMBUSTIBLES (GASOLINA Y GASOIL) EN MODALIDAD DE TICKETS PARA LOS DIRECTIVOS DE  LA DIGEGA\t\t\t\t\t\t\t",
+    "buyer": "Direcci\u00f3n General de Ganader\u00eda",
+    "buyer_country": "DOM",
+    "supplier_name": "Isla Dominicana de Petroleo Corporation",
+    "supplier_name_normalized": "isla dominicana de petroleo corporation",
+    "supplier_id": "DO-RPE-236",
+    "award_id": "DO1.AWD.1138509",
+    "award_date": "2022-02-24",
+    "award_status": "active",
+    "value_native": 1200000,
+    "value_currency": "DOP",
+    "value_usd": 20000.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-CEA-DAF-CM-2023-0056",
+    "tender_id": "CEA-DAF-CM-2023-0056",
+    "tender_title": "GASOIL REGULAR ",
+    "buyer": "Consejo Estatal del Azucar",
+    "buyer_country": "DOM",
+    "supplier_name": "Soluciones Diort, SRL",
+    "supplier_name_normalized": "soluciones diort",
+    "supplier_id": "DO-RPE-99861",
+    "award_id": "DO1.AWD.1356809",
+    "award_date": "2023-04-12",
+    "award_status": "active",
+    "value_native": 1535688,
+    "value_currency": "DOP",
+    "value_usd": 25594.8,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-HRUSVP-DAF-CD-2025-0126",
+    "tender_id": "HRUSVP-DAF-CD-2025-0126",
+    "tender_title": "ADQUISICI\u00d3N DE COMBUSTIBLE ",
+    "buyer": "Hospital Regional Universitario San Vicente de Paul",
+    "buyer_country": "DOM",
+    "supplier_name": "JOSE DE LA CRUZ GONZALEZ",
+    "supplier_name_normalized": "jose de la cruz gonzalez",
+    "supplier_id": "DO-RPE-4549",
+    "award_id": "DO1.AWD.1886121",
+    "award_date": "2025-12-19",
+    "award_status": "active",
+    "value_native": 218000,
+    "value_currency": "DOP",
+    "value_usd": 3633.33,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-DGM-CCC-LPN-2022-0007",
+    "tender_id": "DGM-CCC-LPN-2022-0007",
+    "tender_title": "ADQUISICI\u00d3N DE TICKETS DE COMBUSTIBLE PARA SER UTILIZADO EN LAS OPERACIONES DE ESTA DIRECCI\u00d3N GENERAL DE MIGRACI\u00d3N",
+    "buyer": "Direcci\u00f3n General de Migraci\u00f3n",
+    "buyer_country": "DOM",
+    "supplier_name": "Totalenergies Marketing Dominicana, S.A.",
+    "supplier_name_normalized": "totalenergies marketing dominicana",
+    "supplier_id": "DO-RPE-16525",
+    "award_id": "DO1.AWD.1282949",
+    "award_date": "2022-11-28",
+    "award_status": "active",
+    "value_native": 2000000,
+    "value_currency": "DOP",
+    "value_usd": 33333.33,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-FAD-CCC-CP-2024-0002",
+    "tender_id": "FAD-CCC-CP-2024-0002",
+    "tender_title": "ADQUISICI\u00d3N DE COMBUSTIBLES A GRANEL ,PARA USO EN  LAS AERONAVES DE ESTA FUERZA A\u00c9REA DE REP\u00daBLICA DOMINICANA",
+    "buyer": "Fuerza A\u00e9rea Dominicana",
+    "buyer_country": "DOM",
+    "supplier_name": "Gulfstream Petroleum Dominicana, S de RL",
+    "supplier_name_normalized": "gulfstream petroleum dominicana",
+    "supplier_id": "DO-RPE-238",
+    "award_id": "DO1.AWD.1586025",
+    "award_date": "2024-06-06",
+    "award_status": "active",
+    "value_native": 4999840,
+    "value_currency": "DOP",
+    "value_usd": 83330.67,
+    "fuel_categories": [
+      "aviation"
+    ],
+    "unspsc_codes": [
+      "15101504"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-CEA-CCC-LPN-2021-0001",
+    "tender_id": "CEA-CCC-LPN-2021-0001",
+    "tender_title": "Adquisici\u00f3n de Combustible a Granel para uso del Consejo Estatal del Az\u00facar ( Oficina Principal e Ingenio Porvenir.",
+    "buyer": "Consejo Estatal del Azucar",
+    "buyer_country": "DOM",
+    "supplier_name": "Next Dominicana, SA",
+    "supplier_name_normalized": "next dominicana",
+    "supplier_id": "DO-RPE-3085",
+    "award_id": "DO1.AWD.1048628",
+    "award_date": "2021-09-03",
+    "award_status": "active",
+    "value_native": 34216000,
+    "value_currency": "DOP",
+    "value_usd": 570266.67,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-HOSP RAMON DE LARA-CCC-LPN-2022-0002",
+    "tender_id": "HOSP RAMON DE LARA-CCC-LPN-2022-0002",
+    "tender_title": "Solicitud de Tickets de Combustibles. ",
+    "buyer": "Hospital Ram\u00f3n de Lara FFAA",
+    "buyer_country": "DOM",
+    "supplier_name": "Rili Gasoil, SRL",
+    "supplier_name_normalized": "rili gasoil",
+    "supplier_id": "DO-RPE-20626",
+    "award_id": "DO1.AWD.1151827",
+    "award_date": "2022-03-23",
+    "award_status": "active",
+    "value_native": 8640000,
+    "value_currency": "DOP",
+    "value_usd": 144000.0,
+    "fuel_categories": [
+      "gasoline",
+      "heating_oil"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101701",
+      "15101701"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-MILITARVOLUNTARIO-DAF-CM-2024-0002",
+    "tender_id": "MILITARVOLUNTARIO-DAF-CM-2024-0002",
+    "tender_title": "Para la adquisici\u00f3n de Tickets de Combustible ",
+    "buyer": "Servicio Militar voluntario FFAA",
+    "buyer_country": "DOM",
+    "supplier_name": "S\u00faper Estaci\u00f3n de Servicios M\u00faltiples On The Boulevard, SRL",
+    "supplier_name_normalized": "s\u00faper estaci\u00f3n de servicios m\u00faltiples on the boulevard",
+    "supplier_id": "DO-RPE-1370",
+    "award_id": "DO1.AWD.1511415",
+    "award_date": "2024-01-12",
+    "award_status": "active",
+    "value_native": 1500000,
+    "value_currency": "DOP",
+    "value_usd": 25000.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-HDSSD-DAF-CM-2021-0061",
+    "tender_id": "HDSSD-DAF-CM-2021-0061",
+    "tender_title": "Compra de Combustible (Gasoil).",
+    "buyer": "Hospital Docente SEMMA",
+    "buyer_country": "DOM",
+    "supplier_name": "JR Diesel, SRL",
+    "supplier_name_normalized": "jr diesel",
+    "supplier_id": "DO-RPE-21567",
+    "award_id": "DO1.AWD.1067726",
+    "award_date": "2021-10-11",
+    "award_status": "active",
+    "value_native": 542850,
+    "value_currency": "DOP",
+    "value_usd": 9047.5,
+    "fuel_categories": [
+      "heating_oil"
+    ],
+    "unspsc_codes": [
+      "15101701"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-MONTEDEPIEDAD-DAF-CM-2024-0001",
+    "tender_id": "MONTEDEPIEDAD-DAF-CM-2024-0001",
+    "tender_title": "\u201cAdquisici\u00f3n de combustibles correspondiente al periodo enero-marzo 2024 para la Instituci\u00f3n.\u201d",
+    "buyer": "Caja de Ahorros Para Obreros y Monte de Piedad",
+    "buyer_country": "DOM",
+    "supplier_name": "INVIGO, SRL",
+    "supplier_name_normalized": "invigo",
+    "supplier_id": "DO-RPE-60204",
+    "award_id": "DO1.AWD.1510515",
+    "award_date": "2024-01-11",
+    "award_status": "active",
+    "value_native": 1000000,
+    "value_currency": "DOP",
+    "value_usd": 16666.67,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-MONTEDEPIEDAD-DAF-CM-2021-0011",
+    "tender_id": "MONTEDEPIEDAD-DAF-CM-2021-0011",
+    "tender_title": "Adquisici\u00f3n de Combustibles correspondiente al periodo Abril-Junio 2021 para la Instituci\u00f3n",
+    "buyer": "Caja de Ahorros Para Obreros y Monte de Piedad",
+    "buyer_country": "DOM",
+    "supplier_name": "INVIGO, SRL",
+    "supplier_name_normalized": "invigo",
+    "supplier_id": "DO-RPE-60204",
+    "award_id": "DO1.AWD.975735",
+    "award_date": "2021-04-08",
+    "award_status": "active",
+    "value_native": 450000,
+    "value_currency": "DOP",
+    "value_usd": 7500.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-FAD-CCC-LPN-2022-0013",
+    "tender_id": "FAD-CCC-LPN-2022-0013",
+    "tender_title": "ADQUISICI\u00d3N DE COMBUSTIBLES A GRANEL Y TICKETS DE COMBUSTIBLES PRE-PAGADOS PARA USO EN ESTA FUERZA A\u00c9REA DE REP\u00daBLICA DOMINICANA",
+    "buyer": "Fuerza A\u00e9rea Dominicana",
+    "buyer_country": "DOM",
+    "supplier_name": "PETROMOVIL, S.A.",
+    "supplier_name_normalized": "petromovil",
+    "supplier_id": "DO-RPE-110",
+    "award_id": "DO1.AWD.1316308",
+    "award_date": "2023-01-24",
+    "award_status": "active",
+    "value_native": 5000983,
+    "value_currency": "DOP",
+    "value_usd": 83349.72,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101502"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-IDOPPRIL-DAF-CM-2022-0031",
+    "tender_id": "IDOPPRIL-DAF-CM-2022-0031",
+    "tender_title": "ADQUISICION GASOLINA REGULAR",
+    "buyer": "Instituto Dominicano de la Prevenci\u00f3n y Protecci\u00f3n de Riesgos Laborales",
+    "buyer_country": "DOM",
+    "supplier_name": "Parmira View Enterprises, SRL",
+    "supplier_name_normalized": "parmira view enterprises",
+    "supplier_id": "DO-RPE-13945",
+    "award_id": "DO1.AWD.1218509",
+    "award_date": "2022-08-03",
+    "award_status": "active",
+    "value_native": 1076040,
+    "value_currency": "DOP",
+    "value_usd": 17934.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-DGDRAGAS-CCC-LPN-2024-0001",
+    "tender_id": "DGDRAGAS-CCC-LPN-2024-0001",
+    "tender_title": "ADQUISICI\u00d3N DE COMBUSTIBLES EN TICKETS Y A GRANEL (GASOIL OPTIMO Y GASOLINA PRIMIUM), PARA USO EN LA DIRECCI\u00d3N GENERAL DE DRAGAS, PRESAS Y BALIZAMIENTO, ARD., DURANTE EL PERIODO ABRIL- DICIEMBRE 2024.",
+    "buyer": "DIRECCION GENERAL DE DRAGAS, PRESAS Y BALIZAMIENTO MG",
+    "buyer_country": "DOM",
+    "supplier_name": "Interkonsult Dominicana, SRL",
+    "supplier_name_normalized": "interkonsult dominicana",
+    "supplier_id": "DO-RPE-20380",
+    "award_id": "DO1.AWD.1566642",
+    "award_date": "2024-04-30",
+    "award_status": "active",
+    "value_native": 3600098,
+    "value_currency": "DOP",
+    "value_usd": 60001.63,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-MITUR-CCC-CP-2025-0019",
+    "tender_id": "MITUR-CCC-CP-2025-0019",
+    "tender_title": "ADQUISICI\u00d3N DE COMBUSTIBLE PARA CONSUMO EN TICKETS UTILIZADOS PARA SUPLIR LAS OPERACIONES DIARIAS A NIVEL NACIONAL DE LA FLOTILLA VEHICULAR DE ESTE MITUR.- DIRIGIDO A MIPYMES ",
+    "buyer": "Ministerio de Turismo",
+    "buyer_country": "DOM",
+    "supplier_name": "Servicios Empresariales Canaan, SRL",
+    "supplier_name_normalized": "servicios empresariales canaan",
+    "supplier_id": "DO-RPE-2726",
+    "award_id": "DO1.AWD.1872761",
+    "award_date": "2025-12-04",
+    "award_status": "active",
+    "value_native": 5644000,
+    "value_currency": "DOP",
+    "value_usd": 94066.67,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-Hosp Marcelino Velez-DAF-CM-2025-0168",
+    "tender_id": "Hosp Marcelino Velez-DAF-CM-2025-0168",
+    "tender_title": "COMPRA DE COMBUSTIBLE ( GASOIL )",
+    "buyer": "Hospital General Regional Dr. Macelino Velez Santana",
+    "buyer_country": "DOM",
+    "supplier_name": "United Petroleum Grupo Haina, SRL",
+    "supplier_name_normalized": "united petroleum grupo haina",
+    "supplier_id": "DO-RPE-41668",
+    "award_id": "DO1.AWD.1853746",
+    "award_date": "2025-11-03",
+    "award_status": "active",
+    "value_native": 363150,
+    "value_currency": "DOP",
+    "value_usd": 6052.5,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-JRFPFA-CCC-CP-2022-0004",
+    "tender_id": "JRFPFA-CCC-CP-2022-0004",
+    "tender_title": "ADQUISICION TICKETS DE COMBUSTIBLE",
+    "buyer": "Junta de Retiro y Fondo de Pensiones de las Fuerzas Armadas",
+    "buyer_country": "DOM",
+    "supplier_name": "Sigma Petroleum Corp, SAS",
+    "supplier_name_normalized": "sigma petroleum corp",
+    "supplier_id": "DO-RPE-12737",
+    "award_id": "DO1.AWD.1171133",
+    "award_date": "2022-05-05",
+    "award_status": "active",
+    "value_native": 4400000,
+    "value_currency": "DOP",
+    "value_usd": 73333.33,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-APORDOM-CCC-CP-2024-0005",
+    "tender_id": "APORDOM-CCC-CP-2024-0005",
+    "tender_title": "Adquisici\u00f3n de Combustible a Granel y Tickets de Combustible para APORDOM.",
+    "buyer": "APORDOM (Autoridad Portuaria Dominicana)",
+    "buyer_country": "DOM",
+    "supplier_name": "Sigma Petroleum Corp, SAS",
+    "supplier_name_normalized": "sigma petroleum corp",
+    "supplier_id": "DO-RPE-12737",
+    "award_id": "DO1.AWD.1613549",
+    "award_date": "2024-08-09",
+    "award_status": "active",
+    "value_native": 1500000,
+    "value_currency": "DOP",
+    "value_usd": 25000.0,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-DGEACCC-DAF-CM-2021-0003",
+    "tender_id": "DGEACCC-DAF-CM-2021-0003",
+    "tender_title": "ADQUISICION DE GASOIL REGULAR",
+    "buyer": "Dir Gral Embellecimiento Ave., Carret y Cruzada C\u00edvica",
+    "buyer_country": "DOM",
+    "supplier_name": "Estaci\u00f3n De Servicios Coral, SRL",
+    "supplier_name_normalized": "estaci\u00f3n de servicios coral",
+    "supplier_id": "DO-RPE-69095",
+    "award_id": "DO1.AWD.974907",
+    "award_date": "2021-04-06",
+    "award_status": "active",
+    "value_native": 817200,
+    "value_currency": "DOP",
+    "value_usd": 13620.0,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-PROCURADURIA-CCC-SI-2025-0006",
+    "tender_id": "PROCURADURIA-CCC-SI-2025-0006",
+    "tender_title": "ADQUISICI\u00d3N DE COMBUSTIBLE PARA USO DE LA PROCURADUR\u00cdA GENERAL DE LA REP\u00daBLICA Y SUS DEPENDECIA.",
+    "buyer": "Procuradur\u00eda General de la Rep\u00fablica",
+    "buyer_country": "DOM",
+    "supplier_name": "Gas Antillano, SAS",
+    "supplier_name_normalized": "gas antillano",
+    "supplier_id": "DO-RPE-2922",
+    "award_id": "DO1.AWD.1759803",
+    "award_date": "2025-05-08",
+    "award_status": "active",
+    "value_native": 83895000,
+    "value_currency": "DOP",
+    "value_usd": 1398250.0,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-PROMIPYME-UC-CD-2022-0002",
+    "tender_id": "PROMIPYME-UC-CD-2022-0002",
+    "tender_title": "Combustible",
+    "buyer": "Consejo Nacional Promoci\u00f3n y Apoyo Micro, Peque\u00f1a y Mediana Empresa",
+    "buyer_country": "DOM",
+    "supplier_name": "Estaci\u00f3n Bella Norte, SRL",
+    "supplier_name_normalized": "estaci\u00f3n bella norte",
+    "supplier_id": "DO-RPE-3059",
+    "award_id": "DO1.AWD.1116601",
+    "award_date": "2022-01-05",
+    "award_status": "active",
+    "value_native": 42500,
+    "value_currency": "DOP",
+    "value_usd": 708.33,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-ODAC-DAF-CM-2025-0003",
+    "tender_id": "ODAC-DAF-CM-2025-0003",
+    "tender_title": "Adquisici\u00f3n de cupones de combustible (Gasolina) correspondientes al 2do trimestre del a\u00f1o 2025, para ser utilizados por este Organismo Dominicano de Acreditaci\u00f3n (ODAC). ",
+    "buyer": "Organismo Dominicano de Acreditaci\u00f3n",
+    "buyer_country": "DOM",
+    "supplier_name": "Totalenergies Marketing Dominicana, S.A.",
+    "supplier_name_normalized": "totalenergies marketing dominicana",
+    "supplier_id": "DO-RPE-16525",
+    "award_id": "DO1.AWD.1743121",
+    "award_date": "2025-04-04",
+    "award_status": "active",
+    "value_native": 1050000,
+    "value_currency": "DOP",
+    "value_usd": 17500.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-Bomberos SDE-DAF-CM-2022-0021",
+    "tender_id": "Bomberos SDE-DAF-CM-2022-0021",
+    "tender_title": "COMPRA DE 79 TICKET DE COMBUSTIBLE (GASOLINA REG) PARA USO ENLAS UNIDADES DELOS BOMBEROS SANTO DOMINGO ESTE",
+    "buyer": "Cuerpo de Bomberos de Santo Domingo Este",
+    "buyer_country": "DOM",
+    "supplier_name": "Sunix Petroleum, SRL",
+    "supplier_name_normalized": "sunix petroleum",
+    "supplier_id": "DO-RPE-1419",
+    "award_id": "DO1.AWD.1160218",
+    "award_date": "2022-04-08",
+    "award_status": "active",
+    "value_native": 52500,
+    "value_currency": "DOP",
+    "value_usd": 875.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-SRSNORC-CCC-CP-2023-0005",
+    "tender_id": "SRSNORC-CCC-CP-2023-0005",
+    "tender_title": "ADQUISICION DE TICKETS DE COMBUSTIBLE PARA EL SERVICIO REGIONAL DE SALUD NORCENTRAL II",
+    "buyer": "SERVICIO REGIONAL DE SALUD CIBAO NORTE",
+    "buyer_country": "DOM",
+    "supplier_name": "Inversiones Las Villas, SRL",
+    "supplier_name_normalized": "inversiones las villas",
+    "supplier_id": "DO-RPE-65203",
+    "award_id": "DO1.AWD.1367631",
+    "award_date": "2023-05-04",
+    "award_status": "active",
+    "value_native": 3000000,
+    "value_currency": "DOP",
+    "value_usd": 50000.0,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-HDRJM-UC-CD-2022-0478",
+    "tender_id": "HDRJM-UC-CD-2022-0478",
+    "tender_title": "GASOLINA REGULAR",
+    "buyer": "Hospital Provincial Dr. Rafael J. Ma\u00f1\u00f3n",
+    "buyer_country": "DOM",
+    "supplier_name": "Grupo Dionicio Ramirez, SRL",
+    "supplier_name_normalized": "grupo dionicio ramirez",
+    "supplier_id": "DO-RPE-19323",
+    "award_id": "DO1.AWD.1291504",
+    "award_date": "2022-12-12",
+    "award_status": "active",
+    "value_native": 60000,
+    "value_currency": "DOP",
+    "value_usd": 1000.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-ONE-CCC-CP-2023-0001",
+    "tender_id": "ONE-CCC-CP-2023-0001",
+    "tender_title": "ADQ. TICKETS COMBUSTIBLES, GASOLINA / DIESEL 1ER. SEMESTRE 2023 Y EL DEPARTAMENTO DE ARTICULACION DEL SISTEMA ESTADISTICO NACIONAL.   ",
+    "buyer": "Oficina Nacional de Estad\u00edsticas",
+    "buyer_country": "DOM",
+    "supplier_name": "Estaci\u00f3n De Servicios Coral, SRL",
+    "supplier_name_normalized": "estaci\u00f3n de servicios coral",
+    "supplier_id": "DO-RPE-69095",
+    "award_id": "DO1.AWD.1338726",
+    "award_date": "2023-03-08",
+    "award_status": "active",
+    "value_native": 2280000,
+    "value_currency": "DOP",
+    "value_usd": 38000.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-HMRA-DAF-CM-2023-0233",
+    "tender_id": "HMRA-DAF-CM-2023-0233",
+    "tender_title": "GASOIL REGULAR",
+    "buyer": "Hospital Materno Dr. Reynaldo Almanzar",
+    "buyer_country": "DOM",
+    "supplier_name": "Yona Yonel Diesel, SRL",
+    "supplier_name_normalized": "yona yonel diesel",
+    "supplier_id": "DO-RPE-17331",
+    "award_id": "DO1.AWD.1496817",
+    "award_date": "2023-12-15",
+    "award_status": "active",
+    "value_native": 1108000,
+    "value_currency": "DOP",
+    "value_usd": 18466.67,
+    "fuel_categories": [
+      "heavy_fuel_oil"
+    ],
+    "unspsc_codes": [
+      "15101702"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-OMSA-CCC-LPN-2021-0005",
+    "tender_id": "OMSA-CCC-LPN-2021-0005",
+    "tender_title": "ADQUISICION DE COMBUSTIBLE PARA LOS AUTOBUSES DE LA INSTITUCION",
+    "buyer": "Oficina Metropolitana de Servicios de Autobuses OMSA",
+    "buyer_country": "DOM",
+    "supplier_name": "Cruz Diesel, SRL",
+    "supplier_name_normalized": "cruz diesel",
+    "supplier_id": "DO-RPE-19317",
+    "award_id": "DO1.AWD.1062104",
+    "award_date": "2021-09-30",
+    "award_status": "active",
+    "value_native": 4244000,
+    "value_currency": "DOP",
+    "value_usd": 70733.33,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-ERD-CCC-LPN-2022-0002",
+    "tender_id": "ERD-CCC-LPN-2022-0002",
+    "tender_title": "ADQUISICI\u00d3N DE COMBUSTIBLES Y DERIVADOS DE PETR\u00d3LEO, PARA SER UTILIZADOS EN LOS VEH\u00cdCULOS, AERONAVES, PLANTAS ELECTRICAS Y LOS COMEDORES DE LAS DIFERENTES UNIDADES DEL EJ\u00c9RCITO DE REP\u00daBLICA DOMINICANA",
+    "buyer": "Ej\u00e9rcito de Rep\u00fablica Dominicana",
+    "buyer_country": "DOM",
+    "supplier_name": "Gas Antillano, SAS",
+    "supplier_name_normalized": "gas antillano",
+    "supplier_id": "DO-RPE-2922",
+    "award_id": "DO1.AWD.1292851",
+    "award_date": "2022-12-13",
+    "award_status": "active",
+    "value_native": 16637500,
+    "value_currency": "DOP",
+    "value_usd": 277291.67,
+    "fuel_categories": [
+      "aviation",
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101504",
+      "15101504",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-OMSA-CCC-LPN-2022-0005",
+    "tender_id": "OMSA-CCC-LPN-2022-0005",
+    "tender_title": "ADQUISICION DE COMBUSTIBLE PARA LOS AUTOBUSES Y VEHICULOS DE LA INSTITUCION",
+    "buyer": "Oficina Metropolitana de Servicios de Autobuses OMSA",
+    "buyer_country": "DOM",
+    "supplier_name": "JG Diesel, SRL",
+    "supplier_name_normalized": "jg diesel",
+    "supplier_id": "DO-RPE-14517",
+    "award_id": "DO1.AWD.1262948",
+    "award_date": "2022-10-25",
+    "award_status": "active",
+    "value_native": 9644000,
+    "value_currency": "DOP",
+    "value_usd": 160733.33,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101506",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-HSLM-UC-CD-2023-0716",
+    "tender_id": "HSLM-UC-CD-2023-0716",
+    "tender_title": "TIKETS DE COMBUSTIBLE",
+    "buyer": "Hospital Materno Infantil San Lorenzo de Los Minas",
+    "buyer_country": "DOM",
+    "supplier_name": "Inversiones FH, SRL",
+    "supplier_name_normalized": "inversiones fh",
+    "supplier_id": "DO-RPE-49689",
+    "award_id": "DO1.AWD.1501406",
+    "award_date": "2023-12-22",
+    "award_status": "active",
+    "value_native": 225000,
+    "value_currency": "DOP",
+    "value_usd": 3750.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-ONAMET-DAF-CM-2024-0021",
+    "tender_id": "ONAMET-DAF-CM-2024-0021",
+    "tender_title": "Adquisici\u00f3n de Lubricantes",
+    "buyer": "Instituto Dominicano de Meteorolog\u00eda",
+    "buyer_country": "DOM",
+    "supplier_name": "Vinicio Repuestos y Servicios, SRL",
+    "supplier_name_normalized": "vinicio repuestos y servicios",
+    "supplier_id": "DO-RPE-6518",
+    "award_id": "DO1.AWD.1621626",
+    "award_date": "2024-08-27",
+    "award_status": "active",
+    "value_native": 191671,
+    "value_currency": "DOP",
+    "value_usd": 3194.52,
+    "fuel_categories": [
+      "aviation"
+    ],
+    "unspsc_codes": [
+      "15101510",
+      "15101510",
+      "15101510",
+      "15101510"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-HDRJM-DAF-CD-2024-0008",
+    "tender_id": "HDRJM-DAF-CD-2024-0008",
+    "tender_title": "GASOLINA REGULAR",
+    "buyer": "Hospital Provincial Dr. Rafael J. Ma\u00f1\u00f3n",
+    "buyer_country": "DOM",
+    "supplier_name": "Grupo Dionicio Ramirez, SRL",
+    "supplier_name_normalized": "grupo dionicio ramirez",
+    "supplier_id": "DO-RPE-19323",
+    "award_id": "DO1.AWD.1529229",
+    "award_date": "2024-02-15",
+    "award_status": "active",
+    "value_native": 59999,
+    "value_currency": "DOP",
+    "value_usd": 999.98,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-ODAC-DAF-CM-2022-0001",
+    "tender_id": "ODAC-DAF-CM-2022-0001",
+    "tender_title": "Adquisici\u00f3n de tickets de combustible (Gasolina y Gasoil) correspondientes al 1er trimestre del a\u00f1o 2022, para ser utilizados por este Organismo Dominicano de Acreditaci\u00f3n (ODAC). ",
+    "buyer": "Organismo Dominicano de Acreditaci\u00f3n",
+    "buyer_country": "DOM",
+    "supplier_name": "Sunix Petroleum, SRL",
+    "supplier_name_normalized": "sunix petroleum",
+    "supplier_id": "DO-RPE-1419",
+    "award_id": "DO1.AWD.1128509",
+    "award_date": "2022-02-03",
+    "award_status": "active",
+    "value_native": 900000,
+    "value_currency": "DOP",
+    "value_usd": 15000.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-MERCADOM-UC-CD-2021-0235",
+    "tender_id": "MERCADOM-UC-CD-2021-0235",
+    "tender_title": "ADQUISICION DE TICKEST DE COMBUSTIBLE",
+    "buyer": "Mercados Dominicanos de Abasto Agropecuario",
+    "buyer_country": "DOM",
+    "supplier_name": "Gacerca, SRL",
+    "supplier_name_normalized": "gacerca",
+    "supplier_id": "DO-RPE-61746",
+    "award_id": "DO1.AWD.1033730",
+    "award_date": "2021-08-03",
+    "award_status": "active",
+    "value_native": 29000,
+    "value_currency": "DOP",
+    "value_usd": 483.33,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-MMUJER-UC-CD-2023-0024",
+    "tender_id": "MMUJER-UC-CD-2023-0024",
+    "tender_title": "COMPRA DE TICKETS DE COMBUSTIBLE PARA SER UTILIZADO EN LOS RECORRIDOS DE LOS GRUPOS DE ADOLESCENTE, QUE ASISTIR\u00c1N A LAS CAPACITACIONES EN EL CENTRO DE PROMOCI\u00d3N DE SALUD INTEGRAL DE ADOLESCENTES.",
+    "buyer": "Ministerio de la Mujer",
+    "buyer_country": "DOM",
+    "supplier_name": "Totalenergies Marketing Dominicana, S.A.",
+    "supplier_name_normalized": "totalenergies marketing dominicana",
+    "supplier_id": "DO-RPE-16525",
+    "award_id": "DO1.AWD.1322514",
+    "award_date": "2023-02-07",
+    "award_status": "active",
+    "value_native": 63000,
+    "value_currency": "DOP",
+    "value_usd": 1050.0,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-COPREMFA-DAF-CM-2025-0002",
+    "tender_id": "COPREMFA-DAF-CM-2025-0002",
+    "tender_title": "Adquisici\u00f3n de combustible en tickets pre-pagados",
+    "buyer": "Comisi\u00f3n Permanente para la Reforma y Modernizaci\u00f3n FFAA",
+    "buyer_country": "DOM",
+    "supplier_name": "Inversiones Migs, SRL",
+    "supplier_name_normalized": "inversiones migs",
+    "supplier_id": "DO-RPE-1711",
+    "award_id": "DO1.AWD.1780638",
+    "award_date": "2025-06-17",
+    "award_status": "active",
+    "value_native": 1500000,
+    "value_currency": "DOP",
+    "value_usd": 25000.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-DIGESETT-CCC-LPN-2021-0002",
+    "tender_id": "DIGESETT-CCC-LPN-2021-0002",
+    "tender_title": "ADQUISICION DE TICKETS Y GALONES DE COMBUSTIBLES.",
+    "buyer": "Direcci\u00f3n General de Seguridad de Tr\u00e1nsito y Transporte Terrestre",
+    "buyer_country": "DOM",
+    "supplier_name": "Gulfstream Petroleum Dominicana, S de RL",
+    "supplier_name_normalized": "gulfstream petroleum dominicana",
+    "supplier_id": "DO-RPE-238",
+    "award_id": "DO1.AWD.1127411",
+    "award_date": "2022-02-01",
+    "award_status": "active",
+    "value_native": 49605416,
+    "value_currency": "DOP",
+    "value_usd": 826756.93,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-Bomberos SDO-DAF-CM-2025-0002",
+    "tender_id": "Bomberos SDO-DAF-CM-2025-0002",
+    "tender_title": "ADQUISICION TICKETS DE COMBUSTIBLES PARA SER USADO EN LAS DIFERENTES UNIDADES DE ESTA INSTITUCI\u00d3N ",
+    "buyer": "Cuerpo de Bomberos Santo Domingo Oeste",
+    "buyer_country": "DOM",
+    "supplier_name": "Synergy Group, SRL",
+    "supplier_name_normalized": "synergy group",
+    "supplier_id": "DO-RPE-58386",
+    "award_id": "DO1.AWD.1764954",
+    "award_date": "2025-05-19",
+    "award_status": "active",
+    "value_native": 374500,
+    "value_currency": "DOP",
+    "value_usd": 6241.67,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-TESORERIA NACIONAL-UC-CD-2023-0125",
+    "tender_id": "TESORERIA NACIONAL-UC-CD-2023-0125",
+    "tender_title": "ADQUISICI\u00d3N DE DOSCIENTOS MIL PESOS (RD$200,000.00) DE GASOIL GRANEL, PARA SER USADO EN EL LLENADO DE LOS GENERADORES EL\u00c9CTRICOS DE NUESTRA INSTITUCI\u00d3N.",
+    "buyer": "Tesorer\u00eda Nacional",
+    "buyer_country": "DOM",
+    "supplier_name": "Erik Gas del 2000, SRL",
+    "supplier_name_normalized": "erik gas del 2000",
+    "supplier_id": "DO-RPE-1758",
+    "award_id": "DO1.AWD.1405841",
+    "award_date": "2023-07-14",
+    "award_status": "active",
+    "value_native": 200000,
+    "value_currency": "DOP",
+    "value_usd": 3333.33,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-POLICIA NACIONAL-CCC-LPN-2023-0001",
+    "tender_id": "POLICIA NACIONAL-CCC-LPN-2023-0001",
+    "tender_title": "COMPRA DE EQUIPOS Y ACCESORIOS DE TRANSPORTE, COMBUSTIBLES, ALIMENTOS Y DESECHABLES",
+    "buyer": "Policia Nacional",
+    "buyer_country": "DOM",
+    "supplier_name": "Antelo Dominicana, SRL",
+    "supplier_name_normalized": "antelo dominicana",
+    "supplier_id": "DO-RPE-85218",
+    "award_id": "DO1.AWD.1362402",
+    "award_date": "2023-04-22",
+    "award_status": "active",
+    "value_native": 11341068,
+    "value_currency": "DOP",
+    "value_usd": 189017.8,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-PASP-CCC-SI-2024-0003",
+    "tender_id": "PASP-CCC-SI-2024-0003",
+    "tender_title": "ADQUISICI\u00d3N DE COMBUSTIBLE (GAS-OIL \u00d3PTIMO AL GRANEL Y TICKETS DE COMBUSTIBLE), PARA SER UTILIZADO EN ESTA INSTITUCI\u00d3N",
+    "buyer": "Plan Asistencia Social de la Presidencia (Inactiva)",
+    "buyer_country": "DOM",
+    "supplier_name": "ECO PETROLEO DOMINICANA, S.A.",
+    "supplier_name_normalized": "eco petroleo dominicana",
+    "supplier_id": "DO-RPE-60473",
+    "award_id": "DO1.AWD.1543533",
+    "award_date": "2024-03-13",
+    "award_status": "active",
+    "value_native": 6999999,
+    "value_currency": "DOP",
+    "value_usd": 116666.65,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-CORAAMOCA-DAF-CM-2022-0010",
+    "tender_id": "CORAAMOCA-DAF-CM-2022-0010",
+    "tender_title": "COMPRAS DE COMBUSTIBLES",
+    "buyer": "Corporaci\u00f3n de Acueducto y Alcantarillado Moca",
+    "buyer_country": "DOM",
+    "supplier_name": "Romar Petroleum, SRL",
+    "supplier_name_normalized": "romar petroleum",
+    "supplier_id": "DO-RPE-99033",
+    "award_id": "DO1.AWD.1166144",
+    "award_date": "2022-04-22",
+    "award_status": "active",
+    "value_native": 1200000,
+    "value_currency": "DOP",
+    "value_usd": 20000.0,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-CONALECHE-CCC-LPN-2023-0004",
+    "tender_id": "CONALECHE-CCC-LPN-2023-0004",
+    "tender_title": "Combustibles ",
+    "buyer": "Consejo Nac Reglamentaci\u00f3n y Fomento Industria Lechera",
+    "buyer_country": "DOM",
+    "supplier_name": "Estaci\u00f3n Gasolinera Marino Do\u00f1e, SRL",
+    "supplier_name_normalized": "estaci\u00f3n gasolinera marino do\u00f1e",
+    "supplier_id": "DO-RPE-619",
+    "award_id": "DO1.AWD.1395514",
+    "award_date": "2023-06-27",
+    "award_status": "active",
+    "value_native": 200000,
+    "value_currency": "DOP",
+    "value_usd": 3333.33,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101506",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-MINERD-CCC-LPN-2021-0001",
+    "tender_id": "MINERD-CCC-LPN-2021-0001",
+    "tender_title": "Adquisici\u00f3n de tickets de combustible para las diferentes \u00e1reas del Ministerio de Educaci\u00f3n correspondiente al periodo Mayo 2021/ Mayo 2022.",
+    "buyer": "Ministerio de Educaci\u00f3n",
+    "buyer_country": "DOM",
+    "supplier_name": "ECO PETROLEO DOMINICANA, S.A.",
+    "supplier_name_normalized": "eco petroleo dominicana",
+    "supplier_id": "DO-RPE-60473",
+    "award_id": "DO1.AWD.1011323",
+    "award_date": "2021-06-18",
+    "award_status": "active",
+    "value_native": 32302000,
+    "value_currency": "DOP",
+    "value_usd": 538366.67,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "JAM",
+    "source_portal": "GOJEP",
+    "ocid": null,
+    "tender_id": "4055378",
+    "tender_title": "Supply and Delivery of Fuel (Unleaded 90 Gasoline) to the Errol Flynn Marina Boatyard",
+    "buyer": "Port Authority of Jamaica",
+    "buyer_country": "JAM",
+    "supplier_name": "Sol Jamaica SRL",
+    "supplier_name_normalized": "sol jamaica",
+    "supplier_id": null,
+    "award_id": "4055378",
+    "award_date": "2025-12-18",
+    "award_status": "active",
+    "value_native": null,
+    "value_currency": "JMD",
+    "value_usd": null,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "09132100",
+      "09100000",
+      "09000000",
+      "09120000"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-SRSN-DAF-CM-2024-0059",
+    "tender_id": "SRSN-DAF-CM-2024-0059",
+    "tender_title": "COMPRA DE COMBUSTIBLE PARA LAS PROVINCIAS DUARTE, HERMANAS MIRABAL, MARIA TRINIDAD SANCHEZ Y SAMANA.",
+    "buyer": "Servicio Regional de Salud Cibao Nordeste",
+    "buyer_country": "DOM",
+    "supplier_name": "Lu\u00eds Roberto Pimentel Tejada",
+    "supplier_name_normalized": "lu\u00eds roberto pimentel tejada",
+    "supplier_id": "DO-RPE-15529",
+    "award_id": "DO1.AWD.1690809",
+    "award_date": "2024-12-26",
+    "award_status": "active",
+    "value_native": 298105,
+    "value_currency": "DOP",
+    "value_usd": 4968.42,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-HPPEM-DAF-CM-2023-0093",
+    "tender_id": "HPPEM-DAF-CM-2023-0093",
+    "tender_title": "ADQUISICI\u00d3N  DE COMBUSTIBLES PROPORCIONAR SERVICIOS TRANSPORTE Y GENERACI\u00d3N DE ENERG\u00cdA EL\u00c9CTRICA (PLANTA ELECTRICA).",
+    "buyer": "Hospital Provincial Dr. Pedro E. Marchena",
+    "buyer_country": "DOM",
+    "supplier_name": "ESTACION TEXACO BONAO, SRL",
+    "supplier_name_normalized": "estacion texaco bonao",
+    "supplier_id": "DO-RPE-20004",
+    "award_id": "DO1.AWD.1491536",
+    "award_date": "2023-12-11",
+    "award_status": "active",
+    "value_native": 1465850,
+    "value_currency": "DOP",
+    "value_usd": 24430.83,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-AMJN-DAF-CD-2025-0012",
+    "tender_id": "AMJN-DAF-CD-2025-0012",
+    "tender_title": "combustible Gasoil ",
+    "buyer": "Ayuntamiento Municipal Jamao Al Norte",
+    "buyer_country": "DOM",
+    "supplier_name": "Diesel Extremo, SRL",
+    "supplier_name_normalized": "diesel extremo",
+    "supplier_id": "DO-RPE-33777",
+    "award_id": "DO1.AWD.1805938",
+    "award_date": "2025-08-04",
+    "award_status": "active",
+    "value_native": 134880,
+    "value_currency": "DOP",
+    "value_usd": 2248.0,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-IGNJJHM-DAF-CM-2023-0007",
+    "tender_id": "IGNJJHM-DAF-CM-2023-0007",
+    "tender_title": "Adquisicion de Tickets de combustibles correspondiente a octubre 2023-marzo 2024 para uso del IGNJJHM",
+    "buyer": "Instituto Geogr\u00e1fico Nacional Jos\u00e9 Joaqu\u00edn Hungr\u00eda Morel",
+    "buyer_country": "DOM",
+    "supplier_name": "Isla Dominicana de Petroleo Corporation",
+    "supplier_name_normalized": "isla dominicana de petroleo corporation",
+    "supplier_id": "DO-RPE-236",
+    "award_id": "DO1.AWD.1455606",
+    "award_date": "2023-10-18",
+    "award_status": "active",
+    "value_native": 800000,
+    "value_currency": "DOP",
+    "value_usd": 13333.33,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "JAM",
+    "source_portal": "GOJEP",
+    "ocid": null,
+    "tender_id": "8787406",
+    "tender_title": "CALL-OFF FROM FRAMEWORK: Purchase of Emergency fuel to power Generators at the MBFZ post hurricane Melissa",
+    "buyer": "Port Authority of Jamaica",
+    "buyer_country": "JAM",
+    "supplier_name": "Future Energy Source Company Limited",
+    "supplier_name_normalized": "future energy source company limited",
+    "supplier_id": null,
+    "award_id": "8787406",
+    "award_date": "2026-02-09",
+    "award_status": "active",
+    "value_native": 2263822.14,
+    "value_currency": "JMD",
+    "value_usd": 14327.99,
+    "fuel_categories": [
+      "unspecified"
+    ],
+    "unspsc_codes": [
+      "09000000"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-SRSV-DAF-CM-2024-0046",
+    "tender_id": "SRSV-DAF-CM-2024-0046",
+    "tender_title": "COMPRA DE TICKETS DE COMBUSTIBLE PARA SER UTILIZADO EN LOS VEHICULOS PERTENECIENTES AL SERVICIO REGIONAL DE SALUD VALDESIA (SRSV) INCLUYENDO LAS GERENCIAS, CPN Y CENTROS DE DIAGNOSTICOS",
+    "buyer": "Servicio Regional de Salud Valdesia",
+    "buyer_country": "DOM",
+    "supplier_name": "Super Estacion de Servicios la 1ra del Sur, SRL",
+    "supplier_name_normalized": "super estacion de servicios la 1ra del sur",
+    "supplier_id": "DO-RPE-23096",
+    "award_id": "DO1.AWD.1644527",
+    "award_date": "2024-10-09",
+    "award_status": "active",
+    "value_native": 30000,
+    "value_currency": "DOP",
+    "value_usd": 500.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-Defensor del Pueblo-DAF-CM-2023-0039",
+    "tender_id": "Defensor del Pueblo-DAF-CM-2023-0039",
+    "tender_title": "Adquisici\u00f3n combustible bajo la modalidad de expendio en estaciones de servicio (mediante tickets) y a domicilio, con alcance operativo en todo el territorio nacional, para operatividad institucional ",
+    "buyer": "Defensor del Pueblo",
+    "buyer_country": "DOM",
+    "supplier_name": "Tropigas Dominicana, SRL",
+    "supplier_name_normalized": "tropigas dominicana",
+    "supplier_id": "DO-RPE-6874",
+    "award_id": "DO1.AWD.1405537",
+    "award_date": "2023-07-14",
+    "award_status": "active",
+    "value_native": 1300000,
+    "value_currency": "DOP",
+    "value_usd": 21666.67,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-CORAABO-CCC-CP-2025-0001",
+    "tender_id": "CORAABO-CCC-CP-2025-0001",
+    "tender_title": "ADQUISICION DE COMBUSTIBLE EN FORMATO DE TICKETS PARA EL PERIODO DE MAYO- DICIEMBRE 2025 ",
+    "buyer": "Corporaci\u00f3n de Acueducto y Alcantarillado del Municipio de Boca Chica",
+    "buyer_country": "DOM",
+    "supplier_name": "PETROMOVIL, S.A.",
+    "supplier_name_normalized": "petromovil",
+    "supplier_id": "DO-RPE-110",
+    "award_id": "DO1.AWD.1751838",
+    "award_date": "2025-04-22",
+    "award_status": "cancelled",
+    "value_native": 3999998,
+    "value_currency": "DOP",
+    "value_usd": 66666.63,
+    "fuel_categories": [
+      "gasoline",
+      "heating_oil"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101701"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-POLICIA NACIONAL-CCC-LPN-2025-0002",
+    "tender_id": "POLICIA NACIONAL-CCC-LPN-2025-0002",
+    "tender_title": "ADQUISICI\u00d3N DE COMBUSTIBLES Y TICKETS DE COMBUSTIBLES",
+    "buyer": "Policia Nacional",
+    "buyer_country": "DOM",
+    "supplier_name": "Gas Antillano, SAS",
+    "supplier_name_normalized": "gas antillano",
+    "supplier_id": "DO-RPE-2922",
+    "award_id": "DO1.AWD.1759624",
+    "award_date": "2025-05-07",
+    "award_status": "active",
+    "value_native": 563166309,
+    "value_currency": "DOP",
+    "value_usd": 9386105.15,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101505"
+    ]
+  },
+  {
+    "country": "JAM",
+    "source_portal": "GOJEP",
+    "ocid": null,
+    "tender_id": "8554209",
+    "tender_title": "Fuel for Generator for Hurricane Relief",
+    "buyer": "St. James Municipal Corporation",
+    "buyer_country": "JAM",
+    "supplier_name": "Odel Allen Construction",
+    "supplier_name_normalized": "odel allen construction",
+    "supplier_id": null,
+    "award_id": "8554209",
+    "award_date": "2025-11-12",
+    "award_status": "active",
+    "value_native": 1837500.0,
+    "value_currency": "JMD",
+    "value_usd": 11629.75,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "09134200"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-IDECOOP-DAF-CM-2024-0001",
+    "tender_id": "IDECOOP-DAF-CM-2024-0001",
+    "tender_title": "Adquisicion de tickets de combustible ",
+    "buyer": "Instituto de Desarrollo y Cr\u00e9dito Cooperativo",
+    "buyer_country": "DOM",
+    "supplier_name": "ECO PETROLEO DOMINICANA, S.A.",
+    "supplier_name_normalized": "eco petroleo dominicana",
+    "supplier_id": "DO-RPE-60473",
+    "award_id": "DO1.AWD.1542721",
+    "award_date": "2024-03-12",
+    "award_status": "active",
+    "value_native": 1357000,
+    "value_currency": "DOP",
+    "value_usd": 22616.67,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-MITUR-CCC-CP-2023-0009",
+    "tender_id": "MITUR-CCC-CP-2023-0009",
+    "tender_title": "ADQUISICION DE COMBUSTIBLE PARA CONSUMO EN TICKETS Y A GRANEL UTILIZADOS PARA SUPLIR LAS OPERACIONES DIARIAS A NIVEL NACIONAL DE LA FLOTILLA VEHICULAR Y GENERADORES ELECTRICOS DE ESTE MITUR.   ",
+    "buyer": "Ministerio de Turismo",
+    "buyer_country": "DOM",
+    "supplier_name": "Next Dominicana, SA",
+    "supplier_name_normalized": "next dominicana",
+    "supplier_id": "DO-RPE-3085",
+    "award_id": "DO1.AWD.1415342",
+    "award_date": "2023-08-03",
+    "award_status": "active",
+    "value_native": 200000,
+    "value_currency": "DOP",
+    "value_usd": 3333.33,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-CESTUR-CCC-LPN-2021-0001",
+    "tender_id": "CESTUR-CCC-LPN-2021-0001",
+    "tender_title": "Adquisici\u00f3n Tickets de Combustibles Enero/Diciembre 2021",
+    "buyer": "Direcci\u00f3n Central de Polic\u00eda de Turismo",
+    "buyer_country": "DOM",
+    "supplier_name": "Grupo Las Canas, SRL",
+    "supplier_name_normalized": "grupo las canas",
+    "supplier_id": "DO-RPE-64623",
+    "award_id": "DO1.AWD.972629",
+    "award_date": "2021-03-31",
+    "award_status": "active",
+    "value_native": 2997400,
+    "value_currency": "DOP",
+    "value_usd": 49956.67,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-POLICIA NACIONAL-CCC-LPN-2023-0001",
+    "tender_id": "POLICIA NACIONAL-CCC-LPN-2023-0001",
+    "tender_title": "COMPRA DE EQUIPOS Y ACCESORIOS DE TRANSPORTE, COMBUSTIBLES, ALIMENTOS Y DESECHABLES",
+    "buyer": "Policia Nacional",
+    "buyer_country": "DOM",
+    "supplier_name": "Gas Antillano, SAS",
+    "supplier_name_normalized": "gas antillano",
+    "supplier_id": "DO-RPE-2922",
+    "award_id": "DO1.AWD.1362402",
+    "award_date": "2023-04-22",
+    "award_status": "active",
+    "value_native": 11341068,
+    "value_currency": "DOP",
+    "value_usd": 189017.8,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101505",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-IDECOOP-DAF-CM-2025-0015",
+    "tender_id": "IDECOOP-DAF-CM-2025-0015",
+    "tender_title": "Adquisicion de tickets de combustible para la flotilla vehicular de la institucion.",
+    "buyer": "Instituto de Desarrollo y Cr\u00e9dito Cooperativo",
+    "buyer_country": "DOM",
+    "supplier_name": "ECO PETROLEO DOMINICANA, S.A.",
+    "supplier_name_normalized": "eco petroleo dominicana",
+    "supplier_id": "DO-RPE-60473",
+    "award_id": "DO1.AWD.1832416",
+    "award_date": "2025-09-23",
+    "award_status": "active",
+    "value_native": 1200000,
+    "value_currency": "DOP",
+    "value_usd": 20000.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-ONDA-UC-CD-2021-0078",
+    "tender_id": "ONDA-UC-CD-2021-0078",
+    "tender_title": "Compra de tickets para combustible flotilla de la ONDA, 2da. de noviembre. 21",
+    "buyer": "Oficina Nacional de Derecho de Autor",
+    "buyer_country": "DOM",
+    "supplier_name": "Gulfstream Petroleum Dominicana, S de RL",
+    "supplier_name_normalized": "gulfstream petroleum dominicana",
+    "supplier_id": "DO-RPE-238",
+    "award_id": "DO1.AWD.1081340",
+    "award_date": "2021-11-04",
+    "award_status": "active",
+    "value_native": 115000,
+    "value_currency": "DOP",
+    "value_usd": 1916.67,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "JAM",
+    "source_portal": "GOJEP",
+    "ocid": null,
+    "tender_id": "8595858",
+    "tender_title": "Procurement of Diesel Oil for Generator Following Hurricane Melissa (691907)",
+    "buyer": "HEART NSTA/Trust",
+    "buyer_country": "JAM",
+    "supplier_name": "Rapid Onsite Refuelling LTd",
+    "supplier_name_normalized": "rapid onsite refuelling",
+    "supplier_id": null,
+    "award_id": "8595858",
+    "award_date": "2025-12-18",
+    "award_status": "active",
+    "value_native": 1250000.0,
+    "value_currency": "JMD",
+    "value_usd": 7911.39,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "09134100",
+      "09000000"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-HSLM-UC-CD-2023-0444",
+    "tender_id": "HSLM-UC-CD-2023-0444",
+    "tender_title": "TIKETS DE COMBUSTIBLE",
+    "buyer": "Hospital Materno Infantil San Lorenzo de Los Minas",
+    "buyer_country": "DOM",
+    "supplier_name": "Inversiones FH, SRL",
+    "supplier_name_normalized": "inversiones fh",
+    "supplier_id": "DO-RPE-49689",
+    "award_id": "DO1.AWD.1427814",
+    "award_date": "2023-08-28",
+    "award_status": "active",
+    "value_native": 225000,
+    "value_currency": "DOP",
+    "value_usd": 3750.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-SRSCO-DAF-CM-2025-0008",
+    "tender_id": "SRSCO-DAF-CM-2025-0008",
+    "tender_title": "COMBUSTIBLES (1er. semestre) (gasolina y gasoil) Montecristi",
+    "buyer": "Servicio Regional de Salud Cibao Noroeste, R-4",
+    "buyer_country": "DOM",
+    "supplier_name": "CRISPIN MALLOL REYES",
+    "supplier_name_normalized": "crispin mallol reyes",
+    "supplier_id": "DO-RPE-5774",
+    "award_id": "DO1.AWD.1699928",
+    "award_date": "2025-01-15",
+    "award_status": "active",
+    "value_native": 376987,
+    "value_currency": "DOP",
+    "value_usd": 6283.12,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-Biblioteca Nacional-CCC-CP-2024-0001",
+    "tender_id": "Biblioteca Nacional-CCC-CP-2024-0001",
+    "tender_title": "Adquisici\u00f3n de Tickets de Combustible, para uso de la instituci\u00f3n.",
+    "buyer": "Biblioteca Nacional Pedro Henr\u00edquez Ure\u00f1a",
+    "buyer_country": "DOM",
+    "supplier_name": "Sigma Petroleum Corp, SAS",
+    "supplier_name_normalized": "sigma petroleum corp",
+    "supplier_id": "DO-RPE-12737",
+    "award_id": "DO1.AWD.1536003",
+    "award_date": "2024-02-28",
+    "award_status": "active",
+    "value_native": 3999600,
+    "value_currency": "DOP",
+    "value_usd": 66660.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-SENPA-CCC-CP-2023-0001",
+    "tender_id": "SENPA-CCC-CP-2023-0001",
+    "tender_title": "Adq. de Tickets de Combustibles Prepagados",
+    "buyer": "Servicio Nacional de Protecci\u00f3n Ambiental",
+    "buyer_country": "DOM",
+    "supplier_name": "Inversiones Migs, SRL",
+    "supplier_name_normalized": "inversiones migs",
+    "supplier_id": "DO-RPE-1711",
+    "award_id": "DO1.AWD.1318419",
+    "award_date": "2023-01-27",
+    "award_status": "active",
+    "value_native": 5100000,
+    "value_currency": "DOP",
+    "value_usd": 85000.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-CEA-DAF-CM-2023-0045",
+    "tender_id": "CEA-DAF-CM-2023-0045",
+    "tender_title": "ADQUISICI\u00d3N DE COMBUSTIBLE,INGENIO PORVENIR",
+    "buyer": "Consejo Estatal del Azucar",
+    "buyer_country": "DOM",
+    "supplier_name": "Soluciones Diort, SRL",
+    "supplier_name_normalized": "soluciones diort",
+    "supplier_id": "DO-RPE-99861",
+    "award_id": "DO1.AWD.1342213",
+    "award_date": "2023-03-15",
+    "award_status": "active",
+    "value_native": 1524719,
+    "value_currency": "DOP",
+    "value_usd": 25411.98,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-DGDC-DAF-CM-2022-0069",
+    "tender_id": "DGDC-DAF-CM-2022-0069",
+    "tender_title": "ADQUISICION DE TICKETS PREPAGADOS DE COMBUSTIBLES ",
+    "buyer": "Direcci\u00f3n General de Desarrollo Comunidad",
+    "buyer_country": "DOM",
+    "supplier_name": "Sigma Petroleum Corp, SAS",
+    "supplier_name_normalized": "sigma petroleum corp",
+    "supplier_id": "DO-RPE-12737",
+    "award_id": "DO1.AWD.1296362",
+    "award_date": "2022-12-16",
+    "award_status": "active",
+    "value_native": 387000,
+    "value_currency": "DOP",
+    "value_usd": 6450.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-PNMN-DAF-CM-2025-0003",
+    "tender_id": "PNMN-DAF-CM-2025-0003",
+    "tender_title": "Adquisici\u00f3n de combustible",
+    "buyer": "Parque Nacional Mirador Norte",
+    "buyer_country": "DOM",
+    "supplier_name": "Next Dominicana, SA",
+    "supplier_name_normalized": "next dominicana",
+    "supplier_id": "DO-RPE-3085",
+    "award_id": "DO1.AWD.1745614",
+    "award_date": "2025-04-09",
+    "award_status": "active",
+    "value_native": 1200000,
+    "value_currency": "DOP",
+    "value_usd": 20000.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-DAEH-CCC-LPN-2024-0007",
+    "tender_id": "DAEH-CCC-LPN-2024-0007",
+    "tender_title": "Adquisicion de tickets prepagados de combustible",
+    "buyer": "Direcci\u00f3n de Servicios de Atenci\u00f3n a Emergencias Extra Hospitalarias (DAEH)",
+    "buyer_country": "DOM",
+    "supplier_name": "Isla Dominicana de Petroleo Corporation",
+    "supplier_name_normalized": "isla dominicana de petroleo corporation",
+    "supplier_id": "DO-RPE-236",
+    "award_id": "DO1.AWD.1613210",
+    "award_date": "2024-08-08",
+    "award_status": "active",
+    "value_native": 5000000,
+    "value_currency": "DOP",
+    "value_usd": 83333.33,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-HDPB-UC-CD-2023-0030",
+    "tender_id": "HDPB-UC-CD-2023-0030",
+    "tender_title": "AQUISICION CUPONES DE COMBUSTIBLES ENERO 2023",
+    "buyer": "Hospital Docente Padre Billini",
+    "buyer_country": "DOM",
+    "supplier_name": "Totalenergies Marketing Dominicana, S.A.",
+    "supplier_name_normalized": "totalenergies marketing dominicana",
+    "supplier_id": "DO-RPE-16525",
+    "award_id": "DO1.AWD.1317125",
+    "award_date": "2023-01-25",
+    "award_status": "active",
+    "value_native": 109000,
+    "value_currency": "DOP",
+    "value_usd": 1816.67,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101505",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-CEIZTUR-CCC-CP-2025-0014",
+    "tender_id": "CEIZTUR-CCC-CP-2025-0014",
+    "tender_title": "Adquisici\u00f3n de tickets de combustible para la flotilla vehicular (\u00e1reas operativas y administrativas) de la Instituci\u00f3n",
+    "buyer": "Comit\u00e9 Ejecutor de Infraesctrutura de Zona Tur\u00edsticas",
+    "buyer_country": "DOM",
+    "supplier_name": "Estaci\u00f3n De Servicios Coral, SRL",
+    "supplier_name_normalized": "estaci\u00f3n de servicios coral",
+    "supplier_id": "DO-RPE-69095",
+    "award_id": "DO1.AWD.1790306",
+    "award_date": "2025-07-08",
+    "award_status": "active",
+    "value_native": 5150000,
+    "value_currency": "DOP",
+    "value_usd": 85833.33,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-Bomberos SDN-DAF-CD-2025-0006",
+    "tender_id": "Bomberos SDN-DAF-CD-2025-0006",
+    "tender_title": "ADQUISICI\u00d3N DE GASOIL \u00d3PTIMO PARA USO INSTITUCIONAL",
+    "buyer": "Cuerpo de Bomberos SDN",
+    "buyer_country": "DOM",
+    "supplier_name": "Ozama Diesel, SRL",
+    "supplier_name_normalized": "ozama diesel",
+    "supplier_id": "DO-RPE-3035",
+    "award_id": "DO1.AWD.1749159",
+    "award_date": "2025-04-15",
+    "award_status": "active",
+    "value_native": 247469,
+    "value_currency": "DOP",
+    "value_usd": 4124.48,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-DIGEV-CCC-LPN-2022-0002",
+    "tender_id": "DIGEV-CCC-LPN-2022-0002",
+    "tender_title": "ADQUISICION DE COMBUSTIBLE  ",
+    "buyer": "Direcci\u00f3n General de Escuelas Vocacionales de las FFAA",
+    "buyer_country": "DOM",
+    "supplier_name": "Gas Antillano, SAS",
+    "supplier_name_normalized": "gas antillano",
+    "supplier_id": "DO-RPE-2922",
+    "award_id": "DO1.AWD.1311625",
+    "award_date": "2023-01-16",
+    "award_status": "cancelled",
+    "value_native": 6918000,
+    "value_currency": "DOP",
+    "value_usd": 115300.0,
+    "fuel_categories": [
+      "gasoline",
+      "heavy_fuel_oil"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101702",
+      "15101702"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-PROINDUSTRIA-DAF-CM-2024-0018",
+    "tender_id": "PROINDUSTRIA-DAF-CM-2024-0018",
+    "tender_title": "COMPRA DE TICKETS DE COMBUSTIBLES",
+    "buyer": "Centro de Desarrollo y Competitividad Industrial",
+    "buyer_country": "DOM",
+    "supplier_name": "Yona Yonel Diesel, SRL",
+    "supplier_name_normalized": "yona yonel diesel",
+    "supplier_id": "DO-RPE-17331",
+    "award_id": "DO1.AWD.1554233",
+    "award_date": "2024-04-04",
+    "award_status": "active",
+    "value_native": 950000,
+    "value_currency": "DOP",
+    "value_usd": 15833.33,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-CNNC-DAF-CM-2021-0006",
+    "tender_id": "CNNC-DAF-CM-2021-0006",
+    "tender_title": "COMPRA DE COMBUSTIBLE JULIO, AGOSTO Y SEPTIEMBRE 2021",
+    "buyer": "Comisi\u00f3n Nacional de Negociaciones Comerciales",
+    "buyer_country": "DOM",
+    "supplier_name": "Sunix Petroleum, SRL",
+    "supplier_name_normalized": "sunix petroleum",
+    "supplier_id": "DO-RPE-1419",
+    "award_id": "DO1.AWD.1024412",
+    "award_date": "2021-07-13",
+    "award_status": "active",
+    "value_native": 808500,
+    "value_currency": "DOP",
+    "value_usd": 13475.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-OMSA S.A.-CCC-LPN-2025-0009",
+    "tender_id": "OMSA S.A.-CCC-LPN-2025-0009",
+    "tender_title": "ADQUISICION DE COMBUSTIBLES PARA LOS AUTOBUSES Y VEHICULOS LIVIANOS DE LA EMPRESA.",
+    "buyer": "Operadora Metropolitana de Servicios de Autobuses S.A.",
+    "buyer_country": "DOM",
+    "supplier_name": "Yona Yonel Diesel, SRL",
+    "supplier_name_normalized": "yona yonel diesel",
+    "supplier_id": "DO-RPE-17331",
+    "award_id": "DO1.AWD.1924444",
+    "award_date": "2026-03-11",
+    "award_status": "active",
+    "value_native": 11604000,
+    "value_currency": "DOP",
+    "value_usd": 193400.0,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101506",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-CNE-DAF-CM-2023-0020",
+    "tender_id": "CNE-DAF-CM-2023-0020",
+    "tender_title": "ADQUISICI\u00d3N DE TICKETS DE COMBUSTIBLE PRE-NUMERADOS. ",
+    "buyer": "Comisi\u00f3n Nacional de Energ\u00eda",
+    "buyer_country": "DOM",
+    "supplier_name": "Totalenergies Marketing Dominicana, S.A.",
+    "supplier_name_normalized": "totalenergies marketing dominicana",
+    "supplier_id": "DO-RPE-16525",
+    "award_id": "DO1.AWD.1340616",
+    "award_date": "2023-03-13",
+    "award_status": "active",
+    "value_native": 1500000,
+    "value_currency": "DOP",
+    "value_usd": 25000.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-MISPAS-CCC-LPN-2022-0010",
+    "tender_id": "MISPAS-CCC-LPN-2022-0010",
+    "tender_title": "Adquisici\u00f3n de combustible (gasolina y gasoil) para las dependencias del MISPAS",
+    "buyer": "Ministerio de Salud P\u00fablica y Asistencia Social",
+    "buyer_country": "DOM",
+    "supplier_name": "PETROMOVIL, S.A.",
+    "supplier_name_normalized": "petromovil",
+    "supplier_id": "DO-RPE-110",
+    "award_id": "DO1.AWD.1250002",
+    "award_date": "2022-10-03",
+    "award_status": "active",
+    "value_native": 2000000,
+    "value_currency": "DOP",
+    "value_usd": 33333.33,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-JMJUBE-CCC-CP-2025-0001",
+    "tender_id": "JMJUBE-CCC-CP-2025-0001",
+    "tender_title": "Adquisici\u00f3n de tickets y tarjetas electronicas recargables para consumo de combustible de la institucion",
+    "buyer": "Junta Municipal Juma Bejucal",
+    "buyer_country": "DOM",
+    "supplier_name": "Bignaga Enterprises, SRL",
+    "supplier_name_normalized": "bignaga enterprises",
+    "supplier_id": "DO-RPE-61390",
+    "award_id": "DO1.AWD.1773801",
+    "award_date": "2025-06-04",
+    "award_status": "cancelled",
+    "value_native": null,
+    "value_currency": "DOP",
+    "value_usd": null,
+    "fuel_categories": [
+      "diesel",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-AMTE-DAF-CM-2024-0017",
+    "tender_id": "AMTE-DAF-CM-2024-0017",
+    "tender_title": "COMPRA DE COMBUSTIBLE PARA USO DE LOS EQUIPOS DE TRASPORTE DELOS DEPARTAMENTO Y EQUIPOS PESADO DEL  AYUNTAMIENTO.",
+    "buyer": "Ayuntamiento Municipal de Tenares",
+    "buyer_country": "DOM",
+    "supplier_name": "Negociado Pascasio Javier, SRL",
+    "supplier_name_normalized": "negociado pascasio javier",
+    "supplier_id": "DO-RPE-103060",
+    "award_id": "DO1.AWD.1653802",
+    "award_date": "2024-10-28",
+    "award_status": "active",
+    "value_native": 1250000,
+    "value_currency": "DOP",
+    "value_usd": 20833.33,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505"
+    ]
+  },
+  {
+    "country": "JAM",
+    "source_portal": "GOJEP",
+    "ocid": null,
+    "tender_id": "8396430",
+    "tender_title": "Procurement of diesel fuel",
+    "buyer": "HEART NSTA/Trust",
+    "buyer_country": "JAM",
+    "supplier_name": "GARMIC VENTURES LTD",
+    "supplier_name_normalized": "garmic ventures",
+    "supplier_id": null,
+    "award_id": "8396430",
+    "award_date": "2025-11-04",
+    "award_status": "active",
+    "value_native": 527358.73,
+    "value_currency": "JMD",
+    "value_usd": 3337.71,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "09000000"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-ITLA-CCC-CP-2023-0015",
+    "tender_id": "ITLA-CCC-CP-2023-0015",
+    "tender_title": "Adquisici\u00f3n de Tickets de Combustible para Asignaciones al Personal Administrativo y Abastecimiento a Veh\u00edculos Institucionales del Instituto Tecnol\u00f3gico de las Am\u00e9ricas (ITLA).",
+    "buyer": "Instituto Tecnol\u00f3gico de las Am\u00e9ricas",
+    "buyer_country": "DOM",
+    "supplier_name": "Isla Dominicana de Petroleo Corporation",
+    "supplier_name_normalized": "isla dominicana de petroleo corporation",
+    "supplier_id": "DO-RPE-236",
+    "award_id": "DO1.AWD.1459209",
+    "award_date": "2023-10-25",
+    "award_status": "active",
+    "value_native": 5100000,
+    "value_currency": "DOP",
+    "value_usd": 85000.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-SIV-UC-CD-2021-0053",
+    "tender_id": "SIV-UC-CD-2021-0053",
+    "tender_title": "Adquisicion de combustible planta electrica",
+    "buyer": "Superintendencia de Valores",
+    "buyer_country": "DOM",
+    "supplier_name": "PETROMOVIL, S.A.",
+    "supplier_name_normalized": "petromovil",
+    "supplier_id": "DO-RPE-110",
+    "award_id": "DO1.AWD.979047",
+    "award_date": "2021-04-14",
+    "award_status": "active",
+    "value_native": 22700,
+    "value_currency": "DOP",
+    "value_usd": 378.33,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-CEIZTUR-DAF-CM-2022-0015",
+    "tender_id": "CEIZTUR-DAF-CM-2022-0015",
+    "tender_title": "ADQUISICI\u00d3N DE TICKETS DE COMBUSTIBLE PARA LOS TRASLADOS DE JULIO Y AGOSTO DE LAS \u00c1REAS OPERATIVAS DEL CEIZTUR                            ",
+    "buyer": "Comit\u00e9 Ejecutor de Infraesctrutura de Zona Tur\u00edsticas",
+    "buyer_country": "DOM",
+    "supplier_name": "Estaci\u00f3n De Servicios Coral, SRL",
+    "supplier_name_normalized": "estaci\u00f3n de servicios coral",
+    "supplier_id": "DO-RPE-69095",
+    "award_id": "DO1.AWD.1200008",
+    "award_date": "2022-07-01",
+    "award_status": "active",
+    "value_native": 1200000,
+    "value_currency": "DOP",
+    "value_usd": 20000.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-CORAASAN-UC-CD-2022-0079",
+    "tender_id": "CORAASAN-UC-CD-2022-0079",
+    "tender_title": "Adquisici\u00f3n de l\u00edquido RC2",
+    "buyer": "Corporaci\u00f3n de Acueducto y Alcantarillado de Santiago",
+    "buyer_country": "DOM",
+    "supplier_name": "Constructora Mar, S.R.L.",
+    "supplier_name_normalized": "constructora mar",
+    "supplier_id": "DO-RPE-10782",
+    "award_id": "DO1.AWD.1187804",
+    "award_date": "2022-06-08",
+    "award_status": "active",
+    "value_native": 24453,
+    "value_currency": "DOP",
+    "value_usd": 407.55,
+    "fuel_categories": [
+      "crude"
+    ],
+    "unspsc_codes": [
+      "15101508"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-MISPAS-DAF-CM-2022-0328",
+    "tender_id": "MISPAS-DAF-CM-2022-0328",
+    "tender_title": "ADQUISICI\u00d3N DE COMBUSTIBLES TICKETS DE GASOIL, DIRIGIDO A MIPYMES",
+    "buyer": "Ministerio de Salud P\u00fablica y Asistencia Social",
+    "buyer_country": "DOM",
+    "supplier_name": "Servicios Empresariales Canaan, SRL",
+    "supplier_name_normalized": "servicios empresariales canaan",
+    "supplier_id": "DO-RPE-2726",
+    "award_id": "DO1.AWD.1274743",
+    "award_date": "2022-11-14",
+    "award_status": "active",
+    "value_native": 77200,
+    "value_currency": "DOP",
+    "value_usd": 1286.67,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101505",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-MITUR-CCC-CP-2023-0001",
+    "tender_id": "MITUR-CCC-CP-2023-0001",
+    "tender_title": "ADQUISICION DE COMBUSTIBLE PARA CONSUMO EN TICKETS Y A GRANEL UTILIZADOS PARA SUPLIR LAS OPERACIONES DIARIAS A NIVEL NACIONAL DE LA FLOTILLA VEHICULAR Y GENERADORES ELECTRICOS DE ESTE MITUR ",
+    "buyer": "Ministerio de Turismo",
+    "buyer_country": "DOM",
+    "supplier_name": "Next Dominicana, SA",
+    "supplier_name_normalized": "next dominicana",
+    "supplier_id": "DO-RPE-3085",
+    "award_id": "DO1.AWD.1341004",
+    "award_date": "2023-03-13",
+    "award_status": "active",
+    "value_native": 5004000,
+    "value_currency": "DOP",
+    "value_usd": 83400.0,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-MMUJER-DAF-CM-2022-0061",
+    "tender_id": "MMUJER-DAF-CM-2022-0061",
+    "tender_title": "COMPRA DE COMBUSTIBLE PARA LAS CASAS DE ACOGIDA Y LAS L\u00cdNEAS DE EMERGENCIA DE LAS REGIONES SUR Y NORTE, POR UN PERIODO DE 6 MESES",
+    "buyer": "Ministerio de la Mujer",
+    "buyer_country": "DOM",
+    "supplier_name": "ECO PETROLEO DOMINICANA, S.A.",
+    "supplier_name_normalized": "eco petroleo dominicana",
+    "supplier_id": "DO-RPE-60473",
+    "award_id": "DO1.AWD.1228828",
+    "award_date": "2022-08-25",
+    "award_status": "active",
+    "value_native": 600000,
+    "value_currency": "DOP",
+    "value_usd": 10000.0,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505",
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-MIDE-MAE-PEUR-2021-0002",
+    "tender_id": "MIDE-MAE-PEUR-2021-0002",
+    "tender_title": "Adquisici\u00f3n de Combustibles, para ser utilizados en los veh\u00edculos de las diferentes dependencias de este Ministerio de Defensa, que dar\u00e1n apoyo a los servicios operativos y recorridos de patrullajes, ",
+    "buyer": "Ministerio de Defensa",
+    "buyer_country": "DOM",
+    "supplier_name": "Sunix Petroleum, SRL",
+    "supplier_name_normalized": "sunix petroleum",
+    "supplier_id": "DO-RPE-1419",
+    "award_id": "DO1.AWD.1106356",
+    "award_date": "2021-12-16",
+    "award_status": "active",
+    "value_native": 6000450,
+    "value_currency": "DOP",
+    "value_usd": 100007.5,
+    "fuel_categories": [
+      "aviation",
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101506",
+      "15101504"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-FONDOMARENA-DAF-CM-2023-0002",
+    "tender_id": "FONDOMARENA-DAF-CM-2023-0002",
+    "tender_title": "Adquisici\u00f3n tickets combustible",
+    "buyer": "Fondo Nacional Medio Ambiente y Recursos Naturales",
+    "buyer_country": "DOM",
+    "supplier_name": "Isla Dominicana de Petroleo Corporation",
+    "supplier_name_normalized": "isla dominicana de petroleo corporation",
+    "supplier_id": "DO-RPE-236",
+    "award_id": "DO1.AWD.1393703",
+    "award_date": "2023-06-23",
+    "award_status": "active",
+    "value_native": 500000,
+    "value_currency": "DOP",
+    "value_usd": 8333.33,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-ONDA-UC-CD-2021-0030",
+    "tender_id": "ONDA-UC-CD-2021-0030",
+    "tender_title": "Compra de tickets para combustible flotilla de la ONDA, 1era. de Agosto.",
+    "buyer": "Oficina Nacional de Derecho de Autor",
+    "buyer_country": "DOM",
+    "supplier_name": "Gulfstream Petroleum Dominicana, S de RL",
+    "supplier_name_normalized": "gulfstream petroleum dominicana",
+    "supplier_id": "DO-RPE-238",
+    "award_id": "DO1.AWD.1037634",
+    "award_date": "2021-08-10",
+    "award_status": "active",
+    "value_native": 100000,
+    "value_currency": "DOP",
+    "value_usd": 1666.67,
+    "fuel_categories": [
+      "gasoline"
+    ],
+    "unspsc_codes": [
+      "15101506",
+      "15101506"
+    ]
+  },
+  {
+    "country": "JAM",
+    "source_portal": "GOJEP",
+    "ocid": null,
+    "tender_id": "8786883",
+    "tender_title": "Request no 3186 - Provision of 5000L of Ultra Low Sulphur Diesel to replenish the DEB 1 and 4 Generator Bulk tanks",
+    "buyer": "Port Authority of Jamaica",
+    "buyer_country": "JAM",
+    "supplier_name": "Future Energy Source Company Limited",
+    "supplier_name_normalized": "future energy source company limited",
+    "supplier_id": null,
+    "award_id": "8786883",
+    "award_date": "2026-02-09",
+    "award_status": "active",
+    "value_native": 812607.0,
+    "value_currency": "JMD",
+    "value_usd": 5143.08,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "09132000",
+      "09132100"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-GANADERIA-DAF-CD-2024-0083",
+    "tender_id": "GANADERIA-DAF-CD-2024-0083",
+    "tender_title": "ADQUISICI\u00d3N DE 800 GALONES DE DIESEL PARA PLANTA ELECTRICA",
+    "buyer": "Direcci\u00f3n General de Ganader\u00eda",
+    "buyer_country": "DOM",
+    "supplier_name": "El Avi\u00f3n Diesel, SRL",
+    "supplier_name_normalized": "el avi\u00f3n diesel",
+    "supplier_id": "DO-RPE-5655",
+    "award_id": "DO1.AWD.1651910",
+    "award_date": "2024-10-23",
+    "award_status": "active",
+    "value_native": 177280,
+    "value_currency": "DOP",
+    "value_usd": 2954.67,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-DIGECOG-UC-CD-2022-0075",
+    "tender_id": "DIGECOG-UC-CD-2022-0075",
+    "tender_title": "Adquisici\u00f3n de combustible para abastecer las plantas el\u00e9ctricas de la instituci\u00f3n.",
+    "buyer": "Direcci\u00f3n Gral de Contabilidad Gubernamental",
+    "buyer_country": "DOM",
+    "supplier_name": "Sigma Petroleum Corp, SAS",
+    "supplier_name_normalized": "sigma petroleum corp",
+    "supplier_id": "DO-RPE-12737",
+    "award_id": "DO1.AWD.1219645",
+    "award_date": "2022-08-05",
+    "award_status": "active",
+    "value_native": 26592,
+    "value_currency": "DOP",
+    "value_usd": 443.2,
+    "fuel_categories": [
+      "heating_oil"
+    ],
+    "unspsc_codes": [
+      "15101701"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-ISFODOSU-DAF-CD-2025-0109",
+    "tender_id": "ISFODOSU-DAF-CD-2025-0109",
+    "tender_title": "Recinto 2- EPH-Santiago-Adquisici\u00f3n de Combustible para Plantas El\u00e9ctricas",
+    "buyer": "Instituto Superior de Formaci\u00f3n Docente Salom\u00e9 Ure\u00f1a",
+    "buyer_country": "DOM",
+    "supplier_name": "Next Dominicana, SA",
+    "supplier_name_normalized": "next dominicana",
+    "supplier_id": "DO-RPE-3085",
+    "award_id": "DO1.AWD.1870702",
+    "award_date": "2025-12-01",
+    "award_status": "active",
+    "value_native": 120000,
+    "value_currency": "DOP",
+    "value_usd": 2000.0,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505"
+    ]
+  },
+  {
+    "country": "DOM",
+    "source_portal": "DR_DGCP_OCDS",
+    "ocid": "ocds-6550wx-SEGURIDAD DEL METRO-CCC-CP-2024-0005",
+    "tender_id": "SEGURIDAD DEL METRO-CCC-CP-2024-0005",
+    "tender_title": "ADQUISICI\u00d3N DE TICKETS PRE-PAGADOS DE COMBUSTIBLE, CORRESPONDIENTE AL  PERIODO A JULIO-DICIEMBRE DEL 2024",
+    "buyer": "Cuerpo Especializado de la Seguridad del Metro FFAA",
+    "buyer_country": "DOM",
+    "supplier_name": "Estaci\u00f3n De Servicios Coral, SRL",
+    "supplier_name_normalized": "estaci\u00f3n de servicios coral",
+    "supplier_id": "DO-RPE-69095",
+    "award_id": "DO1.AWD.1592650",
+    "award_date": "2024-06-21",
+    "award_status": "active",
+    "value_native": 5100000,
+    "value_currency": "DOP",
+    "value_usd": 85000.0,
+    "fuel_categories": [
+      "diesel"
+    ],
+    "unspsc_codes": [
+      "15101505",
+      "15101505"
+    ]
+  }
+]
