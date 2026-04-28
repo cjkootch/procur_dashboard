@@ -83,6 +83,15 @@ generic web knowledge:
   know what they've done. If the tool returns disambiguation_needed, ask
   the user to pick from the candidates rather than guessing.
 
+- find_competing_sellers: sell-side market intel. When the user asks who
+  ELSE is selling a commodity in a region, what the going price is, or
+  who the dormant capable sellers are. Returns ACTIVE and DORMANT slices
+  + price-band stats. The dormant slice is strategically valuable —
+  capability + no recent wins = high responsiveness to back-to-back or
+  off-take pitches. Distinct from find_suppliers_for_tender (that ranks
+  bidders for a specific tender; this surfaces the competitive landscape
+  for a category).
+
 Volume and recency matter more than total count. A supplier with 3 large
 recent diesel awards is a better match than one with 50 small awards from
 2020. Surface the dates and dollar amounts; don't just list names.

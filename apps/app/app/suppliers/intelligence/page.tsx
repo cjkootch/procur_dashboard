@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import {
+  findCompetingSellers,
   getMonthlyAwardsVolume,
   getNewBuyers,
   getTopBuyersByCategory,
@@ -47,11 +48,25 @@ export default async function IntelligencePage({ searchParams }: Props) {
 
   const filters = { categoryTag, buyerCountry, monthsLookback };
 
-  const [topBuyers, topSuppliers, monthly, newBuyers] = await Promise.all([
+  // findCompetingSellers operates in months and accepts a list of
+  // buyer countries (for parallel-region filtering). The single-country
+  // form maps cleanly to a one-element list.
+  const competingArgs = {
+    categoryTag,
+    buyerCountries: buyerCountry ? [buyerCountry] : undefined,
+    monthsLookback,
+    dormantLookbackMonths: Math.max(monthsLookback * 3, 36),
+    limit: 15,
+  };
+
+  const [topBuyers, topSuppliers, monthly, newBuyers, competing] = await Promise.all([
     getTopBuyersByCategory(filters, 10),
     getTopSuppliersByCategory(filters, 10),
     getMonthlyAwardsVolume(filters),
     getNewBuyers(filters, 90, 15),
+    categoryTag === 'all'
+      ? Promise.resolve(null)
+      : findCompetingSellers(competingArgs),
   ]);
 
   const fmtUsd = (n: number | null) =>
@@ -173,6 +188,118 @@ export default async function IntelligencePage({ searchParams }: Props) {
           </div>
         )}
       </section>
+
+      {competing && (
+        <section className="mb-8">
+          <div className="mb-2 flex items-baseline justify-between gap-4">
+            <h2 className="text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+              Competitive landscape — sell-side
+            </h2>
+            <span className="text-xs text-[color:var(--color-muted-foreground)]">
+              {competing.marketStats.activeSellersCount} active sellers ·{' '}
+              {competing.marketStats.totalAwardsInWindow} awards
+            </span>
+          </div>
+
+          {(competing.marketStats.medianAwardValueUsd != null ||
+            competing.marketStats.totalValueUsd != null) && (
+            <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-4 text-sm">
+              <Stat
+                label="Total $USD"
+                value={fmtUsd(competing.marketStats.totalValueUsd)}
+              />
+              <Stat
+                label="Median award $USD"
+                value={fmtUsd(competing.marketStats.medianAwardValueUsd)}
+              />
+              <Stat
+                label="p25 / p75 $USD"
+                value={`${fmtUsd(competing.marketStats.p25AwardValueUsd)} / ${fmtUsd(
+                  competing.marketStats.p75AwardValueUsd,
+                )}`}
+              />
+              <Stat
+                label="Active sellers"
+                value={String(competing.marketStats.activeSellersCount)}
+              />
+            </div>
+          )}
+
+          <div className="grid gap-6 md:grid-cols-2">
+            <div>
+              <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                Active ({monthsLookback}m)
+              </h3>
+              {competing.activeSellers.length === 0 ? (
+                <p className="text-sm text-[color:var(--color-muted-foreground)]">
+                  No active sellers in this window.
+                </p>
+              ) : (
+                <ol className="space-y-1.5 text-sm">
+                  {competing.activeSellers.map((s, i) => (
+                    <li key={s.supplierId} className="flex items-baseline justify-between gap-3">
+                      <span className="truncate" title={s.supplierName}>
+                        <span className="text-[color:var(--color-muted-foreground)]">
+                          {String(i + 1).padStart(2, '0')}.{' '}
+                        </span>
+                        <Link href={`/suppliers/${s.supplierId}`} className="hover:underline">
+                          {s.supplierName}
+                        </Link>{' '}
+                        {s.country && (
+                          <span className="text-[color:var(--color-muted-foreground)]">
+                            {s.country}
+                          </span>
+                        )}
+                      </span>
+                      <span className="shrink-0 text-[color:var(--color-muted-foreground)] tabular-nums">
+                        {s.awardsCount} · {fmtUsd(s.totalValueUsd)}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+            <div>
+              <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                Dormant — capable but inactive recently
+              </h3>
+              {competing.dormantSellers.length === 0 ? (
+                <p className="text-sm text-[color:var(--color-muted-foreground)]">
+                  No dormant suppliers — every historical seller has won in the active window.
+                </p>
+              ) : (
+                <ol className="space-y-1.5 text-sm">
+                  {competing.dormantSellers.map((s, i) => (
+                    <li key={s.supplierId} className="flex items-baseline justify-between gap-3">
+                      <span className="truncate" title={s.supplierName}>
+                        <span className="text-[color:var(--color-muted-foreground)]">
+                          {String(i + 1).padStart(2, '0')}.{' '}
+                        </span>
+                        <Link href={`/suppliers/${s.supplierId}`} className="hover:underline">
+                          {s.supplierName}
+                        </Link>{' '}
+                        {s.country && (
+                          <span className="text-[color:var(--color-muted-foreground)]">
+                            {s.country}
+                          </span>
+                        )}
+                      </span>
+                      <span className="shrink-0 text-[color:var(--color-muted-foreground)] tabular-nums">
+                        {s.historicalAwardsCount} · last {s.mostRecentAwardDate}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-[color:var(--color-muted-foreground)]">
+            Dormant = won historically but no public awards in the active window. Capability +
+            silence often signals receptiveness to back-to-back or off-take arrangements; a
+            supplier may also still be active in private channels we can&apos;t see.
+          </p>
+        </section>
+      )}
 
       <section className="mb-8 grid gap-6 md:grid-cols-2">
         <div>
@@ -306,6 +433,17 @@ export default async function IntelligencePage({ searchParams }: Props) {
       <footer className="mt-10 border-t border-[color:var(--color-border)] pt-4 text-xs text-[color:var(--color-muted-foreground)]">
         Aggregated from public-tender award data only. Private commercial flows are not represented.
       </footer>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-3">
+      <div className="text-[10px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+        {label}
+      </div>
+      <div className="mt-1 font-semibold tabular-nums">{value}</div>
     </div>
   );
 }

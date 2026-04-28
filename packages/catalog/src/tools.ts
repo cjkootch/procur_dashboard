@@ -5,6 +5,7 @@ import {
   analyzeSupplier,
   briefOpportunity,
   findBuyersForCommodityOffer,
+  findCompetingSellers,
   findSuppliersForTender,
   getCompanyProfile,
   listJurisdictions,
@@ -745,6 +746,100 @@ export function buildCatalogTools(): ToolRegistry {
                 recentBuyers: s.recentBuyers?.slice(0, 5) ?? [],
                 matchReasons: s.matchReasons,
               })),
+            };
+          },
+        ),
+    }),
+
+    find_competing_sellers: defineTool({
+      name: 'find_competing_sellers',
+      description:
+        'Sell-side market intel: given a commodity + geography, return who has been winning ' +
+        'awards lately (active sellers) AND who has the capability but has gone quiet (dormant ' +
+        'sellers). Distinct from find_suppliers_for_tender — that ranks plausible bidders for a ' +
+        "specific tender; this surfaces the COMPETITIVE LANDSCAPE for a category. Use when the " +
+        "user asks 'who else is selling X', 'who's competing for diesel in the Caribbean', " +
+        "'show me dormant suppliers we could pitch back-to-back', or 'what's the going price for " +
+        "X awards lately'. Returns market price-band stats (median + p25/p75 of contract " +
+        '$USD) so you can sanity-check a broker offer without a separate query. The dormant ' +
+        'slice is strategically valuable: capability + no recent wins = high responsiveness ' +
+        'to alternative deal structures (back-to-back, off-take, blending arrangements). ' +
+        'Public-tender data only — same coverage caveat as find_buyers_for_offer.',
+      kind: 'read',
+      schema: z.object({
+        categoryTag: z
+          .enum([
+            'crude-oil',
+            'diesel',
+            'gasoline',
+            'jet-fuel',
+            'lpg',
+            'marine-bunker',
+            'heating-oil',
+            'heavy-fuel-oil',
+            'food-commodities',
+            'vehicles',
+          ])
+          .describe('Same vocabulary as find_buyers_for_offer.'),
+        buyerCountries: z
+          .array(z.string().length(2))
+          .optional()
+          .describe(
+            "ISO-2 codes filtering award geography. e.g. ['DO','JM','TT'] for the Caribbean. " +
+              'Empty = global.',
+          ),
+        monthsLookback: z
+          .number()
+          .min(1)
+          .max(60)
+          .optional()
+          .describe('Active-window length in months. Default 12.'),
+        dormantLookbackMonths: z
+          .number()
+          .min(6)
+          .max(120)
+          .optional()
+          .describe(
+            'Total history considered for "dormant capable" identification. Suppliers who won ' +
+              'between dormantLookback and active-window are flagged as dormant. Default 36.',
+          ),
+        limit: z.number().min(1).max(100).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_competing_sellers',
+            args: input,
+            summarize: (out: {
+              activeSellers: { length: number };
+              dormantSellers: { length: number };
+            }) => ({
+              resultCount: out.activeSellers.length + out.dormantSellers.length,
+              resultSummary: {
+                categoryTag: input.categoryTag,
+                activeCount: out.activeSellers.length,
+                dormantCount: out.dormantSellers.length,
+              },
+            }),
+          },
+          async () => {
+            const result = await findCompetingSellers({
+              categoryTag: input.categoryTag,
+              buyerCountries: input.buyerCountries,
+              monthsLookback: input.monthsLookback,
+              dormantLookbackMonths: input.dormantLookbackMonths,
+              limit: input.limit ?? 25,
+            });
+            return {
+              categoryTag: result.categoryTag,
+              marketStats: result.marketStats,
+              activeSellers: result.activeSellers,
+              dormantSellers: result.dormantSellers,
+              caveat:
+                'Public procurement data only. Private commercial flows (refiner-to-refiner, ' +
+                'trader-to-trader) are not represented. Dormant flagging is by public-tender ' +
+                'inactivity — a supplier may be active in private channels we can’t see.',
             };
           },
         ),

@@ -1481,6 +1481,233 @@ export async function findSuppliersForTender(
   return { derivedFrom, categoryTag, suppliers };
 }
 
+export interface CompetingSellerArgs {
+  /** Internal commodity tag — same vocabulary as find_buyers_for_offer. */
+  categoryTag: string;
+  /** Optional ISO-2 list filtering buyer geography (i.e., where the
+   *  awards landed). Omit for global. */
+  buyerCountries?: string[];
+  /** Window for "active". Default 12 months. */
+  monthsLookback?: number;
+  /** Window before that for the "ever active" pool used to derive
+   *  dormant suppliers. Default 36 months. */
+  dormantLookbackMonths?: number;
+  /** Cap rows per group. Default 25. */
+  limit?: number;
+}
+
+export interface CompetingSellerRow {
+  supplierId: string;
+  supplierName: string;
+  country: string | null;
+  awardsCount: number;
+  totalValueUsd: number | null;
+  avgValueUsd: number | null;
+  mostRecentAwardDate: string;
+  recentBuyers: string[];
+}
+
+export interface DormantSellerRow {
+  supplierId: string;
+  supplierName: string;
+  country: string | null;
+  /** Last award in the longer-lookback pool. By definition pre-window. */
+  mostRecentAwardDate: string;
+  /** Total awards in the longer pool — proxies "capability". */
+  historicalAwardsCount: number;
+  historicalTotalValueUsd: number | null;
+}
+
+export interface CompetingSellersMarketStats {
+  /** Distinct active sellers in the window. */
+  activeSellersCount: number;
+  /** Awards in the window (denominator for "share"). */
+  totalAwardsInWindow: number;
+  /** Sum of contract_value_usd across the window (null if all rows null). */
+  totalValueUsd: number | null;
+  /** Median + p25/p75 of per-award contract_value_usd — price band proxy. */
+  medianAwardValueUsd: number | null;
+  p25AwardValueUsd: number | null;
+  p75AwardValueUsd: number | null;
+}
+
+export interface CompetingSellersResult {
+  categoryTag: string;
+  marketStats: CompetingSellersMarketStats;
+  activeSellers: CompetingSellerRow[];
+  dormantSellers: DormantSellerRow[];
+}
+
+/**
+ * Sell-side market intel: who has been winning a category in a
+ * geography lately, vs who has the capability but has gone quiet.
+ *
+ * Distinct from `findSuppliersForTender`:
+ *   - That's framed around a specific tender (existing opportunity or
+ *     explicit fields) and ranks plausible bidders.
+ *   - This is framed around competitive landscape — splits suppliers
+ *     into ACTIVE (won in last N months) and DORMANT (won in the
+ *     longer history but not in the recent window). The dormant
+ *     slice is the strategically interesting one for VTC's sell-side
+ *     workflow: capability + no recent wins = high responsiveness to
+ *     alternative deal structures (back-to-back, off-take).
+ *
+ * Also returns market-level price-band stats (median + p25/p75 of
+ * per-award $USD) so callers can sanity-check whether a broker offer
+ * is competitive without round-tripping a separate query.
+ */
+export async function findCompetingSellers(
+  args: CompetingSellerArgs,
+): Promise<CompetingSellersResult> {
+  const monthsLookback = args.monthsLookback ?? 12;
+  const dormantLookbackMonths = args.dormantLookbackMonths ?? 36;
+  const limit = args.limit ?? 25;
+
+  // ACTIVE — supplier won at least one award in the recent window.
+  const activeRows = await db.execute(sql`
+    SELECT
+      s.id                          AS supplier_id,
+      s.organisation_name           AS supplier_name,
+      s.country,
+      COUNT(*)::int                 AS awards_count,
+      SUM(a.contract_value_usd)     AS total_value_usd,
+      AVG(a.contract_value_usd)     AS avg_value_usd,
+      MAX(a.award_date)             AS most_recent_award_date,
+      (ARRAY_AGG(DISTINCT a.buyer_name))[1:5] AS recent_buyers
+    FROM awards a
+    JOIN award_awardees aa ON aa.award_id = a.id
+    JOIN external_suppliers s ON s.id = aa.supplier_id
+    WHERE
+      ${args.categoryTag} = ANY(a.category_tags)
+      AND a.award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+      ${
+        args.buyerCountries && args.buyerCountries.length > 0
+          ? sql`AND a.buyer_country = ANY(${args.buyerCountries}::text[])`
+          : sql``
+      }
+    GROUP BY s.id, s.organisation_name, s.country
+    ORDER BY MAX(a.award_date) DESC, COUNT(*) DESC
+    LIMIT ${limit};
+  `);
+
+  // DORMANT — supplier won in the broader pool but not in the recent window.
+  // Anti-join via NOT EXISTS keeps Postgres on a hash-anti plan.
+  const dormantRows = await db.execute(sql`
+    SELECT
+      s.id                          AS supplier_id,
+      s.organisation_name           AS supplier_name,
+      s.country,
+      COUNT(*)::int                 AS historical_awards_count,
+      SUM(a.contract_value_usd)     AS historical_total_value_usd,
+      MAX(a.award_date)             AS most_recent_award_date
+    FROM awards a
+    JOIN award_awardees aa ON aa.award_id = a.id
+    JOIN external_suppliers s ON s.id = aa.supplier_id
+    WHERE
+      ${args.categoryTag} = ANY(a.category_tags)
+      AND a.award_date >= NOW() - (${dormantLookbackMonths}::int || ' months')::interval
+      AND a.award_date < NOW() - (${monthsLookback}::int || ' months')::interval
+      ${
+        args.buyerCountries && args.buyerCountries.length > 0
+          ? sql`AND a.buyer_country = ANY(${args.buyerCountries}::text[])`
+          : sql``
+      }
+      AND NOT EXISTS (
+        SELECT 1
+        FROM awards a2
+        JOIN award_awardees aa2 ON aa2.award_id = a2.id
+        WHERE
+          aa2.supplier_id = s.id
+          AND ${args.categoryTag} = ANY(a2.category_tags)
+          AND a2.award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+          ${
+            args.buyerCountries && args.buyerCountries.length > 0
+              ? sql`AND a2.buyer_country = ANY(${args.buyerCountries}::text[])`
+              : sql``
+          }
+      )
+    GROUP BY s.id, s.organisation_name, s.country
+    ORDER BY MAX(a.award_date) DESC, COUNT(*) DESC
+    LIMIT ${limit};
+  `);
+
+  // Market-level stats over the active window — single query keeps
+  // the percentile pass cheap.
+  const statsRows = await db.execute(sql`
+    SELECT
+      COUNT(DISTINCT aa.supplier_id)::int                                 AS active_sellers_count,
+      COUNT(*)::int                                                       AS total_awards_in_window,
+      SUM(a.contract_value_usd)                                           AS total_value_usd,
+      percentile_cont(0.50) WITHIN GROUP (ORDER BY a.contract_value_usd)  AS median_award_value_usd,
+      percentile_cont(0.25) WITHIN GROUP (ORDER BY a.contract_value_usd)  AS p25_award_value_usd,
+      percentile_cont(0.75) WITHIN GROUP (ORDER BY a.contract_value_usd)  AS p75_award_value_usd
+    FROM awards a
+    JOIN award_awardees aa ON aa.award_id = a.id
+    WHERE
+      ${args.categoryTag} = ANY(a.category_tags)
+      AND a.award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
+      ${
+        args.buyerCountries && args.buyerCountries.length > 0
+          ? sql`AND a.buyer_country = ANY(${args.buyerCountries}::text[])`
+          : sql``
+      };
+  `);
+  const stats = (statsRows.rows as Array<Record<string, unknown>>)[0] ?? {};
+
+  return {
+    categoryTag: args.categoryTag,
+    marketStats: {
+      activeSellersCount: Number(stats.active_sellers_count ?? 0),
+      totalAwardsInWindow: Number(stats.total_awards_in_window ?? 0),
+      totalValueUsd:
+        stats.total_value_usd != null
+          ? Number.parseFloat(String(stats.total_value_usd))
+          : null,
+      medianAwardValueUsd:
+        stats.median_award_value_usd != null
+          ? Number.parseFloat(String(stats.median_award_value_usd))
+          : null,
+      p25AwardValueUsd:
+        stats.p25_award_value_usd != null
+          ? Number.parseFloat(String(stats.p25_award_value_usd))
+          : null,
+      p75AwardValueUsd:
+        stats.p75_award_value_usd != null
+          ? Number.parseFloat(String(stats.p75_award_value_usd))
+          : null,
+    },
+    activeSellers: (activeRows.rows as Array<Record<string, unknown>>).map((r) => ({
+      supplierId: String(r.supplier_id),
+      supplierName: String(r.supplier_name),
+      country: r.country == null ? null : String(r.country),
+      awardsCount: Number(r.awards_count),
+      totalValueUsd:
+        r.total_value_usd != null ? Number.parseFloat(String(r.total_value_usd)) : null,
+      avgValueUsd:
+        r.avg_value_usd != null ? Number.parseFloat(String(r.avg_value_usd)) : null,
+      mostRecentAwardDate:
+        r.most_recent_award_date instanceof Date
+          ? r.most_recent_award_date.toISOString().slice(0, 10)
+          : String(r.most_recent_award_date),
+      recentBuyers: (r.recent_buyers as string[] | null) ?? [],
+    })),
+    dormantSellers: (dormantRows.rows as Array<Record<string, unknown>>).map((r) => ({
+      supplierId: String(r.supplier_id),
+      supplierName: String(r.supplier_name),
+      country: r.country == null ? null : String(r.country),
+      historicalAwardsCount: Number(r.historical_awards_count),
+      historicalTotalValueUsd:
+        r.historical_total_value_usd != null
+          ? Number.parseFloat(String(r.historical_total_value_usd))
+          : null,
+      mostRecentAwardDate:
+        r.most_recent_award_date instanceof Date
+          ? r.most_recent_award_date.toISOString().slice(0, 10)
+          : String(r.most_recent_award_date),
+    })),
+  };
+}
+
 export type AnalyzeSupplierArgs = {
   supplierId?: string;
   supplierName?: string;
