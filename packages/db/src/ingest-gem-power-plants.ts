@@ -33,7 +33,7 @@ import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import * as schema from './schema';
 import { findOrUpsertEntity } from './lib/find-or-upsert-entity';
-import { readTabular, pickCol, parseNumberSafe } from './lib/read-tabular';
+import { readTabular, pickCol, parseNumberSafe, SheetNotFoundError } from './lib/read-tabular';
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -262,9 +262,16 @@ async function main(): Promise<void> {
     let rows: Array<Record<string, string>>;
     try {
       rows = await readTabular(path, sheet);
-    } catch {
-      console.warn(`  sheet "${sheet}" not found — skipping`);
-      continue;
+    } catch (err) {
+      if (err instanceof SheetNotFoundError) {
+        console.warn(
+          `  sheet "${sheet}" not found — skipping. Available: ${err.availableSheets.join(', ')}`,
+        );
+        continue;
+      }
+      // File-not-found / permission errors etc. should fail loudly,
+      // not look like a missing sheet.
+      throw err;
     }
     console.log(`  ${sheet}: ${rows.length} unit rows`);
 

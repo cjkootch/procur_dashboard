@@ -153,75 +153,92 @@ function extractRefineriesFromHtml(html: string): RawRow[] {
   const $ = cheerio.load(html);
   const out: RawRow[] = [];
 
-  // Select all top-level content nodes in document order.
-  const root = $('.mw-parser-output').first();
-  if (root.length === 0) return out;
+  // Iterate over all H2s and tables in document order. Modern Wikipedia
+  // wraps H2 in <div class="mw-heading mw-heading2"><h2>...</h2></div>;
+  // older articles have bare <h2>. Find all of them via .find() and
+  // sort by document position so we process them in render order.
+  const heads = $('h2');
+  const tables = $('table.wikitable');
+  if (heads.length === 0 && tables.length === 0) return out;
+
+  // Build a single ordered list of {kind, $node, position} where position
+  // is determined by walking the DOM in tree order. cheerio doesn't
+  // expose document position directly, so we use compareDocumentPosition-
+  // equivalent logic via index in a flat list of all candidates.
+  type Item = { kind: 'h2' | 'table'; el: unknown };
+  const items: Item[] = [];
+  $('h2, table.wikitable').each((_i, el) => {
+    const tag = (el as { tagName?: string }).tagName?.toLowerCase();
+    if (tag === 'h2') items.push({ kind: 'h2', el });
+    else if (tag === 'table') items.push({ kind: 'table', el });
+  });
 
   let currentCountry: string | null = null;
 
-  root.children().each((_i, el) => {
-    const node = $(el);
-    const tag =
-      (el as { tagName?: string; type?: string }).tagName?.toLowerCase() ?? '';
-
-    if (tag === 'h2') {
-      // h2 in the parsed output usually has a span.mw-headline holding the title text
-      const heading = node.find('.mw-headline').first().text() || node.text();
-      const iso = nameToIso2(heading);
-      currentCountry = iso;
-      return;
+  for (const item of items) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const $node = $(item.el as any);
+    if (item.kind === 'h2') {
+      // Heading text — try .mw-headline (older), then the h2's own text.
+      const heading =
+        $node.find('.mw-headline').first().text().trim() ||
+        $node.text().trim();
+      // Strip "[edit]" trailing text that some Wikipedia HTML includes
+      const cleaned = heading.replace(/\[edit\]\s*$/i, '').trim();
+      currentCountry = nameToIso2(cleaned);
+      continue;
     }
 
-    if (tag === 'table' && node.hasClass('wikitable') && currentCountry) {
-      const headers: string[] = [];
-      node
-        .find('tr')
-        .first()
-        .find('th')
-        .each((_j, th) => {
-          headers.push($(th).text().trim().toLowerCase());
-        });
+    if (!currentCountry) continue;
 
-      const colIdx = (...candidates: string[]): number => {
-        for (let i = 0; i < headers.length; i += 1) {
-          for (const cand of candidates) {
-            if (headers[i]!.includes(cand)) return i;
-          }
-        }
-        return -1;
-      };
-
-      const nameCol = colIdx('refinery', 'name');
-      const operatorCol = colIdx('operator', 'owner', 'company');
-      const capacityCol = colIdx('capacity', 'bbl', 'bpd');
-      const locationCol = colIdx('location', 'city', 'place', 'state', 'province');
-      const notesCol = colIdx('note', 'remark', 'status');
-
-      if (nameCol < 0) return; // unrecognized table layout
-
-      node.find('tr').slice(1).each((_j, tr) => {
-        const cells = $(tr).find('td');
-        if (cells.length === 0) return;
-        const get = (i: number) =>
-          i >= 0 && i < cells.length ? $(cells.get(i)!).text().trim() : '';
-        const name = get(nameCol).replace(/\[[^\]]*\]/g, '').trim();
-        if (!name) return;
-        const operator = get(operatorCol).replace(/\[[^\]]*\]/g, '').trim() || null;
-        const capacityBpd = parseCapacityBpd(get(capacityCol));
-        const locationText = get(locationCol) || null;
-        const notes = get(notesCol) || null;
-
-        out.push({
-          country: currentCountry!,
-          name,
-          operator,
-          capacityBpd,
-          locationText,
-          notes,
-        });
+    const headers: string[] = [];
+    $node
+      .find('tr')
+      .first()
+      .find('th')
+      .each((_j, th) => {
+        headers.push($(th).text().trim().toLowerCase());
       });
-    }
-  });
+
+    const colIdx = (...candidates: string[]): number => {
+      for (let i = 0; i < headers.length; i += 1) {
+        for (const cand of candidates) {
+          if (headers[i]!.includes(cand)) return i;
+        }
+      }
+      return -1;
+    };
+
+    const nameCol = colIdx('refinery', 'name');
+    const operatorCol = colIdx('operator', 'owner', 'company');
+    const capacityCol = colIdx('capacity', 'bbl', 'bpd');
+    const locationCol = colIdx('location', 'city', 'place', 'state', 'province');
+    const notesCol = colIdx('note', 'remark', 'status');
+
+    if (nameCol < 0) continue;
+
+    $node.find('tr').slice(1).each((_j, tr) => {
+      const cells = $(tr).find('td');
+      if (cells.length === 0) return;
+      const get = (i: number) =>
+        i >= 0 && i < cells.length ? $(cells.get(i)!).text().trim() : '';
+      const name = get(nameCol).replace(/\[[^\]]*\]/g, '').trim();
+      if (!name) return;
+      const operator = get(operatorCol).replace(/\[[^\]]*\]/g, '').trim() || null;
+      const capacityBpd = parseCapacityBpd(get(capacityCol));
+      const locationText = get(locationCol) || null;
+      const notes = get(notesCol) || null;
+
+      out.push({
+        country: currentCountry!,
+        name,
+        operator,
+        capacityBpd,
+        locationText,
+        notes,
+      });
+    });
+  }
 
   return out;
 }

@@ -9,23 +9,47 @@
  * user to manually convert to CSV before ingesting.
  */
 import { readFile } from 'node:fs/promises';
-import { extname } from 'node:path';
+import { extname, resolve, isAbsolute } from 'node:path';
 import { parse as parseCsv } from 'csv-parse/sync';
 import * as XLSX from 'xlsx';
 
 export type Row = Record<string, string>;
 
+/**
+ * Resolve a user-provided file path against the directory where the
+ * user actually invoked the command, not the script's runtime CWD.
+ *
+ * pnpm --filter switches CWD to the workspace package directory, which
+ * means relative paths like `./gort.csv` would resolve under
+ * `packages/db/` instead of the user's terminal cwd. pnpm exposes the
+ * original cwd as INIT_CWD; tsx/node fall back to process.cwd().
+ *
+ * Absolute paths pass through unchanged.
+ */
+export function resolveUserPath(userPath: string): string {
+  if (isAbsolute(userPath)) return userPath;
+  const baseDir = process.env.INIT_CWD ?? process.cwd();
+  return resolve(baseDir, userPath);
+}
+
 export async function readTabular(path: string, sheetName?: string): Promise<Row[]> {
-  const ext = extname(path).toLowerCase();
+  const resolved = resolveUserPath(path);
+  const ext = extname(resolved).toLowerCase();
   if (ext === '.xlsx' || ext === '.xls' || ext === '.xlsm') {
-    const buf = await readFile(path);
+    const buf = await readFile(resolved);
     const workbook = XLSX.read(buf, { type: 'buffer' });
-    const targetSheet =
-      (sheetName && workbook.Sheets[sheetName]) ||
-      workbook.Sheets[workbook.SheetNames[0] ?? ''];
+    let targetSheet: XLSX.WorkSheet | undefined;
+    if (sheetName) {
+      targetSheet = workbook.Sheets[sheetName];
+      if (!targetSheet) {
+        throw new SheetNotFoundError(sheetName, workbook.SheetNames);
+      }
+    } else {
+      targetSheet = workbook.Sheets[workbook.SheetNames[0] ?? ''];
+    }
     if (!targetSheet) {
       throw new Error(
-        `readTabular: no readable sheet in ${path}. Available: ${workbook.SheetNames.join(', ')}`,
+        `readTabular: no readable sheet in ${resolved}. Available: ${workbook.SheetNames.join(', ')}`,
       );
     }
     const rows = XLSX.utils.sheet_to_json<Row>(targetSheet, {
@@ -35,12 +59,30 @@ export async function readTabular(path: string, sheetName?: string): Promise<Row
     return rows;
   }
   // CSV / fallback path
-  const text = await readFile(path, 'utf8');
+  const text = await readFile(resolved, 'utf8');
   return parseCsv(text, {
     columns: true,
     skip_empty_lines: true,
     trim: true,
   }) as Row[];
+}
+
+/**
+ * Thrown when a specific sheet name was requested but not present in
+ * the workbook. Lets callers distinguish "this xlsx doesn't have the
+ * sheet I expected" from "the file doesn't exist or can't be read".
+ */
+export class SheetNotFoundError extends Error {
+  readonly sheetName: string;
+  readonly availableSheets: string[];
+  constructor(sheetName: string, availableSheets: string[]) {
+    super(
+      `Sheet "${sheetName}" not found. Available: ${availableSheets.join(', ')}`,
+    );
+    this.name = 'SheetNotFoundError';
+    this.sheetName = sheetName;
+    this.availableSheets = availableSheets;
+  }
 }
 
 /**
