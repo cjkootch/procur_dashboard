@@ -4,6 +4,7 @@ import {
   text,
   timestamp,
   jsonb,
+  numeric,
   index,
 } from 'drizzle-orm/pg-core';
 
@@ -69,6 +70,14 @@ export const knownEntities = pgTable(
     /** Open metadata bucket — where the analyst pulled the data from,
         last review date, deal-specific flags, etc. */
     metadata: jsonb('metadata'),
+
+    /** Latitude / longitude in WGS84 decimal degrees. Populated for
+        physical-asset entities (refineries, terminals, ports) — null
+        for entities with no canonical location (multinational trading
+        houses headquartered everywhere, etc.). Stored as numeric so
+        precision is preserved through serialization round-trips. */
+    latitude: numeric('latitude', { precision: 9, scale: 6 }),
+    longitude: numeric('longitude', { precision: 9, scale: 6 }),
 
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),

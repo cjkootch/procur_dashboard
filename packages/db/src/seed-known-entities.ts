@@ -37,6 +37,10 @@ type Seed = {
   aliases?: string[];
   tags?: string[];
   metadata?: Record<string, unknown>;
+  /** WGS84 decimal degrees. For physical-asset entities (refineries,
+   *  ports). Null for entities without a canonical location. */
+  latitude?: number;
+  longitude?: number;
 };
 
 /**
@@ -56,6 +60,8 @@ const MEDITERRANEAN_REFINERS: Seed[] = [
     aliases: ['Eni Sannazzaro', 'Sannazzaro de Burgondi'],
     tags: ['refinery', 'region:mediterranean', 'private', 'sweet-crude-runner', 'libya-historic'],
     metadata: { capacity_bpd: 200_000, operator: 'Eni' },
+    latitude: 45.0844,
+    longitude: 8.9094,
   },
   {
     slug: 'curated-it-eni-taranto',
@@ -68,6 +74,8 @@ const MEDITERRANEAN_REFINERS: Seed[] = [
     aliases: ['Eni Taranto'],
     tags: ['refinery', 'region:mediterranean', 'private', 'libya-historic'],
     metadata: { capacity_bpd: 105_000, operator: 'Eni' },
+    latitude: 40.4707,
+    longitude: 17.2106,
   },
   {
     slug: 'curated-it-isab-priolo',
@@ -80,6 +88,8 @@ const MEDITERRANEAN_REFINERS: Seed[] = [
     aliases: ['ISAB Priolo', 'Priolo refinery', 'Goi Energy Priolo'],
     tags: ['refinery', 'region:mediterranean', 'private', 'sweet-crude-runner', 'sanctions-watch'],
     metadata: { capacity_bpd: 360_000, operator: 'GOI Energy' },
+    latitude: 37.1683,
+    longitude: 15.1819,
   },
   {
     slug: 'curated-it-saras-sarroch',
@@ -92,6 +102,8 @@ const MEDITERRANEAN_REFINERS: Seed[] = [
     aliases: ['Saras', 'Sarroch refinery'],
     tags: ['refinery', 'region:mediterranean', 'private', 'sweet-crude-runner', 'high-complexity'],
     metadata: { capacity_bpd: 300_000, operator: 'Saras' },
+    latitude: 39.0628,
+    longitude: 9.0131,
   },
   {
     slug: 'curated-es-repsol-cartagena',
@@ -104,6 +116,8 @@ const MEDITERRANEAN_REFINERS: Seed[] = [
     aliases: ['Repsol Cartagena'],
     tags: ['refinery', 'region:mediterranean', 'private', 'sweet-crude-runner', 'libya-historic'],
     metadata: { capacity_bpd: 220_000, operator: 'Repsol' },
+    latitude: 37.5786,
+    longitude: -1.0117,
   },
   {
     slug: 'curated-es-repsol-bilbao',
@@ -116,6 +130,8 @@ const MEDITERRANEAN_REFINERS: Seed[] = [
     aliases: ['Petronor', 'Repsol Bilbao', 'Petronor Bilbao'],
     tags: ['refinery', 'region:mediterranean', 'private'],
     metadata: { capacity_bpd: 220_000, operator: 'Petronor / Repsol' },
+    latitude: 43.3625,
+    longitude: -3.1097,
   },
   {
     slug: 'curated-tr-tupras-izmit',
@@ -128,6 +144,8 @@ const MEDITERRANEAN_REFINERS: Seed[] = [
     aliases: ['Tupras Izmit', 'Tupras Kocaeli'],
     tags: ['refinery', 'region:mediterranean', 'private', 'urals-substitute-watch'],
     metadata: { capacity_bpd: 227_000, operator: 'Tüpraş (Koç Holding)' },
+    latitude: 40.7833,
+    longitude: 29.9,
   },
   {
     slug: 'curated-gr-helleniq-aspropyrgos',
@@ -140,6 +158,8 @@ const MEDITERRANEAN_REFINERS: Seed[] = [
     aliases: ['Hellenic Petroleum Aspropyrgos', 'HELPE Aspropyrgos'],
     tags: ['refinery', 'region:mediterranean', 'private', 'libya-historic'],
     metadata: { capacity_bpd: 150_000, operator: 'HelleniQ Energy' },
+    latitude: 38.0628,
+    longitude: 23.5972,
   },
   {
     slug: 'curated-hu-mol-szazhalombatta',
@@ -152,6 +172,8 @@ const MEDITERRANEAN_REFINERS: Seed[] = [
     aliases: ['MOL Danube', 'Danube refinery'],
     tags: ['refinery', 'region:mediterranean', 'private', 'urals-substitute-watch'],
     metadata: { capacity_bpd: 160_000, operator: 'MOL' },
+    latitude: 47.3267,
+    longitude: 18.9264,
   },
   {
     slug: 'curated-at-omv-schwechat',
@@ -164,6 +186,8 @@ const MEDITERRANEAN_REFINERS: Seed[] = [
     aliases: ['OMV Schwechat'],
     tags: ['refinery', 'region:mediterranean', 'private'],
     metadata: { capacity_bpd: 200_000, operator: 'OMV' },
+    latitude: 48.13,
+    longitude: 16.49,
   },
 ];
 
@@ -184,6 +208,8 @@ const INDIAN_STATE_REFINERS: Seed[] = [
     aliases: ['IOCL Paradip', 'Indian Oil Paradip'],
     tags: ['refinery', 'region:asia-state', 'public-tender-visible', 'sweet-crude-runner'],
     metadata: { capacity_bpd: 300_000, operator: 'Indian Oil Corporation' },
+    latitude: 20.2667,
+    longitude: 86.6889,
   },
   {
     slug: 'curated-in-iocl-panipat',
@@ -196,6 +222,8 @@ const INDIAN_STATE_REFINERS: Seed[] = [
     aliases: ['IOCL Panipat'],
     tags: ['refinery', 'region:asia-state', 'public-tender-visible'],
     metadata: { capacity_bpd: 300_000, operator: 'Indian Oil Corporation' },
+    latitude: 29.3897,
+    longitude: 76.9594,
   },
   {
     slug: 'curated-in-bpcl-mumbai',
@@ -208,6 +236,8 @@ const INDIAN_STATE_REFINERS: Seed[] = [
     aliases: ['BPCL Mumbai', 'Bharat Petroleum Mumbai'],
     tags: ['refinery', 'region:asia-state', 'public-tender-visible'],
     metadata: { capacity_bpd: 240_000, operator: 'Bharat Petroleum' },
+    latitude: 19.0269,
+    longitude: 72.8964,
   },
   {
     slug: 'curated-in-bpcl-kochi',
@@ -220,6 +250,8 @@ const INDIAN_STATE_REFINERS: Seed[] = [
     aliases: ['BPCL Kochi', 'Kochi Refinery'],
     tags: ['refinery', 'region:asia-state', 'public-tender-visible', 'sweet-crude-runner'],
     metadata: { capacity_bpd: 310_000, operator: 'Bharat Petroleum' },
+    latitude: 9.9747,
+    longitude: 76.2683,
   },
   {
     slug: 'curated-in-hpcl-mumbai',
@@ -232,6 +264,8 @@ const INDIAN_STATE_REFINERS: Seed[] = [
     aliases: ['HPCL Mahul', 'HPCL Mumbai'],
     tags: ['refinery', 'region:asia-state', 'public-tender-visible'],
     metadata: { capacity_bpd: 190_000, operator: 'Hindustan Petroleum' },
+    latitude: 19.0269,
+    longitude: 72.8964,
   },
   {
     slug: 'curated-in-hpcl-visakh',
@@ -244,6 +278,8 @@ const INDIAN_STATE_REFINERS: Seed[] = [
     aliases: ['HPCL Visakh', 'HPCL Vizag'],
     tags: ['refinery', 'region:asia-state', 'public-tender-visible'],
     metadata: { capacity_bpd: 165_000, operator: 'Hindustan Petroleum' },
+    latitude: 17.7167,
+    longitude: 83.2167,
   },
   {
     slug: 'curated-in-mrpl-mangalore',
@@ -256,6 +292,8 @@ const INDIAN_STATE_REFINERS: Seed[] = [
     aliases: ['MRPL'],
     tags: ['refinery', 'region:asia-state', 'public-tender-visible'],
     metadata: { capacity_bpd: 300_000, operator: 'MRPL (ONGC)' },
+    latitude: 12.9667,
+    longitude: 74.9,
   },
   {
     slug: 'curated-in-reliance-jamnagar',
@@ -268,6 +306,8 @@ const INDIAN_STATE_REFINERS: Seed[] = [
     aliases: ['Reliance Jamnagar', 'RIL Jamnagar'],
     tags: ['refinery', 'region:asia-state', 'private', 'mega-complex'],
     metadata: { capacity_bpd: 1_360_000, operator: 'Reliance Industries' },
+    latitude: 22.425,
+    longitude: 69.65,
   },
 ];
 
@@ -282,6 +322,8 @@ const OTHER_ASIAN_STATE_REFINERS: Seed[] = [
     aliases: ['Pertamina Cilacap', 'Cilacap refinery'],
     tags: ['refinery', 'region:asia-state', 'public-tender-visible'],
     metadata: { capacity_bpd: 348_000, operator: 'Pertamina' },
+    latitude: -7.7167,
+    longitude: 109.0167,
   },
   {
     slug: 'curated-pk-pso-karachi',
@@ -293,6 +335,8 @@ const OTHER_ASIAN_STATE_REFINERS: Seed[] = [
     aliases: ['PSO', 'Pakistan State Oil'],
     tags: ['state-buyer', 'region:asia-state', 'public-tender-visible'],
     metadata: { operator: 'PSO' },
+    latitude: 24.8607,
+    longitude: 67.0011,
   },
   {
     slug: 'curated-bd-bpc-chittagong',
@@ -305,6 +349,8 @@ const OTHER_ASIAN_STATE_REFINERS: Seed[] = [
     aliases: ['Eastern Refinery Chittagong', 'BPC Eastern Refinery'],
     tags: ['refinery', 'region:asia-state', 'public-tender-visible'],
     metadata: { capacity_bpd: 33_000, operator: 'Eastern Refinery (BPC)' },
+    latitude: 22.2167,
+    longitude: 91.7833,
   },
   {
     slug: 'curated-lk-cpc-sapugaskanda',
@@ -316,6 +362,8 @@ const OTHER_ASIAN_STATE_REFINERS: Seed[] = [
     aliases: ['Sapugaskanda', 'CPC Sri Lanka'],
     tags: ['refinery', 'region:asia-state', 'public-tender-visible'],
     metadata: { capacity_bpd: 50_000, operator: 'Ceylon Petroleum Corp.' },
+    latitude: 6.9892,
+    longitude: 79.9356,
   },
   {
     slug: 'curated-th-ptt-rayong',
@@ -327,6 +375,8 @@ const OTHER_ASIAN_STATE_REFINERS: Seed[] = [
     aliases: ['Thai Oil Sriracha', 'Thaioil'],
     tags: ['refinery', 'region:asia-state'],
     metadata: { capacity_bpd: 275_000, operator: 'Thai Oil (PTT)' },
+    latitude: 13.15,
+    longitude: 100.9833,
   },
   {
     slug: 'curated-vn-bsr-dung-quat',
@@ -338,6 +388,8 @@ const OTHER_ASIAN_STATE_REFINERS: Seed[] = [
     aliases: ['BSR Dung Quat', 'Binh Son'],
     tags: ['refinery', 'region:asia-state'],
     metadata: { capacity_bpd: 145_000, operator: 'BSR (PetroVietnam)' },
+    latitude: 15.4,
+    longitude: 108.7,
   },
 ];
 
@@ -353,6 +405,8 @@ const TRADING_HOUSES: Seed[] = [
     aliases: ['Vitol Group', 'Vitol SA'],
     tags: ['trader', 'libya-active', 'top-tier'],
     metadata: { headquarters: 'Geneva' },
+    latitude: 46.2044,
+    longitude: 6.1432,
   },
   {
     slug: 'curated-ch-glencore-baar',
@@ -364,6 +418,8 @@ const TRADING_HOUSES: Seed[] = [
     aliases: ['Glencore International'],
     tags: ['trader', 'libya-historic', 'top-tier'],
     metadata: { headquarters: 'Baar, Switzerland' },
+    latitude: 47.1947,
+    longitude: 8.5247,
   },
   {
     slug: 'curated-sg-trafigura',
@@ -376,6 +432,8 @@ const TRADING_HOUSES: Seed[] = [
     aliases: ['Trafigura Group', 'Trafigura Pte Ltd'],
     tags: ['trader', 'top-tier'],
     metadata: { headquarters: 'Singapore (legal); operations: Geneva' },
+    latitude: 1.3521,
+    longitude: 103.8198,
   },
   {
     slug: 'curated-ch-mercuria-geneva',
@@ -387,6 +445,8 @@ const TRADING_HOUSES: Seed[] = [
     aliases: ['Mercuria'],
     tags: ['trader'],
     metadata: { headquarters: 'Geneva' },
+    latitude: 46.2044,
+    longitude: 6.1432,
   },
   {
     slug: 'curated-ch-gunvor-geneva',
@@ -398,6 +458,8 @@ const TRADING_HOUSES: Seed[] = [
     aliases: ['Gunvor'],
     tags: ['trader'],
     metadata: { headquarters: 'Geneva' },
+    latitude: 46.2044,
+    longitude: 6.1432,
   },
 ];
 
@@ -428,6 +490,8 @@ async function main(): Promise<void> {
         notes: s.notes,
         aliases: s.aliases ?? [s.name],
         tags: s.tags ?? [],
+        latitude: s.latitude != null ? String(s.latitude) : null,
+        longitude: s.longitude != null ? String(s.longitude) : null,
         metadata: { source: 'curated', ...(s.metadata ?? {}) },
       })
       .onConflictDoUpdate({
@@ -440,6 +504,8 @@ async function main(): Promise<void> {
           notes: s.notes,
           aliases: s.aliases ?? [s.name],
           tags: s.tags ?? [],
+          latitude: s.latitude != null ? String(s.latitude) : null,
+          longitude: s.longitude != null ? String(s.longitude) : null,
           metadata: { source: 'curated', ...(s.metadata ?? {}) },
           updatedAt: new Date(),
         },

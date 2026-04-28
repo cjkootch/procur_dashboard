@@ -260,6 +260,13 @@
       "when": 1777235000000,
       "tag": "0036_customs_imports",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1777240000000,
+      "tag": "0037_known_entities_geo",
+      "breakpoints": true
     }
   ]
 }
