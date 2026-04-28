@@ -19,6 +19,7 @@
     "@procur/ui": "workspace:*",
     "@procur/utils": "workspace:*",
     "@sentry/nextjs": "^8.47.0",
+    "react-markdown": "^9.0.1",
     "zod": "^3.24.1",
     "drizzle-orm": "^0.38.3",
     "next": "^15.1.3",
