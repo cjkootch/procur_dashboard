@@ -83,7 +83,7 @@ export function LineChart({
   const ticks = [yMin, (yMin + yMax) / 2, yMax];
 
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4">
+    <div className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-4 shadow-sm">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none">
         {ticks.map((t, i) => {
           const y = yFor(t);

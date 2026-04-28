@@ -5,6 +5,8 @@ import {
   getAwardValueHistogram,
   getCommoditySpreadHistory,
   getCommodityTicker,
+  getDataFreshness,
+  getIntelligenceKpis,
   getMarketConcentration,
   getMonthlyAvgAwardValue,
   getMonthlyAwardsVolume,
@@ -105,6 +107,33 @@ function fmtCountry(iso2: string): string {
 const fmtUsd = (n: number | null) =>
   n != null ? `$${Math.round(n).toLocaleString()}` : '—';
 
+const fmtUsdShort = (n: number | null): string => {
+  if (n == null) return '—';
+  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`;
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}k`;
+  return `$${Math.round(n)}`;
+};
+
+function pctChange(current: number, prior: number): number | null {
+  if (prior === 0) return null;
+  return ((current - prior) / prior) * 100;
+}
+
+function formatRelativeTime(iso: string | null): string {
+  if (!iso) return 'never';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return 'just now';
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 90) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}
+
 export default async function IntelligencePage({ searchParams }: Props) {
   const { category, country, months } = await searchParams;
   const categoryTag = category ?? 'diesel';
@@ -161,6 +190,8 @@ export default async function IntelligencePage({ searchParams }: Props) {
     seasonalityVolume,
     supplierBuyerMatrix,
     rolodexCoverage,
+    kpis,
+    freshness,
   ] = await Promise.all([
     safe(getTopBuyersByCategory(filters, 10), [], 'top-buyers'),
     safe(getTopSuppliersByCategory(filters, 10), [], 'top-suppliers'),
@@ -245,6 +276,30 @@ export default async function IntelligencePage({ searchParams }: Props) {
           'rolodex-coverage',
         )
       : Promise.resolve(null),
+    safe(
+      getIntelligenceKpis(valueFilters),
+      {
+        awardsCurrent: 0,
+        awardsPrior: 0,
+        totalUsdCurrent: null,
+        totalUsdPrior: null,
+        uniqueBuyers: 0,
+        uniqueSuppliers: 0,
+        topBuyerName: null,
+        topBuyerSharePct: null,
+      },
+      'kpis',
+    ),
+    safe(
+      getDataFreshness(),
+      {
+        awards: { latest: null, count: 0 },
+        commodityPrices: { latest: null, count: 0 },
+        vesselPositions: { latest: null, count: 0 },
+        customsImports: { latest: null, count: 0 },
+      },
+      'freshness',
+    ),
   ]);
 
   // Aggregate port calls into per-port distinct-vessel counts.
@@ -373,7 +428,8 @@ export default async function IntelligencePage({ searchParams }: Props) {
     : null;
 
   return (
-    <div className="mx-auto max-w-screen-2xl px-6 py-8">
+    <div className="-mx-6 -my-10 min-h-screen bg-[color:var(--color-muted)]/40 px-6 py-8 sm:-mx-8 sm:px-8">
+    <div className="mx-auto max-w-screen-2xl">
       <nav className="mb-3 text-sm text-[color:var(--color-muted-foreground)]">
         <Link href="/suppliers/reverse-search" className="hover:text-[color:var(--color-foreground)]">
           ← Reverse search
@@ -409,6 +465,110 @@ export default async function IntelligencePage({ searchParams }: Props) {
           <span className="font-medium">{monthsLookback} months</span>.
         </p>
       </header>
+
+      {/* Data freshness strip */}
+      <section className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-[color:var(--color-muted-foreground)]">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          <span className="font-medium uppercase tracking-wider">Live</span>
+        </span>
+        <span>
+          Awards: {formatRelativeTime(freshness.awards.latest)}{' '}
+          <span className="opacity-60">({freshness.awards.count.toLocaleString()})</span>
+        </span>
+        <span>
+          Prices: {formatRelativeTime(freshness.commodityPrices.latest)}{' '}
+          <span className="opacity-60">({freshness.commodityPrices.count.toLocaleString()})</span>
+        </span>
+        <span>
+          AIS: {formatRelativeTime(freshness.vesselPositions.latest)}{' '}
+          <span className="opacity-60">({freshness.vesselPositions.count.toLocaleString()})</span>
+        </span>
+        <span>
+          Customs: {formatRelativeTime(freshness.customsImports.latest)}{' '}
+          <span className="opacity-60">({freshness.customsImports.count.toLocaleString()})</span>
+        </span>
+      </section>
+
+      {/* KPI cards — current period vs prior */}
+      <section className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+        {(() => {
+          const dAwards = pctChange(kpis.awardsCurrent, kpis.awardsPrior);
+          const dUsd =
+            kpis.totalUsdCurrent != null && kpis.totalUsdPrior != null
+              ? pctChange(kpis.totalUsdCurrent, kpis.totalUsdPrior)
+              : null;
+          const cards: Array<{
+            label: string;
+            value: string;
+            delta: number | null;
+            sub?: string;
+          }> = [
+            {
+              label: `Awards (${monthsLookback}m)`,
+              value: kpis.awardsCurrent.toLocaleString(),
+              delta: dAwards,
+              sub: `prior ${monthsLookback}m: ${kpis.awardsPrior.toLocaleString()}`,
+            },
+            {
+              label: `Total $USD (${monthsLookback}m)`,
+              value: fmtUsdShort(kpis.totalUsdCurrent),
+              delta: dUsd,
+              sub: `prior: ${fmtUsdShort(kpis.totalUsdPrior)}`,
+            },
+            {
+              label: 'Unique buyers / suppliers',
+              value: `${kpis.uniqueBuyers.toLocaleString()} / ${kpis.uniqueSuppliers.toLocaleString()}`,
+              delta: null,
+            },
+            {
+              label: 'Top buyer share',
+              value:
+                kpis.topBuyerSharePct != null
+                  ? `${kpis.topBuyerSharePct.toFixed(1)}%`
+                  : '—',
+              delta: null,
+              sub: kpis.topBuyerName
+                ? kpis.topBuyerName.length > 32
+                  ? `${kpis.topBuyerName.slice(0, 32)}…`
+                  : kpis.topBuyerName
+                : undefined,
+            },
+          ];
+          return cards.map((c, i) => (
+            <div
+              key={i}
+              className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-card,white)] p-4 shadow-sm dark:bg-[color:var(--color-card,#0a0a0a)]"
+              style={{ background: 'var(--color-card, var(--color-background))' }}
+            >
+              <div className="text-[10px] font-medium uppercase tracking-widest text-[color:var(--color-muted-foreground)]">
+                {c.label}
+              </div>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="text-2xl font-semibold tabular-nums leading-none">
+                  {c.value}
+                </span>
+                {c.delta != null && (
+                  <span
+                    className={`text-xs tabular-nums ${
+                      c.delta >= 0
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-rose-600 dark:text-rose-400'
+                    }`}
+                  >
+                    {c.delta >= 0 ? '▲' : '▼'} {Math.abs(c.delta).toFixed(1)}%
+                  </span>
+                )}
+              </div>
+              {c.sub && (
+                <div className="mt-1 truncate text-[11px] text-[color:var(--color-muted-foreground)]">
+                  {c.sub}
+                </div>
+              )}
+            </div>
+          ));
+        })()}
+      </section>
 
       {/* Commodity price ticker */}
       <section className="mb-6 overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-gradient-to-b from-[color:var(--color-muted)]/30 to-transparent">
@@ -1098,6 +1258,7 @@ export default async function IntelligencePage({ searchParams }: Props) {
         not represented; for cargo-level insight pair with /suppliers/known-entities + AIS port
         calls.
       </footer>
+    </div>
     </div>
   );
 }
