@@ -674,10 +674,10 @@ importers:
         specifier: workspace:*
         version: link:../../packages/utils
       '@trigger.dev/build':
-        specifier: ^4.4.4
+        specifier: 4.4.4
         version: 4.4.4(typescript@5.9.3)
       '@trigger.dev/sdk':
-        specifier: ^4.4.4
+        specifier: 4.4.4
         version: 4.4.4(zod@3.25.76)
       cheerio:
         specifier: ^1.0.0
