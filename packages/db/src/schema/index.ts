@@ -34,3 +34,4 @@ export * from './awards';
 export * from './award-awardees';
 export * from './supplier-aliases';
 export * from './supplier-signals';
+export * from './tool-call-logs';

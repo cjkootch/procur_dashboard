@@ -81,6 +81,8 @@ export {
   meter,
   meterEmbedding,
   defineTool,
+  withToolTelemetry,
+  logToolCall,
   buildAssistantSystem,
   type BudgetStatus,
   type UsageSource,

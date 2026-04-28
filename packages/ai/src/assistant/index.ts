@@ -14,6 +14,12 @@ export { costUsdCentsForTurn, costUsdCentsForEmbedding } from './pricing';
 export { meter, meterEmbedding } from './meter';
 export { buildAssistantSystem } from './system-prompt';
 export { defineTool, buildToolsParam, zodToJsonSchema } from './tools/registry';
+export {
+  logToolCall,
+  withToolTelemetry,
+  type LogToolCallInput,
+  type ToolTelemetrySummary,
+} from './tool-telemetry';
 
 // Re-export commonly-needed Anthropic types so downstream packages can stay
 // on a single SDK version without adding a direct dependency.
