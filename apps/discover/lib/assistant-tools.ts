@@ -6,6 +6,7 @@ import {
   listOpportunities,
   getOpportunityBySlug,
   pricingIntel,
+  summarizeCatalog,
   type OpportunityScope,
 } from './queries';
 
@@ -314,6 +315,59 @@ export function buildDiscoverTools(): ToolRegistry {
           beneficiaryCountry: input.country,
           withinDays: input.withinDays,
         });
+      },
+    }),
+
+    summarize_catalog: defineTool({
+      name: 'summarize_catalog',
+      description:
+        'Aggregate the public catalog into market-sizing buckets — count + total estimated ' +
+        'USD value grouped by jurisdiction, category, beneficiary country, agency, or ' +
+        'currency. Use for questions like "how many fuel tenders by country?", "where is ' +
+        'most procurement happening?", "top agencies by activity", "what categories are ' +
+        'biggest right now?". Returns up to 30 buckets sorted by count descending. Filter ' +
+        'inputs work the same as search_opportunities so you can ask narrow questions like ' +
+        '"of fuel tenders posted this week, which jurisdictions have the most?".',
+      kind: 'read',
+      schema: z.object({
+        groupBy: z
+          .enum(['jurisdiction', 'category', 'country', 'agency', 'currency'])
+          .describe('Which dimension to bucket on. Pick the one that answers the question.'),
+        jurisdiction: z
+          .string()
+          .optional()
+          .describe('Pre-filter to one jurisdiction slug (us-federal, eu-ted, etc) before grouping'),
+        category: z
+          .string()
+          .optional()
+          .describe('Pre-filter to one category slug (food-commodities, petroleum-fuels, etc)'),
+        country: z
+          .string()
+          .optional()
+          .describe('Pre-filter to one beneficiary country (e.g. "Jamaica")'),
+        scope: z
+          .enum(['open', 'past'])
+          .optional()
+          .describe('"open" for active tenders (default), "past" for awarded/closed'),
+        postedWithinDays: z
+          .number()
+          .int()
+          .min(1)
+          .max(365)
+          .optional()
+          .describe('Limit to opportunities posted in the last N days'),
+      }),
+      handler: async (_ctx, input) => {
+        return summarizeCatalog(
+          {
+            jurisdiction: input.jurisdiction,
+            category: input.category,
+            beneficiaryCountry: input.country,
+            scope: input.scope,
+            postedWithinDays: input.postedWithinDays,
+          },
+          input.groupBy,
+        );
       },
     }),
 

@@ -651,3 +651,157 @@ function parseDecimal(s: string | null | undefined): number | null {
   const n = Number.parseFloat(s);
   return Number.isFinite(n) ? n : null;
 }
+
+export type SummarizeFilters = {
+  jurisdiction?: string;
+  category?: string;
+  beneficiaryCountry?: string;
+  scope?: OpportunityScope;
+  /** Limit to opportunities posted within the last N days. */
+  postedWithinDays?: number;
+};
+
+export type SummarizeGroupBy =
+  | 'jurisdiction'
+  | 'category'
+  | 'country'
+  | 'agency'
+  | 'currency';
+
+export type SummarizeBucket = {
+  /** The grouping key — e.g., "United States Federal", "petroleum-fuels", "Jamaica". */
+  label: string;
+  count: number;
+  /** Sum of valueEstimateUsd across the bucket. Null when no rows have a value. */
+  totalValueUsd: number | null;
+};
+
+export type SummarizeResult = {
+  filterDescription: string;
+  groupBy: SummarizeGroupBy;
+  totalRows: number;
+  buckets: SummarizeBucket[];
+};
+
+/**
+ * Aggregate the public catalog into market-sizing buckets. Used by the
+ * AI assistant for "how many fuel tenders by country?", "where is the
+ * most procurement happening?", "top agencies by activity" type
+ * questions.
+ *
+ * Grouping is one-dimensional in v1 — one breakdown per call. The
+ * model can chain calls if it wants two dimensions (e.g., first call
+ * groupBy=country, then groupBy=category for the top country).
+ *
+ * Returns up to 30 buckets sorted by count desc. Empty/null group keys
+ * are filtered out (a row with category=null contributes to totalRows
+ * but not to any bucket).
+ */
+export async function summarizeCatalog(
+  filters: SummarizeFilters,
+  groupBy: SummarizeGroupBy,
+): Promise<SummarizeResult> {
+  const scope: OpportunityScope = filters.scope ?? 'open';
+  const conds = [
+    isNull(opportunities.companyId),
+    scopeCondition(scope),
+  ];
+  if (filters.jurisdiction) conds.push(eq(jurisdictions.slug, filters.jurisdiction));
+  if (filters.category) conds.push(eq(opportunities.category, filters.category));
+  if (filters.beneficiaryCountry) {
+    conds.push(eq(opportunities.beneficiaryCountry, filters.beneficiaryCountry));
+  }
+  if (filters.postedWithinDays && filters.postedWithinDays > 0) {
+    conds.push(
+      gte(
+        sql`coalesce(${opportunities.publishedAt}, ${opportunities.firstSeenAt})`,
+        new Date(Date.now() - filters.postedWithinDays * 24 * 60 * 60 * 1000),
+      ),
+    );
+  }
+  const where = and(...conds);
+
+  // Pick the GROUP BY expression based on the requested dimension.
+  // Each branch joins only what it needs (jurisdictions / agencies)
+  // so the simpler queries don't pay for joins they wouldn't use.
+  let buckets: SummarizeBucket[];
+  if (groupBy === 'jurisdiction') {
+    const rows = await db
+      .select({
+        label: jurisdictions.name,
+        count: sql<number>`count(*)::int`,
+        totalValueUsd: sql<string | null>`sum(${opportunities.valueEstimateUsd}::numeric)::text`,
+      })
+      .from(opportunities)
+      .innerJoin(jurisdictions, eq(opportunities.jurisdictionId, jurisdictions.id))
+      .where(where)
+      .groupBy(jurisdictions.name)
+      .orderBy(desc(sql<number>`count(*)`))
+      .limit(30);
+    buckets = rows.map((r) => ({
+      label: r.label,
+      count: r.count,
+      totalValueUsd: parseDecimal(r.totalValueUsd),
+    }));
+  } else if (groupBy === 'agency') {
+    const rows = await db
+      .select({
+        label: agencies.name,
+        count: sql<number>`count(*)::int`,
+        totalValueUsd: sql<string | null>`sum(${opportunities.valueEstimateUsd}::numeric)::text`,
+      })
+      .from(opportunities)
+      .innerJoin(jurisdictions, eq(opportunities.jurisdictionId, jurisdictions.id))
+      .innerJoin(agencies, eq(opportunities.agencyId, agencies.id))
+      .where(where)
+      .groupBy(agencies.name)
+      .orderBy(desc(sql<number>`count(*)`))
+      .limit(30);
+    buckets = rows.map((r) => ({
+      label: r.label,
+      count: r.count,
+      totalValueUsd: parseDecimal(r.totalValueUsd),
+    }));
+  } else {
+    // category / country / currency — all live on the opportunities row.
+    const col =
+      groupBy === 'category'
+        ? opportunities.category
+        : groupBy === 'country'
+          ? opportunities.beneficiaryCountry
+          : opportunities.currency;
+    const rows = await db
+      .select({
+        label: col,
+        count: sql<number>`count(*)::int`,
+        totalValueUsd: sql<string | null>`sum(${opportunities.valueEstimateUsd}::numeric)::text`,
+      })
+      .from(opportunities)
+      .innerJoin(jurisdictions, eq(opportunities.jurisdictionId, jurisdictions.id))
+      .where(and(where, isNotNull(col))!)
+      .groupBy(col)
+      .orderBy(desc(sql<number>`count(*)`))
+      .limit(30);
+    buckets = rows
+      .filter((r): r is typeof r & { label: string } => r.label != null)
+      .map((r) => ({
+        label: r.label,
+        count: r.count,
+        totalValueUsd: parseDecimal(r.totalValueUsd),
+      }));
+  }
+
+  const totalRows = buckets.reduce((acc, b) => acc + b.count, 0);
+
+  const filterDescription = [
+    filters.jurisdiction ? `jurisdiction=${filters.jurisdiction}` : null,
+    filters.category ? `category=${filters.category}` : null,
+    filters.beneficiaryCountry ? `country=${filters.beneficiaryCountry}` : null,
+    filters.postedWithinDays ? `posted in last ${filters.postedWithinDays}d` : null,
+    filters.scope === 'past' ? 'past awards' : null,
+  ]
+    .filter(Boolean)
+    .join(', ') || 'all open opportunities';
+
+  return { filterDescription, groupBy, totalRows, buckets };
+}
