@@ -1,18 +1,29 @@
 /**
  * Global Energy Monitor — Global Oil Refinery Tracker (GORT) ingest.
  *
- * Source: https://globalenergymonitor.org/projects/global-oil-refinery-tracker/
+ * Source: https://globalenergymonitor.org/trackers/
+ *   GEM occasionally restructures their projects pages. As of this
+ *   commit the GORT lives under the "Trackers" hub. If the link 404s,
+ *   navigate from globalenergymonitor.org → Trackers → search for
+ *   "oil refinery" or "oil infrastructure". The data is now sometimes
+ *   bundled into the "Global Oil Infrastructure Tracker" (GOIT).
+ *
  * License: CC-BY-4.0 (free with attribution)
  * Coverage: ~700 refineries globally with capacity-by-unit detail,
  *   owner, status, startup year, latitude/longitude.
  *
- * GEM gates the download behind a request form (not technical, just
- * collects who's using the data). Once you have the file, run this
- * script with the path:
+ * GEM gates the download behind a request form (not technical — just
+ * collects who's using the data; usually approved within hours).
+ * Once you have the file, run this script with the path:
  *
- *   pnpm --filter @procur/db ingest-gem-refineries -- ./gort.csv
+ *   pnpm --filter @procur/db ingest-gem-refineries ./gort.csv
  *
  * Or set GEM_REFINERY_CSV_PATH env var.
+ *
+ * Free alternative if you can't get GEM access:
+ *   pnpm --filter @procur/db ingest-osm-refineries
+ *   (queries OpenStreetMap Overpass — no auth, ~300-600 refineries
+ *   with name + lat/lng, fewer with operator/capacity)
  *
  * Expected columns (case-insensitive, GEM may rename across releases):
  *   - "Plant Name" / "Refinery Name" / "Project Name"
