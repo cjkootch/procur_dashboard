@@ -20,7 +20,8 @@
     "date-fns-tz": "^3.2.0",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.38.3",
-    "playwright": "^1.49.1"
+    "playwright": "^1.49.1",
+    "unpdf": "^0.12.1"
   },
   "devDependencies": {
     "@procur/config": "workspace:*",
