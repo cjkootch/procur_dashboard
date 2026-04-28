@@ -2,6 +2,7 @@ import 'server-only';
 import { defineTool, type ToolRegistry } from '@procur/ai';
 import { z } from 'zod';
 import {
+  getCompanyProfile,
   listJurisdictions,
   listOpportunities,
   getOpportunityBySlug,
@@ -471,6 +472,26 @@ export function buildDiscoverTools(): ToolRegistry {
           companyId: ctx.companyId,
           opportunitySlug: input.opportunitySlug,
         });
+      },
+    }),
+
+    get_company_profile: defineTool({
+      name: 'get_company_profile',
+      description:
+        "Snapshot of the user's own company — name, plan tier, capability list (categorized: " +
+        "service / certification / technology / geography / personnel / past_performance), and " +
+        'sample past-performance projects with categories + NAICS codes + keywords. Call this ' +
+        'ONCE early in a conversation when the user asks for recommendations, "should I bid", ' +
+        '"is this a fit for us", "what should I look at", or anything that requires understanding ' +
+        "what they actually do. Don't re-fetch each turn — the data doesn't change within a " +
+        "session. Use the returned context to bias subsequent search_opportunities calls toward " +
+        "matching jurisdictions / categories / keywords, and to answer fit questions concretely.",
+      kind: 'read',
+      schema: z.object({}),
+      handler: async (ctx) => {
+        const profile = await getCompanyProfile(ctx.companyId);
+        if (!profile) return { found: false };
+        return { found: true, ...profile };
       },
     }),
 

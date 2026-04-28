@@ -16,10 +16,13 @@ import {
 } from 'drizzle-orm';
 import {
   agencies,
+  companies,
+  companyCapabilities,
   db,
   documents,
   jurisdictions,
   opportunities,
+  pastPerformance,
   taxonomyCategories,
 } from '@procur/db';
 
@@ -804,4 +807,125 @@ export async function summarizeCatalog(
     .join(', ') || 'all open opportunities';
 
   return { filterDescription, groupBy, totalRows, buckets };
+}
+
+export type CompanyProfileResult = {
+  companyName: string;
+  planTier: string;
+  capabilities: Array<{
+    name: string;
+    category: string;
+    description: string | null;
+  }>;
+  capabilityCategoryCounts: Record<string, number>;
+  pastPerformanceCount: number;
+  pastPerformanceSamples: Array<{
+    projectName: string;
+    customerName: string;
+    scopeDescription: string;
+    totalValue: number | null;
+    currency: string | null;
+    categories: string[] | null;
+    naicsCodes: string[] | null;
+    keywords: string[] | null;
+  }>;
+  /** Categories aggregated from past_performance.categories arrays —
+   *  signals what kinds of work the company has actually delivered. */
+  pastPerformanceTopCategories: string[];
+};
+
+/**
+ * Snapshot of a company's profile for the AI assistant. Used to
+ * personalize recommendations ("based on your capabilities, this
+ * tender looks like a good fit") and gut-check fit ("you've delivered
+ * 3 similar projects before").
+ *
+ * Read-only; never exposes another tenant's data — companyId is the
+ * authenticated context's own.
+ *
+ * Caps the capability list at 50 (largest companies have ~30) and
+ * past performance samples at 5 (most-recent first) to keep the
+ * model context reasonable. The model can call this once per
+ * conversation for context, then make many tool calls without
+ * re-fetching.
+ */
+export async function getCompanyProfile(companyId: string): Promise<CompanyProfileResult | null> {
+  const company = await db.query.companies.findFirst({
+    where: eq(companies.id, companyId),
+    columns: { id: true, name: true, planTier: true },
+  });
+  if (!company) return null;
+
+  const caps = await db.query.companyCapabilities.findMany({
+    where: eq(companyCapabilities.companyId, companyId),
+    columns: { name: true, category: true, description: true },
+    orderBy: (t, { asc: a }) => [a(t.category), a(t.name)],
+    limit: 50,
+  });
+
+  const pastPerf = await db
+    .select({
+      projectName: pastPerformance.projectName,
+      customerName: pastPerformance.customerName,
+      scopeDescription: pastPerformance.scopeDescription,
+      totalValue: pastPerformance.totalValue,
+      currency: pastPerformance.currency,
+      categories: pastPerformance.categories,
+      naicsCodes: pastPerformance.naicsCodes,
+      keywords: pastPerformance.keywords,
+    })
+    .from(pastPerformance)
+    .where(eq(pastPerformance.companyId, companyId))
+    .orderBy(desc(pastPerformance.updatedAt))
+    .limit(5);
+
+  // Count distinct past-performance count separately so the assistant
+  // knows the universe size (e.g., "5 of your 47 past projects" vs
+  // showing only 5 with no denominator).
+  const countRows = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(pastPerformance)
+    .where(eq(pastPerformance.companyId, companyId));
+  const pastPerformanceCount = countRows[0]?.count ?? 0;
+
+  const capabilityCategoryCounts: Record<string, number> = {};
+  for (const c of caps) {
+    capabilityCategoryCounts[c.category] = (capabilityCategoryCounts[c.category] ?? 0) + 1;
+  }
+
+  // Roll up the categories arrays from past performance into top
+  // tags by frequency — e.g. ["fuel-supply": 6, "construction": 3].
+  const categoryFreq = new Map<string, number>();
+  for (const p of pastPerf) {
+    for (const cat of p.categories ?? []) {
+      categoryFreq.set(cat, (categoryFreq.get(cat) ?? 0) + 1);
+    }
+  }
+  const pastPerformanceTopCategories = Array.from(categoryFreq.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([cat]) => cat);
+
+  return {
+    companyName: company.name,
+    planTier: company.planTier,
+    capabilities: caps.map((c) => ({
+      name: c.name,
+      category: c.category,
+      description: c.description ?? null,
+    })),
+    capabilityCategoryCounts,
+    pastPerformanceCount,
+    pastPerformanceSamples: pastPerf.map((p) => ({
+      projectName: p.projectName,
+      customerName: p.customerName,
+      scopeDescription: p.scopeDescription.slice(0, 500),
+      totalValue: parseDecimal(p.totalValue as string | null),
+      currency: p.currency ?? null,
+      categories: p.categories,
+      naicsCodes: p.naicsCodes,
+      keywords: p.keywords,
+    })),
+    pastPerformanceTopCategories,
+  };
 }
