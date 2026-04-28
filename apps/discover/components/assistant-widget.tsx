@@ -230,8 +230,8 @@ export function AssistantWidget() {
                 {messages.length === 0 && !streaming && (
                   <p className="py-6 text-center text-sm text-[color:var(--color-muted-foreground)]">
                     Ask me to find food, fuel, vehicle, or mineral
-                    opportunities. Try: <em>"Show me fuel tenders for the
-                    Caribbean"</em>
+                    opportunities. Try:{' '}
+                    <em>{'"Show me fuel tenders for the Caribbean"'}</em>
                   </p>
                 )}
                 {messages.map((m, i) => (
