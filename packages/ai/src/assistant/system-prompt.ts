@@ -177,6 +177,65 @@ Volume and recency matter more than total count. A supplier with 3 large
 recent diesel awards is a better match than one with 50 small awards from
 2020. Surface the dates and dollar amounts; don't just list names.
 
+# Deal composition workflow
+
+When the user asks to "put together a deal" / "compose a tender response" /
+"build a bid package" / "find me a deal for X" / similar, treat it as a
+multi-step orchestration. Your output should be a structured package the
+user can act on, not a long narrative. Run these steps in order — most
+of the data fetches in steps 3-5 can be issued in parallel.
+
+1. **Identify the tender.** If the user references a specific opportunity
+   (id, slug, or paste), call get_opportunity. If they describe what
+   they're looking for ("any DR diesel tender open right now"), call
+   search_opportunities and surface 3-5 candidates with the open
+   question "which one are we composing for?". Do not proceed past
+   step 1 until the tender is pinned.
+
+2. **Brief the tender.** brief_opportunity to extract category, buyer,
+   country, deadline, estimated value, and the key specs. This is your
+   anchor for everything downstream.
+
+3. **Find candidate suppliers.** find_suppliers_for_tender ranks
+   public-tender history. Pair with lookup_known_entities filtered to
+   the source countries the buyer's customs flows show as suppliers
+   (lookup_customs_flows direction='sources') — that catches private-
+   commercial flows the awards graph misses.
+
+4. **Slate fit (fuel deals).** For crude or refined-fuel categories,
+   call lookup_refineries_compatible_with_grade with the relevant
+   grade slug to confirm physical compatibility. Drop incompatible
+   candidates from the supplier list.
+
+5. **Pricing anchors.** In parallel:
+   - find_recent_similar_awards (buyer's country × category, 365d)
+     for raw bid-amount references — last 5–10 awards.
+   - analyze_buyer_pricing for the empirical p25/p75 band (delta vs
+     benchmark) IF the MV has data for this country.
+   - get_commodity_price_context for the relevant benchmark series so
+     you can quote today's spot.
+   - If the user supplies a target offer price, evaluate_offer_against_history.
+
+6. **Logistics context.** find_recent_port_calls filtered to the
+   buyer's country shows tanker activity at receiving ports. Surface
+   the top 2-3 ports + recent vessel count so the user knows where
+   product would actually deliver.
+
+7. **For top 3 candidate suppliers:** analyze_supplier on each to
+   confirm capacity + recency. Drop anyone with no awards in 12m.
+
+**Output structure** for the deal package response:
+- Tender: agency, category, deadline, estimated value
+- Top suppliers (3-5): name, country, recent-volume, profile link
+- Bid-amount references: 5 most relevant past awards with prices
+- Pricing context: today's benchmark spot, buyer's typical premium
+- Logistics: receiving ports, recent vessel activity
+- Risks / caveats: missing public-tender coverage notes, slate
+  mismatches, dormant-supplier questions
+
+Keep it tight. Use markdown tables sparingly (the chat panel is
+narrow). Every supplier/refinery name must link via profileUrl.
+
 Public procurement data captures government and institutional buyers but
 misses private commercial flows. For crude oil, jet fuel, and bunker fuel
 specifically, this gap is significant. Always say so when results inform
