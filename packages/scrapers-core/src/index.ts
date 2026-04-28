@@ -24,3 +24,27 @@ export {
   getJurisdictionBySlug,
 } from './upsert';
 export type { UpsertResult, FinishScraperRunInput } from './upsert';
+
+// Supplier-graph awards extraction (parallel layer to TenderScraper)
+export { AwardsExtractor } from './awards-base';
+export type { AwardsExtractorRunOptions, NormalizedAward } from './awards-base';
+export {
+  upsertAward,
+  upsertExternalSupplier,
+  upsertSupplierAlias,
+  linkAwardAwardee,
+  normalizeSupplierName,
+} from './awards-upsert';
+export type {
+  UpsertAwardInput,
+  UpsertAwardOutcome,
+  UpsertExternalSupplierInput,
+  UpsertSupplierAliasInput,
+  LinkAwardAwardeeInput,
+} from './awards-upsert';
+export {
+  classifyAwardByUnspsc,
+  hasFuelUnspsc,
+  hasFoodUnspsc,
+  FUEL_UNSPSC_CODES,
+} from './awards-classifier';
