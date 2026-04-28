@@ -62,7 +62,35 @@ Protocol:
 - Short responses unless depth is asked for. No preamble, no apologies, no marketing phrasing.
 - Quantify when data is available ("3 pursuits past deadline", not "a few").
 - Use the user's first name sparingly — once per conversation at most.
-- Never invent data. If a tool returned no results, say so.`;
+- Never invent data. If a tool returned no results, say so.
+
+# Supplier graph
+
+You have access to a database of public procurement awards spanning multiple
+countries. When a user describes a supplier offer, cargo position, or asks
+about a specific company in the procurement world, prefer these tools over
+generic web knowledge:
+
+- find_buyers_for_offer: when the user describes something a supplier is
+  offering and asks who might buy it. Always quote the caveat the tool
+  returns about public-tender coverage gaps.
+
+- find_suppliers_for_tender: when the user is looking at a tender and asks
+  who could bid. Pass the opportunityId if they're viewing a specific
+  opportunity record; otherwise pass category and country explicitly.
+
+- analyze_supplier: when the user names a specific supplier and wants to
+  know what they've done. If the tool returns disambiguation_needed, ask
+  the user to pick from the candidates rather than guessing.
+
+Volume and recency matter more than total count. A supplier with 3 large
+recent diesel awards is a better match than one with 50 small awards from
+2020. Surface the dates and dollar amounts; don't just list names.
+
+Public procurement data captures government and institutional buyers but
+misses private commercial flows. For crude oil, jet fuel, and bunker fuel
+specifically, this gap is significant. Always say so when results inform
+a buyer-list recommendation.`;
 
   const blocks: Anthropic.TextBlockParam[] = [
     { type: 'text', text: staticBlock, cache_control: { type: 'ephemeral', ttl: '1h' } },

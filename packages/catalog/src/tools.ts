@@ -2,7 +2,10 @@ import 'server-only';
 import { defineTool, type ToolRegistry } from '@procur/ai';
 import { z } from 'zod';
 import {
+  analyzeSupplier,
   briefOpportunity,
+  findBuyersForCommodityOffer,
+  findSuppliersForTender,
   getCompanyProfile,
   listJurisdictions,
   listOpportunities,
@@ -532,6 +535,293 @@ export function buildCatalogTools(): ToolRegistry {
             active: j.active,
             activeOpportunities: j.opportunitiesCount ?? 0,
           })),
+        };
+      },
+    }),
+
+    // ─── Supplier graph ──────────────────────────────────────────────
+    // Three reverse-lookup tools that ride on the awards / supplier_aliases
+    // tables added in migration 0032. Public-domain — no companyId
+    // scoping. See docs/assistant-tools-spec.md for the rationale.
+
+    find_buyers_for_offer: defineTool({
+      name: 'find_buyers_for_offer',
+      description:
+        'Reverse search: given a commodity offer (crude grade, refined product, food ' +
+        'commodity, vehicle type), find public buyers who have demonstrably bought that ' +
+        'commodity in recent history. Returns a ranked list ordered by recency × volume, ' +
+        'with award counts, total USD value, agency names, and beneficiary countries. Use ' +
+        "this when the user describes a supplier offer or cargo position and asks 'who " +
+        "would buy this' / 'who's a likely buyer' / 'who has purchased this before'. " +
+        'Public-tender data only — does NOT cover private refiner-to-refiner or ' +
+        'trader-to-trader flows. For crude oil specifically, results skew toward national ' +
+        "oil companies and state refiners; private major refiners (ENI, Saras, Reliance) " +
+        "won't appear.",
+      kind: 'read',
+      schema: z.object({
+        categoryTag: z
+          .enum([
+            'crude-oil',
+            'diesel',
+            'gasoline',
+            'jet-fuel',
+            'lpg',
+            'marine-bunker',
+            'heating-oil',
+            'heavy-fuel-oil',
+            'food-commodities',
+            'vehicles',
+          ])
+          .describe(
+            'Internal taxonomy tag for the commodity being offered. Pick the closest match. ' +
+              "For Azeri Light or Brent or Bonny Light, use 'crude-oil'. For Jet A-1, use 'jet-fuel'.",
+          ),
+        descriptionKeywords: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Optional keywords matched (case-insensitive) against commodity_description. ' +
+              "Use to narrow within a category — e.g. ['light sweet', 'azeri'] for Azeri Light. " +
+              'Empty array = match all within the category.',
+          ),
+        buyerCountries: z
+          .array(z.string().length(2))
+          .optional()
+          .describe(
+            "Optional ISO-3166-1 alpha-2 country codes (e.g. ['IT','ES','GR','TR']). " +
+              'Use when the cargo has geographic constraints (CIF Mediterranean, FOB Asia, etc). ' +
+              'Empty = global search.',
+          ),
+        yearsLookback: z
+          .number()
+          .min(1)
+          .max(10)
+          .optional()
+          .describe('How far back to search award history. Default 5 years.'),
+        minAwards: z
+          .number()
+          .min(1)
+          .optional()
+          .describe(
+            'Minimum number of matching awards a buyer must have to qualify. ' +
+              'Higher = more proven, fewer results. Default 2.',
+          ),
+        limit: z.number().min(1).max(100).optional(),
+      }),
+      handler: async (_ctx, input) => {
+        const buyers = await findBuyersForCommodityOffer({
+          categoryTag: input.categoryTag,
+          descriptionKeywords: input.descriptionKeywords,
+          buyerCountries: input.buyerCountries,
+          yearsLookback: input.yearsLookback,
+          minAwards: input.minAwards,
+          limit: input.limit ?? 30,
+        });
+
+        return {
+          count: buyers.length,
+          categoryTag: input.categoryTag,
+          buyers: buyers.map((b) => ({
+            buyerName: b.buyerName,
+            buyerCountry: b.buyerCountry,
+            awardsCount: b.awardsCount,
+            totalValueUsd: b.totalValueUsd,
+            mostRecentAwardDate: b.mostRecentAwardDate,
+            agencies: b.agencies?.slice(0, 5) ?? [],
+            sampleCommodities: b.commoditiesBought?.slice(0, 3) ?? [],
+            beneficiaryCountries: b.beneficiaryCountries ?? [],
+          })),
+          // Hard-coded so the LLM always sees the gap, even when the
+          // system-prompt block isn't present (e.g., the Discover
+          // surfaceContext compresses the static block).
+          caveat:
+            'Public procurement data only. Private commercial flows (major refiner crude purchases, ' +
+            'trader-to-trader) are not represented. For crude grades specifically, augment with ' +
+            'customs data (Kpler/Vortexa) and refinery configuration data (Argus/Platts) before ' +
+            'committing to a buyer list.',
+        };
+      },
+    }),
+
+    find_suppliers_for_tender: defineTool({
+      name: 'find_suppliers_for_tender',
+      description:
+        'Given a public tender (either by opportunity ID or by explicit category/country ' +
+        'fields), return suppliers who have won similar awards in recent history and are ' +
+        'plausible bidders. Results are ranked by relevance signals: how many similar ' +
+        'awards they have won, recency, geographic overlap with the buyer or beneficiary ' +
+        "country, and total contract value. Use this when the user says 'who could bid on " +
+        "this' / 'who has won similar tenders' / 'should I partner with anyone for this'. " +
+        'Returns supplier name, country, awards count for matching category, recent ' +
+        'buyers, and a brief match-reason summary.',
+      kind: 'read',
+      schema: z.object({
+        opportunityId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe(
+            'If provided, the tool derives category/keywords/jurisdiction from the ' +
+              'opportunity record. Use this when the user is looking at a specific tender. ' +
+              'If null, fall back to the explicit fields below.',
+          ),
+        categoryTag: z
+          .string()
+          .optional()
+          .describe(
+            'Internal commodity category — required if opportunityId is not provided. ' +
+              'Same vocabulary as find_buyers_for_offer.',
+          ),
+        descriptionKeywords: z.array(z.string()).optional(),
+        buyerCountry: z
+          .string()
+          .length(2)
+          .optional()
+          .describe(
+            "ISO-2 country code of the buyer. When set, suppliers who've previously won in " +
+              'this country rank higher.',
+          ),
+        beneficiaryCountry: z
+          .string()
+          .length(2)
+          .optional()
+          .describe(
+            'ISO-2 of the beneficiary country (where the work is delivered). For UN/' +
+              'development-bank tenders, this is the actual target country.',
+          ),
+        yearsLookback: z.number().min(1).max(10).optional(),
+        limit: z.number().min(1).max(50).optional(),
+      }),
+      handler: async (ctx, input) => {
+        const result = await findSuppliersForTender(ctx.companyId, {
+          opportunityId: input.opportunityId,
+          categoryTag: input.categoryTag,
+          descriptionKeywords: input.descriptionKeywords,
+          buyerCountry: input.buyerCountry,
+          beneficiaryCountry: input.beneficiaryCountry,
+          yearsLookback: input.yearsLookback,
+          limit: input.limit ?? 15,
+        });
+        return {
+          count: result.suppliers.length,
+          derivedFrom: result.derivedFrom,
+          categoryTag: result.categoryTag,
+          suppliers: result.suppliers.map((s) => ({
+            supplierId: s.supplierId,
+            supplierName: s.supplierName,
+            country: s.country,
+            matchingAwardsCount: s.matchingAwardsCount,
+            totalValueUsd: s.totalValueUsd,
+            mostRecentAwardDate: s.mostRecentAwardDate,
+            recentBuyers: s.recentBuyers?.slice(0, 5) ?? [],
+            matchReasons: s.matchReasons,
+          })),
+        };
+      },
+    }),
+
+    analyze_supplier: defineTool({
+      name: 'analyze_supplier',
+      description:
+        'Deep-dive on a single supplier. Returns full capability profile: total awards ' +
+        'across categories, top buyers, geographic footprint (where they have sold), most ' +
+        'recent activity, and any private signals VTC has captured (RFQ responsiveness, ' +
+        'capability confirmations, OFAC/credit screen results). Use this when the user ' +
+        "names a specific supplier and wants to know: 'are they a real player', 'what's " +
+        "their capability', 'who do they sell to', 'when did they last win something', or " +
+        "'have we engaged with them before'. Accepts either supplierId or supplierName " +
+        '(fuzzy-matched). When the tool returns kind=disambiguation_needed, ask the user ' +
+        'to pick a candidate rather than guessing.',
+      kind: 'read',
+      schema: z
+        .object({
+          supplierId: z
+            .string()
+            .uuid()
+            .optional()
+            .describe('Canonical external_suppliers.id. Use when the supplier is already known.'),
+          supplierName: z
+            .string()
+            .optional()
+            .describe(
+              'Free-text supplier name. Tool resolves via supplier_aliases (trigram fuzzy match). ' +
+                'If multiple matches above similarity threshold, returns disambiguation options.',
+            ),
+          yearsLookback: z
+            .number()
+            .min(1)
+            .max(20)
+            .optional()
+            .describe('How far back to summarize. Default 10 years for the full picture.'),
+        })
+        .refine((d) => d.supplierId || d.supplierName, {
+          message: 'Provide either supplierId or supplierName',
+        }),
+      handler: async (_ctx, input) => {
+        const result = await analyzeSupplier({
+          supplierId: input.supplierId,
+          supplierName: input.supplierName,
+          yearsLookback: input.yearsLookback,
+        });
+
+        if (result.kind === 'disambiguation_needed') {
+          return {
+            kind: 'disambiguation_needed',
+            candidates: result.candidates.map((c) => ({
+              supplierId: c.supplierId,
+              supplierName: c.canonicalName,
+              country: c.country,
+              totalAwards: c.totalAwards,
+              similarityScore: c.similarityScore,
+            })),
+            message:
+              'Multiple suppliers match that name. Ask the user to pick one (or call this ' +
+              'tool again with the supplierId of the intended match).',
+          };
+        }
+
+        if (result.kind === 'not_found') {
+          return {
+            kind: 'not_found',
+            searchedFor: input.supplierName ?? input.supplierId,
+            suggestion:
+              'No supplier matches this name in the public award database. They may be a ' +
+              'private commercial supplier (not visible in public tender data), a new ' +
+              'entrant, or a name variant we have not yet aliased.',
+          };
+        }
+
+        return {
+          kind: 'profile',
+          supplier: {
+            id: result.supplier.id,
+            canonicalName: result.supplier.canonicalName,
+            country: result.supplier.country,
+            aliases: result.supplier.aliases?.slice(0, 5) ?? [],
+          },
+          capabilities: {
+            totalAwards: result.summary.totalAwards,
+            totalValueUsd: result.summary.totalValueUsd,
+            firstAwardDate: result.summary.firstAwardDate,
+            mostRecentAwardDate: result.summary.mostRecentAwardDate,
+            awardsByCategory: result.summary.awardsByCategory,
+          },
+          topBuyers: result.topBuyers.slice(0, 10),
+          geography: {
+            buyerCountries: result.summary.buyerCountries,
+            beneficiaryCountries: result.summary.beneficiaryCountries,
+          },
+          recentAwards: result.recentAwards.slice(0, 5).map((a) => ({
+            awardDate: a.awardDate,
+            buyerName: a.buyerName,
+            buyerCountry: a.buyerCountry,
+            title: a.title,
+            valueUsd: a.contractValueUsd,
+          })),
+          // Private behavioral signals — TENANT SCOPING TODO: filter by
+          // ctx.companyId once the table starts holding private data.
+          // See packages/db/src/schema/supplier-signals.ts.
+          signals: result.signals?.slice(0, 10) ?? [],
         };
       },
     }),

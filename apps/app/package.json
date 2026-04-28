@@ -15,6 +15,7 @@
     "@procur/ai": "workspace:*",
     "@procur/analytics": "workspace:*",
     "@procur/auth": "workspace:*",
+    "@procur/catalog": "workspace:*",
     "@procur/db": "workspace:*",
     "@procur/payments": "workspace:*",
     "@procur/ui": "workspace:*",
