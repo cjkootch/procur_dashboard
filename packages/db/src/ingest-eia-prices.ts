@@ -63,10 +63,13 @@ const SERIES: EiaSeries[] = [
   },
   {
     slug: 'nyh-gasoline',
-    product: 'EPMRR',
+    // EPMRU = Reformulated Regular RBOB; this is the actively-traded
+    // NY Harbor gasoline contract (Northeast US uses RFG mandated by
+    // CAA, so reformulated is the live spot, not conventional EPMRR).
+    product: 'EPMRU',
     duoarea: 'Y35NY',
     unit: 'usd-gal',
-    label: 'NY Harbor RBOB gasoline (conventional)',
+    label: 'NY Harbor RBOB gasoline (reformulated)',
   },
   {
     slug: 'nyh-heating-oil',
