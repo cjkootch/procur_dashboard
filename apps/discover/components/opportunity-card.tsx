@@ -127,10 +127,21 @@ export function OpportunityCard({ op, userLanguage = 'en' }: Props) {
       }`}
     >
       <header className="flex items-start justify-between gap-3">
-        <JurisdictionBadge
-          countryCode={op.jurisdictionCountry}
-          name={op.jurisdictionName}
-        />
+        <div className="flex items-center gap-1.5">
+          <JurisdictionBadge
+            countryCode={op.jurisdictionCountry}
+            name={op.jurisdictionName}
+          />
+          {op.beneficiaryCountry && (
+            <span
+              title={`Beneficiary: ${op.beneficiaryCountry}`}
+              className="inline-flex h-5 items-center rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40 px-1.5 text-[10px] font-medium text-[color:var(--color-foreground)]"
+            >
+              <span aria-hidden className="mr-1 text-[color:var(--color-muted-foreground)]">→</span>
+              {op.beneficiaryCountry}
+            </span>
+          )}
+        </div>
         {countdown && (
           <span
             className={`text-xs font-medium ${

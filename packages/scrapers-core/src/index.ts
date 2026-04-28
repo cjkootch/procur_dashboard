@@ -15,6 +15,7 @@ export type { Dom, Node } from './html';
 export { slugifyTitle, buildOpportunitySlug } from './slug';
 export { parseTenderDate } from './dates';
 export { parseMoney, toUsd } from './currency';
+export { COUNTRY_NAMES, findTrailingCountry } from './countries';
 export {
   upsertOpportunity,
   startScraperRun,

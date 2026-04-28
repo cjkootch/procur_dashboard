@@ -56,6 +56,11 @@ export type OpportunitySummary = {
   jurisdictionSlug: string;
   jurisdictionName: string;
   jurisdictionCountry: string;
+  /** UN-style beneficiary country (e.g. "Suriname" for a UNDP-Suriname
+   *  notice). Distinct from jurisdictionCountry which marks the
+   *  portal's own country. Null for national portals where the
+   *  jurisdiction IS the beneficiary. */
+  beneficiaryCountry: string | null;
   agencyName: string | null;
   agencyShort: string | null;
   language: string | null;
@@ -68,6 +73,9 @@ export type OpportunityFilters = {
   q?: string;
   jurisdiction?: string;
   category?: string;
+  /** Beneficiary country name (e.g. "Suriname"). Stored verbatim as
+   *  written by the scraper; matches the listing-page filter dropdown. */
+  beneficiaryCountry?: string;
   minValueUsd?: number;
   maxValueUsd?: number;
   deadlineBefore?: Date;
@@ -149,6 +157,9 @@ const base = (filters: OpportunityFilters, scope: OpportunityScope = 'open') => 
   if (filters.category) {
     conds.push(eq(opportunities.category, filters.category));
   }
+  if (filters.beneficiaryCountry) {
+    conds.push(eq(opportunities.beneficiaryCountry, filters.beneficiaryCountry));
+  }
   if (filters.minValueUsd != null) {
     conds.push(gte(opportunities.valueEstimateUsd, String(filters.minValueUsd)));
   }
@@ -209,6 +220,7 @@ export async function listOpportunities(
       jurisdictionSlug: jurisdictions.slug,
       jurisdictionName: jurisdictions.name,
       jurisdictionCountry: jurisdictions.countryCode,
+      beneficiaryCountry: opportunities.beneficiaryCountry,
       agencyName: agencies.name,
       agencyShort: agencies.shortName,
       language: opportunities.language,
@@ -280,6 +292,7 @@ export async function getOpportunityBySlug(
       jurisdictionSlug: jurisdictions.slug,
       jurisdictionName: jurisdictions.name,
       jurisdictionCountry: jurisdictions.countryCode,
+      beneficiaryCountry: opportunities.beneficiaryCountry,
       agencyName: agencies.name,
       agencyShort: agencies.shortName,
       language: opportunities.language,
@@ -388,6 +401,30 @@ export async function getAgenciesForJurisdiction(jurisdictionId: string) {
     .from(agencies)
     .where(eq(agencies.jurisdictionId, jurisdictionId))
     .orderBy(desc(agencies.opportunitiesCount));
+}
+
+/**
+ * Distinct beneficiary-country values across all currently-public,
+ * active opportunities — populates the "Beneficiary country" filter
+ * dropdown on the listing page. Same partial index that backs the
+ * filter (`opp_beneficiary_country_idx WHERE beneficiary_country IS
+ * NOT NULL`) serves this query cheaply.
+ */
+export async function listBeneficiaryCountries(): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ country: opportunities.beneficiaryCountry })
+    .from(opportunities)
+    .where(
+      and(
+        isNull(opportunities.companyId),
+        isNotNull(opportunities.beneficiaryCountry),
+        eq(opportunities.status, 'active'),
+      ),
+    )
+    .orderBy(asc(opportunities.beneficiaryCountry));
+  return rows
+    .map((r) => r.country)
+    .filter((c): c is string => c != null && c.length > 0);
 }
 
 /**

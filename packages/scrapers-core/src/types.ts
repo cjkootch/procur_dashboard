@@ -38,6 +38,14 @@ export type NormalizedOpportunity = {
   awardedAt?: Date;
   awardedAmount?: number;
   awardedToCompanyName?: string;
+  /**
+   * Country where the work is performed / who benefits. Distinct from
+   * the jurisdiction's countryCode (which is the portal/source country).
+   * Set for multilateral jurisdictions like UN where notices target
+   * specific countries; left undefined for national portals where the
+   * jurisdiction IS the beneficiary.
+   */
+  beneficiaryCountry?: string;
   rawContent: Record<string, unknown>;
   documents?: ScrapedDocument[];
 };
