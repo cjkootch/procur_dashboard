@@ -40,7 +40,7 @@ export function AssistantDrawer() {
     if (open) setThreadId(undefined);
   }, [open, pathname]);
 
-  if (!open) return <LauncherHint />;
+  if (!open) return <LauncherButton onOpen={() => setOpen(true)} />;
 
   return (
     <div
@@ -101,10 +101,26 @@ export function AssistantDrawer() {
   );
 }
 
-function LauncherHint() {
-  // Visible only on first load; disappears once dismissed via localStorage.
-  // Keeping minimal so it doesn't intrude.
-  return null;
+/**
+ * Floating launcher pinned to the bottom-right corner. Always visible so
+ * the assistant is one click away on every authenticated page (the
+ * Cmd/Ctrl+K shortcut is great for power users but invisible otherwise).
+ */
+function LauncherButton({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-4 py-2.5 text-sm font-medium shadow-lg hover:bg-[color:var(--color-muted)]/40"
+      aria-label="Open Procur Assistant"
+      title="Procur Assistant (⌘K)"
+    >
+      <span>Ask</span>
+      <kbd className="ml-1 hidden rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-muted-foreground)] sm:inline">
+        ⌘K
+      </kbd>
+    </button>
+  );
 }
 
 /**

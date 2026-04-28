@@ -121,8 +121,15 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
       longitude: r.longitude as number,
     }));
 
+  // Map view benefits from a much wider canvas; list view stays at the
+  // narrower reading width.
+  const containerClass =
+    activeView === 'map'
+      ? 'mx-auto max-w-screen-2xl px-4 py-6'
+      : 'mx-auto max-w-6xl px-6 py-10';
+
   return (
-    <div className="mx-auto max-w-6xl px-6 py-10">
+    <div className={containerClass}>
       <nav className="mb-4 text-sm text-[color:var(--color-muted-foreground)]">
         <Link href="/suppliers/intelligence" className="hover:text-[color:var(--color-foreground)]">
           ← Intelligence

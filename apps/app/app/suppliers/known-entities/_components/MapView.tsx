@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
@@ -69,6 +69,22 @@ function FitBounds({ entities }: { entities: MapEntity[] }) {
   return null;
 }
 
+/**
+ * Leaflet caches the container size at init; when the wrapper toggles
+ * between inset and fullscreen the map ends up rendered at the wrong
+ * dimensions until the user pans. invalidateSize() forces it to
+ * re-measure.
+ */
+function InvalidateOnResize({ trigger }: { trigger: unknown }) {
+  const map = useMap();
+  useEffect(() => {
+    // Wait one frame so the parent has applied the new layout.
+    const id = requestAnimationFrame(() => map.invalidateSize());
+    return () => cancelAnimationFrame(id);
+  }, [trigger, map]);
+  return null;
+}
+
 export function MapView({
   entities,
   totalCount,
@@ -76,6 +92,18 @@ export function MapView({
   entities: MapEntity[];
   totalCount?: number;
 }) {
+  const [fullscreen, setFullscreen] = useState(false);
+
+  // Esc closes fullscreen so the user isn't trapped.
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setFullscreen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreen]);
+
   const listOnlyCount =
     totalCount != null ? Math.max(totalCount - entities.length, 0) : 0;
   if (entities.length === 0) {
@@ -112,11 +140,23 @@ export function MapView({
             </span>
           )}
         </span>
+        <button
+          type="button"
+          onClick={() => setFullscreen((v) => !v)}
+          className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-xs hover:border-[color:var(--color-foreground)]"
+          title={fullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen map'}
+        >
+          {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+        </button>
       </div>
 
       <div
-        className="overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)]"
-        style={{ height: '600px' }}
+        className={
+          fullscreen
+            ? 'fixed inset-0 z-50 overflow-hidden border border-[color:var(--color-border)] bg-[color:var(--color-background)]'
+            : 'overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)]'
+        }
+        style={fullscreen ? undefined : { height: 'calc(100vh - 280px)', minHeight: '600px' }}
       >
         <MapContainer
           center={[20, 20]}
@@ -130,6 +170,7 @@ export function MapView({
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           <FitBounds entities={entities} />
+          <InvalidateOnResize trigger={fullscreen} />
           <MarkerClusterGroup
             chunkedLoading
             maxClusterRadius={50}
