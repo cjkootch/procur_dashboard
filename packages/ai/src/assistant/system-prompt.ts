@@ -125,7 +125,7 @@ for public-tender history. Surface all three in your response.
 
 - get_commodity_price_context + get_commodity_spread: current spot
   prices + 30-day moving average + window high/low for the major
-  energy benchmarks (brent, wti, usgc-diesel, usgc-gasoline,
+  energy benchmarks (brent, wti, nyh-diesel, nyh-gasoline,
   nyh-heating-oil). Use whenever pricing matters — every reverse-
   search hit, every "is this offer fair", every Urals-discount
   question. Anchor the response in actual market context rather than
