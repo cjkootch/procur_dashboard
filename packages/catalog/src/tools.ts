@@ -12,6 +12,10 @@ import {
   getTopImportersByPartner,
   getTopSourcesForReporter,
   lookupKnownEntities,
+  listCrudeGrades,
+  lookupRefineriesByGrade,
+  getCommodityPriceContext,
+  getCommoditySpread,
   findRecentPortCalls,
   getCompanyProfile,
   listJurisdictions,
@@ -1093,6 +1097,194 @@ export function buildCatalogTools(): ToolRegistry {
                 'starting point, not ground truth.',
             };
           },
+        ),
+    }),
+
+    list_crude_grades: defineTool({
+      name: 'list_crude_grades',
+      description:
+        'List crude oil grades (physical streams + pricing benchmarks) with their ' +
+        'material properties — API gravity, sulfur %, TAN, characterization. Use this ' +
+        'before lookup_refineries_compatible_with_grade when the user references a grade ' +
+        'name informally and you need to confirm the slug, or when the user asks ' +
+        '"what grades are similar to X" / "what competes with Es Sider in the Med pool".',
+      kind: 'read',
+      schema: z.object({
+        region: z
+          .enum([
+            'mediterranean',
+            'west-africa',
+            'gulf',
+            'caspian',
+            'asia-pacific',
+            'americas',
+            'north-sea',
+          ])
+          .optional()
+          .describe('Filter to one production region.'),
+        originCountry: z
+          .string()
+          .length(2)
+          .optional()
+          .describe('ISO-2 country of production. e.g. LY for Libyan grades.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'list_crude_grades',
+            args: input,
+            summarize: (out: { count: number }) => ({
+              resultCount: out.count,
+              resultSummary: { region: input.region, originCountry: input.originCountry },
+            }),
+          },
+          async () => {
+            const rows = await listCrudeGrades({
+              region: input.region,
+              originCountry: input.originCountry,
+            });
+            return {
+              count: rows.length,
+              grades: rows,
+            };
+          },
+        ),
+    }),
+
+    lookup_refineries_compatible_with_grade: defineTool({
+      name: 'lookup_refineries_compatible_with_grade',
+      description:
+        'Given a crude grade slug (e.g. "es-sider", "bonny-light", "arab-light"), return ' +
+        'the refineries in the rolodex that can run it. Two match paths are unioned: ' +
+        '(1) explicit analyst-curated `compatible:<grade>` tag — highest confidence; ' +
+        '(2) slate-window — the grade fits inside the refinery\'s configured API + sulfur ' +
+        'window. Use this whenever the user asks "who can buy X crude" or "which ' +
+        'Mediterranean refiners run Libyan grade". For Libyan barrels: try "es-sider" or ' +
+        '"sirtica" first. For Nigerian: "bonny-light" or "qua-iboe". Use list_crude_grades ' +
+        'first if the user references a grade by an informal name.',
+      kind: 'read',
+      schema: z.object({
+        gradeSlug: z
+          .string()
+          .describe(
+            'crude_grades.slug — must match an existing grade. Use list_crude_grades to discover.',
+          ),
+        country: z
+          .string()
+          .length(2)
+          .optional()
+          .describe('Restrict to refineries in this ISO-2 country.'),
+        limit: z.number().min(1).max(200).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_refineries_compatible_with_grade',
+            args: input,
+            summarize: (out: { count: number }) => ({
+              resultCount: out.count,
+              resultSummary: { gradeSlug: input.gradeSlug, country: input.country },
+            }),
+          },
+          async () => {
+            const rows = await lookupRefineriesByGrade(input.gradeSlug, {
+              country: input.country,
+              limit: input.limit,
+            });
+            return {
+              count: rows.length,
+              gradeSlug: input.gradeSlug,
+              refineries: rows.map((r) => ({
+                name: r.name,
+                country: r.country,
+                profileUrl: buildEntityProfileUrl({ kind: 'known_entity', slug: r.slug }),
+                capacityBpd: r.capacityBpd,
+                operator: r.operator,
+                notes: r.notes,
+                matchSource: r.matchSource,
+                slateNotes: r.slateNotes,
+              })),
+            };
+          },
+        ),
+    }),
+
+    get_commodity_price_context: defineTool({
+      name: 'get_commodity_price_context',
+      description:
+        "Current spot price + 30-day stats for a commodity series. Use this whenever a " +
+        "response involves pricing — every reverse-search hit, every pitch question, " +
+        "every \"is X a fair offer\" check should anchor against current market context. " +
+        'Series slugs: \'brent\' (Europe spot), \'wti\' (Cushing OK), \'usgc-diesel\' (US ' +
+        "Gulf Coast ULSD, $/gal), 'usgc-gasoline' ($/gal), 'nyh-heating-oil' ($/gal). " +
+        'Returns latest price, 30-day moving average, window high/low, and % change. ' +
+        "If noData=true, the series hasn't been ingested yet — say so and skip; do not " +
+        "fabricate a number. Pair with get_commodity_spread for differentials.",
+      kind: 'read',
+      schema: z.object({
+        seriesSlug: z
+          .string()
+          .describe(
+            "commodity_prices.series_slug. Common values: 'brent', 'wti', 'usgc-diesel', " +
+              "'usgc-gasoline', 'nyh-heating-oil'.",
+          ),
+        windowDays: z
+          .number()
+          .int()
+          .min(1)
+          .max(365)
+          .optional()
+          .describe('Lookback window for moving avg / high / low. Default 30.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'get_commodity_price_context',
+            args: input,
+            summarize: (out: { noData: boolean }) => ({
+              resultCount: out.noData ? 0 : 1,
+              resultSummary: { seriesSlug: input.seriesSlug, windowDays: input.windowDays ?? 30 },
+            }),
+          },
+          async () => getCommodityPriceContext(input.seriesSlug, input.windowDays ?? 30),
+        ),
+    }),
+
+    get_commodity_spread: defineTool({
+      name: 'get_commodity_spread',
+      description:
+        "Today's spread between two commodity series — e.g. Brent–WTI, Brent–Urals. Use " +
+        "when the user asks about differentials, when explaining a Russian-crude discount, " +
+        "or when quoting where a non-marker grade trades relative to its benchmark. " +
+        "Returns base_price - target_price along with both raw prices and the as-of date. " +
+        "Returns null spread if either series hasn't been ingested.",
+      kind: 'read',
+      schema: z.object({
+        baseSlug: z
+          .string()
+          .describe("Reference series. Typically 'brent' or 'wti'."),
+        targetSlug: z
+          .string()
+          .describe(
+            "Series to subtract — the spread is base_price - target_price. " +
+              "For Urals discount: base='brent', target='urals' (positive = Urals trades below Brent).",
+          ),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'get_commodity_spread',
+            args: input,
+            summarize: (out: { spread: number | null }) => ({
+              resultCount: out.spread != null ? 1 : 0,
+              resultSummary: input,
+            }),
+          },
+          async () => getCommoditySpread(input.baseSlug, input.targetSlug),
         ),
     }),
 

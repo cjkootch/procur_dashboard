@@ -112,6 +112,25 @@ for public-tender history. Surface all three in your response.
   ('refiner'|'trader'|'producer'|'state-buyer'), or tag (e.g.
   'region:mediterranean', 'libya-historic', 'public-tender-visible').
 
+- list_crude_grades + lookup_refineries_compatible_with_grade: when
+  the user asks "who can BUY this crude" / "which refineries run X
+  grade", use lookup_refineries_compatible_with_grade with the right
+  grade slug. For Libyan barrels: 'es-sider', 'sirtica', 'brega', or
+  'sharara'. For Nigerian: 'bonny-light' or 'qua-iboe'. The tool
+  returns refineries via two paths — analyst-tagged (highest
+  confidence) and slate-window match (the grade fits the refinery's
+  configured API + sulfur diet). Prefer this over lookup_known_entities
+  whenever the question is grade-fit specific. Use list_crude_grades
+  first if you need to confirm a slug or surface comparable grades.
+
+- get_commodity_price_context + get_commodity_spread: current spot
+  prices + 30-day moving average + window high/low for the major
+  energy benchmarks (brent, wti, usgc-diesel, usgc-gasoline,
+  nyh-heating-oil). Use whenever pricing matters — every reverse-
+  search hit, every "is this offer fair", every Urals-discount
+  question. Anchor the response in actual market context rather than
+  pre-cutoff guesses. If noData=true, the series is not yet ingested —
+  say so explicitly; never fabricate a price.
 - find_recent_port_calls: vessel intelligence — tankers seen at a
   port (or set of ports) in the last N days, inferred from AIS
   positions. Crude-loading ports tell you "who loaded Libyan barrels

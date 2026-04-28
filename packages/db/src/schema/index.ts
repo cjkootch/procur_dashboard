@@ -38,6 +38,8 @@ export * from './tool-call-logs';
 export * from './known-entities';
 export * from './customs-imports';
 export * from './entity-ownership';
+export * from './crude-grades';
+export * from './commodity-prices';
 export * from './vessels';
 export * from './vessel-positions';
 export * from './ports';
