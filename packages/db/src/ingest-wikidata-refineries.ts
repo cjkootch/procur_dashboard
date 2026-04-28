@@ -41,17 +41,31 @@ loadEnv({ path: '../../.env' });
 const SPARQL_ENDPOINT = 'https://query.wikidata.org/sparql';
 
 /**
- * Pulls every entity that's a direct instance of "oil refinery"
- * (Q235365). Earlier version used `wdt:P31/wdt:P279*` for subclass
- * traversal but Wikidata's free SPARQL service times out silently on
- * that path expression and returns 0 rows. Direct P31 catches ~700
- * refineries which is what we actually want.
+ * Q-IDs Wikidata uses for oil/petroleum refineries. Q235365 is the
+ * abstract "oil refinery" class — most actual refinery items are
+ * instances of one of its subclasses. Enumerating them explicitly is
+ * way faster than `wdt:P31/wdt:P279*` (which times out on the free
+ * tier) and gives broader coverage than instance-of-Q235365 alone
+ * (which returns ~30 rows).
+ *
+ * If you suspect coverage gaps, run this in the Wikidata Query Service
+ * to find candidates:
+ *   SELECT ?c ?cLabel WHERE { ?c wdt:P279* wd:Q235365 .
+ *     SERVICE wikibase:label { bd:serviceParam wikibase:language "en" . } }
  */
+const REFINERY_CLASSES = [
+  'wd:Q235365',   // oil refinery
+  'wd:Q1019358',  // petroleum refinery (most common direct class)
+  'wd:Q1521410',  // petroleum products refinery
+  'wd:Q11516670', // crude oil refinery
+];
+
 const SPARQL_QUERY = `
 SELECT ?refinery ?refineryLabel ?countryCode ?operatorLabel ?ownerLabel
        ?capacity ?capacityUnit ?statusLabel ?inception ?coord
 WHERE {
-  ?refinery wdt:P31 wd:Q235365 .
+  VALUES ?refineryClass { ${REFINERY_CLASSES.join(' ')} }
+  ?refinery wdt:P31 ?refineryClass .
   OPTIONAL {
     ?refinery wdt:P17 ?country .
     ?country wdt:P298 ?countryCode .
@@ -69,7 +83,7 @@ WHERE {
   OPTIONAL { ?refinery wdt:P625 ?coord . }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en" . }
 }
-LIMIT 1500
+LIMIT 2000
 `;
 
 type SparqlBinding<T> = { value: T };
@@ -103,11 +117,31 @@ async function fetchWikidata(): Promise<SparqlRow[]> {
     const body = await res.text();
     throw new Error(`Wikidata SPARQL ${res.status}: ${body.slice(0, 500)}`);
   }
-  const json = (await res.json()) as {
+  const text = await res.text();
+  let json: {
     head?: { vars?: string[] };
     results?: { bindings?: SparqlRow[] };
   };
-  return json.results?.bindings ?? [];
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`Wikidata SPARQL returned non-JSON: ${text.slice(0, 500)}`);
+  }
+  const bindings = json.results?.bindings ?? [];
+  if (bindings.length === 0) {
+    // Diagnostic dump — helps identify whether the query was malformed,
+    // the response shape changed, or anti-bot filtering kicked in.
+    console.warn('Wikidata returned 0 rows. Diagnostics:');
+    console.warn(`  HTTP status: ${res.status}`);
+    console.warn(`  response keys: ${Object.keys(json).join(', ')}`);
+    console.warn(`  head.vars: ${JSON.stringify(json.head?.vars ?? [])}`);
+    console.warn(`  raw body (first 500 chars): ${text.slice(0, 500)}`);
+    console.warn(
+      '  Try the query manually at https://query.wikidata.org/ to verify Wikidata returns data; ' +
+        'if it does, the issue is likely User-Agent or POST-encoding.',
+    );
+  }
+  return bindings;
 }
 
 function slugify(name: string, country: string): string {

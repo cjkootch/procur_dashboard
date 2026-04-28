@@ -98,6 +98,16 @@ export abstract class AwardsExtractor {
 
       for await (const normalized of this.streamAwards()) {
         recordsFound += 1;
+        // Periodic progress so a long-running stream (e.g. DR DGCP
+        // OCDS bulk = 250MB+) doesn't look stalled.
+        if (recordsFound % 100 === 0) {
+          logger.info('awards.progress', {
+            recordsFound,
+            recordsNew,
+            recordsUpdated,
+            recordsSkipped,
+          });
+        }
         try {
           // Resolve all awardees first so award_awardees has FKs to
           // hit. Aliases come along for the ride.
