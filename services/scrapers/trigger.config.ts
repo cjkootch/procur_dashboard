@@ -1,4 +1,5 @@
 import { defineConfig } from '@trigger.dev/sdk';
+import { playwright } from '@trigger.dev/build/extensions/playwright';
 
 export default defineConfig({
   project: 'proj_eigtroxsysxjbjgeyuql',
@@ -15,9 +16,12 @@ export default defineConfig({
       randomize: true,
     },
   },
-  // Only bundle cheerio-based scrapers (Jamaica + Guyana) for now.
-  // Trinidad uses Playwright which needs a build extension that isn't in
-  // this pinned trigger.dev version; we'll re-enable once the @trigger.dev
-  // packages can be upgraded.
+  build: {
+    // Trinidad eGP scraper drives Chromium via Playwright (TT's portal
+    // sits behind a JS challenge that defeats plain HTTP fetches). The
+    // playwright() extension installs the browser + its system deps in
+    // the deploy image. Default headless Chromium is what we use.
+    extensions: [playwright()],
+  },
   dirs: ['./src/trigger/scheduled'],
 });
