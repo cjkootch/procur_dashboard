@@ -41,3 +41,9 @@ coverage/
 # Trigger.dev
 .trigger/
 .env.sentry-build-plugin
+
+# Manually-downloaded reference datasets
+# (GEM trackers, etc — gated behind request forms; shareable but big +
+# regenerable; we don't commit them to the repo)
+data/gem/
+
