@@ -22,5 +22,9 @@ export default defineConfig({
   // hard-coded grep for chromium-headless-shell that doesn't match
   // playwright install --dry-run output. See scrape-trinidad.ts for
   // the re-enable plan.
-  dirs: ['./src/trigger/scheduled'],
+  // Awards extractors (./src/trigger/awards) are env-gated individually
+  // (JM_AWARDS_EXTRACTOR_ENABLED, TED_AWARDS_EXTRACTOR_ENABLED,
+  // UNGM_AWARDS_EXTRACTOR_ENABLED). Including the dir bundles them;
+  // without the env flag set, each task no-ops at run time.
+  dirs: ['./src/trigger/scheduled', './src/trigger/awards'],
 });
