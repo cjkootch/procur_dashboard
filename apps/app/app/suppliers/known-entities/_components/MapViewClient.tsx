@@ -20,6 +20,12 @@ const MapView = dynamic(() => import('./MapView').then((m) => m.MapView), {
   ),
 });
 
-export function MapViewClient({ entities }: { entities: MapEntity[] }) {
-  return <MapView entities={entities} />;
+export function MapViewClient({
+  entities,
+  totalCount,
+}: {
+  entities: MapEntity[];
+  totalCount?: number;
+}) {
+  return <MapView entities={entities} totalCount={totalCount} />;
 }
