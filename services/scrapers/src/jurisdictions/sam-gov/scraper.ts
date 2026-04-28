@@ -26,8 +26,10 @@
 import {
   TenderScraper,
   fetchWithRetry,
+  loadHtml,
   type NormalizedOpportunity,
   type RawOpportunity,
+  type ScrapedDocument,
 } from '@procur/scrapers-core';
 import { log } from '@procur/utils/logger';
 
@@ -120,10 +122,29 @@ type SamRawData = {
   /**
    * placeOfPerformance is a structured object on SAM:
    *   { city: { code, name }, state: { code, name }, country: { code, name }, zip }
-   * Stored verbatim in rawContent for the AI pipeline; we don't currently
-   * surface it on cards.
+   * The country.name is what we surface as beneficiaryCountry for non-US
+   * notices (Antigua, Haiti, Iraq, etc) so the country filter works for SAM.
    */
-  placeOfPerformance?: unknown;
+  placeOfPerformance?: {
+    city?: { code?: string; name?: string };
+    state?: { code?: string; name?: string };
+    country?: { code?: string; name?: string };
+    zip?: string;
+  };
+  /**
+   * SAM's `description` field in the v2 search response is a URL pointing
+   * to a separate `/v1/noticedesc?noticeid=...` endpoint that returns the
+   * actual notice text (HTML). We fetch it in a second pass after the
+   * search loop completes, populating descriptionText below.
+   */
+  descriptionUrl?: string;
+  /** Plain-text version of the fetched description (HTML stripped). */
+  descriptionText?: string;
+  /**
+   * `resourceLinks` is an array of URLs to attached files (RFP PDFs,
+   * amendments, drawings). Surfaced as opportunity documents.
+   */
+  resourceLinks?: string[];
 };
 
 type SamSearchResponse = {
@@ -136,7 +157,7 @@ type SamSearchResponse = {
 type SamInput = {
   /** Override the API key (defaults to env SAM_API_KEY). */
   apiKey?: string;
-  /** Days to look back from today. Default 30. */
+  /** Days to look back from today. Default 60. */
   postedWithinDays?: number;
   /** Page size; SAM caps at 1000. Default 1000. */
   pageSize?: number;
@@ -144,6 +165,8 @@ type SamInput = {
   maxPagesPerNaics?: number;
   /** Override the NAICS list (for testing). */
   naicsCodes?: string[];
+  /** Skip the per-notice description fetch (faster, but no AI summary). */
+  skipDescriptions?: boolean;
   /** Pre-canned JSON response (for testing). */
   fixtureJson?: SamSearchResponse;
 };
@@ -174,7 +197,7 @@ export class SamGovScraper extends TenderScraper {
 
     const pageSize = this.input.pageSize ?? 1000;
     const maxPages = this.input.maxPagesPerNaics ?? 3;
-    const days = this.input.postedWithinDays ?? 30;
+    const days = this.input.postedWithinDays ?? 60;
     const codes = this.input.naicsCodes ?? VTC_NAICS_CODES;
     const { postedFrom, postedTo } = buildDateRange(days);
 
@@ -228,7 +251,68 @@ export class SamGovScraper extends TenderScraper {
       }
     }
 
+    // Second pass: fetch the per-notice description for every row. SAM's
+    // search response gives us a URL, not the text; we need the text for
+    // AI summary + search index. Sequential keeps us under the 10 req/sec
+    // free-tier rate limit without coordination.
+    if (!this.input.skipDescriptions) {
+      await this.hydrateDescriptions(out, apiKey);
+    }
+
     return out;
+  }
+
+  /**
+   * For each opportunity, GET the descriptionUrl and stash the HTML-stripped
+   * text on rawData.descriptionText. One call per opportunity — for a
+   * 60-day VTC-NAICS run that's typically <500 calls (~50 sec at 10 RPS).
+   * Errors are logged but don't fail the row; `parse()` falls back to the
+   * synthesized description when descriptionText is empty.
+   */
+  private async hydrateDescriptions(rows: RawOpportunity[], apiKey: string): Promise<void> {
+    let fetched = 0;
+    let failed = 0;
+    for (const row of rows) {
+      const data = row.rawData as unknown as SamRawData;
+      if (!data.descriptionUrl) continue;
+      try {
+        // Append our api_key — SAM rejects unauthenticated description
+        // calls with 401 even though the URL came from an authenticated
+        // search response.
+        const url = new URL(data.descriptionUrl);
+        url.searchParams.set('api_key', apiKey);
+        const res = await fetchWithRetry(url.toString(), {
+          method: 'GET',
+          headers: COMMON_HEADERS,
+          timeoutMs: 30_000,
+          retryableStatuses: [408, 429, 502, 503, 504],
+        });
+        if (!res.ok) {
+          failed += 1;
+          continue;
+        }
+        const text = await res.text();
+        // Response is sometimes plain text, sometimes JSON {description: "..."}
+        let html: string | undefined;
+        try {
+          const json = JSON.parse(text) as { description?: string } | string;
+          html = typeof json === 'string' ? json : json?.description;
+        } catch {
+          html = text;
+        }
+        if (html && html.trim().length > 0) {
+          data.descriptionText = stripHtml(html);
+          fetched += 1;
+        }
+      } catch (err) {
+        failed += 1;
+        log.warn('sam.description.failed', {
+          noticeId: data.noticeId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    log.info('sam.descriptions.hydrated', { fetched, failed, total: rows.length });
   }
 
   private async fetchPaginated(args: {
@@ -322,7 +406,13 @@ export class SamGovScraper extends TenderScraper {
         typeOfSetAsideDescription: stringOrUndef(o.typeOfSetAsideDescription),
         typeOfSetAside: stringOrUndef(o.typeOfSetAside),
         uiLink: stringOrUndef(o.uiLink),
-        placeOfPerformance: o.placeOfPerformance,
+        placeOfPerformance: o.placeOfPerformance as SamRawData['placeOfPerformance'],
+        descriptionUrl: stringOrUndef(o.description),
+        resourceLinks: Array.isArray(o.resourceLinks)
+          ? (o.resourceLinks as unknown[])
+              .map((r) => (typeof r === 'string' ? r : null))
+              .filter((r): r is string => r != null && r.length > 0)
+          : undefined,
       };
 
       out.push({
@@ -345,18 +435,30 @@ export class SamGovScraper extends TenderScraper {
         ? 'closed'
         : 'active';
 
-    // Description: synthesize from set-aside + classification + place,
-    // since we don't fetch the full description URL in v1. Gives the
-    // AI summary pipeline + search index something useful to match on.
-    const descParts: string[] = [];
-    if (d.typeOfSetAsideDescription) descParts.push(`Set-aside: ${d.typeOfSetAsideDescription}`);
-    if (d.naicsCode) descParts.push(`NAICS: ${d.naicsCode}`);
-    if (d.classificationCode) descParts.push(`PSC: ${d.classificationCode}`);
-    const placeText = formatPlaceOfPerformance(d.placeOfPerformance);
-    if (placeText) descParts.push(`Place of performance: ${placeText}`);
-    const description = descParts.length > 0 ? descParts.join('\n') : undefined;
+    // Real description if we hydrated it, otherwise synthesize from
+    // set-aside / NAICS / PSC / place so search + AI pipeline have
+    // something to chew on. Both branches deliver the same shape.
+    const description = d.descriptionText ?? synthesizeDescription(d);
 
-    const agencyName = topLevelAgency(d.fullParentPathName);
+    const agencyName = normalizeAgencyName(topLevelAgency(d.fullParentPathName));
+
+    // Beneficiary country: SAM notices for OCONUS work (embassies, FOBs,
+    // foreign-aid CIF deliveries to the Caribbean) carry the target
+    // country in placeOfPerformance.country. Mirroring how UNGM tags
+    // beneficiaryCountry, we surface this so the country filter on
+    // Discover finds e.g. "Antigua and Barbuda" SAM rows. CONUS rows
+    // (state set, country=USA or unset) leave beneficiaryCountry null —
+    // the us-federal jurisdiction itself is the beneficiary.
+    const beneficiaryCountry = pickBeneficiaryCountry(d.placeOfPerformance);
+
+    const documents: ScrapedDocument[] | undefined =
+      d.resourceLinks && d.resourceLinks.length > 0
+        ? d.resourceLinks.map((url, i) => ({
+            originalUrl: url,
+            documentType: 'attachment',
+            title: `Attachment ${i + 1}`,
+          }))
+        : undefined;
 
     const award = d.award;
     const awardedAmount =
@@ -378,7 +480,9 @@ export class SamGovScraper extends TenderScraper {
       awardedAt: parseSamDate(award?.date),
       awardedAmount: Number.isFinite(awardedAmount) ? awardedAmount : undefined,
       awardedToCompanyName: award?.awardee?.name,
+      beneficiaryCountry,
       rawContent: d as unknown as Record<string, unknown>,
+      documents,
     };
   }
 }
@@ -426,33 +530,130 @@ function parseIsoDate(s: string | undefined): Date | undefined {
  * SAM's `fullParentPathName` is a dot-delimited chain from cabinet
  * department down to a specific contracting office, e.g.:
  *   "DEPT OF DEFENSE.DEPT OF THE ARMY.AMC.ACC.ACC-RSA"
- * For agency display we want the cabinet-level head, so we take the
- * first segment and title-case it. Specific office becomes irrelevant
- * noise in card UX.
+ * Returns the cabinet-level head (first segment, raw all-caps).
+ * normalizeAgencyName() handles casing.
  */
 function topLevelAgency(path: string | undefined): string | undefined {
   if (!path) return undefined;
   const head = path.split('.')[0]?.trim();
-  if (!head) return undefined;
-  // Title-case but preserve known acronyms (USDA, GSA, NASA, etc).
-  return head
+  return head && head.length > 0 ? head : undefined;
+}
+
+/**
+ * Acronyms that should stay all-caps after title-casing. Common-word
+ * tokens like ARMY / NAVY are NOT in here (those become "Army" / "Navy"),
+ * but real abbreviations like USAID / NASA / DOD / DLA do.
+ */
+const PRESERVE_ACRONYMS = new Set([
+  'USAID', 'USDA', 'NASA', 'NSA', 'CIA', 'FBI', 'DOD', 'DHS', 'GSA',
+  'EPA', 'NRC', 'NIH', 'DOE', 'DOJ', 'DOL', 'DOT', 'HHS', 'HUD',
+  'FEMA', 'TSA', 'ATF', 'IRS', 'SSA', 'VA', 'USCG', 'DLA', 'SBA',
+  'FAA', 'FCC', 'FDA', 'FDIC', 'FTC', 'NRO', 'NGA', 'DCMA', 'DCAA',
+  'USACE', 'USAFE', 'USNAVEUR', 'USCYBERCOM', 'USSOCOM',
+]);
+
+const SMALL_WORDS = new Set(['of', 'the', 'and', 'for', 'to', 'a', 'an', 'in', 'on']);
+
+/**
+ * Convert SAM's all-caps agency strings to title case while keeping
+ * known acronyms upper.
+ *
+ *   "DEPT OF DEFENSE"     → "Department of Defense"
+ *   "DEPT OF THE ARMY"    → "Department of the Army"
+ *   "USAID"               → "USAID"
+ *   "GENERAL SVCS ADMIN"  → "General Svcs Admin"
+ *
+ * Also expands "DEPT" → "DEPARTMENT" so the result reads naturally.
+ */
+function normalizeAgencyName(name: string | undefined): string | undefined {
+  if (!name) return undefined;
+  const expanded = name.replace(/\bDEPT\.?\b/gi, 'DEPARTMENT');
+  return expanded
     .split(/\s+/)
-    .map((w) => (w.length <= 4 && w === w.toUpperCase() ? w : titleCase(w)))
+    .map((w, i) => {
+      const upper = w.toUpperCase();
+      if (PRESERVE_ACRONYMS.has(upper)) return upper;
+      const lower = w.toLowerCase();
+      if (i > 0 && SMALL_WORDS.has(lower)) return lower;
+      return titleCase(lower);
+    })
     .join(' ');
 }
 
+/** Title-case a single word while leaving small connectives alone. */
 function titleCase(s: string): string {
   return s.length === 0 ? s : s[0]!.toUpperCase() + s.slice(1).toLowerCase();
 }
 
-function formatPlaceOfPerformance(p: unknown): string | undefined {
-  if (!p || typeof p !== 'object') return undefined;
-  const o = p as Record<string, unknown>;
-  const city = (o.city as Record<string, unknown> | undefined)?.name;
-  const state = (o.state as Record<string, unknown> | undefined)?.name;
-  const country = (o.country as Record<string, unknown> | undefined)?.name;
-  const parts = [city, state, country].filter((v): v is string => typeof v === 'string' && v.length > 0);
+/** "ANTIGUA AND BARBUDA" → "Antigua and Barbuda". */
+function titleCasePlace(s: string | undefined): string | undefined {
+  if (!s) return undefined;
+  return s
+    .split(/\s+/)
+    .map((w, i) => (i > 0 && SMALL_WORDS.has(w.toLowerCase()) ? w.toLowerCase() : titleCase(w.toLowerCase())))
+    .join(' ');
+}
+
+/**
+ * Build a comma-separated "city, state, country" string with proper
+ * casing. SAM emits all-caps names (`ANTIGUA AND BARBUDA`,
+ * `WASHINGTON`); title-case before joining.
+ */
+function formatPlaceOfPerformance(p: SamRawData['placeOfPerformance']): string | undefined {
+  if (!p) return undefined;
+  const parts = [p.city?.name, p.state?.name, p.country?.name]
+    .map((v) => titleCasePlace(v))
+    .filter((v): v is string => typeof v === 'string' && v.length > 0);
   return parts.length > 0 ? parts.join(', ') : undefined;
+}
+
+/**
+ * Synthesize a description when we don't have the fetched text yet.
+ * Same shape as the v1 fallback so AI summary + search still have
+ * something to match on.
+ */
+function synthesizeDescription(d: SamRawData): string | undefined {
+  const parts: string[] = [];
+  if (d.typeOfSetAsideDescription) parts.push(`Set-aside: ${d.typeOfSetAsideDescription}`);
+  if (d.naicsCode) parts.push(`NAICS: ${d.naicsCode}`);
+  if (d.classificationCode) parts.push(`PSC: ${d.classificationCode}`);
+  const placeText = formatPlaceOfPerformance(d.placeOfPerformance);
+  if (placeText) parts.push(`Place of performance: ${placeText}`);
+  return parts.length > 0 ? parts.join('\n') : undefined;
+}
+
+/**
+ * Tag US-federal notices with the beneficiary country when work is
+ * performed outside the US. CONUS rows leave it null (the us-federal
+ * jurisdiction is the beneficiary). country.code uses ISO3 (USA, ATG,
+ * HTI…) — anything other than USA is a foreign place of performance.
+ */
+function pickBeneficiaryCountry(p: SamRawData['placeOfPerformance']): string | undefined {
+  if (!p?.country) return undefined;
+  const code = (p.country.code ?? '').toUpperCase();
+  // ISO3 USA + legacy 2-char US — both signal CONUS, no beneficiary.
+  if (code === 'USA' || code === 'US' || !code) return undefined;
+  return titleCasePlace(p.country.name);
+}
+
+/**
+ * SAM's description endpoint returns HTML. Convert to plain text with
+ * paragraph breaks preserved. Cheerio is already a dep via scrapers-core
+ * so this stays a one-liner with no extra parser cost.
+ */
+function stripHtml(html: string): string {
+  const $ = loadHtml(html);
+  // Inject newlines after block-level tags so the flat .text() output
+  // doesn't run paragraphs together.
+  $('br, p, div, li, h1, h2, h3, h4, h5, h6, tr').each((_i, el) => {
+    $(el).after('\n');
+  });
+  return $.root()
+    .text()
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function stringOrUndef(v: unknown): string | undefined {
