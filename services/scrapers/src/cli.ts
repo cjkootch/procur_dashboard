@@ -19,6 +19,7 @@ import { JamaicaGojepSuppliersScraper } from './jurisdictions/jamaica-gojep-supp
 import { upsertSuppliers } from './jurisdictions/jamaica-gojep-suppliers/upsert';
 import { DrDgcpAwardsExtractor } from './awards-extractors/dr-dgcp/extractor';
 import { JamaicaGojepAwardsExtractor } from './awards-extractors/jamaica-gojep/extractor';
+import { TedAwardsExtractor } from './awards-extractors/ted/extractor';
 
 config({ path: '../../.env.local' });
 config({ path: '../../.env' });
@@ -53,13 +54,22 @@ async function runJamaicaAwardsExtractor() {
   process.exit(result.status === 'failed' ? 1 : 0);
 }
 
+async function runTedAwardsExtractor(daysArg: string | undefined) {
+  const days = daysArg ? Number.parseInt(daysArg, 10) : undefined;
+  console.log(`extracting TED awards (CPV 09 + 15) for last ${days ?? 30} days...`);
+  const extractor = new TedAwardsExtractor({ postedWithinDays: days });
+  const result = await extractor.run();
+  console.log(JSON.stringify(result, null, 2));
+  process.exit(result.status === 'failed' ? 1 : 0);
+}
+
 async function main() {
   const slug = process.argv[2];
   if (!slug) {
     console.error('usage: scrape <jurisdiction-slug | jamaica-suppliers | awards-dr [paths...] | awards-jm>');
     console.error(`available tender scrapers: ${Object.keys(scrapers).join(', ')}`);
     console.error('supplier scrapers: jamaica-suppliers');
-    console.error('awards extractors: awards-dr, awards-jm');
+    console.error('awards extractors: awards-dr, awards-jm, awards-ted [days]');
     process.exit(1);
   }
 
@@ -75,6 +85,11 @@ async function main() {
 
   if (slug === 'awards-jm') {
     await runJamaicaAwardsExtractor();
+    return;
+  }
+
+  if (slug === 'awards-ted') {
+    await runTedAwardsExtractor(process.argv[3]);
     return;
   }
 
