@@ -82,16 +82,41 @@ type Args = {
 
 function buildPeriods(monthsLookback: number): string[] {
   // UN Comtrade monthly period format: YYYYMM (e.g. 202406).
+  // Skip the most recent 4 months — UN Comtrade lag varies by reporter
+  // but typically 3-4 months. Querying empty periods returns 400 from
+  // the preview API.
   const periods: string[] = [];
   const now = new Date();
-  for (let i = 0; i < monthsLookback; i += 1) {
-    // Skip the current and last month — UN Comtrade lag is ~3 months.
-    if (i < 2) continue;
+  for (let i = 4; i < monthsLookback + 4; i += 1) {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
     periods.push(`${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
   }
   return periods;
 }
+
+/**
+ * Curated list of M49 reporter codes covering the global trade flows
+ * VTC tracks. The public preview API rejects reporterCode=all (returns
+ * 400); we enumerate explicit codes instead. Comma-separated up to ~40
+ * fits in a single URL and stays under the 100-record-per-call preview
+ * limit per period.
+ */
+const REPORTER_M49_LIST = [
+  // Europe (EU + EFTA + UK + Turkey)
+  '040', '056', '100', '191', '196', '203', '208', '233', '246', '250',
+  '276', '300', '348', '372', '380', '428', '440', '442', '470', '528',
+  '578', '616', '620', '642', '688', '703', '705', '724', '752', '756',
+  '792', '826',
+  // Asia
+  '050', '156', '356', '360', '392', '410', '458', '586', '702', '764',
+  '784', '704',
+  // Americas
+  '076', '124', '152', '170', '484', '604', '780', '840',
+  // Africa + ME
+  '012', '231', '364', '368', '414', '566', '634', '682', '710', '818',
+  // Oceania
+  '036',
+];
 
 async function fetchOnePeriod(
   period: string,
@@ -102,7 +127,7 @@ async function fetchOnePeriod(
     flowCode: 'M', // imports
     partnerCode: args.partnerM49,
     period,
-    reporterCode: 'all',
+    reporterCode: REPORTER_M49_LIST.join(','),
   });
   const url = `${COMTRADE_BASE}/C/M/HS?${params.toString()}`;
   const headers: Record<string, string> = {

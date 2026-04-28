@@ -224,7 +224,28 @@ async function main(): Promise<void> {
   };
   console.log('Eurostat Comext ingest', args);
 
-  const ds = await fetchEurostat(args);
+  // The HS-detail Comext datasets (ext_lt_extracn8, ds_059341, etc.)
+  // are no longer exposed via the dissemination API — Eurostat moved
+  // them to bulk-download-only (TSV.gz). Aggregate datasets like
+  // ext_lt_intratrd or ext_lt_maineu work but lack the HS detail we
+  // need. The 404 response below is expected; UN Comtrade is the
+  // primary source for global HS-detail trade flows now.
+  let ds: JsonStatDataset;
+  try {
+    ds = await fetchEurostat(args);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('404')) {
+      console.warn(
+        `Eurostat dataset '${args.dataset}' is not available via dissemination API.\n` +
+          `HS-detail data was moved to bulk-download in late 2023; aggregate datasets are still available.\n` +
+          `Use UN Comtrade for HS-level customs flows: pnpm --filter @procur/db ingest-un-comtrade\n` +
+          `Or override EUROSTAT_DATASET=ext_lt_intratrd for SITC-level aggregates.`,
+      );
+      return;
+    }
+    throw err;
+  }
   console.log(`  source: ${ds.source ?? '?'}, updated: ${ds.updated ?? '?'}`);
   console.log(`  dimensions: ${(ds.id ?? Object.keys(ds.dimension)).join(', ')}`);
 
