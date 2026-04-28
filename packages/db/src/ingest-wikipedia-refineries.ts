@@ -148,8 +148,16 @@ type RawRow = {
  * Walk the article DOM, group rows by H2 section. For each H2 whose
  * text we can map to ISO-2, scan forward for tables until the next H2
  * and extract refinery rows.
+ *
+ * `defaultCountry` is used by sub-article callers ("List of oil
+ * refineries in India") whose H2s are usually section names like
+ * "Operating refineries" rather than country names — without a default,
+ * those tables would be skipped because currentCountry never gets set.
  */
-function extractRefineriesFromHtml(html: string): RawRow[] {
+function extractRefineriesFromHtml(
+  html: string,
+  defaultCountry: string | null = null,
+): RawRow[] {
   const $ = cheerio.load(html);
   const out: RawRow[] = [];
 
@@ -173,7 +181,7 @@ function extractRefineriesFromHtml(html: string): RawRow[] {
     else if (tag === 'table') items.push({ kind: 'table', el });
   });
 
-  let currentCountry: string | null = null;
+  let currentCountry: string | null = defaultCountry;
 
   for (const item of items) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -185,7 +193,11 @@ function extractRefineriesFromHtml(html: string): RawRow[] {
         $node.text().trim();
       // Strip "[edit]" trailing text that some Wikipedia HTML includes
       const cleaned = heading.replace(/\[edit\]\s*$/i, '').trim();
-      currentCountry = nameToIso2(cleaned);
+      const mapped = nameToIso2(cleaned);
+      // On sub-articles ("List of oil refineries in India"), section
+      // headings like "Operating refineries" don't map. Fall back to
+      // the article-level default rather than losing the country.
+      currentCountry = mapped ?? defaultCountry;
       continue;
     }
 
@@ -245,19 +257,56 @@ function extractRefineriesFromHtml(html: string): RawRow[] {
 
 /**
  * Master article links to per-country sub-articles via "Main article:"
- * hatnotes. Find them via the API's links list rather than parsing HTML.
+ * hatnotes. Use the query API's links endpoint with pllimit=max
+ * (=500) and paginate via plcontinue — action=parse&prop=links is
+ * capped at the default 10 and won't surface the long tail.
  */
 async function findSubArticles(): Promise<string[]> {
-  const url = `${WIKI_API}?action=parse&page=${encodeURIComponent(
-    MASTER_ARTICLE,
-  )}&format=json&prop=links&redirects=true`;
-  const res = await fetch(url, { headers: HEADERS });
-  if (!res.ok) return [];
-  const json = (await res.json()) as { parse?: { links?: Array<{ '*': string }> } };
-  const links = json.parse?.links ?? [];
-  return links
-    .map((l) => l['*'])
-    .filter((title) => /^List of oil refineries in /i.test(title));
+  const titles: string[] = [];
+  let plcontinue: string | null = null;
+  // Cap pages to keep this from running away if Wikipedia restructures.
+  for (let page = 0; page < 20; page += 1) {
+    const params = new URLSearchParams({
+      action: 'query',
+      format: 'json',
+      titles: MASTER_ARTICLE.replace(/_/g, ' '),
+      prop: 'links',
+      pllimit: 'max',
+      redirects: '1',
+    });
+    if (plcontinue) params.set('plcontinue', plcontinue);
+    const res = await fetch(`${WIKI_API}?${params}`, { headers: HEADERS });
+    if (!res.ok) break;
+    const json = (await res.json()) as {
+      query?: {
+        pages?: Record<
+          string,
+          { links?: Array<{ ns: number; title: string }> }
+        >;
+      };
+      continue?: { plcontinue?: string };
+    };
+    const pages = json.query?.pages ?? {};
+    for (const p of Object.values(pages)) {
+      for (const l of p.links ?? []) {
+        if (l.ns === 0) titles.push(l.title);
+      }
+    }
+    plcontinue = json.continue?.plcontinue ?? null;
+    if (!plcontinue) break;
+  }
+  return titles.filter((t) => /^List of oil refineries in /i.test(t));
+}
+
+/**
+ * "List of oil refineries in the United States" → "US".
+ * Returns null if the country fragment isn't in our ISO map.
+ */
+function countryFromSubArticleTitle(title: string): string | null {
+  const m = title.match(/^List of oil refineries in (.+)$/i);
+  if (!m) return null;
+  const fragment = m[1]!.replace(/^the\s+/i, '').trim();
+  return nameToIso2(fragment);
 }
 
 async function main(): Promise<void> {
@@ -278,8 +327,13 @@ async function main(): Promise<void> {
     for (const sub of subArticles) {
       try {
         const html = await fetchArticleHtml(sub.replace(/ /g, '_'));
-        const rows = extractRefineriesFromHtml(html);
-        console.log(`    ${sub}: ${rows.length} rows`);
+        // Sub-article H2s are usually section names ("Operating refineries")
+        // not country names. Pass the country derived from the title so all
+        // tables in the article inherit it.
+        const subCountry = countryFromSubArticleTitle(sub);
+        const rows = extractRefineriesFromHtml(html, subCountry);
+        const countryLabel = subCountry ?? '?';
+        console.log(`    ${sub} [${countryLabel}]: ${rows.length} rows`);
         rawRows.push(...rows);
         // Be polite to Wikipedia — small delay between sub-article fetches
         await new Promise((r) => setTimeout(r, 500));

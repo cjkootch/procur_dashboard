@@ -112,6 +112,47 @@ function resolveCountry(tags: Record<string, string>): string | null {
   return null;
 }
 
+/**
+ * Nominatim reverse-geocoder. OSM POIs almost never carry country
+ * tags directly — a refinery node inside a country boundary inherits
+ * the country via spatial containment, not by repeating the tag. So
+ * for points that resolveCountry() can't satisfy, fall back to
+ * Nominatim with throttling.
+ *
+ * Usage policy requires:
+ *   - identifying User-Agent
+ *   - <= 1 request per second
+ *   - cache results so we don't re-request
+ */
+const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/reverse';
+const NOMINATIM_HEADERS = {
+  'User-Agent': 'procur-research/1.0 (cole@vectortradecapital.com)',
+  Accept: 'application/json',
+};
+const NOMINATIM_DELAY_MS = 1100;
+
+async function reverseGeocodeCountry(
+  lat: number,
+  lon: number,
+): Promise<string | null> {
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lon: String(lon),
+    format: 'json',
+    zoom: '3', // country level
+    addressdetails: '1',
+  });
+  const res = await fetch(`${NOMINATIM_URL}?${params}`, {
+    headers: NOMINATIM_HEADERS,
+  });
+  if (!res.ok) return null;
+  const json = (await res.json()) as {
+    address?: { country_code?: string };
+  };
+  const cc = json.address?.country_code;
+  return cc ? cc.toUpperCase() : null;
+}
+
 function slugify(name: string, country: string, osmType: string, osmId: number): string {
   const base = name
     .toLowerCase()
@@ -153,27 +194,59 @@ async function main(): Promise<void> {
   let skippedNoCoords = 0;
   const unknownCountries = new Map<string, number>();
 
+  // Need to know how many we're going to reverse-geocode so the
+  // progress log makes sense — pre-scan first, then process.
+  type Pending = {
+    el: OsmElement;
+    name: string;
+    lat: number;
+    lon: number;
+    countryFromTags: string | null;
+  };
+  const pending: Pending[] = [];
   for (const el of elements) {
     const tags = el.tags ?? {};
     const name = tags.name?.trim();
     if (!name) continue;
-    const country = resolveCountry(tags);
-    if (!country) {
-      skippedNoCountry += 1;
-      const display =
-        (tags['addr:country'] ?? tags['is_in:country'] ?? tags['is_in'] ?? '<none>').slice(
-          0,
-          40,
-        );
-      unknownCountries.set(display, (unknownCountries.get(display) ?? 0) + 1);
-      continue;
-    }
     const lat = el.lat ?? el.center?.lat;
     const lon = el.lon ?? el.center?.lon;
     if (lat == null || lon == null) {
       skippedNoCoords += 1;
       continue;
     }
+    pending.push({ el, name, lat, lon, countryFromTags: resolveCountry(tags) });
+  }
+  const needsGeocode = pending.filter((p) => !p.countryFromTags).length;
+  if (needsGeocode > 0) {
+    const seconds = Math.ceil((needsGeocode * NOMINATIM_DELAY_MS) / 1000);
+    console.log(
+      `  ${needsGeocode}/${pending.length} features lack country tags — reverse-geocoding via Nominatim (~${seconds}s with 1.1s throttle).`,
+    );
+  }
+
+  let geocodedSoFar = 0;
+  for (const p of pending) {
+    const { el, name, lat, lon } = p;
+    let country = p.countryFromTags;
+    if (!country) {
+      try {
+        country = await reverseGeocodeCountry(lat, lon);
+      } catch {
+        country = null;
+      }
+      geocodedSoFar += 1;
+      if (geocodedSoFar % 25 === 0) {
+        console.log(`    geocoded ${geocodedSoFar}/${needsGeocode}…`);
+      }
+      // Throttle even on errors — don't hammer Nominatim.
+      await new Promise((r) => setTimeout(r, NOMINATIM_DELAY_MS));
+    }
+    if (!country) {
+      skippedNoCountry += 1;
+      unknownCountries.set('<unresolved>', (unknownCountries.get('<unresolved>') ?? 0) + 1);
+      continue;
+    }
+    const tags = el.tags ?? {};
 
     const operator = tags.operator ?? tags['operator:short'] ?? null;
     const wikidataId = tags.wikidata ?? null;
