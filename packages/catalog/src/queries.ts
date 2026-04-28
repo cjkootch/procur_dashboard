@@ -2653,6 +2653,344 @@ export async function lookupKnownEntities(
   }));
 }
 
+// ─── Unified entity profile (cross-table lookup) ──────────────────
+
+export interface EntityProfileResult {
+  /** Canonical id used in the URL — the known_entities.slug if curated,
+   *  the external_suppliers.id if portal-only. */
+  canonicalKey: string;
+  /** 'known_entity' (curated/Wikidata source) | 'supplier' (portal-scraped). */
+  primarySource: 'known_entity' | 'supplier' | 'not_found';
+  name: string;
+  country: string | null;
+  role: string | null;
+  categories: string[];
+  aliases: string[];
+  tags: string[];
+  notes: string | null;
+  /** From known_entities.metadata + Wikidata enrichment. */
+  capabilities: {
+    capacityBpd: number | null;
+    operator: string | null;
+    owner: string | null;
+    inceptionYear: number | null;
+    status: string | null;
+    wikidataId: string | null;
+  };
+  /** Resolved external_suppliers.id if this entity has portal-scraped
+   *  presence. Null when known-entity-only. */
+  matchedSupplierId: string | null;
+  /** Public-tender history; null if no matchedSupplierId. */
+  publicTenderActivity: {
+    totalAwards: number;
+    totalValueUsd: number | null;
+    firstAwardDate: string | null;
+    mostRecentAwardDate: string | null;
+    awardsByCategory: Record<string, number>;
+    topBuyers: Array<{ buyerName: string; awardsCount: number; totalValueUsd: number | null }>;
+    recentAwards: Array<{
+      awardDate: string;
+      buyerName: string;
+      buyerCountry: string;
+      title: string | null;
+      contractValueUsd: number | null;
+    }>;
+  } | null;
+}
+
+/**
+ * Unified entity profile resolver.
+ *
+ * Accepts EITHER a known_entities.slug OR an external_suppliers.id (UUID)
+ * and merges available data across both tables plus the supplier-graph
+ * (awards). Designed for the /entities/[slug] page and as a profileUrl
+ * destination from chat tool responses.
+ *
+ * Resolution flow:
+ *   1. UUID input → look up external_suppliers, then try fuzzy match
+ *      to known_entities by name
+ *   2. slug input → look up known_entities, then try fuzzy match to
+ *      external_suppliers (via supplier_aliases trigram) for portal
+ *      presence
+ *   3. Pulls awards data via whichever supplier_id was resolved
+ */
+export async function getEntityProfile(
+  slugOrId: string,
+): Promise<EntityProfileResult> {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    slugOrId,
+  );
+
+  let knownEntity: {
+    slug: string;
+    name: string;
+    country: string;
+    role: string;
+    categories: string[];
+    notes: string | null;
+    aliases: string[];
+    tags: string[];
+    metadata: Record<string, unknown> | null;
+  } | null = null;
+  let supplierId: string | null = null;
+  let supplierName: string | null = null;
+  let supplierCountry: string | null = null;
+
+  if (isUuid) {
+    // External-supplier path: resolve by id, then look for a curated overlay.
+    supplierId = slugOrId;
+    const supRows = await db.execute(sql`
+      SELECT id, organisation_name, country
+      FROM external_suppliers
+      WHERE id = ${slugOrId}
+      LIMIT 1;
+    `);
+    const sup = (supRows.rows as Array<Record<string, unknown>>)[0];
+    if (sup) {
+      supplierName = String(sup.organisation_name);
+      supplierCountry = sup.country == null ? null : String(sup.country);
+      // Try to find an overlay in known_entities by alias/name match.
+      const keRows = await db.execute(sql`
+        SELECT slug, name, country, role, categories, notes, aliases, tags, metadata
+        FROM known_entities
+        WHERE ${supplierName} = ANY(aliases) OR name = ${supplierName}
+        LIMIT 1;
+      `);
+      const ke = (keRows.rows as Array<Record<string, unknown>>)[0];
+      if (ke) knownEntity = mapKnownEntityRow(ke);
+    }
+  } else {
+    // Slug path: resolve known_entities first, then look for portal presence.
+    const keRows = await db.execute(sql`
+      SELECT slug, name, country, role, categories, notes, aliases, tags, metadata
+      FROM known_entities
+      WHERE slug = ${slugOrId}
+      LIMIT 1;
+    `);
+    const ke = (keRows.rows as Array<Record<string, unknown>>)[0];
+    if (ke) {
+      knownEntity = mapKnownEntityRow(ke);
+      // Best-effort match into external_suppliers via the canonical
+      // name and any aliases. Uses ILIKE to tolerate corporate
+      // suffix variation.
+      const candidates = [knownEntity.name, ...knownEntity.aliases];
+      const matchClauses = candidates.map(
+        (c) => sql`LOWER(s.organisation_name) LIKE LOWER(${`%${c.split(/\s+/)[0]}%`})`,
+      );
+      const matchSql = sql.join(matchClauses, sql` OR `);
+      const supRows = await db.execute(sql`
+        SELECT s.id, s.organisation_name, s.country
+        FROM external_suppliers s
+        WHERE ${matchSql}
+        ORDER BY similarity(s.organisation_name, ${knownEntity.name}) DESC
+        LIMIT 1;
+      `);
+      const sup = (supRows.rows as Array<Record<string, unknown>>)[0];
+      if (sup) {
+        supplierId = String(sup.id);
+        supplierName = String(sup.organisation_name);
+        supplierCountry = sup.country == null ? null : String(sup.country);
+      }
+    }
+  }
+
+  if (!knownEntity && !supplierId) {
+    return notFoundProfile(slugOrId);
+  }
+
+  // Public-tender activity — only if we resolved a supplier_id.
+  let publicTenderActivity: EntityProfileResult['publicTenderActivity'] = null;
+  if (supplierId) {
+    const summary = await db.execute(sql`
+      SELECT
+        COUNT(*)::int            AS total_awards,
+        SUM(a.contract_value_usd) AS total_value_usd,
+        MIN(a.award_date)        AS first_award_date,
+        MAX(a.award_date)        AS most_recent_award_date
+      FROM awards a
+      JOIN award_awardees aa ON aa.award_id = a.id
+      WHERE aa.supplier_id = ${supplierId};
+    `);
+    const summaryRow = (summary.rows as Array<Record<string, unknown>>)[0] ?? {};
+
+    const totalAwards = Number(summaryRow.total_awards ?? 0);
+    if (totalAwards > 0) {
+      const buyersRows = await db.execute(sql`
+        SELECT a.buyer_name, COUNT(*)::int AS awards_count,
+               SUM(a.contract_value_usd) AS total_value_usd
+        FROM awards a
+        JOIN award_awardees aa ON aa.award_id = a.id
+        WHERE aa.supplier_id = ${supplierId}
+        GROUP BY a.buyer_name
+        ORDER BY COUNT(*) DESC, SUM(a.contract_value_usd) DESC NULLS LAST
+        LIMIT 5;
+      `);
+
+      const recentRows = await db.execute(sql`
+        SELECT a.award_date, a.buyer_name, a.buyer_country, a.title, a.contract_value_usd
+        FROM awards a
+        JOIN award_awardees aa ON aa.award_id = a.id
+        WHERE aa.supplier_id = ${supplierId}
+        ORDER BY a.award_date DESC
+        LIMIT 5;
+      `);
+
+      const categoryRows = await db.execute(sql`
+        SELECT tag, COUNT(*)::int AS cnt
+        FROM (
+          SELECT unnest(a.category_tags) AS tag
+          FROM awards a
+          JOIN award_awardees aa ON aa.award_id = a.id
+          WHERE aa.supplier_id = ${supplierId}
+        ) t
+        GROUP BY tag ORDER BY cnt DESC;
+      `);
+
+      const awardsByCategory: Record<string, number> = {};
+      for (const row of categoryRows.rows as Array<Record<string, unknown>>) {
+        awardsByCategory[String(row.tag)] = Number(row.cnt);
+      }
+
+      publicTenderActivity = {
+        totalAwards,
+        totalValueUsd:
+          summaryRow.total_value_usd != null
+            ? Number.parseFloat(String(summaryRow.total_value_usd))
+            : null,
+        firstAwardDate: dateOrNull(summaryRow.first_award_date),
+        mostRecentAwardDate: dateOrNull(summaryRow.most_recent_award_date),
+        awardsByCategory,
+        topBuyers: (buyersRows.rows as Array<Record<string, unknown>>).map((r) => ({
+          buyerName: String(r.buyer_name),
+          awardsCount: Number(r.awards_count),
+          totalValueUsd:
+            r.total_value_usd != null ? Number.parseFloat(String(r.total_value_usd)) : null,
+        })),
+        recentAwards: (recentRows.rows as Array<Record<string, unknown>>).map((r) => ({
+          awardDate: dateOrNull(r.award_date) ?? '',
+          buyerName: String(r.buyer_name),
+          buyerCountry: String(r.buyer_country),
+          title: r.title == null ? null : String(r.title),
+          contractValueUsd:
+            r.contract_value_usd != null
+              ? Number.parseFloat(String(r.contract_value_usd))
+              : null,
+        })),
+      };
+    }
+  }
+
+  // Compose the result, preferring known_entity values when present.
+  const meta = knownEntity?.metadata ?? {};
+  const canonicalKey = knownEntity?.slug ?? supplierId ?? slugOrId;
+  const primarySource: EntityProfileResult['primarySource'] = knownEntity
+    ? 'known_entity'
+    : supplierId
+      ? 'supplier'
+      : 'not_found';
+
+  return {
+    canonicalKey,
+    primarySource,
+    name: knownEntity?.name ?? supplierName ?? 'UNKNOWN',
+    country: knownEntity?.country ?? supplierCountry ?? null,
+    role: knownEntity?.role ?? null,
+    categories: knownEntity?.categories ?? [],
+    aliases: knownEntity?.aliases ?? (supplierName ? [supplierName] : []),
+    tags: knownEntity?.tags ?? [],
+    notes: knownEntity?.notes ?? null,
+    capabilities: {
+      capacityBpd: numberOrNull(meta.capacity_bpd),
+      operator: stringOrNull(meta.operator),
+      owner: stringOrNull(meta.owner),
+      inceptionYear: numberOrNull(meta.inception_year),
+      status: stringOrNull(meta.status),
+      wikidataId: stringOrNull(meta.wikidata_id),
+    },
+    matchedSupplierId: supplierId,
+    publicTenderActivity,
+  };
+}
+
+function mapKnownEntityRow(r: Record<string, unknown>): {
+  slug: string;
+  name: string;
+  country: string;
+  role: string;
+  categories: string[];
+  notes: string | null;
+  aliases: string[];
+  tags: string[];
+  metadata: Record<string, unknown> | null;
+} {
+  return {
+    slug: String(r.slug),
+    name: String(r.name),
+    country: String(r.country),
+    role: String(r.role),
+    categories: (r.categories as string[] | null) ?? [],
+    notes: r.notes == null ? null : String(r.notes),
+    aliases: (r.aliases as string[] | null) ?? [],
+    tags: (r.tags as string[] | null) ?? [],
+    metadata: (r.metadata as Record<string, unknown> | null) ?? null,
+  };
+}
+
+function notFoundProfile(slugOrId: string): EntityProfileResult {
+  return {
+    canonicalKey: slugOrId,
+    primarySource: 'not_found',
+    name: 'Not found',
+    country: null,
+    role: null,
+    categories: [],
+    aliases: [],
+    tags: [],
+    notes: null,
+    capabilities: {
+      capacityBpd: null,
+      operator: null,
+      owner: null,
+      inceptionYear: null,
+      status: null,
+      wikidataId: null,
+    },
+    matchedSupplierId: null,
+    publicTenderActivity: null,
+  };
+}
+
+function numberOrNull(v: unknown): number | null {
+  if (v == null) return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function stringOrNull(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s.length > 0 ? s : null;
+}
+
+function dateOrNull(v: unknown): string | null {
+  if (v == null) return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v).slice(0, 10);
+}
+
+/**
+ * Build the canonical profile URL for an entity. Uses slug for
+ * known_entities (stable, human-readable) and UUID for external_suppliers
+ * (no slug; UUID is the canonical id).
+ */
+export function buildEntityProfileUrl(
+  options:
+    | { kind: 'known_entity'; slug: string }
+    | { kind: 'supplier'; id: string },
+): string {
+  return `/entities/${options.kind === 'known_entity' ? options.slug : options.id}`;
+}
+
 // ─── Drill-down queries (for the supplier profile + buyer pages) ──
 
 export interface BuyerAwardRow {
