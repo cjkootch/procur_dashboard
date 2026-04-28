@@ -2819,6 +2819,153 @@ export async function getCommoditySpread(
   };
 }
 
+// ─── Crude grades + refinery slate compatibility ──────────────────
+
+export interface CrudeGradeRow {
+  slug: string;
+  name: string;
+  originCountry: string | null;
+  region: string | null;
+  apiGravity: number | null;
+  sulfurPct: number | null;
+  tan: number | null;
+  characterization: string | null;
+  isMarker: boolean;
+  loadingCountry: string | null;
+  notes: string | null;
+}
+
+/**
+ * List crude grades from the reference table. Optionally filter by
+ * region or origin country. Used to drive grade pickers and also as
+ * input to refinery-slate compatibility queries.
+ */
+export async function listCrudeGrades(filters?: {
+  region?: string;
+  originCountry?: string;
+}): Promise<CrudeGradeRow[]> {
+  const result = await db.execute(sql`
+    SELECT
+      slug, name, origin_country, region, api_gravity, sulfur_pct, tan,
+      characterization, is_marker, loading_country, notes
+    FROM crude_grades
+    WHERE 1=1
+      ${filters?.region ? sql`AND region = ${filters.region}` : sql``}
+      ${filters?.originCountry ? sql`AND origin_country = ${filters.originCountry}` : sql``}
+    ORDER BY is_marker DESC, region, name;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    slug: String(r.slug),
+    name: String(r.name),
+    originCountry: r.origin_country == null ? null : String(r.origin_country),
+    region: r.region == null ? null : String(r.region),
+    apiGravity: r.api_gravity == null ? null : Number.parseFloat(String(r.api_gravity)),
+    sulfurPct: r.sulfur_pct == null ? null : Number.parseFloat(String(r.sulfur_pct)),
+    tan: r.tan == null ? null : Number.parseFloat(String(r.tan)),
+    characterization: r.characterization == null ? null : String(r.characterization),
+    isMarker: Boolean(r.is_marker),
+    loadingCountry: r.loading_country == null ? null : String(r.loading_country),
+    notes: r.notes == null ? null : String(r.notes),
+  }));
+}
+
+export interface RefineryCompatibilityRow {
+  slug: string;
+  name: string;
+  country: string;
+  capacityBpd: number | null;
+  operator: string | null;
+  notes: string | null;
+  matchSource: 'tag' | 'slate-window';
+  /** Free-form notes from the refinery's slate metadata (analyst). */
+  slateNotes: string | null;
+}
+
+/**
+ * Find refineries that can run a given crude grade.
+ *
+ * Two match paths, unioned:
+ *   1. Explicit tag — the refinery is tagged `compatible:<grade-slug>`.
+ *      Highest confidence; analyst-curated.
+ *   2. Slate-window — the grade's API + sulfur fits inside the
+ *      refinery's `metadata.slate` window. Lower confidence, but
+ *      catches refineries that haven't been individually annotated.
+ *
+ * Tagged matches always win (matchSource = 'tag') so the chat tool can
+ * surface them first.
+ */
+export async function lookupRefineriesByGrade(
+  gradeSlug: string,
+  filters?: { country?: string; limit?: number },
+): Promise<RefineryCompatibilityRow[]> {
+  const limit = Math.min(filters?.limit ?? 50, 500);
+  const tag = `compatible:${gradeSlug}`;
+
+  // Pull the grade's API + sulfur for the slate-window fallback.
+  const gradeRows = await db.execute(sql`
+    SELECT api_gravity, sulfur_pct FROM crude_grades WHERE slug = ${gradeSlug} LIMIT 1;
+  `);
+  const grade = (gradeRows.rows as Array<Record<string, unknown>>)[0];
+  const apiNum = grade?.api_gravity != null ? Number.parseFloat(String(grade.api_gravity)) : null;
+  const sulfurNum = grade?.sulfur_pct != null ? Number.parseFloat(String(grade.sulfur_pct)) : null;
+
+  const result = await db.execute(sql`
+    WITH tagged AS (
+      SELECT slug, name, country, metadata, notes,
+             'tag'::text AS match_source
+      FROM known_entities
+      WHERE role = 'refiner'
+        AND ${tag} = ANY(tags)
+        ${filters?.country ? sql`AND country = ${filters.country}` : sql``}
+    ),
+    windowed AS (
+      SELECT slug, name, country, metadata, notes,
+             'slate-window'::text AS match_source
+      FROM known_entities
+      WHERE role = 'refiner'
+        AND metadata ? 'slate'
+        AND NOT (${tag} = ANY(COALESCE(tags, ARRAY[]::text[])))
+        ${
+          apiNum != null
+            ? sql`AND (metadata->'slate'->>'min_api')::numeric <= ${apiNum}
+                  AND (metadata->'slate'->>'max_api')::numeric >= ${apiNum}`
+            : sql``
+        }
+        ${
+          sulfurNum != null
+            ? sql`AND (metadata->'slate'->>'max_sulfur_pct')::numeric >= ${sulfurNum}`
+            : sql``
+        }
+        ${filters?.country ? sql`AND country = ${filters.country}` : sql``}
+    )
+    SELECT * FROM tagged
+    UNION ALL
+    SELECT * FROM windowed
+    LIMIT ${limit};
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((r) => {
+    const meta = (r.metadata as Record<string, unknown> | null) ?? {};
+    const slate = (meta.slate as Record<string, unknown> | undefined) ?? {};
+    return {
+      slug: String(r.slug),
+      name: String(r.name),
+      country: String(r.country),
+      capacityBpd: typeof meta.capacity_bpd === 'number' ? meta.capacity_bpd : null,
+      operator:
+        typeof meta.operator === 'string'
+          ? meta.operator
+          : Array.isArray(meta.operators) && typeof meta.operators[0] === 'string'
+            ? (meta.operators[0] as string)
+            : null,
+      notes: r.notes == null ? null : String(r.notes),
+      matchSource: r.match_source === 'tag' ? 'tag' : 'slate-window',
+      slateNotes:
+        typeof slate.source_notes === 'string' ? (slate.source_notes as string) : null,
+    };
+  });
+}
+
 // ─── Entity ownership chain ───────────────────────────────────────
 
 export interface OwnershipNode {
