@@ -1,3 +1,5 @@
+import { sql } from 'drizzle-orm';
+import { db } from '@procur/db';
 import { log, type Logger } from '@procur/utils/logger';
 import {
   finishScraperRun,
@@ -162,6 +164,37 @@ export abstract class AwardsExtractor {
           : errors.length < recordsFound
             ? 'partial'
             : 'failed';
+
+      // Refresh the per-supplier capability summary so downstream
+      // queries (the supplier-graph queries hit the awards table
+      // directly today, but the view is the canonical roll-up for
+      // future leaderboard / dashboard surfaces) reflect this run.
+      // Skip on full failure — no point refreshing if nothing landed.
+      if (status !== 'failed' && (recordsNew > 0 || recordsUpdated > 0)) {
+        try {
+          await db.execute(
+            sql`REFRESH MATERIALIZED VIEW CONCURRENTLY supplier_capability_summary`,
+          );
+          logger.info('awards.mv_refreshed');
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // First-time refresh on an empty MV requires non-CONCURRENTLY.
+          // Try the fallback once before surfacing.
+          try {
+            await db.execute(sql`REFRESH MATERIALIZED VIEW supplier_capability_summary`);
+            logger.info('awards.mv_refreshed', { mode: 'non-concurrent-fallback' });
+          } catch (fallbackErr) {
+            const fallbackMsg =
+              fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+            // Don't fail the run if MV refresh fails — the upserts
+            // already succeeded. Surface as a warning instead.
+            errors.push({
+              message: `MV refresh failed: ${msg}; fallback: ${fallbackMsg}`,
+            });
+            logger.warn('awards.mv_refresh_failed', { message: fallbackMsg });
+          }
+        }
+      }
 
       const durationMs = Date.now() - started;
       await finishScraperRun({
