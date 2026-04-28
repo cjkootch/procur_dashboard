@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { resolveAssistantContext } from '../../../../../lib/assistant/context';
+import { hydrateMessages } from '../../../../../lib/assistant/hydrate';
 import {
   deleteThread,
   getThread,
@@ -18,7 +19,8 @@ export async function GET(_req: Request, { params }: RouteContext): Promise<Resp
   const thread = await getThread(ctx.companyId, ctx.userId, threadId);
   if (!thread) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   const messages = await listMessages(threadId);
-  return NextResponse.json({ thread, messages });
+  const rendered = hydrateMessages(messages);
+  return NextResponse.json({ thread, messages, rendered });
 }
 
 export async function PATCH(req: Request, { params }: RouteContext): Promise<Response> {
