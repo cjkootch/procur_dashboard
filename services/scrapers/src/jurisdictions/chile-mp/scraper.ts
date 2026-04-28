@@ -25,6 +25,7 @@ import {
   parseTenderDate,
   type NormalizedOpportunity,
   type RawOpportunity,
+  classifyVtcCategory,
 } from '@procur/scrapers-core';
 import { log } from '@procur/utils/logger';
 
@@ -177,6 +178,8 @@ export class ChileMpScraper extends TenderScraper {
       sourceUrl: raw.sourceUrl,
       title: d.Nombre,
       referenceNumber: d.CodigoExterno,
+      // Spanish-language source; cross-language keywords only.
+      category: classifyVtcCategory(d.Nombre) ?? undefined,
       currency: 'CLP',
       publishedAt: parseTenderDate(chileDate(d.FechaCreacion), TZ) ?? undefined,
       deadlineAt: parseTenderDate(chileDate(d.FechaCierre), TZ) ?? undefined,

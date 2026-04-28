@@ -45,6 +45,7 @@ import {
   textOf,
   type NormalizedOpportunity,
   type RawOpportunity,
+  classifyVtcCategory,
 } from '@procur/scrapers-core';
 import { fromZonedTime } from 'date-fns-tz';
 
@@ -198,6 +199,7 @@ export class JamaicaGojepScraper extends TenderScraper {
       description: d.title,
       referenceNumber: d.referenceNumber,
       agencyName: d.agency,
+      category: classifyVtcCategory(d.title) ?? undefined,
       currency: 'JMD',
       // For award-notice rows, valueEstimate is the awarded value
       // (no separate budget estimate is published). Same number lands

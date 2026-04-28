@@ -46,6 +46,7 @@ import {
   textOf,
   type NormalizedOpportunity,
   type RawOpportunity,
+  classifyVtcCategory,
 } from '@procur/scrapers-core';
 
 const PORTAL = 'https://lcregister.petroleum.gov.gy';
@@ -102,7 +103,12 @@ export class GuyanaLcrScraper extends TenderScraper {
       // surfaces who's actually procuring.
       agencyName: d.operator,
       type: d.noticeType,
-      category: d.supplyCategory,
+      // d.supplyCategory is operator-emitted free text ("Drilling Services",
+      // "Well Services") and doesn't map to taxonomy slugs. Use the keyword
+      // classifier so VTC's commodity buckets light up — most LCR rows are
+      // oil-&-gas, so they'll bucket as petroleum-fuels when the title or
+      // description mentions diesel/fuel/lubricant/etc.
+      category: classifyVtcCategory(`${d.title} ${d.supplyCategory ?? ''}`) ?? undefined,
       // Oil & gas tenders on the Stabroek block are dollar-denominated
       // by convention. Operators publish in USD; Guyana's local-content
       // suppliers invoice and report in USD.

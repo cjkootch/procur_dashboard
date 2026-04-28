@@ -29,6 +29,7 @@
  */
 import {
   TenderScraper,
+  classifyVtcCategory,
   fetchWithRetry,
   findTrailingCountry,
   loadHtml,
@@ -399,6 +400,9 @@ export class UngmScraper extends TenderScraper {
       d.countries && d.countries.length > 0 ? `Countries: ${d.countries.join(', ')}` : null;
     const description = [d.description, countriesLine].filter(Boolean).join('\n\n') || undefined;
 
+    const category =
+      classifyVtcCategory(`${d.title} ${description ?? ''}`) ?? undefined;
+
     return {
       sourceReferenceId: raw.sourceReferenceId,
       sourceUrl: raw.sourceUrl,
@@ -407,6 +411,7 @@ export class UngmScraper extends TenderScraper {
       referenceNumber: d.reference,
       type: d.noticeType,
       agencyName: d.agency,
+      category,
       // First country in the rawContent — UNGM rows have one country
       // suffix per notice. Surfaced on Discover as a chip and via the
       // beneficiary_country filter dropdown.

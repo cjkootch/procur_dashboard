@@ -26,6 +26,7 @@ import {
   textOf,
   type NormalizedOpportunity,
   type RawOpportunity,
+  classifyVtcCategory,
 } from '@procur/scrapers-core';
 
 const PORTAL = 'https://comunidad.comprasdominicana.gob.do';
@@ -179,6 +180,8 @@ export class DrDgcpScraper extends TenderScraper {
       referenceNumber: d.referenceNumber,
       type: readableProcedureType(d.phaseCode),
       agencyName: d.agency,
+      // Spanish-language source; cross-language keywords only.
+      category: classifyVtcCategory(d.title) ?? undefined,
       currency,
       valueEstimate,
       publishedAt: parseDrDate(d.publishedText) ?? undefined,
