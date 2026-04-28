@@ -15,12 +15,17 @@ export function LineChart({
   /** Format Y-axis values; default rounds + adds prefix. */
   formatY = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}`,
   emptyMessage = 'No data in this window.',
+  /** Clamp y-axis domain to ≥0 when all values are non-negative.
+      Default true — most dashboard metrics (counts, $USD) are
+      non-negative and the 10% padding shouldn't push them below zero. */
+  clampPositive = true,
 }: {
   points: LinePoint[];
   height?: number;
   yLabel?: string;
   formatY?: (n: number) => string;
   emptyMessage?: string;
+  clampPositive?: boolean;
 }): ReactNode {
   const valid = points.filter(
     (p): p is { label: string; value: number } => p.value != null,
@@ -49,8 +54,9 @@ export function LineChart({
   const max = Math.max(...valid.map((p) => p.value));
   // Pad domain by 10% so the line doesn't touch the edges.
   const range = max - min || 1;
-  const yMin = min - range * 0.1;
+  let yMin = min - range * 0.1;
   const yMax = max + range * 0.1;
+  if (clampPositive && min >= 0 && yMin < 0) yMin = 0;
 
   const xFor = (i: number) => padL + (i / (points.length - 1)) * innerW;
   const yFor = (v: number) => padT + innerH - ((v - yMin) / (yMax - yMin)) * innerH;

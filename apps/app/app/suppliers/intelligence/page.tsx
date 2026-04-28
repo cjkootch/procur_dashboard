@@ -20,6 +20,7 @@ import { BarChart, type BarDatum } from './_components/BarChart';
 import { Heatmap } from './_components/Heatmap';
 import { LineChart, type LinePoint } from './_components/LineChart';
 import { MultiLineChart, type MultiLineSeries } from './_components/MultiLineChart';
+import { Sparkline } from './_components/Sparkline';
 
 /**
  * Continuous-intelligence dashboard for the supplier-graph data
@@ -410,38 +411,57 @@ export default async function IntelligencePage({ searchParams }: Props) {
       </header>
 
       {/* Commodity price ticker */}
-      <section className="mb-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 px-4 py-3">
-        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 text-sm">
+      <section className="mb-6 overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-gradient-to-b from-[color:var(--color-muted)]/30 to-transparent">
+        <div className="grid grid-cols-2 divide-x divide-y divide-[color:var(--color-border)] sm:grid-cols-3 lg:grid-cols-5">
           {TICKER_SERIES.map((s) => {
             const t = ticker.find((x) => x.seriesSlug === s.slug);
             const price = t?.latestPrice ?? null;
             const change = t?.pctChange30d ?? null;
             const unit = t?.unit ?? null;
             const priceLabel =
-              price == null ? '—' : unit === 'usd-gal' ? `$${price.toFixed(3)}/gal` : `$${price.toFixed(2)}/bbl`;
+              price == null
+                ? '—'
+                : unit === 'usd-gal'
+                  ? `$${price.toFixed(3)}`
+                  : `$${price.toFixed(2)}`;
+            const unitLabel = price == null ? '' : unit === 'usd-gal' ? '/gal' : '/bbl';
+            const changeColor =
+              change == null
+                ? 'text-[color:var(--color-muted-foreground)]'
+                : change >= 0
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-rose-600 dark:text-rose-400';
             return (
-              <div key={s.slug} className="flex items-baseline gap-2">
-                <span className="text-[10px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                  {s.label}
-                </span>
-                <span className="font-semibold tabular-nums">{priceLabel}</span>
-                {change != null && (
-                  <span
-                    className={`text-xs tabular-nums ${
-                      change >= 0
-                        ? 'text-[color:var(--color-success)]'
-                        : 'text-[color:var(--color-destructive)]'
-                    }`}
-                  >
-                    {change >= 0 ? '+' : ''}
-                    {change.toFixed(1)}%
+              <div
+                key={s.slug}
+                className="px-4 py-3 transition-colors hover:bg-[color:var(--color-muted)]/40"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-medium uppercase tracking-widest text-[color:var(--color-muted-foreground)]">
+                    {s.label}
                   </span>
-                )}
-                {t?.latestDate && (
-                  <span className="text-[10px] text-[color:var(--color-muted-foreground)]">
-                    {t.latestDate}
+                  {t?.spark && t.spark.length >= 2 && <Sparkline values={t.spark} />}
+                </div>
+                <div className="mt-1 flex items-baseline gap-1">
+                  <span className="text-lg font-semibold tabular-nums leading-none">
+                    {priceLabel}
                   </span>
-                )}
+                  <span className="text-[11px] text-[color:var(--color-muted-foreground)]">
+                    {unitLabel}
+                  </span>
+                </div>
+                <div className="mt-0.5 flex items-baseline gap-2 text-[11px]">
+                  <span className={`tabular-nums ${changeColor}`}>
+                    {change == null
+                      ? '—'
+                      : `${change >= 0 ? '▲' : '▼'} ${Math.abs(change).toFixed(1)}%`}
+                  </span>
+                  {t?.latestDate && (
+                    <span className="text-[10px] text-[color:var(--color-muted-foreground)]">
+                      {t.latestDate}
+                    </span>
+                  )}
+                </div>
               </div>
             );
           })}

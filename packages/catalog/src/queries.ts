@@ -3146,15 +3146,26 @@ export async function getCommodityTicker(
     latestDate: string | null;
     unit: string | null;
     pctChange30d: number | null;
+    /** Last ~30 daily prices for a sparkline. Oldest → newest. */
+    spark: number[];
   }>
 > {
   if (seriesSlugs.length === 0) return [];
+  // Drizzle's neon-http handles `inArray` cleanly; the prior
+  // `ANY(${arr}::text[])` template form serialized arrays in a way
+  // that Neon's wire protocol rejected silently and dropped the
+  // ticker rows entirely. Use a hand-built IN list against an
+  // unrolled SQL placeholder list.
+  const inFragment = sql.join(
+    seriesSlugs.map((s) => sql`${s}`),
+    sql`, `,
+  );
   const result = await db.execute(sql`
     WITH latest AS (
       SELECT DISTINCT ON (series_slug)
         series_slug, price::numeric AS price, unit, price_date
       FROM commodity_prices
-      WHERE series_slug = ANY(${seriesSlugs}::text[])
+      WHERE series_slug IN (${inFragment})
         AND contract_type = 'spot'
       ORDER BY series_slug, price_date DESC
     ),
@@ -3162,22 +3173,41 @@ export async function getCommodityTicker(
       SELECT DISTINCT ON (series_slug)
         series_slug, price::numeric AS price
       FROM commodity_prices
-      WHERE series_slug = ANY(${seriesSlugs}::text[])
+      WHERE series_slug IN (${inFragment})
         AND contract_type = 'spot'
         AND price_date <= NOW() - INTERVAL '30 days'
       ORDER BY series_slug, price_date DESC
+    ),
+    spark AS (
+      SELECT series_slug,
+        json_agg(price::numeric ORDER BY price_date ASC) AS prices
+      FROM (
+        SELECT series_slug, price, price_date
+        FROM commodity_prices
+        WHERE series_slug IN (${inFragment})
+          AND contract_type = 'spot'
+          AND price_date >= NOW() - INTERVAL '45 days'
+        ORDER BY series_slug, price_date ASC
+      ) sub
+      GROUP BY series_slug
     )
     SELECT
       l.series_slug, l.price AS latest_price, l.unit, l.price_date AS latest_date,
-      e.price AS earlier_price
+      e.price AS earlier_price,
+      s.prices AS spark
     FROM latest l
-    LEFT JOIN earlier e ON e.series_slug = l.series_slug;
+    LEFT JOIN earlier e ON e.series_slug = l.series_slug
+    LEFT JOIN spark   s ON s.series_slug = l.series_slug;
   `);
   return (result.rows as Array<Record<string, unknown>>).map((r) => {
     const latest =
       r.latest_price != null ? Number.parseFloat(String(r.latest_price)) : null;
     const earlier =
       r.earlier_price != null ? Number.parseFloat(String(r.earlier_price)) : null;
+    const sparkRaw = (r.spark as Array<number | string> | null) ?? [];
+    const spark = sparkRaw
+      .map((v) => Number.parseFloat(String(v)))
+      .filter((v) => Number.isFinite(v));
     return {
       seriesSlug: String(r.series_slug),
       latestPrice: latest,
@@ -3187,6 +3217,7 @@ export async function getCommodityTicker(
         latest != null && earlier != null && earlier !== 0
           ? ((latest - earlier) / earlier) * 100
           : null,
+      spark,
     };
   });
 }
