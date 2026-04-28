@@ -246,6 +246,13 @@
       "when": 1777225000000,
       "tag": "0034_tool_call_logs",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1777230000000,
+      "tag": "0035_known_entities",
+      "breakpoints": true
     }
   ]
 }

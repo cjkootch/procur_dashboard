@@ -2310,6 +2310,78 @@ export async function getToolCallStats(
   }));
 }
 
+// ─── Known entities (analyst-curated rolodex) ───────────────────
+
+export interface KnownEntityFilters {
+  /** Filter to entities whose categories[] array contains this value. */
+  categoryTag?: string;
+  /** ISO-2 country filter. */
+  country?: string;
+  /** Free-text role filter ('refiner' | 'trader' | 'producer' | 'state-buyer'). */
+  role?: string;
+  /** Free-text tag filter — exact match against any element of tags[]. */
+  tag?: string;
+  /** Default 100, hard cap 500 to keep the page render bounded. */
+  limit?: number;
+}
+
+export interface KnownEntityRow {
+  id: string;
+  slug: string;
+  name: string;
+  country: string;
+  role: string;
+  categories: string[];
+  notes: string | null;
+  contactEntity: string | null;
+  aliases: string[];
+  tags: string[];
+  metadata: Record<string, unknown> | null;
+}
+
+/**
+ * Query the analyst-curated known_entities rolodex. Distinct from the
+ * supplier-graph queries (those operate on awards). Use when the user
+ * wants candidate buyers/sellers that may not have public-tender
+ * activity — most Mediterranean refiners and major trading houses fall
+ * in this bucket.
+ */
+export async function lookupKnownEntities(
+  filters: KnownEntityFilters,
+): Promise<KnownEntityRow[]> {
+  const limit = Math.min(filters.limit ?? 100, 500);
+  const result = await db.execute(sql`
+    SELECT
+      id, slug, name, country, role, categories, notes,
+      contact_entity, aliases, tags, metadata
+    FROM known_entities
+    WHERE 1=1
+      ${
+        filters.categoryTag
+          ? sql`AND ${filters.categoryTag} = ANY(categories)`
+          : sql``
+      }
+      ${filters.country ? sql`AND country = ${filters.country}` : sql``}
+      ${filters.role ? sql`AND role = ${filters.role}` : sql``}
+      ${filters.tag ? sql`AND ${filters.tag} = ANY(tags)` : sql``}
+    ORDER BY country ASC, name ASC
+    LIMIT ${limit};
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    id: String(r.id),
+    slug: String(r.slug),
+    name: String(r.name),
+    country: String(r.country),
+    role: String(r.role),
+    categories: (r.categories as string[] | null) ?? [],
+    notes: r.notes == null ? null : String(r.notes),
+    contactEntity: r.contact_entity == null ? null : String(r.contact_entity),
+    aliases: (r.aliases as string[] | null) ?? [],
+    tags: (r.tags as string[] | null) ?? [],
+    metadata: r.metadata as Record<string, unknown> | null,
+  }));
+}
+
 // ─── Drill-down queries (for the supplier profile + buyer pages) ──
 
 export interface BuyerAwardRow {

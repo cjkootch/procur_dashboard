@@ -7,6 +7,7 @@ import {
   findBuyersForCommodityOffer,
   findCompetingSellers,
   findSuppliersForTender,
+  lookupKnownEntities,
   getCompanyProfile,
   listJurisdictions,
   listOpportunities,
@@ -840,6 +841,95 @@ export function buildCatalogTools(): ToolRegistry {
                 'Public procurement data only. Private commercial flows (refiner-to-refiner, ' +
                 'trader-to-trader) are not represented. Dormant flagging is by public-tender ' +
                 'inactivity — a supplier may be active in private channels we can’t see.',
+            };
+          },
+        ),
+    }),
+
+    lookup_known_entities: defineTool({
+      name: 'lookup_known_entities',
+      description:
+        'Query the analyst-curated rolodex of buyers / sellers / traders / refiners — the ' +
+        'entities VTC has researched as relevant to its deal flow. DISTINCT from the supplier-' +
+        'graph queries (find_buyers_for_offer / find_competing_sellers / analyze_supplier), ' +
+        "which only see entities that appear in public-tender award data. Use this tool when " +
+        "the user asks about entities that may not have public-tender activity: Mediterranean " +
+        "private refiners, major trading houses (Vitol/Glencore/Trafigura), or any 'who could " +
+        "buy X' question where private commercial flows dominate the market (crude oil, jet " +
+        "fuel, marine bunker). Filter by category (crude-oil, diesel, etc), country, role " +
+        "(refiner | trader | producer | state-buyer), or tag (e.g. 'region:mediterranean', " +
+        "'public-tender-visible', 'libya-historic'). Returns entity name, country, role, " +
+        'capability notes, and any contact entity that has been recorded.',
+      kind: 'read',
+      schema: z.object({
+        categoryTag: z
+          .string()
+          .optional()
+          .describe(
+            'Internal commodity tag — same vocabulary as find_buyers_for_offer. e.g. crude-oil, ' +
+              'diesel, jet-fuel.',
+          ),
+        country: z
+          .string()
+          .length(2)
+          .optional()
+          .describe('ISO-2 country code.'),
+        role: z
+          .enum(['refiner', 'trader', 'producer', 'state-buyer'])
+          .optional()
+          .describe('Filter to a single role.'),
+        tag: z
+          .string()
+          .optional()
+          .describe(
+            "Free-text tag filter — exact match. Useful tags: 'region:mediterranean', " +
+              "'region:asia-state', 'public-tender-visible', 'libya-historic', 'sweet-crude-runner', " +
+              "'top-tier' (for trading houses), 'size:mega'.",
+          ),
+        limit: z.number().min(1).max(200).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_known_entities',
+            args: input,
+            summarize: (out: { count: number }) => ({
+              resultCount: out.count,
+              resultSummary: {
+                categoryTag: input.categoryTag,
+                country: input.country,
+                role: input.role,
+                tag: input.tag,
+              },
+            }),
+          },
+          async () => {
+            const rows = await lookupKnownEntities({
+              categoryTag: input.categoryTag,
+              country: input.country,
+              role: input.role,
+              tag: input.tag,
+              limit: input.limit ?? 50,
+            });
+            return {
+              count: rows.length,
+              entities: rows.map((r) => ({
+                id: r.id,
+                name: r.name,
+                country: r.country,
+                role: r.role,
+                categories: r.categories,
+                notes: r.notes,
+                contactEntity: r.contactEntity,
+                tags: r.tags,
+                metadata: r.metadata,
+              })),
+              caveat:
+                'Curated analyst rolodex — facts here are public-knowledge basics (refinery name, ' +
+                'operator, country, capacity). Not a substitute for customs/AIS data (Kpler, Vortexa) ' +
+                'when current import flows matter. The notes field captures editorial; treat it as a ' +
+                'starting point, not ground truth.',
             };
           },
         ),
