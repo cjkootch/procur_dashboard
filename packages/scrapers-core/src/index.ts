@@ -48,3 +48,5 @@ export {
   hasFoodUnspsc,
   FUEL_UNSPSC_CODES,
 } from './awards-classifier';
+export { convertToUsd, isSupportedCurrency } from './fx';
+export type { SupportedCurrency } from './fx';
