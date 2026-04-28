@@ -9,13 +9,17 @@ import {
   getMonthlyAvgAwardValue,
   getMonthlyAwardsVolume,
   getNewBuyers,
+  getRolodexCoverage,
+  getSupplierBuyerMatrix,
   getTopBuyersByCategory,
   getTopImportersByPartner,
   getTopSourcesForReporter,
   getTopSuppliersByCategory,
 } from '@procur/catalog';
 import { BarChart, type BarDatum } from './_components/BarChart';
+import { Heatmap } from './_components/Heatmap';
 import { LineChart, type LinePoint } from './_components/LineChart';
+import { MultiLineChart, type MultiLineSeries } from './_components/MultiLineChart';
 
 /**
  * Continuous-intelligence dashboard for the supplier-graph data
@@ -153,6 +157,9 @@ export default async function IntelligencePage({ searchParams }: Props) {
     spreadHistory,
     concentration,
     portCalls,
+    seasonalityVolume,
+    supplierBuyerMatrix,
+    rolodexCoverage,
   ] = await Promise.all([
     safe(getTopBuyersByCategory(filters, 10), [], 'top-buyers'),
     safe(getTopSuppliersByCategory(filters, 10), [], 'top-suppliers'),
@@ -209,6 +216,34 @@ export default async function IntelligencePage({ searchParams }: Props) {
           'port-calls',
         )
       : Promise.resolve([]),
+    // 36-month seasonality: pull a wider window than the user picked
+    // so we can split into year-overlay lines regardless of the main
+    // window setting.
+    safe(
+      getMonthlyAwardsVolume({
+        ...filters,
+        monthsLookback: Math.max(monthsLookback, 36),
+      }),
+      [],
+      'seasonality-volume',
+    ),
+    safe(
+      getSupplierBuyerMatrix({
+        categoryTag: categoryTag === 'all' ? undefined : categoryTag,
+        monthsLookback,
+        topSuppliers: 10,
+        topBuyerCountries: 10,
+      }),
+      { suppliers: [], buyerCountries: [], cells: [] },
+      'supplier-buyer-matrix',
+    ),
+    buyerCountry
+      ? safe(
+          getRolodexCoverage(buyerCountry),
+          { total: 0, byRole: {}, withCoords: 0, withSlate: 0 },
+          'rolodex-coverage',
+        )
+      : Promise.resolve(null),
   ]);
 
   // Aggregate port calls into per-port distinct-vessel counts.
@@ -248,6 +283,37 @@ export default async function IntelligencePage({ searchParams }: Props) {
       a.lastCallAt < b.lastCallAt ? 1 : -1,
     );
   })();
+
+  // Seasonality: split monthly volume into year buckets, each
+  // containing a 12-element array indexed by month-of-year (0-11).
+  const seasonalityYears = (() => {
+    const byYear = new Map<number, Array<number | null>>();
+    for (const r of seasonalityVolume) {
+      const [yyyy, mm] = r.month.split('-');
+      if (!yyyy || !mm) continue;
+      const y = Number.parseInt(yyyy, 10);
+      const m = Number.parseInt(mm, 10) - 1;
+      if (!byYear.has(y)) byYear.set(y, Array(12).fill(null));
+      byYear.get(y)![m] = r.awardsCount;
+    }
+    return [...byYear.entries()].sort((a, b) => a[0] - b[0]);
+  })();
+  const currentYear = new Date().getFullYear();
+  const seasonalitySeries: MultiLineSeries[] = seasonalityYears.map(
+    ([year, values]) => ({
+      label: String(year),
+      values,
+      emphasized: year === currentYear,
+    }),
+  );
+  const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  // Supplier × buyer-country matrix → Heatmap input.
+  const matrixCells = new Map<string, Map<string, number>>();
+  for (const c of supplierBuyerMatrix.cells) {
+    if (!matrixCells.has(c.supplierId)) matrixCells.set(c.supplierId, new Map());
+    matrixCells.get(c.supplierId)!.set(c.buyerCountry, c.awardCount);
+  }
 
   const hhiLabel = (h: number | null) => {
     if (h == null) return '—';
@@ -505,6 +571,51 @@ export default async function IntelligencePage({ searchParams }: Props) {
           />
         </div>
       </section>
+
+      {/* Year-over-year seasonality */}
+      <section className="mb-8">
+        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          Year-over-year seasonality — monthly award count by year
+        </h2>
+        <MultiLineChart
+          xLabels={monthLabels}
+          series={seasonalitySeries}
+          yLabel="awards"
+          formatY={(n) => Math.round(n).toLocaleString()}
+          emptyMessage="Need 2+ years of data to show seasonality."
+        />
+      </section>
+
+      {/* Rolodex coverage — only when country filter is set */}
+      {buyerCountry && rolodexCoverage && (
+        <section className="mb-8">
+          <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Rolodex coverage — {fmtCountry(buyerCountry)}
+          </h2>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
+            <Stat label="Total entities" value={String(rolodexCoverage.total)} />
+            <Stat
+              label="With coordinates"
+              value={`${rolodexCoverage.withCoords} / ${rolodexCoverage.total}`}
+            />
+            <Stat
+              label="With slate metadata"
+              value={`${rolodexCoverage.withSlate} / ${rolodexCoverage.total}`}
+            />
+            {Object.entries(rolodexCoverage.byRole)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 3)
+              .map(([role, n]) => (
+                <Stat key={role} label={role} value={String(n)} />
+              ))}
+          </div>
+          <p className="mt-2 text-xs text-[color:var(--color-muted-foreground)]">
+            Curated rolodex depth for this country. Higher counts +
+            slate-metadata coverage = more reliable downstream queries
+            (refinery compatibility, port-call attribution).
+          </p>
+        </section>
+      )}
 
       {/* Market concentration (HHI) */}
       <section className="mb-8">
@@ -807,6 +918,31 @@ export default async function IntelligencePage({ searchParams }: Props) {
           </p>
         </section>
       )}
+
+      {/* Supplier × buyer-country award matrix */}
+      <section className="mb-8">
+        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          Top suppliers × buyer countries — award count
+        </h2>
+        <Heatmap
+          rows={supplierBuyerMatrix.suppliers.map((s) => ({
+            id: s.supplierId,
+            label: s.supplierName,
+            sublabel: `${s.total}`,
+          }))}
+          cols={supplierBuyerMatrix.buyerCountries.map((c) => ({
+            id: c.country,
+            label: c.country,
+          }))}
+          cells={matrixCells}
+          emptyMessage="Need supplier + buyer-country data to render the matrix. Try a wider window or different category."
+        />
+        <p className="mt-2 text-xs text-[color:var(--color-muted-foreground)]">
+          Reveals geographic specialization — concentrated rows =
+          supplier serves few markets; concentrated columns = country
+          buys from few suppliers. Hover a cell for the exact count.
+        </p>
+      </section>
 
       {/* Top buyers + suppliers */}
       <section className="mb-8 grid gap-6 md:grid-cols-2">
