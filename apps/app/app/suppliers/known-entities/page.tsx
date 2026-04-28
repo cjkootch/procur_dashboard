@@ -229,7 +229,7 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
       </div>
 
       {activeView === 'map' ? (
-        <MapViewClient entities={mapEntities} />
+        <MapViewClient entities={mapEntities} totalCount={rows.length} />
       ) : rows.length === 0 ? (
         <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-8 text-center text-sm text-[color:var(--color-muted-foreground)]">
           No entities match these filters. Try widening the category or clearing tags.

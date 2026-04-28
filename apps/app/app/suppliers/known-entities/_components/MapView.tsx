@@ -5,6 +5,11 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import { useEffect } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
+// react-leaflet-cluster ships its own MarkerClusterGroup wrapped for React
+// and patches react-leaflet's createElement hooks. CommonJS default export.
+import MarkerClusterGroup from 'react-leaflet-cluster';
 
 /**
  * Leaflet map view of known_entities. Server component (the page)
@@ -64,12 +69,24 @@ function FitBounds({ entities }: { entities: MapEntity[] }) {
   return null;
 }
 
-export function MapView({ entities }: { entities: MapEntity[] }) {
+export function MapView({
+  entities,
+  totalCount,
+}: {
+  entities: MapEntity[];
+  totalCount?: number;
+}) {
+  const listOnlyCount =
+    totalCount != null ? Math.max(totalCount - entities.length, 0) : 0;
   if (entities.length === 0) {
     return (
       <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-8 text-center text-sm text-[color:var(--color-muted-foreground)]">
-        No entities with coordinates match these filters. Most curated refineries have lat/lng;
-        rolodex entries without coordinates (some trading houses, multinationals) are list-only.
+        No entities with coordinates match these filters
+        {totalCount != null && totalCount > 0
+          ? ` — ${totalCount} list-only (no coordinates yet)`
+          : ''}
+        . Most refineries + power plants + extraction sites have lat/lng. Trading
+        houses, multinationals, and some curated entries are list-only by design.
       </div>
     );
   }
@@ -88,6 +105,12 @@ export function MapView({ entities }: { entities: MapEntity[] }) {
         ))}
         <span className="ml-auto">
           {entities.length} entit{entities.length === 1 ? 'y' : 'ies'} on map
+          {listOnlyCount > 0 && (
+            <span className="text-[color:var(--color-muted-foreground)]">
+              {' '}
+              ({listOnlyCount} list-only — no coords)
+            </span>
+          )}
         </span>
       </div>
 
@@ -107,60 +130,75 @@ export function MapView({ entities }: { entities: MapEntity[] }) {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           <FitBounds entities={entities} />
-          {entities.map((e) => {
-            const icon = makeIcon(ROLE_COLORS[e.role] ?? '#737373');
-            const meta = e.metadata ?? {};
-            const cap =
-              typeof meta.capacity_bpd === 'number' ? meta.capacity_bpd : null;
-            const operator =
-              typeof meta.operator === 'string' ? meta.operator : null;
-            return (
-              <Marker
-                key={e.slug}
-                position={[e.latitude, e.longitude]}
-                icon={icon}
-              >
-                <Popup>
-                  <div style={{ minWidth: 220 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                      <Link
-                        href={`/entities/${encodeURIComponent(e.slug)}`}
-                        style={{ color: '#2563eb', textDecoration: 'underline' }}
-                      >
-                        {e.name}
-                      </Link>
+          <MarkerClusterGroup
+            chunkedLoading
+            maxClusterRadius={50}
+            spiderfyOnMaxZoom
+            showCoverageOnHover={false}
+            disableClusteringAtZoom={9}
+          >
+            {entities.map((e) => {
+              const icon = makeIcon(ROLE_COLORS[e.role] ?? '#737373');
+              const meta = e.metadata ?? {};
+              const capBpd =
+                typeof meta.capacity_bpd === 'number' ? meta.capacity_bpd : null;
+              const capMw =
+                typeof meta.capacity_mw === 'number' ? meta.capacity_mw : null;
+              const operator =
+                typeof meta.operator === 'string'
+                  ? meta.operator
+                  : Array.isArray(meta.operators) && typeof meta.operators[0] === 'string'
+                    ? (meta.operators[0] as string)
+                    : null;
+              return (
+                <Marker
+                  key={e.slug}
+                  position={[e.latitude, e.longitude]}
+                  icon={icon}
+                >
+                  <Popup>
+                    <div style={{ minWidth: 220 }}>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                        <Link
+                          href={`/entities/${encodeURIComponent(e.slug)}`}
+                          style={{ color: '#2563eb', textDecoration: 'underline' }}
+                        >
+                          {e.name}
+                        </Link>
+                      </div>
+                      <div style={{ fontSize: 12, color: '#525252' }}>
+                        {e.country} · {e.role}
+                      </div>
+                      {(capBpd != null || capMw != null) && (
+                        <div style={{ fontSize: 12, marginTop: 4 }}>
+                          {capBpd != null && `${(capBpd / 1000).toFixed(0)}k bpd`}
+                          {capMw != null && `${Math.round(capMw).toLocaleString()} MW`}
+                          {operator ? ` · ${operator}` : ''}
+                        </div>
+                      )}
+                      {e.categories.length > 0 && (
+                        <div style={{ fontSize: 11, marginTop: 6, color: '#737373' }}>
+                          {e.categories.slice(0, 3).join(' · ')}
+                        </div>
+                      )}
+                      {e.notes && (
+                        <div
+                          style={{
+                            fontSize: 11,
+                            marginTop: 6,
+                            color: '#404040',
+                            maxWidth: 240,
+                          }}
+                        >
+                          {e.notes.length > 160 ? e.notes.slice(0, 160) + '…' : e.notes}
+                        </div>
+                      )}
                     </div>
-                    <div style={{ fontSize: 12, color: '#525252' }}>
-                      {e.country} · {e.role}
-                    </div>
-                    {cap != null && (
-                      <div style={{ fontSize: 12, marginTop: 4 }}>
-                        {(cap / 1000).toFixed(0)}k bpd
-                        {operator ? ` · ${operator}` : ''}
-                      </div>
-                    )}
-                    {e.categories.length > 0 && (
-                      <div style={{ fontSize: 11, marginTop: 6, color: '#737373' }}>
-                        {e.categories.slice(0, 3).join(' · ')}
-                      </div>
-                    )}
-                    {e.notes && (
-                      <div
-                        style={{
-                          fontSize: 11,
-                          marginTop: 6,
-                          color: '#404040',
-                          maxWidth: 240,
-                        }}
-                      >
-                        {e.notes.length > 160 ? e.notes.slice(0, 160) + '…' : e.notes}
-                      </div>
-                    )}
-                  </div>
-                </Popup>
-              </Marker>
-            );
-          })}
+                  </Popup>
+                </Marker>
+              );
+            })}
+          </MarkerClusterGroup>
         </MapContainer>
       </div>
     </>
