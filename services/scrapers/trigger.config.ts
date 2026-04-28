@@ -1,5 +1,4 @@
 import { defineConfig } from '@trigger.dev/sdk';
-import { playwright } from '@trigger.dev/build/extensions/playwright';
 
 export default defineConfig({
   project: 'proj_eigtroxsysxjbjgeyuql',
@@ -16,12 +15,12 @@ export default defineConfig({
       randomize: true,
     },
   },
-  build: {
-    // Trinidad eGP scraper drives Chromium via Playwright (TT's portal
-    // sits behind a JS challenge that defeats plain HTTP fetches). The
-    // playwright() extension installs the browser + its system deps in
-    // the deploy image. Default headless Chromium is what we use.
-    extensions: [playwright()],
-  },
+  // Only bundle cheerio-based scrapers from `./scheduled`. Trinidad's
+  // task file lives under src/trigger/ (outside the glob) because it
+  // needs Playwright/Chromium and the @trigger.dev/build@4.4.4
+  // playwright() extension currently fails the deploy build with a
+  // hard-coded grep for chromium-headless-shell that doesn't match
+  // playwright install --dry-run output. See scrape-trinidad.ts for
+  // the re-enable plan.
   dirs: ['./src/trigger/scheduled'],
 });
