@@ -1,5 +1,6 @@
 import 'server-only';
 import type { AssistantContext, ToolRegistry } from '@procur/ai';
+import { buildCatalogTools } from '@procur/catalog';
 import { searchOpportunitiesTool } from './tools/search-opportunities';
 import { globalSearchTool } from './tools/global-search';
 import { getHomeSummaryTool } from './tools/get-home-summary';
@@ -43,8 +44,25 @@ export const writeTools = {
   [proposePushManyToVexTool.name]: proposePushManyToVexTool,
 } satisfies ToolRegistry;
 
+/**
+ * Compose the full assistant tool surface. Three sources merged here:
+ *   - readTools / writeTools above — app-side tools that touch app
+ *     state (pursuits, proposals, alerts, vex CRM push)
+ *   - buildCatalogTools() — catalog/intelligence tools defined in
+ *     @procur/catalog (lookup_customs_flows, find_suppliers_for_tender,
+ *     lookup_known_entities, get_market_snapshot,
+ *     get_commodity_price_context, get_crude_basis, etc.). These were
+ *     previously orphaned — defined in the catalog package but never
+ *     wired into the assistant runtime, so every call returned
+ *     unknown_tool. The Discover widget consumes the same registry.
+ *
+ * Merge order: catalog tools first, then readTools, then writeTools.
+ * If a name collides, the later entry wins — by convention app-side
+ * tools take precedence so the workflow tools (proposeX) can't be
+ * masked by an accidentally-same-named catalog tool.
+ */
 export function buildAssistantTools(): ToolRegistry {
-  return { ...readTools, ...writeTools };
+  return { ...buildCatalogTools(), ...readTools, ...writeTools };
 }
 
 export type { AssistantContext };
