@@ -722,6 +722,9 @@ importers:
       '@procur/analytics':
         specifier: workspace:*
         version: link:../../packages/analytics
+      '@procur/catalog':
+        specifier: workspace:*
+        version: link:../../packages/catalog
       '@procur/db':
         specifier: workspace:*
         version: link:../../packages/db

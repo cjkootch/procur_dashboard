@@ -16,13 +16,14 @@ import { db, users } from '@procur/db';
 export type NotificationTypeKey =
   | 'pursuit.stage_moved'
   | 'pursuit.gate_review_decided'
-  | 'proposal.comment_mentioned';
+  | 'proposal.comment_mentioned'
+  | 'digest.match_queue';
 
 export type NotificationTypeMeta = {
   key: NotificationTypeKey;
   label: string;
   description: string;
-  group: 'capture' | 'proposal';
+  group: 'capture' | 'proposal' | 'digest';
 };
 
 export const NOTIFICATION_TYPES: NotificationTypeMeta[] = [
@@ -45,6 +46,13 @@ export const NOTIFICATION_TYPES: NotificationTypeMeta[] = [
     label: 'Comment mentions',
     description: 'When a teammate @-mentions you in a proposal comment.',
     group: 'proposal',
+  },
+  {
+    key: 'digest.match_queue',
+    label: 'Match queue digest',
+    description:
+      "Daily 16:00 UTC email with today's top-ranked deal-origination signals from the match queue.",
+    group: 'digest',
   },
 ];
 
