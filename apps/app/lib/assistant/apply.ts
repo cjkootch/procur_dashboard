@@ -437,6 +437,122 @@ const pushToVex: ApplyHandler = async (ctx, rawPayload) => {
   };
 };
 
+const pushManyToVexSchema = z.object({
+  pushes: z
+    .array(
+      z.object({
+        sourceRef: z.string(),
+        entitySlug: z.string().optional(),
+        legalName: z.string(),
+        country: z.string().nullable(),
+        role: z.string().nullable(),
+        contactName: z.string().nullable(),
+        contactEmail: z.string().nullable(),
+        contactPhone: z.string().nullable(),
+        commercialContext: z.object({
+          categories: z.array(z.string()),
+          awardCount: z.number(),
+          awardTotalUsd: z.number().nullable(),
+          daysSinceLastAward: z.number().nullable(),
+          distressSignals: z.array(
+            z.object({
+              kind: z.string(),
+              detail: z.string(),
+              observedAt: z.string().nullable(),
+            }),
+          ),
+          notes: z.string().nullable(),
+          procurEntityProfileUrl: z.string(),
+        }),
+        originationContext: z.object({
+          chatSummary: z.string().nullable(),
+          userNote: z.string().nullable(),
+        }),
+      }),
+    )
+    .min(1)
+    .max(50),
+  chatSummary: z.string(),
+  userNote: z.string().nullable(),
+});
+
+/**
+ * Bulk-push handler. Iterates the pre-resolved pushes from the
+ * proposal and calls vex once per entity. Failures are collected,
+ * not thrown — vex 502/timeouts on entity #7 shouldn't drop pushes
+ * for entities #8-50. The result summary tells the user how many
+ * landed, which failed, and surfaces the first vex URL so they
+ * have somewhere to click.
+ */
+const pushManyToVex: ApplyHandler = async (ctx, rawPayload) => {
+  const payload = pushManyToVexSchema.parse(rawPayload);
+  const { pushVexContact } = await import('../vex-client');
+
+  type PerResult = {
+    legalName: string;
+    ok: boolean;
+    vexContactId?: string;
+    vexRecordUrl?: string;
+    dedupedAgainstExisting?: boolean;
+    error?: string;
+  };
+
+  const pushedAt = new Date().toISOString();
+  const results: PerResult[] = [];
+  for (const push of payload.pushes) {
+    const r = await pushVexContact({
+      source: 'procur',
+      sourceRef: push.sourceRef,
+      legalName: push.legalName,
+      country: push.country,
+      role: push.role,
+      contactName: push.contactName,
+      contactEmail: push.contactEmail,
+      contactPhone: push.contactPhone,
+      commercialContext: push.commercialContext,
+      originationContext: {
+        triggeredBy: `procur-assistant-bulk:user:${ctx.userId}`,
+        chatSummary: push.originationContext.chatSummary,
+        userNote: push.originationContext.userNote,
+        pushedAt,
+      },
+    });
+    if (r.ok) {
+      results.push({
+        legalName: push.legalName,
+        ok: true,
+        vexContactId: r.data.vexContactId,
+        vexRecordUrl: r.data.vexRecordUrl,
+        dedupedAgainstExisting: r.data.dedupedAgainstExisting,
+      });
+    } else {
+      results.push({
+        legalName: push.legalName,
+        ok: false,
+        error: r.error,
+      });
+    }
+  }
+
+  const succeeded = results.filter((r) => r.ok);
+  const failed = results.filter((r) => !r.ok);
+  const firstUrl = succeeded[0]?.vexRecordUrl ?? null;
+
+  return {
+    ok: true,
+    result: {
+      totalRequested: payload.pushes.length,
+      pushed: succeeded.length,
+      failed: failed.length,
+      dedupedAgainstExisting: succeeded.filter((r) => r.dedupedAgainstExisting).length,
+      results,
+      // First-success URL so the chat surface has somewhere to send
+      // the user. The full per-entity URL list lives in `results`.
+      redirectTo: firstUrl,
+    },
+  };
+};
+
 const HANDLERS: Record<string, ApplyHandler> = {
   propose_create_pursuit: createPursuit,
   propose_advance_stage: advanceStage,
@@ -444,6 +560,7 @@ const HANDLERS: Record<string, ApplyHandler> = {
   propose_draft_proposal_section: draftProposalSection,
   propose_create_alert_profile: createAlert,
   propose_push_to_vex_contact: pushToVex,
+  propose_push_many_to_vex_contacts: pushManyToVex,
 };
 
 export async function applyProposal(

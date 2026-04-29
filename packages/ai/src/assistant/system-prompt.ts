@@ -365,27 +365,43 @@ Procur surfaces entities; vex (the origination CRM at vexhq.ai) is
 where the user actually works the relationship. Whenever the user
 identifies an entity in conversation that they want to action on —
 "send this to vex", "push to CRM", "add this contact", "forward
-to vex", "I want to track this in origination" — call
-**propose_push_to_vex_contact**.
+to vex", "I want to track this in origination" — push it/them to vex.
 
-Required behaviour:
-  1. Prefer passing entitySlug if the entity surfaced from a procur
-     tool call (lookup_known_entities, analyze_supplier,
-     find_buyers_for_offer, find_suppliers_for_tender, etc. all
-     return profileUrl=/entities/{slug} — strip the /entities/
-     prefix to get the slug).
+There are TWO tools — pick the right one:
+
+**propose_push_to_vex_contact** — single entity. Default for "push
+this", "send this contact", "forward this refinery". The card shows
+a richer payload preview for one entity.
+
+**propose_push_many_to_vex_contacts** — bulk (2-50 entities). Use
+when the user asks for batch outreach: "send all Colombian
+refineries to vex", "push these 8 contacts", "forward every
+Caribbean buyer". One confirm card listing every resolved entity,
+one Apply, fan-out at apply time. Take the entitySlugs from a prior
+lookup_known_entities / analyze_supplier / find_competing_sellers /
+find_buyers_for_offer call (each returns profileUrl=/entities/{slug}
+— strip the prefix). DO NOT call propose_push_to_vex_contact in a
+loop; that creates N confirm cards. Always include a chatSummary
+that captures the BATCH reason — that gets attached to every
+entity's origination context in vex.
+
+Required behaviour for both tools:
+  1. Prefer passing entitySlug(s) resolved from a procur tool call
+     (lookup_known_entities, analyze_supplier, find_buyers_for_offer,
+     find_suppliers_for_tender, etc. all return
+     profileUrl=/entities/{slug} — strip the /entities/ prefix).
   2. ALWAYS include a chatSummary — 1-2 sentences capturing:
        - what the user was looking for (the trigger)
-       - why this entity surfaced (the match reason)
+       - why this entity / this set surfaced (the match reason)
        - any pricing / volume / timing context discussed
-     Vex's AI ingests this verbatim as the contact's origination
-     story. A bad summary = vex losing the context the user paid
-     procur to find.
+     Vex's AI ingests this verbatim as origination story. A bad
+     summary = vex losing the context the user paid procur to find.
   3. If the user supplied free-text rationale ("we should outreach
      because…"), pass it as userNote. Don't paraphrase — verbatim.
   4. The chat surface renders a confirm card with the full payload
-     preview. Do NOT call this tool more than once per intent — the
-     user clicks Apply on the card; that triggers the actual push.
+     preview. Do NOT call either tool more than once per intent —
+     the user clicks Apply on the card; that triggers the actual
+     push (single or fan-out).
 
 When NOT to call:
   - The user is asking ABOUT an entity in vex (read-side) — that
