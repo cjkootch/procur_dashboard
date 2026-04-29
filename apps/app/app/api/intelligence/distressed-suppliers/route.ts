@@ -66,36 +66,48 @@ export async function GET(req: Request): Promise<Response> {
     .map((s) => s.trim().toUpperCase())
     .filter((s) => s.length === 2);
 
-  const suppliers = await findDistressedSuppliers({
-    categoryTag: parsed.data.category_tag,
-    countries,
-    minPrevAwards: parsed.data.min_prev_awards,
-    velocityChangeMax: parsed.data.velocity_change_max,
-    includeNewsEvents: parsed.data.include_news_events,
-    limit: parsed.data.limit,
-  });
+  try {
+    const suppliers = await findDistressedSuppliers({
+      categoryTag: parsed.data.category_tag,
+      countries,
+      minPrevAwards: parsed.data.min_prev_awards,
+      velocityChangeMax: parsed.data.velocity_change_max,
+      includeNewsEvents: parsed.data.include_news_events,
+      limit: parsed.data.limit,
+    });
 
-  const shaped = suppliers.map((s) => {
-    const news = s.recentNewsEvents[0] ?? null;
-    const distressSignal = news
-      ? {
-          kind: news.eventType,
-          detail: news.summary,
-          observedAt: news.eventDate,
-        }
-      : {
-          kind: 'velocity_drop',
-          detail: s.distressReasons[0] ?? 'award velocity dropped',
-          observedAt: s.mostRecentAwardDate,
-        };
-    return {
-      supplierEntityId: s.supplierId,
-      legalName: s.organisationName,
-      country: s.country,
-      distressSignal,
-      awardVelocityChangePct: s.velocityChangePct * 100,
-    };
-  });
+    const shaped = suppliers.map((s) => {
+      const news = s.recentNewsEvents[0] ?? null;
+      const distressSignal = news
+        ? {
+            kind: news.eventType,
+            detail: news.summary,
+            observedAt: news.eventDate,
+          }
+        : {
+            kind: 'velocity_drop',
+            detail: s.distressReasons[0] ?? 'award velocity dropped',
+            observedAt: s.mostRecentAwardDate,
+          };
+      return {
+        supplierEntityId: s.supplierId,
+        legalName: s.organisationName,
+        country: s.country,
+        distressSignal,
+        awardVelocityChangePct: s.velocityChangePct * 100,
+      };
+    });
 
-  return NextResponse.json({ suppliers: shaped, totalCount: shaped.length });
+    return NextResponse.json({ suppliers: shaped, totalCount: shaped.length });
+  } catch (err) {
+    // Surface a structured body so vex's client doesn't see an empty
+    // 500 (which it can't distinguish from a network blip). The detail
+    // string ends up in vex's logs alongside the request id.
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('distressed-suppliers query failed:', err);
+    return NextResponse.json(
+      { error: 'query_failed', message },
+      { status: 500 },
+    );
+  }
 }

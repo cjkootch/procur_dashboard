@@ -5235,7 +5235,10 @@ export async function findDistressedSuppliers(
 
   const countryFilter =
     spec.countries && spec.countries.length > 0
-      ? sql`AND s.country = ANY(${spec.countries}::text[])`
+      ? sql`AND s.country = ANY(ARRAY[${sql.join(
+          spec.countries.map((c) => sql`${c}`),
+          sql`, `,
+        )}]::text[])`
       : sql``;
   const categoryFilter = spec.categoryTag
     ? categoryColumnFilter(spec.categoryTag)
@@ -5278,7 +5281,10 @@ export async function findDistressedSuppliers(
         relevance_score,
         source_url
       FROM entity_news_events
-      WHERE external_supplier_id = ANY(${supplierIds}::uuid[])
+      WHERE external_supplier_id = ANY(ARRAY[${sql.join(
+        supplierIds.map((id) => sql`${id}`),
+        sql`, `,
+      )}]::uuid[])
         AND event_date >= CURRENT_DATE - INTERVAL '90 days'
         AND (relevance_score IS NULL OR relevance_score >= 0.5)
       ORDER BY event_date DESC
