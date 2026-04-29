@@ -1054,6 +1054,20 @@ export function buildCatalogTools(): ToolRegistry {
         'capability notes, and any contact entity that has been recorded.',
       kind: 'read',
       schema: z.object({
+        name: z
+          .string()
+          .optional()
+          .describe(
+            'Case-insensitive substring match against name, slug, AND ' +
+              'aliases[]. Use this for "do we have X in the rolodex" ' +
+              'questions — e.g. name="Petroilsa" finds an entity ' +
+              'named "Petroilsa S.A." or aliased to "Petroilsa Colombia". ' +
+              'Combine with country / role / categoryTag to narrow ' +
+              'further. If you call this tool with no filters, you get ' +
+              'the first 50 rows by country alphabetically — that\'s ' +
+              'probably not what you want; always pass at least one ' +
+              'filter.',
+          ),
         categoryTag: z
           .string()
           .optional()
@@ -1089,6 +1103,7 @@ export function buildCatalogTools(): ToolRegistry {
             summarize: (out: { count: number }) => ({
               resultCount: out.count,
               resultSummary: {
+                name: input.name,
                 categoryTag: input.categoryTag,
                 country: input.country,
                 role: input.role,
@@ -1098,6 +1113,7 @@ export function buildCatalogTools(): ToolRegistry {
           },
           async () => {
             const rows = await lookupKnownEntities({
+              name: input.name,
               categoryTag: input.categoryTag,
               country: input.country,
               role: input.role,

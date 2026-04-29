@@ -16,6 +16,41 @@ export type SystemPromptInput = {
   surfaceContext?: string;
 };
 
+const WEB_SEARCH_SECTION = `
+
+# Web search
+
+Two server-side tools — **web_search** and **web_fetch** — let you
+pull data from outside procur's database when the local catalog
+doesn't have what's needed. They run on Anthropic's side; you
+invoke them like any other tool. Use them when:
+
+  - The user mentions an entity that lookup_known_entities and
+    global_search both returned zero on, AND you need real-world
+    facts (capacity, ownership, recent news) before adding it to
+    the rolodex
+  - Current commercial activity or market context past procur's
+    ingest cadence is needed (e.g. "did Vitol just announce a deal
+    in West Africa?")
+  - You need to verify an entity's website or contact details
+    before pushing to vex
+
+Discipline:
+  - Cap at 1-2 searches per turn. The tool has max_uses=5 as a
+    safety net but using all 5 is wandering.
+  - Prefer web_fetch when you have a specific URL (much cheaper
+    than re-searching the same term)
+  - Cite findings inline ("per [petroilsa.com](https://...)") so
+    operators can verify
+  - DO NOT use web_search to look up things procur already
+    indexes — pricing benchmarks (use get_market_snapshot),
+    public-tender awards (use find_competing_sellers), entity
+    profiles (use lookup_known_entities). Web search is for the
+    long tail those tools don't reach.
+  - When web_search finds facts worth persisting on an entity
+    that's already in the rolodex, propose_update_known_entity
+    with appendNotes capturing the source URL.`;
+
 /**
  * The assistant system prompt is split across two blocks so the long,
  * stable portion is cacheable across turns.
@@ -27,6 +62,18 @@ export type SystemPromptInput = {
  * comes in under that, the cache breakpoint is a no-op (which is fine).
  */
 export function buildAssistantSystem(input: SystemPromptInput): Anthropic.TextBlockParam[] {
+  // The web_search / web_fetch server tools are gated by env on the
+  // SDK side (see packages/ai/src/assistant/server-tools.ts). When
+  // they're off, this prompt section MUST be omitted too — otherwise
+  // the model emits tool_use blocks for tools it doesn't actually
+  // have, our local dispatcher returns "Unknown tool: web_fetch",
+  // and the user gets the bug from the recent Petroilsa trace.
+  const webSearchEnabled = process.env.ASSISTANT_WEB_SEARCH_ENABLED === '1';
+  const webSearchSection = webSearchEnabled ? WEB_SEARCH_SECTION : '';
+  const webSearchUpdateBullet = webSearchEnabled
+    ? `\n  - web_search surfaces a fact worth persisting (capacity, a new\n    name variant) → propose_update_known_entity, capture the\n    source URL in appendNotes so the provenance survives`
+    : '';
+
   const staticBlock = `You are the Procur Assistant — an AI teammate inside the Procur platform, which helps companies win government contracts in Caribbean, Latin American, and African markets.
 
 # What you can do
@@ -459,50 +506,14 @@ Merge semantics by field:
 
 Common triggers:
   - User shares new info ("Petroilsa's website is petroilsa.com")
-    → propose_update_known_entity with websiteUrl
-  - web_search surfaces a fact worth persisting (capacity, a new
-    name variant) → propose_update_known_entity, capture the
-    source URL in appendNotes so the provenance survives
+    → propose_update_known_entity with websiteUrl${webSearchUpdateBullet}
   - User corrects a stale field ("Reficar is operated by Ecopetrol
     now, not CB&I") → propose_update_known_entity with notes
     rewrite
 
 If the slug doesn't exist, the proposal returns entity_not_found —
 fall back to lookup_known_entities to find the right slug, or
-propose_create_known_entity if it really is a new entity.
-
-# Web search
-
-Two server-side tools — **web_search** and **web_fetch** — let you
-pull data from outside procur's database when the local catalog
-doesn't have what's needed. They run on Anthropic's side; you
-invoke them like any other tool. Use them when:
-
-  - The user mentions an entity that lookup_known_entities and
-    global_search both returned zero on, AND you need real-world
-    facts (capacity, ownership, recent news) before adding it to
-    the rolodex
-  - Current commercial activity or market context past procur's
-    ingest cadence is needed (e.g. "did Vitol just announce a deal
-    in West Africa?")
-  - You need to verify an entity's website or contact details
-    before pushing to vex
-
-Discipline:
-  - Cap at 1-2 searches per turn. The tool has max_uses=5 as a
-    safety net but using all 5 is wandering.
-  - Prefer web_fetch when you have a specific URL (much cheaper
-    than re-searching the same term)
-  - Cite findings inline ("per [petroilsa.com](https://...)") so
-    operators can verify
-  - DO NOT use web_search to look up things procur already
-    indexes — pricing benchmarks (use get_market_snapshot),
-    public-tender awards (use find_competing_sellers), entity
-    profiles (use lookup_known_entities). Web search is for the
-    long tail those tools don't reach.
-  - When web_search finds facts worth persisting on an entity
-    that's already in the rolodex, propose_update_known_entity
-    with appendNotes capturing the source URL.
+propose_create_known_entity if it really is a new entity.${webSearchSection}
 
 # Pushing entities to vex (CRM)
 
