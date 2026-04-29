@@ -4600,6 +4600,11 @@ export interface EntityProfileResult {
     status: string | null;
     wikidataId: string | null;
   };
+  /** WGS84 decimal degrees. Populated for physical-asset entities
+   *  (refineries, terminals, ports). Null when no canonical
+   *  location is known (multinational trading houses, etc.). */
+  latitude: number | null;
+  longitude: number | null;
   /** Resolved external_suppliers.id if this entity has portal-scraped
    *  presence. Null when known-entity-only. */
   matchedSupplierId: string | null;
@@ -4654,6 +4659,8 @@ export async function getEntityProfile(
     aliases: string[];
     tags: string[];
     metadata: Record<string, unknown> | null;
+    latitude: number | null;
+    longitude: number | null;
   } | null = null;
   let supplierId: string | null = null;
   let supplierName: string | null = null;
@@ -4674,7 +4681,8 @@ export async function getEntityProfile(
       supplierCountry = sup.country == null ? null : String(sup.country);
       // Try to find an overlay in known_entities by alias/name match.
       const keRows = await db.execute(sql`
-        SELECT slug, name, country, role, categories, notes, aliases, tags, metadata
+        SELECT slug, name, country, role, categories, notes, aliases, tags, metadata,
+               latitude, longitude
         FROM known_entities
         WHERE ${supplierName} = ANY(aliases) OR name = ${supplierName}
         LIMIT 1;
@@ -4685,7 +4693,8 @@ export async function getEntityProfile(
   } else {
     // Slug path: resolve known_entities first, then look for portal presence.
     const keRows = await db.execute(sql`
-      SELECT slug, name, country, role, categories, notes, aliases, tags, metadata
+      SELECT slug, name, country, role, categories, notes, aliases, tags, metadata,
+             latitude, longitude
       FROM known_entities
       WHERE slug = ${slugOrId}
       LIMIT 1;
@@ -4830,6 +4839,8 @@ export async function getEntityProfile(
       status: stringOrNull(meta.status),
       wikidataId: stringOrNull(meta.wikidata_id),
     },
+    latitude: knownEntity?.latitude ?? null,
+    longitude: knownEntity?.longitude ?? null,
     matchedSupplierId: supplierId,
     publicTenderActivity,
   };
@@ -4845,6 +4856,8 @@ function mapKnownEntityRow(r: Record<string, unknown>): {
   aliases: string[];
   tags: string[];
   metadata: Record<string, unknown> | null;
+  latitude: number | null;
+  longitude: number | null;
 } {
   return {
     slug: String(r.slug),
@@ -4856,6 +4869,8 @@ function mapKnownEntityRow(r: Record<string, unknown>): {
     aliases: (r.aliases as string[] | null) ?? [],
     tags: (r.tags as string[] | null) ?? [],
     metadata: (r.metadata as Record<string, unknown> | null) ?? null,
+    latitude: r.latitude == null ? null : Number.parseFloat(String(r.latitude)),
+    longitude: r.longitude == null ? null : Number.parseFloat(String(r.longitude)),
   };
 }
 
@@ -4878,6 +4893,8 @@ function notFoundProfile(slugOrId: string): EntityProfileResult {
       status: null,
       wikidataId: null,
     },
+    latitude: null,
+    longitude: null,
     matchedSupplierId: null,
     publicTenderActivity: null,
   };
@@ -5915,4 +5932,199 @@ export async function getPortsForMap(filters: {
     lng: Number.parseFloat(String(r.lng)),
     geofenceRadiusNm: Number.parseFloat(String(r.radius_nm)),
   }));
+}
+
+// ===========================================================================
+// Entity vessel activity — port-call rollup near a refinery / terminal
+// ===========================================================================
+
+export interface EntityVesselActivity {
+  /** Tanker calls in the last 24 hours / 7 days / 30 days at any
+      port within `radiusNm` of the entity. A "call" is a unique
+      (mmsi × port × continuous-cluster). */
+  callsLast24h: number;
+  callsLast7d: number;
+  callsLast30d: number;
+  /** Ports within radiusNm that any tanker actually called at,
+      ranked by 7-day call count. Empty when the entity sits far
+      from any seeded port. */
+  nearbyPorts: Array<{
+    slug: string;
+    name: string;
+    distanceNm: number;
+    calls7d: number;
+    calls30d: number;
+  }>;
+  /** Most recent calls (10 by default) for the activity timeline. */
+  recentVessels: Array<{
+    mmsi: string;
+    vesselName: string | null;
+    flagCountry: string | null;
+    portSlug: string;
+    portName: string;
+    arrivalAt: string;
+    lastSeenAt: string;
+  }>;
+}
+
+/**
+ * Vessel activity at the ports nearest a given entity (refinery,
+ * terminal, port). Powers the per-entity vessel section on
+ * /entities/[slug].
+ *
+ * Strategy:
+ *   1. Find ports within `radiusNm` of the entity's coordinates
+ *      (default 50 nm — wide enough to catch the actual loading/
+ *      discharge port even when the entity's lat/lng is its
+ *      headquarters rather than the dock).
+ *   2. For those ports, derive port calls the same way
+ *      findRecentPortCalls does — geofence-radius + slow-speed
+ *      cluster — over a 30-day window.
+ *   3. Aggregate per-port counts; aggregate global 24h/7d/30d totals;
+ *      emit the 10 most recent calls.
+ *
+ * Skips entirely when no port is in range (returns zeros + empty
+ * arrays). The caller decides whether to render an empty state.
+ */
+export async function getEntityVesselActivity(args: {
+  lat: number;
+  lng: number;
+  /** Default 50 nm (wide; includes headquarters-vs-dock offset). */
+  radiusNm?: number;
+  /** Default 30; lookback for the long-window count + ranking. */
+  daysBack?: number;
+  /** Default 10; cap on recentVessels. */
+  recentLimit?: number;
+}): Promise<EntityVesselActivity> {
+  const radius = args.radiusNm ?? 50;
+  const daysBack = args.daysBack ?? 30;
+  const recentLimit = Math.min(args.recentLimit ?? 10, 50);
+
+  if (
+    !Number.isFinite(args.lat) ||
+    !Number.isFinite(args.lng) ||
+    Math.abs(args.lat) > 90 ||
+    Math.abs(args.lng) > 180
+  ) {
+    return {
+      callsLast24h: 0,
+      callsLast7d: 0,
+      callsLast30d: 0,
+      nearbyPorts: [],
+      recentVessels: [],
+    };
+  }
+
+  // Aggregate — single query with window-of-window CTEs. Uses the
+  // existing equirectangular distance approximation (acceptable
+  // <0.5 nm error at typical port latitudes).
+  const result = await db.execute(sql`
+    WITH nearby_ports AS (
+      SELECT slug, name,
+        lat::numeric AS lat,
+        lng::numeric AS lng,
+        geofence_radius_nm::numeric AS port_radius_nm,
+        SQRT(
+          POW((lat::numeric - ${args.lat}) * 60, 2) +
+          POW((lng::numeric - ${args.lng}) * 60 * COS(RADIANS(${args.lat})), 2)
+        ) AS distance_nm
+      FROM ports
+    ),
+    in_range AS (
+      SELECT * FROM nearby_ports WHERE distance_nm <= ${radius}
+    ),
+    matches AS (
+      SELECT
+        p.mmsi,
+        p.timestamp,
+        ir.slug AS port_slug,
+        ir.name AS port_name,
+        ir.distance_nm
+      FROM vessel_positions p
+      JOIN in_range ir
+        ON SQRT(
+          POW((p.lat::numeric - ir.lat) * 60, 2) +
+          POW((p.lng::numeric - ir.lng) * 60 * COS(RADIANS(ir.lat)), 2)
+        ) <= ir.port_radius_nm
+      WHERE p.timestamp >= NOW() - (${daysBack}::int * INTERVAL '1 day')
+        AND (p.speed_knots IS NULL OR p.speed_knots::numeric < 2)
+    ),
+    calls AS (
+      SELECT
+        mmsi,
+        port_slug,
+        MIN(port_name) AS port_name,
+        MIN(distance_nm) AS distance_nm,
+        MIN(timestamp) AS arrival_at,
+        MAX(timestamp) AS last_seen_at
+      FROM matches
+      GROUP BY mmsi, port_slug
+    )
+    SELECT
+      json_build_object(
+        'totals', json_build_object(
+          'calls24h', COALESCE((SELECT COUNT(*) FROM calls WHERE arrival_at >= NOW() - INTERVAL '24 hours'), 0),
+          'calls7d',  COALESCE((SELECT COUNT(*) FROM calls WHERE arrival_at >= NOW() - INTERVAL '7 days'), 0),
+          'calls30d', COALESCE((SELECT COUNT(*) FROM calls), 0)
+        ),
+        'nearbyPorts', COALESCE((
+          SELECT json_agg(p) FROM (
+            SELECT
+              port_slug AS slug,
+              port_name AS name,
+              MIN(distance_nm) AS "distanceNm",
+              COUNT(*) FILTER (WHERE arrival_at >= NOW() - INTERVAL '7 days') AS calls7d,
+              COUNT(*) AS calls30d
+            FROM calls
+            GROUP BY port_slug, port_name
+            ORDER BY calls7d DESC, calls30d DESC
+          ) p
+        ), '[]'::json),
+        'recentVessels', COALESCE((
+          SELECT json_agg(r) FROM (
+            SELECT
+              c.mmsi,
+              v.name AS "vesselName",
+              v.flag_country AS "flagCountry",
+              c.port_slug AS "portSlug",
+              c.port_name AS "portName",
+              c.arrival_at AS "arrivalAt",
+              c.last_seen_at AS "lastSeenAt"
+            FROM calls c
+            LEFT JOIN vessels v ON v.mmsi = c.mmsi
+            ORDER BY c.last_seen_at DESC
+            LIMIT ${recentLimit}
+          ) r
+        ), '[]'::json)
+      ) AS payload
+  `);
+
+  const row = (result.rows as Array<Record<string, unknown>>)[0];
+  const payload = (row?.payload as {
+    totals?: { calls24h: number; calls7d: number; calls30d: number };
+    nearbyPorts?: Array<{ slug: string; name: string; distanceNm: number | string; calls7d: number; calls30d: number }>;
+    recentVessels?: Array<{
+      mmsi: string;
+      vesselName: string | null;
+      flagCountry: string | null;
+      portSlug: string;
+      portName: string;
+      arrivalAt: string;
+      lastSeenAt: string;
+    }>;
+  }) ?? null;
+
+  return {
+    callsLast24h: Number(payload?.totals?.calls24h ?? 0),
+    callsLast7d: Number(payload?.totals?.calls7d ?? 0),
+    callsLast30d: Number(payload?.totals?.calls30d ?? 0),
+    nearbyPorts: (payload?.nearbyPorts ?? []).map((p) => ({
+      slug: p.slug,
+      name: p.name,
+      distanceNm: Number.parseFloat(String(p.distanceNm)),
+      calls7d: Number(p.calls7d),
+      calls30d: Number(p.calls30d),
+    })),
+    recentVessels: payload?.recentVessels ?? [],
+  };
 }

@@ -1,6 +1,11 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getDirectOwners, getEntityProfile, getOwnershipChain } from '@procur/catalog';
+import {
+  getDirectOwners,
+  getEntityProfile,
+  getEntityVesselActivity,
+  getOwnershipChain,
+} from '@procur/catalog';
 
 /**
  * Unified entity profile — accepts either a known_entities.slug or
@@ -35,9 +40,18 @@ export default async function EntityProfilePage({ params }: Props) {
   // itself for traders / NOCs whose primary identity IS the operator.
   const cap = profile.capabilities;
   const ownershipQueryName = cap.operator ?? profile.name;
-  const [directOwners, ownershipChain] = await Promise.all([
+  const [directOwners, ownershipChain, vesselActivity] = await Promise.all([
     getDirectOwners(ownershipQueryName),
     getOwnershipChain(ownershipQueryName, 5),
+    profile.latitude != null && profile.longitude != null
+      ? getEntityVesselActivity({
+          lat: profile.latitude,
+          lng: profile.longitude,
+          radiusNm: 50,
+          daysBack: 30,
+          recentLimit: 10,
+        }).catch(() => null)
+      : Promise.resolve(null),
   ]);
 
   const fmtUsd = (n: number | null) =>
@@ -106,6 +120,100 @@ export default async function EntityProfilePage({ params }: Props) {
             <Stat label="Started" value={String(cap.inceptionYear)} />
           )}
           {cap.status && <Stat label="Status" value={cap.status} />}
+        </section>
+      )}
+
+      {vesselActivity && (
+        <section className="mb-6">
+          <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Vessel activity
+          </h2>
+          <div className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-4 shadow-sm">
+            {vesselActivity.callsLast30d === 0 && vesselActivity.nearbyPorts.length === 0 ? (
+              <p className="text-xs text-[color:var(--color-muted-foreground)]">
+                No tanker calls within 50 nm of this location in the last 30 days. Either the AISStream
+                feed has no coverage in this region (current bboxes: Med · NW Indian Ocean · Caribbean)
+                or no port within 50 nm of the entity is seeded — populate <code className="rounded bg-[color:var(--color-muted)]/40 px-1">ports</code> with a closer entry to enable
+                call detection.
+              </p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                  <Stat label="Calls 24h" value={vesselActivity.callsLast24h.toString()} />
+                  <Stat label="Calls 7d" value={vesselActivity.callsLast7d.toString()} />
+                  <Stat label="Calls 30d" value={vesselActivity.callsLast30d.toString()} />
+                  <Stat
+                    label="Nearby ports"
+                    value={vesselActivity.nearbyPorts.length.toString()}
+                    sub={
+                      vesselActivity.nearbyPorts.length > 0
+                        ? `closest ${vesselActivity.nearbyPorts[0]!.distanceNm.toFixed(1)} nm`
+                        : undefined
+                    }
+                  />
+                </div>
+
+                {vesselActivity.nearbyPorts.length > 0 && (
+                  <div className="mt-3 border-t border-[color:var(--color-border)] pt-3">
+                    <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                      Calls per port (30d)
+                    </div>
+                    <ul className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
+                      {vesselActivity.nearbyPorts.slice(0, 6).map((p) => (
+                        <li key={p.slug} className="flex items-center justify-between gap-2">
+                          <span className="truncate">
+                            {p.name}{' '}
+                            <span className="text-[10px] text-[color:var(--color-muted-foreground)]">
+                              ({p.distanceNm.toFixed(1)} nm)
+                            </span>
+                          </span>
+                          <span className="shrink-0 tabular-nums text-[color:var(--color-muted-foreground)]">
+                            {p.calls7d} / {p.calls30d}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {vesselActivity.recentVessels.length > 0 && (
+                  <details className="mt-3 border-t border-[color:var(--color-border)] pt-3 text-xs">
+                    <summary className="cursor-pointer text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] [&::-webkit-details-marker]:hidden">
+                      Recent vessels ▾
+                    </summary>
+                    <ul className="mt-2 flex flex-col divide-y divide-[color:var(--color-border)]/40">
+                      {vesselActivity.recentVessels.map((v) => (
+                        <li
+                          key={`${v.mmsi}-${v.portSlug}-${v.lastSeenAt}`}
+                          className="grid grid-cols-[1fr_140px_120px] items-baseline gap-2 py-1 tabular-nums"
+                        >
+                          <span className="truncate">
+                            {v.vesselName ?? `MMSI ${v.mmsi}`}
+                            {v.flagCountry && (
+                              <span className="ml-1 text-[10px] text-[color:var(--color-muted-foreground)]">
+                                ({v.flagCountry})
+                              </span>
+                            )}
+                          </span>
+                          <span className="truncate text-[color:var(--color-muted-foreground)]">
+                            {v.portName}
+                          </span>
+                          <span className="text-right text-[10px] text-[color:var(--color-muted-foreground)]">
+                            {new Date(v.lastSeenAt).toLocaleDateString()}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+
+                <p className="mt-3 text-[10px] italic text-[color:var(--color-muted-foreground)]">
+                  Calls inferred from AIS positions clustered inside each port&apos;s geofence at
+                  &lt; 2 kn (anchored or moored). One call = one (vessel × port) cluster within 30 days.
+                </p>
+              </>
+            )}
+          </div>
         </section>
       )}
 
@@ -339,13 +447,24 @@ export default async function EntityProfilePage({ params }: Props) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+}) {
   return (
     <div className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4">
       <div className="text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
         {label}
       </div>
       <div className="mt-1 text-lg font-semibold tabular-nums">{value}</div>
+      {sub && (
+        <div className="mt-0.5 text-[10px] text-[color:var(--color-muted-foreground)]">{sub}</div>
+      )}
     </div>
   );
 }
