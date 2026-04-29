@@ -7,11 +7,13 @@ import {
   alertProfiles,
   auditLog,
   db,
+  knownEntities,
   opportunities,
   proposals,
   pursuits,
   pursuitTasks,
   type NewAlertProfile,
+  type NewKnownEntity,
   type NewPursuit,
   type NewPursuitTask,
 } from '@procur/db';
@@ -553,6 +555,78 @@ const pushManyToVex: ApplyHandler = async (ctx, rawPayload) => {
   };
 };
 
+const createKnownEntitySchema = z.object({
+  slug: z.string().min(3),
+  name: z.string().min(2),
+  country: z.string().length(2),
+  role: z.string().min(2),
+  categories: z.array(z.string()).min(1),
+  notes: z.string().nullable(),
+  aliases: z.array(z.string()),
+  tags: z.array(z.string()),
+  metadata: z.record(z.unknown()),
+  latitude: z.number().nullable(),
+  longitude: z.number().nullable(),
+});
+
+/**
+ * Insert a new analyst-rolodex row from the chat-curated path.
+ * Conflict on slug returns the existing row's path so the operator
+ * can navigate to it instead of getting a confusing duplicate error
+ * (the proposal step already checks; this is the race-safe fallback).
+ */
+const createKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
+  const payload = createKnownEntitySchema.parse(rawPayload);
+
+  const row: NewKnownEntity = {
+    slug: payload.slug,
+    name: payload.name,
+    country: payload.country.toUpperCase(),
+    role: payload.role,
+    categories: payload.categories,
+    notes: payload.notes,
+    aliases: payload.aliases,
+    tags: payload.tags,
+    metadata: payload.metadata,
+    latitude: payload.latitude == null ? null : String(payload.latitude),
+    longitude: payload.longitude == null ? null : String(payload.longitude),
+  };
+
+  try {
+    const [created] = await db
+      .insert(knownEntities)
+      .values(row)
+      .returning({ id: knownEntities.id, slug: knownEntities.slug });
+    if (!created) return { ok: false, error: 'insert_failed' };
+    return {
+      ok: true,
+      result: {
+        entityId: created.id,
+        slug: created.slug,
+        redirectTo: `/entities/${created.slug}`,
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Postgres unique-constraint violation surfaces as "duplicate key
+    // value violates unique constraint". The proposal step already
+    // checks for this, but a race between proposal and apply can land
+    // here — return the existing slug so the user has somewhere to go.
+    if (/duplicate key/i.test(msg)) {
+      return {
+        ok: true,
+        result: {
+          entityId: null,
+          slug: payload.slug,
+          redirectTo: `/entities/${payload.slug}`,
+          dedupedAgainstExisting: true,
+        },
+      };
+    }
+    return { ok: false, error: 'insert_failed', message: msg };
+  }
+};
+
 const HANDLERS: Record<string, ApplyHandler> = {
   propose_create_pursuit: createPursuit,
   propose_advance_stage: advanceStage,
@@ -561,6 +635,7 @@ const HANDLERS: Record<string, ApplyHandler> = {
   propose_create_alert_profile: createAlert,
   propose_push_to_vex_contact: pushToVex,
   propose_push_many_to_vex_contacts: pushManyToVex,
+  propose_create_known_entity: createKnownEntity,
 };
 
 export async function applyProposal(

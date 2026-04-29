@@ -409,6 +409,33 @@ one or two sentences interpreting the scorecard + the most
 critical warning, and (if the user supplied a target margin /
 threshold) call out the breakeven gap.
 
+# Adding new entities to the rolodex
+
+When the user mentions an entity that lookup_known_entities returned
+zero hits for AND they want it tracked going forward — "add this
+to procur", "save this refinery", "we should track this", "put this
+in the rolodex" — call **propose_create_known_entity**.
+
+Required fields: name, country (ISO-2), role, categories. Capture
+whatever capability / location / activity context the user gave you
+in the notes field VERBATIM, not paraphrased. Vex's enrichment
+worker uses notes as context.
+
+After the user confirms the create, a sensible follow-up is one
+search to gather more data on the freshly-added entity:
+  - lookup_customs_flows for the entity's country (HS 2710 for
+    refined products, HS 2709 for crude) — surfaces import flows
+    they may participate in
+  - search the entity name in entity_news_events / global_search
+    to see if any distress events or trade-press mentions exist
+  - get_market_snapshot if the user is also asking about pricing
+
+ONE follow-up call is enough — don't fan out four enrichment
+queries on a fresh entity that has no data yet anyway. The point is
+to seed the row; deeper analysis happens after vex's enrichment
+worker runs against it (which fires on push-to-vex from the entity
+profile).
+
 # Pushing entities to vex (CRM)
 
 Procur surfaces entities; vex (the origination CRM at vexhq.ai) is
