@@ -5741,3 +5741,178 @@ export async function getRecentCompetitorNews(filters: {
       r.relevance_score != null ? Number.parseFloat(String(r.relevance_score)) : null,
   }));
 }
+
+// ===========================================================================
+// Vessel intelligence — map data
+// ===========================================================================
+
+export interface VesselMapPoint {
+  mmsi: string;
+  vesselName: string | null;
+  imo: string | null;
+  shipTypeLabel: string | null;
+  flagCountry: string | null;
+  /** Most recent position. */
+  lat: number;
+  lng: number;
+  speedKnots: number | null;
+  timestamp: string;
+  /** Up to 20 prior position points for the vessel's recent trail.
+      Ordered oldest → newest so polyline rendering is straight. */
+  trail: Array<{ lat: number; lng: number; timestamp: string }>;
+}
+
+export interface PortMapPoint {
+  slug: string;
+  name: string;
+  country: string;
+  portType: string;
+  lat: number;
+  lng: number;
+  geofenceRadiusNm: number;
+}
+
+/**
+ * Recent vessel positions, grouped by MMSI, with up to 20 trail
+ * points each. Powers the /suppliers/vessels map.
+ *
+ * Strategy:
+ *   1. Pull DISTINCT ON (mmsi) latest position (1 row per vessel) —
+ *      drives the marker placement.
+ *   2. For the same vessels, pull last 20 positions ordered oldest-
+ *      first to draw the trail polyline.
+ *   3. Optional bbox filter on the latest position so we don't ship
+ *      thousands of vessel rows to the client when the user is
+ *      looking at one region.
+ *
+ * Both queries hit the (mmsi, timestamp DESC) index from the schema.
+ * 1000-vessel cap on the latest-position step to keep the wire
+ * payload bounded.
+ */
+export async function getRecentVesselTracks(filters: {
+  /** Lookback in days. Default 7 (catches active tankers; older than
+      a week typically means the vessel has left the bbox). */
+  daysBack?: number;
+  /** Cap on number of distinct MMSIs returned. Default 500, max 2000. */
+  limit?: number;
+  /** Optional [[latSW, lngSW], [latNE, lngNE]]. */
+  bbox?: [[number, number], [number, number]];
+  /** Trail length per vessel. Default 20, max 50. */
+  trailLength?: number;
+}): Promise<VesselMapPoint[]> {
+  const daysBack = filters.daysBack ?? 7;
+  const limit = Math.min(filters.limit ?? 500, 2000);
+  const trailLength = Math.min(filters.trailLength ?? 20, 50);
+
+  const bboxFilter = filters.bbox
+    ? sql`AND lat::numeric BETWEEN ${filters.bbox[0][0]} AND ${filters.bbox[1][0]}
+            AND lng::numeric BETWEEN ${filters.bbox[0][1]} AND ${filters.bbox[1][1]}`
+    : sql``;
+
+  // Step 1 — latest position per MMSI.
+  const latestResult = await db.execute(sql`
+    WITH latest AS (
+      SELECT DISTINCT ON (mmsi)
+        mmsi, lat::numeric AS lat, lng::numeric AS lng,
+        speed_knots::numeric AS speed_knots, timestamp
+      FROM vessel_positions
+      WHERE timestamp >= NOW() - (${daysBack}::int * INTERVAL '1 day')
+      ORDER BY mmsi, timestamp DESC
+    )
+    SELECT
+      l.mmsi, l.lat, l.lng, l.speed_knots, l.timestamp,
+      v.name AS vessel_name, v.imo, v.ship_type_label, v.flag_country
+    FROM latest l
+    LEFT JOIN vessels v ON v.mmsi = l.mmsi
+    WHERE 1 = 1 ${bboxFilter}
+    ORDER BY l.timestamp DESC
+    LIMIT ${limit}
+  `);
+
+  const latestRows = latestResult.rows as Array<Record<string, unknown>>;
+  if (latestRows.length === 0) return [];
+
+  const mmsis = latestRows.map((r) => String(r.mmsi));
+
+  // Step 2 — last N positions for the trail. Keep ordered
+  // chronologically (oldest first) so the consumer can draw the
+  // polyline without re-sorting.
+  const trailResult = await db.execute(sql`
+    SELECT mmsi, lat::numeric AS lat, lng::numeric AS lng, timestamp
+    FROM (
+      SELECT mmsi, lat, lng, timestamp,
+        ROW_NUMBER() OVER (PARTITION BY mmsi ORDER BY timestamp DESC) AS rn
+      FROM vessel_positions
+      WHERE mmsi = ANY(${mmsis}::text[])
+        AND timestamp >= NOW() - (${daysBack}::int * INTERVAL '1 day')
+    ) sub
+    WHERE rn <= ${trailLength}
+    ORDER BY mmsi, timestamp ASC
+  `);
+
+  const trailByMmsi = new Map<string, Array<{ lat: number; lng: number; timestamp: string }>>();
+  for (const r of trailResult.rows as Array<Record<string, unknown>>) {
+    const m = String(r.mmsi);
+    const arr = trailByMmsi.get(m) ?? [];
+    arr.push({
+      lat: Number.parseFloat(String(r.lat)),
+      lng: Number.parseFloat(String(r.lng)),
+      timestamp:
+        r.timestamp instanceof Date
+          ? r.timestamp.toISOString()
+          : String(r.timestamp),
+    });
+    trailByMmsi.set(m, arr);
+  }
+
+  return latestRows.map((r) => {
+    const mmsi = String(r.mmsi);
+    return {
+      mmsi,
+      vesselName: r.vessel_name == null ? null : String(r.vessel_name),
+      imo: r.imo == null ? null : String(r.imo),
+      shipTypeLabel: r.ship_type_label == null ? null : String(r.ship_type_label),
+      flagCountry: r.flag_country == null ? null : String(r.flag_country),
+      lat: Number.parseFloat(String(r.lat)),
+      lng: Number.parseFloat(String(r.lng)),
+      speedKnots: r.speed_knots != null ? Number.parseFloat(String(r.speed_knots)) : null,
+      timestamp:
+        r.timestamp instanceof Date
+          ? r.timestamp.toISOString()
+          : String(r.timestamp),
+      trail: trailByMmsi.get(mmsi) ?? [],
+    };
+  });
+}
+
+/**
+ * Ports for the map view. Tiny query — the table is hand-seeded and
+ * has dozens of rows, not thousands. No filters needed; the client
+ * styles by `portType`.
+ */
+export async function getPortsForMap(filters: {
+  types?: Array<'crude-loading' | 'refinery' | 'transshipment' | 'mixed'>;
+} = {}): Promise<PortMapPoint[]> {
+  const typeFilter =
+    filters.types && filters.types.length > 0
+      ? sql`WHERE port_type = ANY(${filters.types}::text[])`
+      : sql``;
+  const result = await db.execute(sql`
+    SELECT
+      slug, name, country, port_type,
+      lat::numeric AS lat, lng::numeric AS lng,
+      geofence_radius_nm::numeric AS radius_nm
+    FROM ports
+    ${typeFilter}
+    ORDER BY name ASC
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    slug: String(r.slug),
+    name: String(r.name),
+    country: String(r.country),
+    portType: String(r.port_type),
+    lat: Number.parseFloat(String(r.lat)),
+    lng: Number.parseFloat(String(r.lng)),
+    geofenceRadiusNm: Number.parseFloat(String(r.radius_nm)),
+  }));
+}
