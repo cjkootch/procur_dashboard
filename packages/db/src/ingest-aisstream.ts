@@ -233,12 +233,21 @@ async function flushPositions(
   }));
   await db.insert(schema.vesselPositions).values(values);
   // Touch last_seen_at on the vessels we just heard from.
+  // Drizzle + Neon-HTTP serializes a JS array param as a record
+  // literal, which Postgres can't cast to text[] (yields the
+  // "cannot cast type record to text[]" error). Inlining via
+  // sql.join builds a proper ARRAY[...] literal that does cast.
   const mmsiList = [...new Set(positions.map((p) => p.mmsi))];
-  await db.execute(sql`
-    INSERT INTO vessels (mmsi, last_seen_at)
-    SELECT m, NOW() FROM unnest(${mmsiList}::text[]) AS m
-    ON CONFLICT (mmsi) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at;
-  `);
+  if (mmsiList.length > 0) {
+    await db.execute(sql`
+      INSERT INTO vessels (mmsi, last_seen_at)
+      SELECT m, NOW() FROM unnest(ARRAY[${sql.join(
+        mmsiList.map((m) => sql`${m}`),
+        sql`, `,
+      )}]::text[]) AS m
+      ON CONFLICT (mmsi) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at;
+    `);
+  }
   return values.length;
 }
 
