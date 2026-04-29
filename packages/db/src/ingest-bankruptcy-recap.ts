@@ -242,10 +242,16 @@ async function loadNameIndex(
 ): Promise<EntityIndexRow[]> {
   // known_entities (curated rolodex) — narrow to physical / trading
   // roles where bankruptcy is meaningful.
+  // IN-list rather than ANY(${arr}::text[]) — the latter trips up
+  // Neon's HTTP wire protocol with 'cannot cast type record to text[]'.
+  const rolesIn = sql.join(
+    RELEVANT_ROLES.map((r) => sql`${r}`),
+    sql`, `,
+  );
   const knownResult = await db.execute(sql`
     SELECT id, name, country
     FROM known_entities
-    WHERE role = ANY(${RELEVANT_ROLES}::text[])
+    WHERE role IN (${rolesIn})
   `);
   // external_suppliers (public-procurement winners) — pull all; the
   // role concept doesn't apply. Limit to the ones with at least one
