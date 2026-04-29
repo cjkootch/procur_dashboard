@@ -6332,3 +6332,194 @@ export async function getCrudeBasis(
     notes: row.notes == null ? null : String(row.notes),
   };
 }
+
+// ===========================================================================
+// Cargo inference — pair load→discharge port calls into cargo trips
+// ===========================================================================
+
+export interface CargoTrip {
+  /** Synthetic id stable across runs: `${mmsi}:${loadSlug}:${dischargeSlug}:${loadedAt}` */
+  cargoId: string;
+  mmsi: string;
+  vesselName: string | null;
+  flagCountry: string | null;
+  /** Loading-port leg. */
+  loadPortSlug: string;
+  loadPortName: string;
+  loadPortCountry: string;
+  loadedAt: string;
+  /** Discharge-port leg. */
+  dischargePortSlug: string;
+  dischargePortName: string;
+  dischargePortCountry: string;
+  arrivedAt: string;
+  transitDays: number;
+  /**
+   * 'strong'  : both ends in known crude/refinery ports, transit-time plausible
+   * 'medium'  : ports include 'mixed' on at least one end OR transit borderline
+   * 'weak'    : edge cases (vessel revisits same port; very short transit)
+   */
+  confidence: 'strong' | 'medium' | 'weak';
+}
+
+/**
+ * Infer cargo trips from AIS port-call clusters, pairing each
+ * vessel's consecutive (load → discharge) calls. Pure SQL; no
+ * materialized layer. Powers the /api/intelligence/cargoes
+ * endpoint when the AIS feed has coverage.
+ *
+ * Method:
+ *   1. Re-use the geofence-cluster logic from findRecentPortCalls
+ *      to derive port calls (mmsi × port × cluster) over the lookback.
+ *   2. ROW_NUMBER() OVER (PARTITION BY mmsi ORDER BY arrival_at) to
+ *      enumerate each vessel's call sequence.
+ *   3. Self-join on (mmsi, rn = next.rn-1) to pair each call with its
+ *      next call. Filter to (load_type, discharge_type) compatible
+ *      pairs.
+ *   4. Guardrails: discharge.arrived > load.last_seen,
+ *      transit ≥ 1 day, transit ≤ 90 days. (Sub-day pairs are
+ *      typically lightering / inland transfers, not cargoes.
+ *      Over 90 = vessel left the bbox and re-entered; not a single
+ *      cargo trip.)
+ *
+ * Confidence ladder:
+ *   'strong'  : load.port_type='crude-loading' AND discharge.port_type='refinery'
+ *   'medium'  : either end is 'mixed' OR 'transshipment'
+ *   'weak'    : otherwise (catch-all)
+ *
+ * Order: most-recent arrivedAt first.
+ */
+export async function inferCargoTripsFromAis(filters: {
+  /** Lookback in days. Default 30. Capped at 365. */
+  daysBack?: number;
+  /** ISO-2 destination filter (matches discharge_port_country). */
+  destinationCountry?: string;
+  /** ISO-2 origin filter (matches load_port_country). */
+  originCountry?: string;
+  /** Default 'weak'. Filter rows whose confidence is at or above this. */
+  minConfidence?: 'weak' | 'medium' | 'strong';
+  /** Cap rows. Default 100, max 500. */
+  limit?: number;
+}): Promise<CargoTrip[]> {
+  const daysBack = Math.min(filters.daysBack ?? 30, 365);
+  const limit = Math.min(filters.limit ?? 100, 500);
+  const minConfidence = filters.minConfidence ?? 'weak';
+
+  const destinationFilter = filters.destinationCountry
+    ? sql`AND d.port_country = ${filters.destinationCountry.toUpperCase()}`
+    : sql``;
+  const originFilter = filters.originCountry
+    ? sql`AND l.port_country = ${filters.originCountry.toUpperCase()}`
+    : sql``;
+  const confidenceRank: Record<string, number> = {
+    weak: 0,
+    medium: 1,
+    strong: 2,
+  };
+  const minRank = confidenceRank[minConfidence] ?? 0;
+
+  const result = await db.execute(sql`
+    WITH calls AS (
+      -- Per-mmsi port-call clusters via geofence + slow-speed.
+      -- Same shape as findRecentPortCalls' inner CTE.
+      SELECT
+        p.mmsi,
+        sp.slug    AS port_slug,
+        sp.name    AS port_name,
+        sp.country AS port_country,
+        sp.port_type,
+        MIN(p.timestamp) AS arrival_at,
+        MAX(p.timestamp) AS last_seen_at
+      FROM vessel_positions p
+      JOIN ports sp
+        ON SQRT(
+            POW((p.lat::numeric - sp.lat::numeric) * 60, 2) +
+            POW((p.lng::numeric - sp.lng::numeric) * 60 * COS(RADIANS(sp.lat::numeric)), 2)
+           ) <= sp.geofence_radius_nm::numeric
+      WHERE p.timestamp >= NOW() - (${daysBack}::int * INTERVAL '1 day')
+        AND (p.speed_knots IS NULL OR p.speed_knots::numeric < 2)
+      GROUP BY p.mmsi, sp.slug, sp.name, sp.country, sp.port_type
+    ),
+    enumerated AS (
+      SELECT *,
+        ROW_NUMBER() OVER (PARTITION BY mmsi ORDER BY arrival_at) AS rn
+      FROM calls
+    ),
+    pairs AS (
+      SELECT
+        l.mmsi,
+        l.port_slug    AS load_port_slug,
+        l.port_name    AS load_port_name,
+        l.port_country AS load_port_country,
+        l.port_type    AS load_port_type,
+        l.last_seen_at AS loaded_at,
+        d.port_slug    AS discharge_port_slug,
+        d.port_name    AS discharge_port_name,
+        d.port_country AS discharge_port_country,
+        d.port_type    AS discharge_port_type,
+        d.arrival_at   AS arrived_at,
+        EXTRACT(EPOCH FROM (d.arrival_at - l.last_seen_at)) / 86400 AS transit_days
+      FROM enumerated l
+      JOIN enumerated d
+        ON d.mmsi = l.mmsi
+       AND d.rn   = l.rn + 1
+      WHERE l.port_type IN ('crude-loading', 'mixed')
+        AND d.port_type IN ('refinery', 'transshipment', 'mixed')
+        AND d.arrival_at > l.last_seen_at
+        AND EXTRACT(EPOCH FROM (d.arrival_at - l.last_seen_at)) / 86400 BETWEEN 1 AND 90
+        ${destinationFilter}
+        ${originFilter}
+    ),
+    scored AS (
+      SELECT *,
+        CASE
+          WHEN load_port_type = 'crude-loading' AND discharge_port_type = 'refinery'
+            THEN 'strong'
+          WHEN load_port_type = 'mixed' OR discharge_port_type IN ('mixed', 'transshipment')
+            THEN 'medium'
+          ELSE 'weak'
+        END AS confidence,
+        CASE
+          WHEN load_port_type = 'crude-loading' AND discharge_port_type = 'refinery' THEN 2
+          WHEN load_port_type = 'mixed' OR discharge_port_type IN ('mixed', 'transshipment') THEN 1
+          ELSE 0
+        END AS conf_rank
+      FROM pairs
+    )
+    SELECT
+      s.*,
+      v.name AS vessel_name,
+      v.flag_country
+    FROM scored s
+    LEFT JOIN vessels v ON v.mmsi = s.mmsi
+    WHERE conf_rank >= ${minRank}
+    ORDER BY arrived_at DESC
+    LIMIT ${limit}
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((r) => {
+    const mmsi = String(r.mmsi);
+    const loadSlug = String(r.load_port_slug);
+    const dischSlug = String(r.discharge_port_slug);
+    const loadedAt =
+      r.loaded_at instanceof Date ? r.loaded_at.toISOString() : String(r.loaded_at);
+    const arrivedAt =
+      r.arrived_at instanceof Date ? r.arrived_at.toISOString() : String(r.arrived_at);
+    return {
+      cargoId: `${mmsi}:${loadSlug}:${dischSlug}:${loadedAt.slice(0, 10)}`,
+      mmsi,
+      vesselName: r.vessel_name == null ? null : String(r.vessel_name),
+      flagCountry: r.flag_country == null ? null : String(r.flag_country),
+      loadPortSlug: loadSlug,
+      loadPortName: String(r.load_port_name),
+      loadPortCountry: String(r.load_port_country),
+      loadedAt,
+      dischargePortSlug: dischSlug,
+      dischargePortName: String(r.discharge_port_name),
+      dischargePortCountry: String(r.discharge_port_country),
+      arrivedAt,
+      transitDays: Number.parseFloat(String(r.transit_days)),
+      confidence: String(r.confidence) as CargoTrip['confidence'],
+    };
+  });
+}
