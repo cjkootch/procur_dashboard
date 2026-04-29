@@ -911,9 +911,19 @@ export function buildCatalogTools(): ToolRegistry {
           ),
         productCode: z
           .string()
+          .optional()
           .describe(
             "HS code (2/4/6/8 digits). Common: '2709' = crude petroleum, '2710' = refined " +
-              "fuel, '2711' = LNG/LPG. Use 4-digit HS to keep results aggregated.",
+              "fuel, '2711' = LNG/LPG. Use 4-digit HS to keep results aggregated. " +
+              "Accepts the alias `hsCode` if you naturally reach for that name.",
+          ),
+        hsCode: z
+          .string()
+          .optional()
+          .describe(
+            "Alias for productCode — same HS-code value. Models often type " +
+              "`hsCode` because the description above mentions HS codes; either " +
+              "name works.",
           ),
         monthsLookback: z
           .number()
@@ -930,9 +940,18 @@ export function buildCatalogTools(): ToolRegistry {
           message:
             "direction='imports' requires partnerCountry; direction='sources' requires reporterCountry.",
         },
-      ),
-      handler: async (ctx, input) =>
-        withToolTelemetry(
+      ).refine((d) => Boolean(d.productCode ?? d.hsCode), {
+        message:
+          'productCode (or hsCode alias) is required — pass an HS code like "2709" (crude) or "2710" (refined fuel).',
+        path: ['productCode'],
+      }),
+      handler: async (ctx, input) => {
+        // Coalesce the productCode / hsCode aliases. The model can pass
+        // either; downstream queries take productCode. Refine() above
+        // ensures at least one is present, so productCode is non-null
+        // here.
+        const productCode = (input.productCode ?? input.hsCode)!;
+        return withToolTelemetry(
           {
             ctx,
             toolName: 'lookup_customs_flows',
@@ -941,7 +960,7 @@ export function buildCatalogTools(): ToolRegistry {
               resultCount: out.rankedCountries.length,
               resultSummary: {
                 direction: input.direction ?? 'imports',
-                productCode: input.productCode,
+                productCode,
                 pivotCountry: input.partnerCountry ?? input.reporterCountry,
               },
             }),
@@ -954,7 +973,7 @@ export function buildCatalogTools(): ToolRegistry {
               const sources = await getTopSourcesForReporter(
                 {
                   reporterCountry,
-                  productCode: input.productCode,
+                  productCode,
                   monthsLookback: input.monthsLookback,
                   partnerCountry: input.partnerCountry,
                 },
@@ -963,7 +982,7 @@ export function buildCatalogTools(): ToolRegistry {
               return {
                 direction,
                 reporterCountry,
-                productCode: input.productCode,
+                productCode,
                 rankedCountries: sources.map((r) => ({
                   country: r.partnerCountry,
                   role: 'source',
@@ -982,7 +1001,7 @@ export function buildCatalogTools(): ToolRegistry {
             const partnerCountry = input.partnerCountry!;
             const filters = {
               partnerCountry,
-              productCode: input.productCode,
+              productCode,
               monthsLookback: input.monthsLookback,
               reporterCountry: input.reporterCountry,
             };
@@ -993,7 +1012,7 @@ export function buildCatalogTools(): ToolRegistry {
             return {
               direction,
               partnerCountry,
-              productCode: input.productCode,
+              productCode,
               rankedCountries: topImporters.map((r) => ({
                 country: r.reporterCountry,
                 role: 'importer',
@@ -1015,7 +1034,8 @@ export function buildCatalogTools(): ToolRegistry {
                 'lookup_known_entities to attribute country imports to candidate refineries.',
             };
           },
-        ),
+        );
+      },
     }),
 
     lookup_known_entities: defineTool({

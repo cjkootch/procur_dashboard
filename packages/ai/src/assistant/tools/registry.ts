@@ -17,13 +17,24 @@ function zodToJsonSchema(schema: z.ZodTypeAny): Anthropic.Tool['input_schema'] {
 }
 
 // Minimal recursive walker for z.object / z.string / z.number / z.boolean /
-// z.array / z.enum / z.optional / z.nullable / z.literal / z.union of literals.
+// z.array / z.enum / z.optional / z.nullable / z.literal / z.union of literals
+// / z.refine + z.transform (ZodEffects).
 function convert(schema: z.ZodTypeAny): Record<string, unknown> {
   if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable) {
     return convert(schema._def.innerType);
   }
   if (schema instanceof z.ZodDefault) {
     return convert(schema._def.innerType);
+  }
+  // ZodEffects = output of .refine() / .transform() / .preprocess(). The
+  // user's actual shape is the inner schema; without this branch the
+  // converter falls through to {} and the top-level wrapper kicks in,
+  // producing {type: object, properties: {value: ...}, required: ['value']}
+  // which makes the model invoke the tool with `{value: {...real args}}`.
+  // That's the bug behind chat traces showing analyze_supplier called as
+  // {value: {supplierName: "..."}} instead of {supplierName: "..."}.
+  if (schema instanceof z.ZodEffects) {
+    return convert(schema._def.schema);
   }
   if (schema instanceof z.ZodString) {
     const out: Record<string, unknown> = { type: 'string' };
