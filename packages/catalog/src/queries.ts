@@ -6666,3 +6666,76 @@ export async function updateMatchQueueStatus(args: {
     WHERE id = ${args.id}::uuid
   `);
 }
+
+// ============================================================================
+// Entity contact enrichments — vex's ContactEnrichmentAgent share-back
+// ============================================================================
+
+export type EntityContactEnrichment = {
+  id: string;
+  contactName: string;
+  source: string;
+  enrichedAt: string;
+  email: { value: string; confidence: number; sourceUrl: string | null } | null;
+  title: { value: string; confidence: number; sourceUrl: string | null } | null;
+  phone: { value: string; confidence: number; sourceUrl: string | null } | null;
+  linkedinUrl: { value: string; confidence: number; sourceUrl: string | null } | null;
+};
+
+/**
+ * Fetch sidecar contact enrichments for an entity. These are vex's
+ * ContactEnrichmentAgent discoveries that have been shared back via
+ * POST /api/intelligence/entity/{slug}/contact-enrichment. Read-only
+ * here — the entity profile page renders them as a "Contacts"
+ * section so an operator can see what vex has surfaced.
+ *
+ * Ordered by enrichedAt DESC so the most-recently-discovered
+ * contacts surface first.
+ */
+export async function getContactEnrichmentsBySlug(
+  entitySlug: string,
+): Promise<EntityContactEnrichment[]> {
+  const result = await db.execute(sql`
+    SELECT
+      id,
+      contact_name,
+      source,
+      enriched_at,
+      email, email_confidence, email_source_url,
+      title, title_confidence, title_source_url,
+      phone, phone_confidence, phone_source_url,
+      linkedin_url, linkedin_confidence, linkedin_source_url
+    FROM entity_contact_enrichments
+    WHERE entity_slug = ${entitySlug}
+    ORDER BY enriched_at DESC, contact_name ASC
+    LIMIT 50
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((r) => {
+    const field = (
+      value: unknown,
+      conf: unknown,
+      src: unknown,
+    ): EntityContactEnrichment['email'] => {
+      if (value == null) return null;
+      return {
+        value: String(value),
+        confidence: conf == null ? 0 : Number.parseFloat(String(conf)),
+        sourceUrl: src == null ? null : String(src),
+      };
+    };
+    return {
+      id: String(r.id),
+      contactName: String(r.contact_name),
+      source: String(r.source),
+      enrichedAt:
+        r.enriched_at instanceof Date
+          ? r.enriched_at.toISOString()
+          : String(r.enriched_at),
+      email: field(r.email, r.email_confidence, r.email_source_url),
+      title: field(r.title, r.title_confidence, r.title_source_url),
+      phone: field(r.phone, r.phone_confidence, r.phone_source_url),
+      linkedinUrl: field(r.linkedin_url, r.linkedin_confidence, r.linkedin_source_url),
+    };
+  });
+}
