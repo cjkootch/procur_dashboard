@@ -368,12 +368,82 @@ const createAlert: ApplyHandler = async (ctx, rawPayload) => {
 
 // -- Registry ----------------------------------------------------------------
 
+const pushToVexSchema = z.object({
+  sourceRef: z.string(),
+  legalName: z.string(),
+  country: z.string().nullable(),
+  role: z.string().nullable(),
+  contactName: z.string().nullable(),
+  contactEmail: z.string().nullable(),
+  contactPhone: z.string().nullable(),
+  commercialContext: z.object({
+    categories: z.array(z.string()),
+    awardCount: z.number(),
+    awardTotalUsd: z.number().nullable(),
+    daysSinceLastAward: z.number().nullable(),
+    distressSignals: z.array(
+      z.object({
+        kind: z.string(),
+        detail: z.string(),
+        observedAt: z.string().nullable(),
+      }),
+    ),
+    notes: z.string().nullable(),
+    procurEntityProfileUrl: z.string(),
+  }),
+  originationContext: z.object({
+    chatSummary: z.string().nullable(),
+    userNote: z.string().nullable(),
+  }),
+});
+
+const pushToVex: ApplyHandler = async (ctx, rawPayload) => {
+  const payload = pushToVexSchema.parse(rawPayload);
+  const { pushVexContact } = await import('../vex-client');
+
+  const result = await pushVexContact({
+    source: 'procur',
+    sourceRef: payload.sourceRef,
+    legalName: payload.legalName,
+    country: payload.country,
+    role: payload.role,
+    contactName: payload.contactName,
+    contactEmail: payload.contactEmail,
+    contactPhone: payload.contactPhone,
+    commercialContext: payload.commercialContext,
+    originationContext: {
+      triggeredBy: `procur-assistant:user:${ctx.userId}`,
+      chatSummary: payload.originationContext.chatSummary,
+      userNote: payload.originationContext.userNote,
+      pushedAt: new Date().toISOString(),
+    },
+  });
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: 'vex_push_failed',
+      message: result.error,
+    };
+  }
+
+  return {
+    ok: true,
+    result: {
+      vexContactId: result.data.vexContactId,
+      dedupedAgainstExisting: result.data.dedupedAgainstExisting,
+      redirectTo: result.data.vexRecordUrl,
+    },
+  };
+};
+
 const HANDLERS: Record<string, ApplyHandler> = {
   propose_create_pursuit: createPursuit,
   propose_advance_stage: advanceStage,
   propose_create_task: createTask,
   propose_draft_proposal_section: draftProposalSection,
   propose_create_alert_profile: createAlert,
+  propose_push_to_vex_contact: pushToVex,
 };
 
 export async function applyProposal(

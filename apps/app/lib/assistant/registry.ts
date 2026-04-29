@@ -16,6 +16,7 @@ import { proposeAdvanceStageTool } from './tools/propose-advance-stage';
 import { proposeCreateTaskTool } from './tools/propose-create-task';
 import { proposeDraftProposalSectionTool } from './tools/propose-draft-proposal-section';
 import { proposeCreateAlertTool } from './tools/propose-create-alert';
+import { proposePushToVexTool } from './tools/propose-push-to-vex';
 
 export const readTools = {
   [searchOpportunitiesTool.name]: searchOpportunitiesTool,
@@ -37,6 +38,7 @@ export const writeTools = {
   [proposeCreateTaskTool.name]: proposeCreateTaskTool,
   [proposeDraftProposalSectionTool.name]: proposeDraftProposalSectionTool,
   [proposeCreateAlertTool.name]: proposeCreateAlertTool,
+  [proposePushToVexTool.name]: proposePushToVexTool,
 } satisfies ToolRegistry;
 
 export function buildAssistantTools(): ToolRegistry {
