@@ -1,3 +1,24 @@
+> **IMPLEMENTATION STATUS — refreshed 2026-04-29**
+>
+> **Status: shipped + extended beyond spec.** All three reverse-search tools are live, plus several additions not in this brief.
+>
+> Shipped per spec:
+> - `find_buyers_for_offer`, `find_suppliers_for_tender`, `analyze_supplier` — all live in `packages/catalog/src/tools.ts`
+>
+> Shipped beyond spec:
+> - `analyze_supplier_pricing`, `analyze_buyer_pricing`, `evaluate_offer_against_history` — added per pricing-analytics-brief.md
+> - `find_recent_cargoes`, `find_distressed_suppliers`, `get_commodity_price_context` — added per intelligence-layers-brief.md
+> - `compose_deal_economics` — interactive deal modeling tool with sliders (not in any brief; built during sprint)
+> - `get_market_snapshot` — live pricing snapshot tool
+> - `push_to_vex_contact` — chat tool for forwarding entities into vex CRM (the operator-facing surface of the integration)
+> - Bulk `push-to-vex` chat tool for batch operations
+>
+> The HTTP API surface specified in the vex integration brief (`/api/intelligence/*`) is fully shipped — 11 endpoints live behind the `PROCUR_API_TOKEN` bearer auth, Clerk middleware bypass added.
+>
+> **Divergence from brief:** the system grew significantly beyond what this brief specified. The body below describes the foundation; the catalog now supports the full proactive matching workflow described in `strategic-vision.md`.
+>
+> ---
+
 # Assistant Tools — Supplier Graph Integration
 
 **Status:** spec, not yet implemented
