@@ -34,6 +34,31 @@ import {
 } from '@procur/db';
 
 /**
+ * Build a properly-cast Postgres array literal from a JS array.
+ *
+ * The bare `${arr}::text[]` template form goes through Drizzle's
+ * Neon-HTTP serialization as a JSON record literal, which Postgres
+ * rejects with "cannot cast type record to text[]" (error 42846).
+ * Depending on where the template lives that surfaces as either a
+ * 500 with empty body (route handler) or silently dropped rows
+ * (background job that swallows the error). Either way the cure is
+ * to inline the values into an explicit ARRAY[...] literal that
+ * casts cleanly.
+ *
+ * Use this whenever a JS array needs to land in a `= ANY(...)` or
+ * `&& ...` clause typed as text[] / uuid[].
+ */
+function pgArray(values: readonly string[], elemType: 'text' | 'uuid' = 'text') {
+  if (values.length === 0) {
+    return sql`ARRAY[]::${sql.raw(elemType)}[]`;
+  }
+  return sql`ARRAY[${sql.join(
+    values.map((v) => sql`${v}`),
+    sql`, `,
+  )}]::${sql.raw(elemType)}[]`;
+}
+
+/**
  * Per-language translations stored on `opportunities.parsed_content`
  * under the `translations` key. Populated by the AI pipeline's
  * translateTask when an opportunity's source language isn't the
@@ -1271,12 +1296,12 @@ export async function findBuyersForCommodityOffer(
         }
         ${
           spec.unspscCodes && spec.unspscCodes.length > 0
-            ? sql`AND a.unspsc_codes && ${spec.unspscCodes}::text[]`
+            ? sql`AND a.unspsc_codes && ${pgArray(spec.unspscCodes)}`
             : sql``
         }
         ${
           spec.buyerCountries && spec.buyerCountries.length > 0
-            ? sql`AND a.buyer_country = ANY(${spec.buyerCountries}::text[])`
+            ? sql`AND a.buyer_country = ANY(${pgArray(spec.buyerCountries)})`
             : sql``
         }
     )
@@ -1549,7 +1574,7 @@ async function applyOriginBias(
       avg(latitude::float8) AS lat,
       avg(longitude::float8) AS lon
     FROM known_entities
-    WHERE country = ANY(${countries}::text[])
+    WHERE country = ANY(${pgArray(countries)})
       AND latitude IS NOT NULL
       AND longitude IS NOT NULL
     GROUP BY country
@@ -1702,7 +1727,7 @@ export async function findCompetingSellers(
       AND a.award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
       ${
         args.buyerCountries && args.buyerCountries.length > 0
-          ? sql`AND a.buyer_country = ANY(${args.buyerCountries}::text[])`
+          ? sql`AND a.buyer_country = ANY(${pgArray(args.buyerCountries)})`
           : sql``
       }
     GROUP BY s.id, s.organisation_name, s.country
@@ -1729,7 +1754,7 @@ export async function findCompetingSellers(
       AND a.award_date < NOW() - (${monthsLookback}::int || ' months')::interval
       ${
         args.buyerCountries && args.buyerCountries.length > 0
-          ? sql`AND a.buyer_country = ANY(${args.buyerCountries}::text[])`
+          ? sql`AND a.buyer_country = ANY(${pgArray(args.buyerCountries)})`
           : sql``
       }
       AND NOT EXISTS (
@@ -1742,7 +1767,7 @@ export async function findCompetingSellers(
           AND a2.award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
           ${
             args.buyerCountries && args.buyerCountries.length > 0
-              ? sql`AND a2.buyer_country = ANY(${args.buyerCountries}::text[])`
+              ? sql`AND a2.buyer_country = ANY(${pgArray(args.buyerCountries)})`
               : sql``
           }
       )
@@ -1768,7 +1793,7 @@ export async function findCompetingSellers(
       AND a.award_date >= NOW() - (${monthsLookback}::int || ' months')::interval
       ${
         args.buyerCountries && args.buyerCountries.length > 0
-          ? sql`AND a.buyer_country = ANY(${args.buyerCountries}::text[])`
+          ? sql`AND a.buyer_country = ANY(${pgArray(args.buyerCountries)})`
           : sql``
       };
   `);
@@ -2819,7 +2844,7 @@ export async function findEntitiesNearLocation(filters: {
   }
 
   const roleFilter = filters.roles && filters.roles.length > 0
-    ? sql`AND role = ANY(${filters.roles}::text[])`
+    ? sql`AND role = ANY(${pgArray(filters.roles)})`
     : sql``;
   const categoryFilter = filters.categoryTag
     ? sql`AND ${filters.categoryTag} = ANY(categories)`
@@ -5591,7 +5616,7 @@ export async function getCompetitorOverview(filters: {
   const names = entities.map((e) => e.name);
   const supplierLinks = await db.execute(sql`
     WITH e AS (
-      SELECT unnest(${names}::text[]) AS entity_name
+      SELECT unnest(${pgArray(names)}) AS entity_name
     ),
     matched AS (
       SELECT DISTINCT ON (e.entity_name)
@@ -5625,7 +5650,7 @@ export async function getCompetitorOverview(filters: {
         supplier_id, total_awards, total_value_usd,
         awards_last_90d, awards_prev_90d, most_recent_award_date
       FROM supplier_capability_summary
-      WHERE supplier_id = ANY(${supplierIds}::uuid[])
+      WHERE supplier_id = ANY(${pgArray(supplierIds, 'uuid')})
     `);
     for (const row of capResult.rows as Array<Record<string, unknown>>) {
       capByCounter.set(String(row.supplier_id), {
@@ -5660,7 +5685,7 @@ export async function getCompetitorOverview(filters: {
         LIMIT 1
       ) AS most_recent
     FROM entity_news_events e1
-    WHERE known_entity_id = ANY(${entityIds}::uuid[])
+    WHERE known_entity_id = ANY(${pgArray(entityIds, 'uuid')})
       AND (relevance_score IS NULL OR relevance_score >= 0.5)
     GROUP BY known_entity_id
   `);
@@ -5866,7 +5891,7 @@ export async function getRecentVesselTracks(filters: {
       SELECT mmsi, lat, lng, timestamp,
         ROW_NUMBER() OVER (PARTITION BY mmsi ORDER BY timestamp DESC) AS rn
       FROM vessel_positions
-      WHERE mmsi = ANY(${mmsis}::text[])
+      WHERE mmsi = ANY(${pgArray(mmsis)})
         AND timestamp >= NOW() - (${daysBack}::int * INTERVAL '1 day')
     ) sub
     WHERE rn <= ${trailLength}
@@ -5918,7 +5943,7 @@ export async function getPortsForMap(filters: {
 } = {}): Promise<PortMapPoint[]> {
   const typeFilter =
     filters.types && filters.types.length > 0
-      ? sql`WHERE port_type = ANY(${filters.types}::text[])`
+      ? sql`WHERE port_type = ANY(${pgArray(filters.types)})`
       : sql``;
   const result = await db.execute(sql`
     SELECT
