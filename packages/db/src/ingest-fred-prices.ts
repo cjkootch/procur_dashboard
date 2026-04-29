@@ -70,29 +70,38 @@ function parseFredCsv(csv: string): Row[] {
   return out;
 }
 
-async function main() {
+export type IngestFredPricesResult = {
+  since: string;
+  perSeries: Record<string, number>;
+  totalRowsUpserted: number;
+};
+
+/**
+ * Pull FRED daily commodity prices (Brent + WTI) and upsert into
+ * commodity_prices. CLI shim below; Trigger.dev cron wrapper in
+ * services/scrapers/src/trigger/scheduled/ingest-fred-prices.ts.
+ */
+export async function ingestFredPrices(opts: {
+  /** YYYY-MM-DD. Default 2020-01-01 for backfill, or a recent date
+      for cron. */
+  since?: string;
+} = {}): Promise<IngestFredPricesResult> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL not set');
-
-  const sinceArg = process.argv.find((a) => a.startsWith('--since='))?.split('=')[1];
-  const sinceDate = sinceArg ?? '2020-01-01'; // default 5y backfill
+  const sinceDate = opts.since ?? '2020-01-01';
 
   const client = neon(url);
   const db = drizzle(client, { schema, casing: 'snake_case' });
 
+  const perSeries: Record<string, number> = {};
+  let totalRowsUpserted = 0;
+
   for (const series of SERIES) {
-    console.log(`Fetching ${series.label} (${series.fredId})...`);
     const csv = await fetchCsv(series.fredId);
     const all = parseFredCsv(csv);
     const filtered = all.filter((r) => r.priceDate >= sinceDate);
-    console.log(
-      `  ${all.length} rows total, ${filtered.length} since ${sinceDate}. Upserting...`,
-    );
 
     let inserted = 0;
-    let updated = 0;
-    // Insert in batches of 500 — Neon HTTP can comfortably handle the
-    // resulting parameter count and we get one network round-trip per chunk.
     const chunkSize = 500;
     for (let i = 0; i < filtered.length; i += chunkSize) {
       const chunk = filtered.slice(i, i + chunkSize);
@@ -121,15 +130,28 @@ async function main() {
           },
         })
         .returning({ id: schema.commodityPrices.id });
-      // onConflictDoUpdate counts both inserts + updates as upserts.
       inserted += res.length;
-      void updated;
     }
-    console.log(`  ${series.label}: ${inserted} rows upserted.`);
+    perSeries[series.slug] = inserted;
+    totalRowsUpserted += inserted;
   }
+
+  return { since: sinceDate, perSeries, totalRowsUpserted };
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
-  process.exit(1);
-});
+async function main() {
+  const sinceArg = process.argv.find((a) => a.startsWith('--since='))?.split('=')[1];
+  console.log('FRED daily prices: fetching Brent + WTI...');
+  const result = await ingestFredPrices({ since: sinceArg });
+  console.log(
+    `Done. ${result.totalRowsUpserted} rows upserted across ` +
+      `${Object.keys(result.perSeries).length} series since ${result.since}.`,
+  );
+}
+
+if (process.argv[1] && process.argv[1].endsWith('ingest-fred-prices.ts')) {
+  main().catch((err: unknown) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

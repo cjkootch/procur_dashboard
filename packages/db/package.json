@@ -12,7 +12,9 @@
     "./ingest-ecb-fx": "./src/ingest-ecb-fx.ts",
     "./ingest-sec-edgar": "./src/ingest-sec-edgar.ts",
     "./ingest-bankruptcy-recap": "./src/ingest-bankruptcy-recap.ts",
-    "./ingest-aisstream": "./src/ingest-aisstream.ts"
+    "./ingest-aisstream": "./src/ingest-aisstream.ts",
+    "./ingest-fred-prices": "./src/ingest-fred-prices.ts",
+    "./ingest-eia-prices": "./src/ingest-eia-prices.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",

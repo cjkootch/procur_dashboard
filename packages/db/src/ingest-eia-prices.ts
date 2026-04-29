@@ -125,31 +125,49 @@ async function fetchSeries(
     .filter((r) => Number.isFinite(r.price));
 }
 
-async function main() {
+export type IngestEiaPricesResult = {
+  since: string;
+  perSeries: Record<string, number>;
+  totalRowsUpserted: number;
+  /** True when EIA_API_KEY was missing and we no-op'd cleanly. */
+  skipped: boolean;
+};
+
+/**
+ * Pull EIA daily refined-product spot prices (NYH ULSD / RBOB /
+ * heating oil) and upsert into commodity_prices. CLI shim below;
+ * Trigger.dev cron wrapper in services/scrapers.
+ *
+ * No-ops with skipped=true when EIA_API_KEY is missing — keeps the
+ * scheduled task safe across environments where the key isn't set
+ * (still emits a log line; doesn't fail the run).
+ */
+export async function ingestEiaPrices(opts: {
+  /** YYYY-MM-DD. Default 2022-01-01 — EIA has older data but most
+      analytics windows look at <3y. */
+  since?: string;
+} = {}): Promise<IngestEiaPricesResult> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL not set');
 
   const apiKey = process.env.EIA_API_KEY;
   if (!apiKey) {
-    console.warn(
-      'EIA_API_KEY not set — skipping refined-product ingest. Sign up at ' +
-        'https://www.eia.gov/opendata/register.php and add the key to .env.local.',
-    );
-    return;
+    return { since: '', perSeries: {}, totalRowsUpserted: 0, skipped: true };
   }
 
-  const sinceArg = process.argv.find((a) => a.startsWith('--since='))?.split('=')[1];
-  const sinceDate = sinceArg ?? '2022-01-01';
-
+  const sinceDate = opts.since ?? '2022-01-01';
   const client = neon(url);
   const db = drizzle(client, { schema, casing: 'snake_case' });
 
-  for (const series of SERIES) {
-    console.log(`Fetching ${series.label}...`);
-    const rows = await fetchSeries(apiKey, series, sinceDate);
-    console.log(`  ${rows.length} rows since ${sinceDate}. Upserting...`);
-    if (rows.length === 0) continue;
+  const perSeries: Record<string, number> = {};
+  let totalRowsUpserted = 0;
 
+  for (const series of SERIES) {
+    const rows = await fetchSeries(apiKey, series, sinceDate);
+    if (rows.length === 0) {
+      perSeries[series.slug] = 0;
+      continue;
+    }
     let upserted = 0;
     const chunkSize = 500;
     for (let i = 0; i < rows.length; i += chunkSize) {
@@ -182,11 +200,33 @@ async function main() {
         .returning({ id: schema.commodityPrices.id });
       upserted += res.length;
     }
-    console.log(`  ${series.label}: ${upserted} rows upserted.`);
+    perSeries[series.slug] = upserted;
+    totalRowsUpserted += upserted;
   }
+
+  return { since: sinceDate, perSeries, totalRowsUpserted, skipped: false };
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
-  process.exit(1);
-});
+async function main() {
+  const sinceArg = process.argv.find((a) => a.startsWith('--since='))?.split('=')[1];
+  console.log('EIA NYH refined-product spot: fetching...');
+  const result = await ingestEiaPrices({ since: sinceArg });
+  if (result.skipped) {
+    console.warn(
+      'EIA_API_KEY not set — skipping refined-product ingest. Sign up at ' +
+        'https://www.eia.gov/opendata/register.php and add the key.',
+    );
+    return;
+  }
+  console.log(
+    `Done. ${result.totalRowsUpserted} rows upserted across ` +
+      `${Object.keys(result.perSeries).length} series since ${result.since}.`,
+  );
+}
+
+if (process.argv[1] && process.argv[1].endsWith('ingest-eia-prices.ts')) {
+  main().catch((err: unknown) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
