@@ -1,3 +1,21 @@
+> **IMPLEMENTATION STATUS — refreshed 2026-04-29**
+>
+> **Status: shipped + extended.** The award delta-vs-spot analytics engine is live.
+>
+> Shipped per spec:
+> - Migration 0042 (`pricing_analytics_foundation`) — `commodity_benchmark_mappings`, `country_default_currencies`, `fx_rates`
+> - Migration 0044 (`award_price_deltas`) — the materialized view with confidence scoring (7 KB SQL)
+> - Migration 0043 (`award_quantity_bbl`) — added as bbl-normalized quantity column for cross-grade comparison (not in brief; needed for the analytics to work)
+> - Migrations 0045 + 0046 — OCDS jurisdiction expansion (10 publishers seeded: Mexico, Colombia, Paraguay, Honduras, plus 6 more)
+> - ECB FX daily cron live
+> - All three tools live: `analyze_supplier_pricing`, `analyze_buyer_pricing`, `evaluate_offer_against_history`
+>
+> **Divergence from brief:** OCDS expansion was scoped wider than this brief anticipated. The benchmark coverage now spans far more LatAm publishers than originally specced — Mexico, Colombia, Paraguay, Honduras among others. This expanded the practical universe of comparable awards substantially.
+>
+> The currency handling went with the "best-effort backfill" choice you made (assumed currency where missing, FX-converted, confidence-scored). Working as designed.
+>
+> ---
+
 # Pricing Analytics Addendum — Award Delta-vs-Spot Intelligence
 
 **Status:** spec, not yet implemented
