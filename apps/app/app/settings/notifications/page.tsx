@@ -26,8 +26,8 @@ export default async function NotificationPreferencesPage() {
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Notifications</h1>
         <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
-          Choose which events trigger an in-app notification (the bell in the
-          top-right). Untoggle anything that&rsquo;s noisy for you.
+          Choose which events trigger an in-app notification (bell, top-right) or an
+          email digest. Untoggle anything that&rsquo;s noisy for you.
         </p>
       </header>
 
@@ -79,6 +79,7 @@ export default async function NotificationPreferencesPage() {
 const GROUP_LABEL: Record<NotificationTypeMeta['group'], string> = {
   capture: 'Capture',
   proposal: 'Proposal',
+  digest: 'Email digests',
 };
 
 function groupByGroup(

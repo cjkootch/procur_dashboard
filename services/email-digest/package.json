@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@procur/analytics": "workspace:*",
+    "@procur/catalog": "workspace:*",
     "@procur/db": "workspace:*",
     "@procur/email-templates": "workspace:*",
     "@procur/utils": "workspace:*",
