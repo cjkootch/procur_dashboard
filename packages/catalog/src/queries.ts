@@ -6523,3 +6523,115 @@ export async function inferCargoTripsFromAis(filters: {
     };
   });
 }
+
+// ===========================================================================
+// Match queue — proactive deal-origination signals
+// ===========================================================================
+
+export interface MatchQueueItem {
+  id: string;
+  signalType: 'distress_event' | 'velocity_drop' | 'new_award' | string;
+  signalKind: string;
+  sourceTable: string;
+  sourceId: string;
+  knownEntityId: string | null;
+  externalSupplierId: string | null;
+  sourceEntityName: string;
+  sourceEntityCountry: string | null;
+  categoryTags: string[];
+  observedAt: string;
+  score: number;
+  rationale: string;
+  status: 'open' | 'dismissed' | 'pushed-to-vex' | 'actioned' | string;
+  matchedAt: string;
+  /** Set when knownEntityId resolves to a known_entities row. */
+  entityProfileSlug: string | null;
+}
+
+/**
+ * Pull the match queue, default to open rows ranked by score
+ * (DESC) + observed_at (DESC). Powers /match-queue.
+ */
+export async function getMatchQueue(filters: {
+  status?: 'open' | 'dismissed' | 'pushed-to-vex' | 'actioned';
+  signalType?: 'distress_event' | 'velocity_drop' | 'new_award';
+  daysBack?: number;
+  limit?: number;
+} = {}): Promise<MatchQueueItem[]> {
+  const status = filters.status ?? 'open';
+  const daysBack = filters.daysBack ?? 30;
+  const limit = Math.min(filters.limit ?? 100, 500);
+
+  const signalFilter = filters.signalType
+    ? sql`AND mq.signal_type = ${filters.signalType}`
+    : sql``;
+
+  const result = await db.execute(sql`
+    SELECT
+      mq.id,
+      mq.signal_type,
+      mq.signal_kind,
+      mq.source_table,
+      mq.source_id,
+      mq.known_entity_id,
+      mq.external_supplier_id,
+      mq.source_entity_name,
+      mq.source_entity_country,
+      mq.category_tags,
+      mq.observed_at,
+      mq.score,
+      mq.rationale,
+      mq.status,
+      mq.matched_at,
+      ke.slug AS entity_slug
+    FROM match_queue mq
+    LEFT JOIN known_entities ke ON ke.id = mq.known_entity_id
+    WHERE mq.status = ${status}
+      AND mq.observed_at >= CURRENT_DATE - (${daysBack}::int * INTERVAL '1 day')
+      ${signalFilter}
+    ORDER BY mq.score DESC, mq.observed_at DESC, mq.matched_at DESC
+    LIMIT ${limit}
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    id: String(r.id),
+    signalType: String(r.signal_type),
+    signalKind: String(r.signal_kind),
+    sourceTable: String(r.source_table),
+    sourceId: String(r.source_id),
+    knownEntityId: r.known_entity_id == null ? null : String(r.known_entity_id),
+    externalSupplierId:
+      r.external_supplier_id == null ? null : String(r.external_supplier_id),
+    sourceEntityName: String(r.source_entity_name),
+    sourceEntityCountry:
+      r.source_entity_country == null ? null : String(r.source_entity_country),
+    categoryTags: (r.category_tags as string[] | null) ?? [],
+    observedAt:
+      r.observed_at instanceof Date
+        ? r.observed_at.toISOString().slice(0, 10)
+        : String(r.observed_at),
+    score: Number.parseFloat(String(r.score)),
+    rationale: String(r.rationale),
+    status: String(r.status) as MatchQueueItem['status'],
+    matchedAt:
+      r.matched_at instanceof Date
+        ? r.matched_at.toISOString()
+        : String(r.matched_at),
+    entityProfileSlug: r.entity_slug == null ? null : String(r.entity_slug),
+  }));
+}
+
+/**
+ * Workflow transitions on a match-queue row. Server-action target.
+ */
+export async function updateMatchQueueStatus(args: {
+  id: string;
+  status: 'open' | 'dismissed' | 'pushed-to-vex' | 'actioned';
+}): Promise<void> {
+  await db.execute(sql`
+    UPDATE match_queue
+    SET status = ${args.status},
+        status_updated_at = NOW()
+    WHERE id = ${args.id}::uuid
+  `);
+}
