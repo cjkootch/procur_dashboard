@@ -1,4 +1,5 @@
 import { schedules } from '@trigger.dev/sdk/v3';
+import { isNotNull } from 'drizzle-orm';
 import { db, users, type User } from '@procur/db';
 import { getMatchQueue } from '@procur/catalog';
 import {
@@ -35,7 +36,10 @@ export const matchQueueDigest = schedules.task({
   run: async () => {
     const today = new Date().toISOString().slice(0, 10);
 
-    const rows = await db.select().from(users);
+    const rows = await db
+      .select()
+      .from(users)
+      .where(isNotNull(users.companyId));
     const recipients = rows.filter(isOptedIn);
 
     log.info('digest.match-queue.started', {
@@ -44,38 +48,40 @@ export const matchQueueDigest = schedules.task({
       today,
     });
 
-    const items = await getMatchQueue({
-      status: 'open',
-      daysBack: 7,
-      limit: 200,
-    });
-    const top = items.slice(0, TOP_N);
-
-    if (top.length === 0) {
-      log.info('digest.match-queue.no-items');
-      return { sent: 0, skipped: recipients.length, reason: 'no-items' };
-    }
-
     const matchQueueUrl = `${APP_URL}/suppliers/match-queue`;
-    const digestRows: MatchQueueDigestRow[] = top.map((it) => ({
-      id: it.id,
-      signalType: it.signalType,
-      signalKind: it.signalKind,
-      score: it.score,
-      entityName: it.sourceEntityName,
-      entityCountry: it.sourceEntityCountry,
-      rationale: it.rationale,
-      observedAt: it.observedAt,
-      entityProfileUrl: it.entityProfileSlug
-        ? `${APP_URL}/entities/${it.entityProfileSlug}`
-        : null,
-    }));
-
     let sent = 0;
+    let skippedEmpty = 0;
     const errors: Array<{ userId: string; message: string }> = [];
 
     for (const u of recipients) {
       try {
+        // Tenant-scoped queue per user's company.
+        const items = await getMatchQueue({
+          companyId: u.companyId!,
+          status: 'open',
+          daysBack: 7,
+          limit: 200,
+        });
+        const top = items.slice(0, TOP_N);
+        if (top.length === 0) {
+          skippedEmpty += 1;
+          continue;
+        }
+
+        const digestRows: MatchQueueDigestRow[] = top.map((it) => ({
+          id: it.id,
+          signalType: it.signalType,
+          signalKind: it.signalKind,
+          score: it.score,
+          entityName: it.sourceEntityName,
+          entityCountry: it.sourceEntityCountry,
+          rationale: it.rationale,
+          observedAt: it.observedAt,
+          entityProfileUrl: it.entityProfileSlug
+            ? `${APP_URL}/entities/${it.entityProfileSlug}`
+            : null,
+        }));
+
         const { id: resendId } = await sendEmail({
           to: u.email,
           subject: `${top.length} match-queue lead${top.length === 1 ? '' : 's'} ranked for today`,
@@ -112,11 +118,16 @@ export const matchQueueDigest = schedules.task({
 
     log.info('digest.match-queue.done', {
       sent,
-      skipped: rows.length - recipients.length,
+      skippedEmpty,
+      skippedOptedOut: rows.length - recipients.length,
       errorCount: errors.length,
-      rowCount: top.length,
     });
-    return { sent, skipped: rows.length - recipients.length, errors };
+    return {
+      sent,
+      skippedEmpty,
+      skippedOptedOut: rows.length - recipients.length,
+      errors,
+    };
   },
 });
 

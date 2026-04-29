@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { updateMatchQueueStatus } from '@procur/catalog';
-import { getCurrentUser } from '@procur/auth';
+import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,9 +10,8 @@ export const dynamic = 'force-dynamic';
  * PATCH /api/match-queue/[id]
  *   { status: 'dismissed' | 'pushed-to-vex' | 'actioned' | 'open' }
  *
- * Workflow transition for a match-queue row. Auth via the existing
- * Clerk middleware (any authenticated user — match queue is shared
- * in v1; per-user scoping comes later).
+ * Workflow transition for a match-queue row, scoped to the caller's
+ * company so a user can't transition rows owned by another tenant.
  */
 const BodySchema = z.object({
   status: z.enum(['open', 'dismissed', 'pushed-to-vex', 'actioned']),
@@ -25,6 +24,10 @@ export async function PATCH(
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
+  const company = await getCurrentCompany();
+  if (!company) {
+    return NextResponse.json({ error: 'no_company' }, { status: 403 });
   }
 
   const { id } = await params;
@@ -42,6 +45,10 @@ export async function PATCH(
     );
   }
 
-  await updateMatchQueueStatus({ id, status: parsed.data.status });
+  await updateMatchQueueStatus({
+    id,
+    companyId: company.id,
+    status: parsed.data.status,
+  });
   return NextResponse.json({ ok: true });
 }

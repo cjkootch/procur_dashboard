@@ -10,19 +10,29 @@ import {
 } from 'drizzle-orm/pg-core';
 import { knownEntities } from './known-entities';
 import { externalSuppliers } from './external-suppliers';
+import { companies } from './companies';
 
 /**
  * Match queue — ranked counterparty signals the trader should
  * action on each day. Capstone of the strategic-vision.md loop;
- * see migration 0050 for the rationale + idempotency notes.
+ * see migration 0050 for the original rationale and 0051 for the
+ * per-tenant scoping.
  *
- * Single global queue in v1; per-user interest profiles will land
- * in a follow-up.
+ * Each row is owned by exactly one company. The scoring cron loops
+ * over companies and writes a tenant-scoped copy of each matching
+ * source signal — same source row may produce N match_queue rows
+ * (one per interested tenant), each with that tenant's preferred
+ * categories / jurisdictions baked into the rationale and score.
  */
 export const matchQueue = pgTable(
   'match_queue',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+
+    /** Owning tenant. Rows are deleted when the company is deleted. */
+    companyId: uuid('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
 
     /** 'distress_event' | 'velocity_drop' | 'new_award'. */
     signalType: text('signal_type').notNull(),
@@ -71,12 +81,14 @@ export const matchQueue = pgTable(
   },
   (table) => ({
     openScoreIdx: index('match_queue_open_score_idx').on(
+      table.companyId,
       table.status,
       table.score,
       table.observedAt,
     ),
     observedIdx: index('match_queue_observed_idx').on(table.observedAt),
     dedupIdx: uniqueIndex('match_queue_dedup_idx').on(
+      table.companyId,
       table.sourceTable,
       table.sourceId,
     ),

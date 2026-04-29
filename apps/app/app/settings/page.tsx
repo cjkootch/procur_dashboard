@@ -75,13 +75,15 @@ export default async function CompanyProfilePage() {
           name="preferredJurisdictions"
           placeholder="comma-separated, e.g. trinidad-and-tobago, jamaica, guyana"
           defaultValue={(company.preferredJurisdictions ?? []).join(', ')}
+          helper="Drives both opportunity recommendations and which buyer countries the daily match queue scores. Leave empty to use the broad VTC defaults."
           full
         />
         <Field
           label="Preferred categories"
           name="preferredCategories"
-          placeholder="comma-separated, e.g. IT services, consulting, construction"
+          placeholder="comma-separated, e.g. crude-oil, diesel, gasoline, jet-fuel"
           defaultValue={(company.preferredCategories ?? []).join(', ')}
+          helper="Drives both opportunity recommendations and which award categories the daily match queue scores. Leave empty to use the broad VTC defaults (crude/diesel/gasoline/jet/marine bunker)."
           full
         />
         <Field
@@ -161,6 +163,7 @@ function Field({
   defaultValue,
   required,
   full,
+  helper,
 }: {
   label: string;
   name: string;
@@ -169,6 +172,7 @@ function Field({
   defaultValue?: string;
   required?: boolean;
   full?: boolean;
+  helper?: string;
 }) {
   return (
     <label className={full ? 'md:col-span-2' : undefined}>
@@ -181,6 +185,11 @@ function Field({
         defaultValue={defaultValue}
         className="mt-1 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
       />
+      {helper && (
+        <span className="mt-1 block text-[11px] text-[color:var(--color-muted-foreground)]">
+          {helper}
+        </span>
+      )}
     </label>
   );
 }

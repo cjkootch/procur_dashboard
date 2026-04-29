@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { getMatchQueue } from '@procur/catalog';
+import { requireCompany } from '@procur/auth';
 import { MatchRow } from './_components/MatchRow';
 
 export const dynamic = 'force-dynamic';
@@ -7,21 +8,15 @@ export const dynamic = 'force-dynamic';
 /**
  * Daily match queue — proactive deal-origination signals to action.
  *
- * Rows come from score-match-queue (Trigger.dev daily 15:30 UTC):
+ * Rows come from score-match-queue (Trigger.dev daily 15:30 UTC),
+ * tenant-scoped by the current company:
  *   distress events from entity_news_events
  *   velocity drops from supplier_capability_summary
- *   fresh awards in target categories × target countries
+ *   fresh awards in this tenant's preferred categories × jurisdictions
  *
- * Layout: ranked list, score chip + signal-class badge + entity
- * link + rationale + per-row actions (push to vex, actioned,
- * dismiss). Filters: signal type + lookback. Status defaults to
- * 'open' — dismissed/actioned rows hide.
- *
- * Click "Push to vex" marks the row in procur; the actual push
- * happens via the assistant chat (propose_push_to_vex_contact tool
- * from PR #264). v2 will connect the button directly to that flow
- * — for now the button is a status-only marker so the queue
- * doesn't re-surface things you've already handled.
+ * Tenants without preferred_categories / preferred_jurisdictions set
+ * fall back to the broad VTC defaults (see scoreMatchQueue) so a
+ * fresh account isn't empty. Configure under /settings.
  */
 interface Props {
   searchParams: Promise<{
@@ -31,9 +26,11 @@ interface Props {
 }
 
 export default async function MatchQueuePage({ searchParams }: Props) {
+  const { company } = await requireCompany();
   const params = await searchParams;
   const days = clampDays(params.days);
   const items = await getMatchQueue({
+    companyId: company.id,
     status: 'open',
     signalType: params.signal,
     daysBack: days,

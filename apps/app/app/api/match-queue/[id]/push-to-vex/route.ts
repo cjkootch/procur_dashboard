@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db, matchQueue, knownEntities, externalSuppliers } from '@procur/db';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { getEntityProfile, updateMatchQueueStatus } from '@procur/catalog';
-import { getCurrentUser } from '@procur/auth';
+import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 import { pushVexContact } from '@/lib/vex-client';
 
 export const runtime = 'nodejs';
@@ -37,6 +37,10 @@ export async function POST(
   if (!user) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
+  const company = await getCurrentCompany();
+  if (!company) {
+    return NextResponse.json({ error: 'no_company' }, { status: 403 });
+  }
 
   const { id } = await params;
 
@@ -55,7 +59,7 @@ export async function POST(
   }
 
   const row = await db.query.matchQueue.findFirst({
-    where: eq(matchQueue.id, id),
+    where: and(eq(matchQueue.id, id), eq(matchQueue.companyId, company.id)),
   });
   if (!row) {
     return NextResponse.json({ error: 'not_found' }, { status: 404 });
@@ -165,7 +169,11 @@ export async function POST(
     );
   }
 
-  await updateMatchQueueStatus({ id: row.id, status: 'pushed-to-vex' });
+  await updateMatchQueueStatus({
+    id: row.id,
+    companyId: company.id,
+    status: 'pushed-to-vex',
+  });
 
   return NextResponse.json({
     ok: true,

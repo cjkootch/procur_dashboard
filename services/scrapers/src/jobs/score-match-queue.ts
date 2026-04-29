@@ -1,17 +1,18 @@
 /**
- * Daily match-queue scoring job.
+ * Daily match-queue scoring job — per-tenant.
  *
- * Capstone of the strategic-vision.md loop. Scans procur's recent
- * counterparty signals — distress events, velocity drops, fresh
- * awards — and writes ranked rows to match_queue for the
- * /match-queue page.
+ * Capstone of the strategic-vision.md loop. Every morning, scans
+ * procur's recent counterparty signals — distress events, velocity
+ * drops, fresh awards — and writes ranked rows to match_queue for
+ * each tenant's /match-queue page.
  *
- * v1 ships with a hardcoded interest profile keyed to VTC's lane:
- *   categories: crude-oil, diesel, gasoline, jet-fuel, marine-bunker
- *   regions   : Caribbean (DO/JM/TT/PR/BS), Mediterranean (IT/ES/GR/TR),
- *               LATAM (MX/CO/EC/PE/BR/PY/HN/GT/PA/AR), Africa (NG/AO/MA/DZ),
- *               Mid-East distress origin signals (anywhere)
- * Per-user interest profiles come in a follow-up.
+ * Per-tenant interest profile (companies table):
+ *   preferred_categories     → category filter on awards & rationale
+ *   preferred_jurisdictions  → buyer-country filter on awards
+ *
+ * If a tenant hasn't configured either field, scoring falls back to
+ * the broad VTC defaults below so the queue is never empty for a
+ * fresh account.
  *
  * Three signal sources, each with a baseline score + recency bonus:
  *
@@ -24,25 +25,32 @@
  *     baseline 7.0
  *     +0.5 always (it's a 90d-rolling signal — recency baked in)
  *
- *   new_award (awards, last 24h, in target category × country set)
+ *   new_award (awards, last 24h, in tenant category × jurisdiction set)
  *     baseline 4.0
  *     +0.5 if value > $10M
  *
  * Score capped at 9.99 (matches column precision). Idempotent on
- * (source_table, source_id) — re-running today's job after a
- * partial failure is safe.
+ * (company_id, source_table, source_id) — re-running today's job
+ * after a partial failure is safe.
+ *
+ * NOTE: distress_event and velocity_drop are fan-outs to every
+ * tenant (those signals aren't category-scoped — a refiner going
+ * bankrupt is interesting to anyone trading the lane). Only the
+ * new_award path filters by the tenant's preferred categories +
+ * jurisdictions, which is where multi-tenant differentiation shows
+ * up most strongly.
  */
 import { sql } from 'drizzle-orm';
-import { db } from '@procur/db';
+import { db, companies } from '@procur/db';
 
-const TARGET_CATEGORIES = [
+const DEFAULT_CATEGORIES = [
   'crude-oil',
   'diesel',
   'gasoline',
   'jet-fuel',
   'marine-bunker',
 ];
-const TARGET_COUNTRIES = [
+const DEFAULT_JURISDICTIONS = [
   // Caribbean
   'DO', 'JM', 'TT', 'PR', 'BS', 'BB', 'HT',
   // Mediterranean
@@ -54,6 +62,7 @@ const TARGET_COUNTRIES = [
 ];
 
 export type ScoreMatchQueueResult = {
+  companies: number;
   distressInserted: number;
   velocityInserted: number;
   awardInserted: number;
@@ -61,18 +70,53 @@ export type ScoreMatchQueueResult = {
 };
 
 export async function scoreMatchQueue(): Promise<ScoreMatchQueueResult> {
-  // ── 1. Distress events — entity_news_events last 7d, relevance ≥ 0.5
-  // (NULL counts as "not yet scored"; we still surface those — better
-  // false-positives early than missing high-signal events while the
-  // scoring job catches up).
-  const distressResult = await db.execute(sql`
+  const tenants = await db
+    .select({
+      id: companies.id,
+      preferredCategories: companies.preferredCategories,
+      preferredJurisdictions: companies.preferredJurisdictions,
+    })
+    .from(companies);
+
+  let distressInserted = 0;
+  let velocityInserted = 0;
+  let awardInserted = 0;
+
+  for (const tenant of tenants) {
+    const categories =
+      tenant.preferredCategories && tenant.preferredCategories.length > 0
+        ? tenant.preferredCategories
+        : DEFAULT_CATEGORIES;
+    const jurisdictions =
+      tenant.preferredJurisdictions && tenant.preferredJurisdictions.length > 0
+        ? tenant.preferredJurisdictions
+        : DEFAULT_JURISDICTIONS;
+
+    distressInserted += await insertDistress(tenant.id);
+    velocityInserted += await insertVelocity(tenant.id);
+    awardInserted += await insertAwards(tenant.id, categories, jurisdictions);
+  }
+
+  return {
+    companies: tenants.length,
+    distressInserted,
+    velocityInserted,
+    awardInserted,
+    totalInserted: distressInserted + velocityInserted + awardInserted,
+  };
+}
+
+async function insertDistress(companyId: string): Promise<number> {
+  const result = await db.execute(sql`
     INSERT INTO match_queue (
+      company_id,
       signal_type, signal_kind, source_table, source_id,
       known_entity_id, external_supplier_id,
       source_entity_name, source_entity_country,
       category_tags, observed_at, score, rationale
     )
     SELECT
+      ${companyId}::uuid,
       'distress_event',
       n.event_type,
       'entity_news_events',
@@ -108,21 +152,23 @@ export async function scoreMatchQueue(): Promise<ScoreMatchQueueResult> {
     FROM entity_news_events n
     WHERE n.event_date >= CURRENT_DATE - INTERVAL '7 days'
       AND (n.relevance_score IS NULL OR n.relevance_score >= 0.5)
-    ON CONFLICT (source_table, source_id) DO NOTHING
+    ON CONFLICT (company_id, source_table, source_id) DO NOTHING
     RETURNING id;
   `);
-  const distressInserted = (distressResult.rows as unknown[]).length;
+  return (result.rows as unknown[]).length;
+}
 
-  // ── 2. Velocity drops — suppliers whose 90d-window awards dropped
-  // ≥ 50% vs the prior 90d. Same threshold as findDistressedSuppliers.
-  const velocityResult = await db.execute(sql`
+async function insertVelocity(companyId: string): Promise<number> {
+  const result = await db.execute(sql`
     INSERT INTO match_queue (
+      company_id,
       signal_type, signal_kind, source_table, source_id,
       external_supplier_id,
       source_entity_name, source_entity_country,
       category_tags, observed_at, score, rationale
     )
     SELECT
+      ${companyId}::uuid,
       'velocity_drop',
       'velocity_drop',
       'supplier_capability_summary',
@@ -144,29 +190,39 @@ export async function scoreMatchQueue(): Promise<ScoreMatchQueueResult> {
     FROM supplier_capability_summary s
     WHERE s.awards_prev_90d >= 3
       AND ((s.awards_last_90d::float / NULLIF(s.awards_prev_90d, 0)::float) - 1) <= -0.5
-    ON CONFLICT (source_table, source_id) DO NOTHING
+    ON CONFLICT (company_id, source_table, source_id) DO NOTHING
     RETURNING id;
   `);
-  const velocityInserted = (velocityResult.rows as unknown[]).length;
+  return (result.rows as unknown[]).length;
+}
 
-  // ── 3. Fresh awards — last 24h, in target category × country set.
-  // Buyer-side signal: someone just bought meaningful diesel in our
-  // territory; we want eyes on the supplier who won it (in case it
-  // becomes recurring) AND on the buyer (in case of repeat spend).
-  const awardResult = await db.execute(sql`
+async function insertAwards(
+  companyId: string,
+  categories: string[],
+  jurisdictions: string[],
+): Promise<number> {
+  const categoryArr = sql`ARRAY[${sql.join(
+    categories.map((c) => sql`${c}`),
+    sql`, `,
+  )}]::text[]`;
+  const jurisdictionArr = sql`ARRAY[${sql.join(
+    jurisdictions.map((c) => sql`${c}`),
+    sql`, `,
+  )}]::text[]`;
+
+  const result = await db.execute(sql`
     INSERT INTO match_queue (
+      company_id,
       signal_type, signal_kind, source_table, source_id,
       source_entity_name, source_entity_country,
       category_tags, observed_at, score, rationale
     )
     SELECT
+      ${companyId}::uuid,
       'new_award',
       COALESCE(
         (SELECT t FROM unnest(a.category_tags) AS t
-         WHERE t = ANY(${sql.join(
-           TARGET_CATEGORIES.map((c) => sql`${c}`),
-           sql`, `,
-         )}::text[])
+         WHERE t = ANY(${categoryArr})
          LIMIT 1),
         'unspecified'
       ),
@@ -189,10 +245,7 @@ export async function scoreMatchQueue(): Promise<ScoreMatchQueueResult> {
         'new ',
         COALESCE(
           (SELECT t FROM unnest(a.category_tags) AS t
-           WHERE t = ANY(${sql.join(
-             TARGET_CATEGORIES.map((c) => sql`${c}`),
-             sql`, `,
-           )}::text[])
+           WHERE t = ANY(${categoryArr})
            LIMIT 1),
           'fuel'
         ),
@@ -206,23 +259,10 @@ export async function scoreMatchQueue(): Promise<ScoreMatchQueueResult> {
       )
     FROM awards a
     WHERE a.award_date >= CURRENT_DATE - INTERVAL '1 day'
-      AND a.category_tags && ${sql.join(
-        TARGET_CATEGORIES.map((c) => sql`${c}`),
-        sql`, `,
-      )}::text[]
-      AND a.buyer_country = ANY(${sql.join(
-        TARGET_COUNTRIES.map((c) => sql`${c}`),
-        sql`, `,
-      )}::text[])
-    ON CONFLICT (source_table, source_id) DO NOTHING
+      AND a.category_tags && ${categoryArr}
+      AND a.buyer_country = ANY(${jurisdictionArr})
+    ON CONFLICT (company_id, source_table, source_id) DO NOTHING
     RETURNING id;
   `);
-  const awardInserted = (awardResult.rows as unknown[]).length;
-
-  return {
-    distressInserted,
-    velocityInserted,
-    awardInserted,
-    totalInserted: distressInserted + velocityInserted + awardInserted,
-  };
+  return (result.rows as unknown[]).length;
 }

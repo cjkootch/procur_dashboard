@@ -6553,11 +6553,12 @@ export interface MatchQueueItem {
  * (DESC) + observed_at (DESC). Powers /match-queue.
  */
 export async function getMatchQueue(filters: {
+  companyId: string;
   status?: 'open' | 'dismissed' | 'pushed-to-vex' | 'actioned';
   signalType?: 'distress_event' | 'velocity_drop' | 'new_award';
   daysBack?: number;
   limit?: number;
-} = {}): Promise<MatchQueueItem[]> {
+}): Promise<MatchQueueItem[]> {
   const status = filters.status ?? 'open';
   const daysBack = filters.daysBack ?? 30;
   const limit = Math.min(filters.limit ?? 100, 500);
@@ -6586,7 +6587,8 @@ export async function getMatchQueue(filters: {
       ke.slug AS entity_slug
     FROM match_queue mq
     LEFT JOIN known_entities ke ON ke.id = mq.known_entity_id
-    WHERE mq.status = ${status}
+    WHERE mq.company_id = ${filters.companyId}::uuid
+      AND mq.status = ${status}
       AND mq.observed_at >= CURRENT_DATE - (${daysBack}::int * INTERVAL '1 day')
       ${signalFilter}
     ORDER BY mq.score DESC, mq.observed_at DESC, mq.matched_at DESC
@@ -6626,6 +6628,7 @@ export async function getMatchQueue(filters: {
  */
 export async function updateMatchQueueStatus(args: {
   id: string;
+  companyId: string;
   status: 'open' | 'dismissed' | 'pushed-to-vex' | 'actioned';
 }): Promise<void> {
   await db.execute(sql`
@@ -6633,5 +6636,6 @@ export async function updateMatchQueueStatus(args: {
     SET status = ${args.status},
         status_updated_at = NOW()
     WHERE id = ${args.id}::uuid
+      AND company_id = ${args.companyId}::uuid
   `);
 }
