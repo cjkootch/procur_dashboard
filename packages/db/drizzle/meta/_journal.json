@@ -358,6 +358,13 @@
       "when": 1777335500000,
       "tag": "0050_match_queue",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1777335700000,
+      "tag": "0052_entity_contact_enrichments",
+      "breakpoints": true
     }
   ]
 }

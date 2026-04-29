@@ -48,3 +48,4 @@ export * from './country-default-currencies';
 export * from './fx-rates';
 export * from './entity-news-events';
 export * from './match-queue';
+export * from './entity-contact-enrichments';
