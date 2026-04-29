@@ -563,8 +563,220 @@ const TRADING_HOUSES: Seed[] = [
   },
 ];
 
+/**
+ * African refiners — West / East / North / Southern Africa refineries
+ * relevant to the lane VTC trades. Capacity figures are public-knowledge
+ * approximations in barrels per day. Coordinates are the operating-unit
+ * centroid; geofence overlap with the corresponding seed-ports.ts entry
+ * is intentional so vessel activity attributes correctly.
+ *
+ * Without this curated set, lookup_known_entities for African refining
+ * returns OSM noise (mis-tagged power plants, etc) instead of the
+ * actual export-capable refineries operators care about.
+ */
+const AFRICAN_REFINERS: Seed[] = [
+  // ── West Africa ────────────────────────────────────────────
+  {
+    slug: 'curated-ng-dangote-lekki',
+    name: 'Dangote Refinery',
+    country: 'NG',
+    role: 'refiner',
+    categories: ['crude-oil', 'diesel', 'gasoline', 'jet-fuel'],
+    notes:
+      "World's largest single-train refinery. ~650 kbd at Lekki Free Trade Zone, commissioned 2024. Privately owned by Aliko Dangote. Game-changer for West African product flows — was historically a refined-product importer; Dangote inverts that. Now exports diesel/jet to Europe + Americas, displacing some EU/USGC barrels into West Africa.",
+    aliases: ['Dangote Petroleum Refinery', 'Dangote Oil Refining Company'],
+    tags: ['refinery', 'private', 'west-africa', 'sweet-crude-runner', 'top-tier'],
+    metadata: { capacity_bpd: 650000, operator: 'Dangote Group', city: 'Lekki' },
+    latitude: 6.45,
+    longitude: 3.7,
+  },
+  {
+    slug: 'curated-ng-port-harcourt-nnpc',
+    name: 'Port Harcourt Refinery (NNPC)',
+    country: 'NG',
+    role: 'refiner',
+    categories: ['crude-oil', 'diesel', 'gasoline', 'jet-fuel'],
+    notes:
+      'NNPC-owned, 210 kbd nameplate (two trains, 60 + 150 kbd). Decades-long underperformer; partial rehab brought one train back online late 2024. Historically a notional capacity that didn\'t produce — Nigeria imported gasoline despite owning this asset.',
+    aliases: ['PHRC', 'Port Harcourt Refining Company'],
+    tags: ['refinery', 'state', 'west-africa', 'underutilized'],
+    metadata: { capacity_bpd: 210000, operator: 'NNPC' },
+    latitude: 4.7,
+    longitude: 7.0,
+  },
+  {
+    slug: 'curated-ng-warri-nnpc',
+    name: 'Warri Refinery (NNPC)',
+    country: 'NG',
+    role: 'refiner',
+    categories: ['crude-oil', 'diesel', 'gasoline', 'jet-fuel'],
+    notes:
+      'NNPC-owned, ~125 kbd. Mostly idle for years; rehab completion announced multiple times. Treat as not-running until verified.',
+    aliases: ['WRPC', 'Warri Refining and Petrochemical Company'],
+    tags: ['refinery', 'state', 'west-africa', 'underutilized'],
+    metadata: { capacity_bpd: 125000, operator: 'NNPC' },
+    latitude: 5.5,
+    longitude: 5.7,
+  },
+  {
+    slug: 'curated-ng-indorama-eleme',
+    name: 'Indorama Eleme Petrochemicals',
+    country: 'NG',
+    role: 'refiner',
+    categories: ['diesel', 'gasoline', 'lpg'],
+    notes:
+      'Private petrochemicals + refining complex near Port Harcourt. ~210 kbd capacity claimed; primarily fertilizer + olefins, with some refined-product output. Indorama Group (Singapore parent).',
+    tags: ['refinery', 'private', 'west-africa', 'petrochem'],
+    metadata: { operator: 'Indorama Corporation' },
+    latitude: 4.83,
+    longitude: 7.13,
+  },
+  {
+    slug: 'curated-gh-tema-tor',
+    name: 'Tema Oil Refinery',
+    country: 'GH',
+    role: 'refiner',
+    categories: ['crude-oil', 'diesel', 'gasoline', 'jet-fuel'],
+    notes:
+      "TOR — Ghana's only refinery, ~45 kbd. State-owned. Frequently offline for maintenance / cash-flow reasons; Ghana imports most refined products through Tema port.",
+    aliases: ['TOR'],
+    tags: ['refinery', 'state', 'west-africa', 'underutilized'],
+    metadata: { capacity_bpd: 45000, operator: 'Tema Oil Refinery Ltd' },
+    latitude: 5.6386,
+    longitude: -0.0181,
+  },
+  {
+    slug: 'curated-sn-sar-dakar',
+    name: 'Société Africaine de Raffinage (SAR)',
+    country: 'SN',
+    role: 'refiner',
+    categories: ['crude-oil', 'diesel', 'gasoline', 'jet-fuel'],
+    notes:
+      "Senegal's sole refinery, ~27 kbd at Mbao (Dakar). State + private mix (Petrosen, Total, Saudi Binladin). Senegal's GTA gas project may shift dynamics; refinery itself remains small and product-import-supplemented.",
+    aliases: ['SAR', 'Refinery of Mbao'],
+    tags: ['refinery', 'mixed-ownership', 'west-africa'],
+    metadata: { capacity_bpd: 27000, operator: 'SAR' },
+    latitude: 14.7589,
+    longitude: -17.32,
+  },
+  {
+    slug: 'curated-ao-sonangol-luanda',
+    name: 'Sonangol Luanda Refinery',
+    country: 'AO',
+    role: 'refiner',
+    categories: ['crude-oil', 'diesel', 'gasoline', 'jet-fuel'],
+    notes:
+      "Sonangol-operated, ~65 kbd at Luanda. Angola's only operating refinery; Lobito refinery is announced but not commissioned. Domestic-market biased.",
+    aliases: ['Refinaria de Luanda'],
+    tags: ['refinery', 'state', 'west-africa'],
+    metadata: { capacity_bpd: 65000, operator: 'Sonangol' },
+    latitude: -8.78,
+    longitude: 13.38,
+  },
+
+  // ── Southern Africa ────────────────────────────────────────
+  {
+    slug: 'curated-za-sapref',
+    name: 'SAPREF Refinery',
+    country: 'ZA',
+    role: 'refiner',
+    categories: ['crude-oil', 'diesel', 'gasoline', 'jet-fuel'],
+    notes:
+      "Largest refinery in southern Africa — 180 kbd at Durban. Originally Shell/BP 50/50 JV; idle since 2022 force majeure, sold to state-affiliated CEF in 2024 with restart pending. Was the main South African import-substitution buffer.",
+    aliases: ['South African Petroleum Refineries'],
+    tags: ['refinery', 'southern-africa', 'idle', 'restart-watch'],
+    metadata: { capacity_bpd: 180000, operator: 'CEF (state)', former_operators: 'Shell, BP' },
+    latitude: -29.94,
+    longitude: 30.99,
+  },
+  {
+    slug: 'curated-za-engen-durban',
+    name: 'Engen Durban Refinery',
+    country: 'ZA',
+    role: 'refiner',
+    categories: ['crude-oil', 'diesel', 'gasoline', 'jet-fuel'],
+    notes:
+      'Engen-operated, ~135 kbd at Durban. Idle since 2020 fire; restart uncertain. Engen majority-owned by Vivo Energy / Vitol.',
+    tags: ['refinery', 'southern-africa', 'idle'],
+    metadata: { capacity_bpd: 135000, operator: 'Engen', parent: 'Vivo Energy / Vitol' },
+    latitude: -29.92,
+    longitude: 31.02,
+  },
+  {
+    slug: 'curated-za-natref',
+    name: 'Natref Refinery',
+    country: 'ZA',
+    role: 'refiner',
+    categories: ['crude-oil', 'diesel', 'gasoline'],
+    notes:
+      'National Petroleum Refiners — 108 kbd at Sasolburg, inland. Sasol/TotalEnergies JV. South Africa\'s only inland crude refinery, fed by Durban-Johannesburg pipeline.',
+    aliases: ['National Petroleum Refiners of South Africa'],
+    tags: ['refinery', 'southern-africa', 'inland'],
+    metadata: { capacity_bpd: 108000, operator: 'Sasol / TotalEnergies' },
+    latitude: -26.83,
+    longitude: 27.83,
+  },
+  {
+    slug: 'curated-za-petrosa-mossel-bay',
+    name: 'PetroSA Mossel Bay GTL',
+    country: 'ZA',
+    role: 'refiner',
+    categories: ['diesel', 'gasoline', 'jet-fuel'],
+    notes:
+      "PetroSA-operated 45 kbd GTL (gas-to-liquids) facility at Mossel Bay, Western Cape. Fed by offshore Mossgas; gas reserves declining and unit running below nameplate. Strategic but small.",
+    tags: ['refinery', 'southern-africa', 'gtl', 'state'],
+    metadata: { capacity_bpd: 45000, operator: 'PetroSA' },
+    latitude: -34.18,
+    longitude: 22.15,
+  },
+
+  // ── North Africa ───────────────────────────────────────────
+  {
+    slug: 'curated-dz-sonatrach-skikda',
+    name: 'Sonatrach Skikda Refinery',
+    country: 'DZ',
+    role: 'refiner',
+    categories: ['crude-oil', 'diesel', 'gasoline', 'jet-fuel'],
+    notes:
+      "Sonatrach-operated, 350 kbd at Skikda — Africa's largest refinery export complex. Configured for Mediterranean gasoline/diesel export to Europe. Algeria's primary downstream asset.",
+    aliases: ['Skikda Refinery'],
+    tags: ['refinery', 'state', 'north-africa', 'mediterranean', 'export-oriented', 'top-tier'],
+    metadata: { capacity_bpd: 350000, operator: 'Sonatrach' },
+    latitude: 36.88,
+    longitude: 6.90,
+  },
+  {
+    slug: 'curated-dz-sonatrach-arzew',
+    name: 'Sonatrach Arzew Refinery',
+    country: 'DZ',
+    role: 'refiner',
+    categories: ['crude-oil', 'diesel', 'gasoline'],
+    notes:
+      'Sonatrach-operated ~60 kbd refinery at Arzew, Mediterranean coast. Adjacent to large LNG complex; product-export oriented but smaller than Skikda.',
+    tags: ['refinery', 'state', 'north-africa', 'mediterranean'],
+    metadata: { capacity_bpd: 60000, operator: 'Sonatrach' },
+    latitude: 35.85,
+    longitude: -0.32,
+  },
+  {
+    slug: 'curated-ma-samir-mohammedia',
+    name: 'Samir Mohammedia Refinery',
+    country: 'MA',
+    role: 'refiner',
+    categories: ['crude-oil', 'diesel', 'gasoline', 'jet-fuel'],
+    notes:
+      "Samir — Morocco's only refinery, ~200 kbd at Mohammedia. Idle since 2015 bankruptcy; assets in liquidation but restart bids periodically surface. Morocco currently imports all refined products.",
+    aliases: ['Société Anonyme Marocaine de l\'Industrie de Raffinage'],
+    tags: ['refinery', 'north-africa', 'idle', 'restart-watch'],
+    metadata: { capacity_bpd: 200000, operator: 'Samir (in liquidation)' },
+    latitude: 33.69,
+    longitude: -7.39,
+  },
+];
+
 const ALL_SEEDS: Seed[] = [
   ...MEDITERRANEAN_REFINERS,
+  ...AFRICAN_REFINERS,
   ...INDIAN_STATE_REFINERS,
   ...OTHER_ASIAN_STATE_REFINERS,
   ...TRADING_HOUSES,

@@ -403,6 +403,219 @@ const PORTS: PortSeed[] = [
     portType: 'mixed',
     notes: 'Europort — largest European refining/transshipment hub. Vitol, Vopak terminals.',
   },
+
+  // ── West Africa ────────────────────────────────────────────
+  // Coverage for the Atlantic-coast bbox (PR #289). Without these
+  // seeded, vessel positions in the new bbox have no port to
+  // attribute calls to and the entity Vessel Activity sections
+  // stay empty.
+  {
+    slug: 'tema-port',
+    name: 'Tema Oil Refinery Port',
+    country: 'GH',
+    lat: 5.6386,
+    lng: -0.0181,
+    radiusNm: 4,
+    portType: 'refinery',
+    notes:
+      'Tema (TOR) — Ghana\'s only refinery, ~45 kbd. Primary West Africa import hub for refined products.',
+  },
+  {
+    slug: 'lome-port',
+    name: 'Port of Lomé',
+    country: 'TG',
+    lat: 6.1319,
+    lng: 1.2873,
+    radiusNm: 4,
+    portType: 'mixed',
+    notes:
+      'Togo\'s deepwater port — regional transshipment for landlocked Sahel + bunker hub for West Africa coastal trade.',
+  },
+  {
+    slug: 'lagos-apapa-port',
+    name: 'Lagos / Apapa Oil Port',
+    country: 'NG',
+    lat: 6.4434,
+    lng: 3.3623,
+    radiusNm: 5,
+    portType: 'mixed',
+    notes:
+      'Apapa terminal complex — Nigeria\'s primary refined-product import gateway. Adjacent to Dangote\'s Lekki port.',
+  },
+  {
+    slug: 'lekki-port',
+    name: 'Lekki Deep Sea Port (Dangote)',
+    country: 'NG',
+    lat: 6.4500,
+    lng: 3.7000,
+    radiusNm: 4,
+    portType: 'refinery',
+    notes:
+      'Dangote Refinery offshore terminal — 650 kbd refinery (world\'s largest single-train), commissioned 2024. Crude in / refined products out.',
+  },
+  {
+    slug: 'dakar-port',
+    name: 'Port of Dakar',
+    country: 'SN',
+    lat: 14.6928,
+    lng: -17.4467,
+    radiusNm: 4,
+    portType: 'mixed',
+    notes:
+      'Dakar — Senegal\'s primary port, hosts SAR (Société Africaine de Raffinage, ~27 kbd). West Africa bunkering hub.',
+  },
+  {
+    slug: 'cabinda-terminal',
+    name: 'Cabinda Crude Terminal',
+    country: 'AO',
+    lat: -5.5500,
+    lng: 12.2000,
+    radiusNm: 4,
+    portType: 'crude-loading',
+    knownGrades: ['cabinda'],
+    notes:
+      'Cabinda Gulf Oil Company (CABGOC) — Angolan crude export terminal. Cabinda blend ~35°API sweet, often arbitraged with West African grades.',
+  },
+  {
+    slug: 'luanda-port',
+    name: 'Port of Luanda',
+    country: 'AO',
+    lat: -8.7733,
+    lng: 13.3756,
+    radiusNm: 4,
+    portType: 'mixed',
+    notes:
+      'Luanda — Angola\'s capital port. Sonangol Luanda Refinery (~65 kbd) onshore. Mixed product import + crude staging.',
+  },
+  {
+    slug: 'walvis-bay-port',
+    name: 'Port of Walvis Bay',
+    country: 'NA',
+    lat: -22.9530,
+    lng: 14.4979,
+    radiusNm: 4,
+    portType: 'transshipment',
+    notes:
+      'Namibia\'s deepwater port — Atlantic-Cape rounding bunker stop. Some refined product imports for southern Africa.',
+  },
+
+  // ── East Africa + Southern Africa ──────────────────────────
+  {
+    slug: 'mombasa-port',
+    name: 'Port of Mombasa',
+    country: 'KE',
+    lat: -4.0435,
+    lng: 39.6682,
+    radiusNm: 5,
+    portType: 'mixed',
+    notes:
+      'Mombasa — East Africa\'s primary refined-product gateway. Serves Kenya, Uganda, Rwanda, Burundi, eastern DRC, South Sudan via the Northern Corridor pipeline.',
+  },
+  {
+    slug: 'dar-es-salaam-port',
+    name: 'Port of Dar es Salaam',
+    country: 'TZ',
+    lat: -6.8161,
+    lng: 39.2891,
+    radiusNm: 5,
+    portType: 'mixed',
+    notes:
+      'Tanzania\'s primary port — Central Corridor gateway for Tanzania, Zambia, eastern DRC, Burundi, Rwanda. Refined product imports + transit.',
+  },
+  {
+    slug: 'maputo-port',
+    name: 'Port of Maputo',
+    country: 'MZ',
+    lat: -25.9692,
+    lng: 32.5732,
+    radiusNm: 4,
+    portType: 'mixed',
+    notes:
+      'Mozambique\'s capital port — serves South Africa\'s Witwatersrand inland market plus regional refined-product distribution.',
+  },
+  {
+    slug: 'durban-port',
+    name: 'Port of Durban',
+    country: 'ZA',
+    lat: -29.8587,
+    lng: 31.0218,
+    radiusNm: 5,
+    portType: 'mixed',
+    notes:
+      'Durban — South Africa\'s busiest port. Hosts SAPREF (~180 kbd Shell/BP JV) + Engen Refinery (~135 kbd). Major crude import + refined product hub.',
+  },
+  {
+    slug: 'cape-town-port',
+    name: 'Port of Cape Town',
+    country: 'ZA',
+    lat: -33.9253,
+    lng: 18.4239,
+    radiusNm: 4,
+    portType: 'mixed',
+    notes:
+      'Cape Town — Western Cape gateway, Atlantic-Cape rounding bunker stop. Refined product imports for the Cape region.',
+  },
+
+  // ── Caribbean basin ────────────────────────────────────────
+  // The Caribbean bbox (PR #289 was the Africa add; the Caribbean
+  // bbox has existed since the original AISStream config). Without
+  // these seeded, port-call detection for Caribbean refineries
+  // also stays empty — fixing that parallel gap here.
+  {
+    slug: 'punta-caucedo-port',
+    name: 'Punta Caucedo Refinery Port',
+    country: 'DO',
+    lat: 18.4194,
+    lng: -69.6128,
+    radiusNm: 3,
+    portType: 'refinery',
+    notes:
+      'Refidomsa terminal — Dominican Republic\'s primary refining + import port. Active diesel/gasoline tender buyer.',
+  },
+  {
+    slug: 'kingston-port',
+    name: 'Kingston Oil Port (Petrojam)',
+    country: 'JM',
+    lat: 17.9683,
+    lng: -76.7917,
+    radiusNm: 3,
+    portType: 'refinery',
+    notes:
+      'Petrojam — Jamaica\'s only refinery (~35 kbd). State-owned; PCJ subsidiary. Active GOJEP tender buyer for crude + refined products.',
+  },
+  {
+    slug: 'port-of-spain',
+    name: 'Port of Spain',
+    country: 'TT',
+    lat: 10.6549,
+    lng: -61.5176,
+    radiusNm: 4,
+    portType: 'mixed',
+    notes:
+      'Trinidad\'s capital port — refined product imports + LNG-adjacent activity. Petrotrin Pointe-à-Pierre refinery (mothballed 2018) lies south.',
+  },
+  {
+    slug: 'freeport-borco',
+    name: 'Freeport (BORCO Terminal)',
+    country: 'BS',
+    lat: 26.5333,
+    lng: -78.6833,
+    radiusNm: 4,
+    portType: 'transshipment',
+    notes:
+      'Bahamas Oil Refining Co. — major Atlantic transshipment terminal. ~25M bbl storage, owned by Buckeye. Frequent Atlantic-basin crude / product staging.',
+  },
+  {
+    slug: 'limetree-bay-port',
+    name: 'Limetree Bay Terminal',
+    country: 'VI',
+    lat: 17.6800,
+    lng: -64.7500,
+    radiusNm: 3,
+    portType: 'mixed',
+    notes:
+      'St. Croix USVI — former HOVENSA refinery, now Port Hamilton storage + transshipment. Still active terminal in regional refined-product staging.',
+  },
 ];
 
 async function main() {
