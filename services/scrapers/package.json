@@ -10,6 +10,7 @@
     "clean": "rm -rf dist .turbo node_modules"
   },
   "dependencies": {
+    "@procur/ai": "workspace:*",
     "@procur/db": "workspace:*",
     "@procur/scrapers-core": "workspace:*",
     "@procur/utils": "workspace:*",
