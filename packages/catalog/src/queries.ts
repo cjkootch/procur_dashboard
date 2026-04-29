@@ -2737,6 +2737,10 @@ export interface KnownEntityFilters {
   role?: string;
   /** Free-text tag filter — exact match against any element of tags[]. */
   tag?: string;
+  /** Case-insensitive name match. Searches name, aliases[], AND slug
+   *  with ILIKE '%query%'. Useful for "do we have X in the rolodex"
+   *  questions where the user types a fragment of a company name. */
+  name?: string;
   /** Default 100, hard cap 500 to keep the page render bounded. */
   limit?: number;
 }
@@ -2782,6 +2786,18 @@ export async function lookupKnownEntities(
       ${filters.country ? sql`AND country = ${filters.country}` : sql``}
       ${filters.role ? sql`AND role = ${filters.role}` : sql``}
       ${filters.tag ? sql`AND ${filters.tag} = ANY(tags)` : sql``}
+      ${
+        filters.name
+          ? sql`AND (
+              name ILIKE ${`%${filters.name}%`}
+              OR slug ILIKE ${`%${filters.name.toLowerCase().replace(/\s+/g, '-')}%`}
+              OR EXISTS (
+                SELECT 1 FROM unnest(aliases) AS a
+                WHERE a ILIKE ${`%${filters.name}%`}
+              )
+            )`
+          : sql``
+      }
     ORDER BY country ASC, name ASC
     LIMIT ${limit};
   `);
