@@ -140,11 +140,20 @@ async function main(): Promise<void> {
 async function loadEntities(
   db: ReturnType<typeof drizzle<typeof schema>>,
 ): Promise<EntityRow[]> {
+  // Unroll the role list into an IN-list. The `ANY(${arr}::text[])`
+  // pattern is brittle under Neon's HTTP wire protocol — Drizzle
+  // serialises the array in a way the parser rejects with
+  // 'cannot cast type record to text[]'. sql.join with one
+  // placeholder per element is the workaround that's known to work.
+  const rolesIn = sql.join(
+    PHYSICAL_ROLES.map((r) => sql`${r}`),
+    sql`, `,
+  );
   const result = await db.execute(sql`
     SELECT id, slug, name, country, role, categories, notes, aliases, tags,
            metadata, latitude, longitude, created_at
     FROM known_entities
-    WHERE role = ANY(${PHYSICAL_ROLES}::text[])
+    WHERE role IN (${rolesIn})
       AND latitude IS NOT NULL
       AND longitude IS NOT NULL
   `);
