@@ -81,21 +81,60 @@ function FitBounds({
 export function VesselMap({
   vessels,
   ports,
+  totalPositions,
+  lastSeenIso,
+  resetHref,
 }: {
   vessels: VesselPoint[];
   ports: PortPoint[];
+  /** All-time vessel_positions row count from getDataFreshness. Used
+      to differentiate "no data ingested yet" from "data exists but
+      no vessel matches the active filters". */
+  totalPositions: number;
+  /** ISO timestamp of the most recent AIS ping. */
+  lastSeenIso: string | null;
+  /** href to reset filters (window=7d, no bbox). Used in the
+      diagnostic banner when vessels.length===0 but data exists. */
+  resetHref: string;
 }) {
-  if (vessels.length === 0 && ports.length === 0) {
-    return (
-      <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-10 text-center text-sm text-[color:var(--color-muted-foreground)]">
-        No vessel positions in the lookback window. Ensure{' '}
-        <code className="rounded bg-[color:var(--color-muted)]/40 px-1">ingest-aisstream</code>{' '}
-        has run recently — see the page footer for the freshness indicator.
-      </div>
-    );
+  // Diagnostic banner. Shown above the map (not instead of) so port
+  // reference layer stays visible while the user adjusts.
+  let banner: React.ReactNode = null;
+  if (vessels.length === 0) {
+    if (totalPositions === 0) {
+      banner = (
+        <div className="mb-3 rounded-[var(--radius-md)] border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900">
+          <div className="font-semibold">No vessel positions ingested yet.</div>
+          <div className="mt-1">
+            Run <code className="rounded bg-white/40 px-1">pnpm --filter @procur/db ingest-aisstream --minutes=10</code>{' '}
+            from a maintenance shell, or wait for the Trigger.dev cron
+            (<code className="rounded bg-white/40 px-1">ingest-aisstream</code>, every 30 min).
+            Confirm <code className="rounded bg-white/40 px-1">AISSTREAM_API_KEY</code> is set in the
+            environment the worker runs in.
+          </div>
+        </div>
+      );
+    } else {
+      banner = (
+        <div className="mb-3 rounded-[var(--radius-md)] border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-sky-900">
+          <div className="font-semibold">
+            {totalPositions.toLocaleString()} positions in DB
+            {lastSeenIso ? ` · last ping ${new Date(lastSeenIso).toLocaleString()}` : ''} —
+            but nothing matches the active filters.
+          </div>
+          <div className="mt-1">
+            Try widening the window or removing the region preset.{' '}
+            <a href={resetHref} className="font-medium underline">
+              Reset filters →
+            </a>
+          </div>
+        </div>
+      );
+    }
   }
   return (
     <>
+      {banner}
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[color:var(--color-muted-foreground)]">
         <span className="flex items-center gap-1.5">
           <Dot color={VESSEL_COLOR_MOVING} /> vessel under way

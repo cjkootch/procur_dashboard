@@ -99,7 +99,13 @@ export default async function VesselsPage({ searchParams }: Props) {
       </section>
 
       {/* Map */}
-      <VesselMapClient vessels={v} ports={p} />
+      <VesselMapClient
+        vessels={v}
+        ports={p}
+        totalPositions={totalPositions}
+        lastSeenIso={lastSeen ? lastSeen.toISOString() : null}
+        resetHref="/suppliers/vessels"
+      />
 
       {/* Freshness footer */}
       <section className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3 text-[11px]">

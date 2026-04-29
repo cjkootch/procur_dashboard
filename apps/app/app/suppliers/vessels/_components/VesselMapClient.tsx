@@ -23,9 +23,23 @@ const VesselMap = dynamic(() => import('./VesselMap').then((m) => m.VesselMap), 
 export function VesselMapClient({
   vessels,
   ports,
+  totalPositions,
+  lastSeenIso,
+  resetHref,
 }: {
   vessels: VesselPoint[];
   ports: PortPoint[];
+  totalPositions: number;
+  lastSeenIso: string | null;
+  resetHref: string;
 }) {
-  return <VesselMap vessels={vessels} ports={ports} />;
+  return (
+    <VesselMap
+      vessels={vessels}
+      ports={ports}
+      totalPositions={totalPositions}
+      lastSeenIso={lastSeenIso}
+      resetHref={resetHref}
+    />
+  );
 }
