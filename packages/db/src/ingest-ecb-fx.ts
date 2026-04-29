@@ -111,20 +111,35 @@ async function fetchSeries(currency: string, since: string): Promise<EcbRow[]> {
   return out;
 }
 
-async function main() {
+export type IngestEcbFxResult = {
+  since: string;
+  totalRowsUpserted: number;
+  perCurrency: Record<string, number>;
+  skippedCurrencies: string[];
+};
+
+/**
+ * Ingest ECB daily FX rates. Pure function — caller owns env loading
+ * (DATABASE_URL must be set). Used by both the CLI shim below and the
+ * Trigger.dev scheduled task in services/scrapers.
+ */
+export async function ingestEcbFx(opts: {
+  /** YYYY-MM-DD. Default 2020-01-01 for backfill, or a recent date for cron. */
+  since?: string;
+} = {}): Promise<IngestEcbFxResult> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL not set');
 
-  const sinceArg = process.argv.find((a) => a.startsWith('--since='))?.split('=')[1];
-  const sinceDate = sinceArg ?? '2020-01-01';
-
+  const sinceDate = opts.since ?? '2020-01-01';
   const client = neon(url);
   const db = drizzle(client, { schema, casing: 'snake_case' });
 
+  const perCurrency: Record<string, number> = {};
+  const skippedCurrencies: string[] = [];
+  let totalRowsUpserted = 0;
+
   // 1. Pull EUR↔USD daily — the anchor for cross-multiplication.
-  console.log('Fetching EUR↔USD anchor...');
   const usdRows = await fetchSeries('USD', sinceDate);
-  console.log(`  ${usdRows.length} USD rows since ${sinceDate}.`);
   if (usdRows.length === 0) throw new Error('ECB returned no USD rows');
 
   // Index date → USD-per-EUR for cross-mult.
@@ -132,7 +147,6 @@ async function main() {
   for (const r of usdRows) usdPerEurByDate.set(r.rateDate, r.eurPerUnit);
 
   // 2. Write EUR rate (1 EUR = N USD) directly.
-  console.log('Writing EUR rates...');
   const eurValues = usdRows.map((r) => ({
     currencyCode: 'EUR',
     rateDate: r.rateDate,
@@ -140,9 +154,10 @@ async function main() {
     source: 'ecb',
   }));
   await upsertChunk(db, eurValues);
+  perCurrency.EUR = eurValues.length;
+  totalRowsUpserted += eurValues.length;
 
   // 3. Write USD rate (always 1).
-  console.log('Writing USD rates (1.0 baseline)...');
   const usdValues = usdRows.map((r) => ({
     currencyCode: 'USD',
     rateDate: r.rateDate,
@@ -150,13 +165,17 @@ async function main() {
     source: 'ecb',
   }));
   await upsertChunk(db, usdValues);
+  perCurrency.USD = usdValues.length;
+  totalRowsUpserted += usdValues.length;
 
   // 4. For every other currency, fetch its EUR series + cross-multiply.
   for (const currency of ECB_CURRENCIES) {
     if (currency === 'USD') continue;
-    console.log(`Fetching ${currency}...`);
     const rows = await fetchSeries(currency, sinceDate);
-    if (rows.length === 0) continue;
+    if (rows.length === 0) {
+      skippedCurrencies.push(currency);
+      continue;
+    }
     const values: Array<{
       currencyCode: string;
       rateDate: string;
@@ -177,14 +196,31 @@ async function main() {
         source: 'ecb',
       });
     }
-    if (values.length === 0) continue;
+    if (values.length === 0) {
+      skippedCurrencies.push(currency);
+      continue;
+    }
     await upsertChunk(db, values);
-    console.log(`  ${values.length} ${currency} rows upserted.`);
+    perCurrency[currency] = values.length;
+    totalRowsUpserted += values.length;
     // Be polite to the ECB API.
     await new Promise((r) => setTimeout(r, 250));
   }
 
-  console.log('Done.');
+  return { since: sinceDate, totalRowsUpserted, perCurrency, skippedCurrencies };
+}
+
+async function main() {
+  const sinceArg = process.argv.find((a) => a.startsWith('--since='))?.split('=')[1];
+  console.log('Fetching EUR↔USD anchor + cross-rates from ECB...');
+  const result = await ingestEcbFx({ since: sinceArg });
+  console.log(
+    `Done. ${result.totalRowsUpserted} rows upserted across ` +
+      `${Object.keys(result.perCurrency).length} currencies since ${result.since}.`,
+  );
+  if (result.skippedCurrencies.length > 0) {
+    console.log(`Skipped (no data): ${result.skippedCurrencies.join(', ')}`);
+  }
 }
 
 async function upsertChunk(

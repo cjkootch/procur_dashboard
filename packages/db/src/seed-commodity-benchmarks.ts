@@ -76,6 +76,34 @@ const SEEDS: BenchmarkSeed[] = [
   { category: 'diesel', country: 'EC', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
   { category: 'diesel', country: 'PE', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
   { category: 'diesel', country: 'BR', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  // Central America + Andean publishers (OCDS bulk feeds): default
+  // to NYH ULSD same as the Caribbean — Gulf-supply basis. Honduras /
+  // Guatemala / Panama / Paraguay are landlocked or USGC-fed; small
+  // basis differential vs published spot is a v2 refinement.
+  { category: 'diesel', country: 'PY', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'HN', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'GT', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  { category: 'diesel', country: 'PA', grade: null, benchmarkSlug: 'nyh-diesel', benchmarkSource: 'eia' },
+  // Argentina — South Atlantic supply, modest premium vs NYH for shipping.
+  {
+    category: 'diesel',
+    country: 'AR',
+    grade: null,
+    benchmarkSlug: 'nyh-diesel',
+    benchmarkSource: 'eia',
+    adjustmentUsdBbl: 1,
+  },
+  // Nigeria — Atlantic-basin product imports despite domestic crude.
+  // ECN/Dangote refinery balance still nets imports for refined fuel;
+  // NYH is the closest published proxy.
+  {
+    category: 'diesel',
+    country: 'NG',
+    grade: null,
+    benchmarkSlug: 'nyh-diesel',
+    benchmarkSource: 'eia',
+    adjustmentUsdBbl: 1,
+  },
   // Mediterranean diesel — small premium for transatlantic + EU spec
   {
     category: 'diesel',
@@ -139,6 +167,31 @@ const SEEDS: BenchmarkSeed[] = [
   { category: 'gasoline', country: 'HT', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
   { category: 'gasoline', country: 'US', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
   { category: 'gasoline', country: 'MX', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  // LatAm + Africa OCDS-publisher gasoline coverage (parity with diesel).
+  { category: 'gasoline', country: 'CO', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'EC', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'PE', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'BR', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'PY', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'HN', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'GT', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  { category: 'gasoline', country: 'PA', grade: null, benchmarkSlug: 'nyh-gasoline', benchmarkSource: 'eia' },
+  {
+    category: 'gasoline',
+    country: 'AR',
+    grade: null,
+    benchmarkSlug: 'nyh-gasoline',
+    benchmarkSource: 'eia',
+    adjustmentUsdBbl: 1,
+  },
+  {
+    category: 'gasoline',
+    country: 'NG',
+    grade: null,
+    benchmarkSlug: 'nyh-gasoline',
+    benchmarkSource: 'eia',
+    adjustmentUsdBbl: 1,
+  },
 
   // ── Heating oil / No. 2 distillate ─────────────────────────
   {
