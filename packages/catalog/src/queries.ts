@@ -5453,3 +5453,291 @@ export async function getEntityNewsEvents(filters: {
         : String(r.ingested_at),
   }));
 }
+
+// ===========================================================================
+// Competitor overview — companies operating in VTC's lane
+// ===========================================================================
+
+export interface CompetitorOverviewRow {
+  knownEntityId: string;
+  slug: string;
+  name: string;
+  country: string;
+  role: string;
+  categories: string[];
+  tags: string[];
+  notes: string | null;
+  headquarters: string | null;
+  /** External-supplier id we matched the competitor to (via name fuzzy
+      match against external_suppliers). NULL when no public-tender
+      footprint links the competitor. Drives the activity numbers. */
+  matchedSupplierId: string | null;
+  totalAwards: number;
+  totalValueUsd: number | null;
+  awardsLast90d: number;
+  awardsPrev90d: number;
+  velocityChangePct: number | null;
+  mostRecentAwardDate: string | null;
+  /** entity_news_events count over the lookback window — distress
+      signals, bankruptcies, press mentions, leadership changes. */
+  newsEventsLast90d: number;
+  /** Most recent news event title (truncated). NULL when no events. */
+  mostRecentNewsTitle: string | null;
+  mostRecentNewsDate: string | null;
+}
+
+export interface RecentCompetitorNewsItem {
+  id: string;
+  knownEntityId: string | null;
+  knownEntitySlug: string | null;
+  knownEntityName: string | null;
+  sourceEntityName: string;
+  eventType: string;
+  eventDate: string;
+  summary: string;
+  source: string;
+  sourceUrl: string | null;
+  relevanceScore: number | null;
+}
+
+/**
+ * Roll up the competitor universe — every known_entities row tagged
+ * 'competitor' (or role='trader' as the looser fallback). For each,
+ * surfaces:
+ *   - public-tender activity: total awards + total value + last/prev
+ *     90d velocity, joined via fuzzy-name match to external_suppliers
+ *     (most major trading houses don't appear in public-procurement
+ *     data, so these stats are typically zero — we still want the
+ *     row in the dashboard with a "no public-tender activity" state).
+ *   - news event activity: count of entity_news_events rows in the
+ *     last 90 days + the most recent one's title/date.
+ *
+ * Powers /suppliers/competitors. Lookups all batched — one query
+ * per data source then merged in JS.
+ */
+export async function getCompetitorOverview(filters: {
+  category?: string;
+  country?: string;
+  /** When 'curated' (default), require the 'competitor' tag.
+      When 'all-traders', include any role='trader' even without
+      explicit competitor tagging. */
+  scope?: 'curated' | 'all-traders';
+} = {}): Promise<CompetitorOverviewRow[]> {
+  const scope = filters.scope ?? 'curated';
+
+  const scopeFilter = scope === 'curated'
+    ? sql`AND ('competitor' = ANY(tags))`
+    : sql`AND (role = 'trader' OR 'competitor' = ANY(tags))`;
+  const categoryFilter = filters.category
+    ? sql`AND ${filters.category} = ANY(categories)`
+    : sql``;
+  const countryFilter = filters.country
+    ? sql`AND country = ${filters.country.toUpperCase()}`
+    : sql``;
+
+  const entitiesResult = await db.execute(sql`
+    SELECT id, slug, name, country, role, categories, tags, notes, metadata
+    FROM known_entities
+    WHERE 1 = 1
+      ${scopeFilter}
+      ${categoryFilter}
+      ${countryFilter}
+    ORDER BY
+      ('top-tier' = ANY(tags))::int DESC,
+      ('state-affiliated' = ANY(tags))::int DESC,
+      name ASC
+  `);
+
+  const entities = (entitiesResult.rows as Array<Record<string, unknown>>).map((r) => ({
+    id: String(r.id),
+    slug: String(r.slug),
+    name: String(r.name),
+    country: String(r.country),
+    role: String(r.role),
+    categories: (r.categories as string[]) ?? [],
+    tags: (r.tags as string[]) ?? [],
+    notes: r.notes != null ? String(r.notes) : null,
+    metadata: (r.metadata as Record<string, unknown> | null) ?? null,
+  }));
+  if (entities.length === 0) return [];
+
+  // Fuzzy-match each entity against external_suppliers via trigram on
+  // the supplier's organisation name. similarity > 0.55 keeps the
+  // false-positive rate low; aliases (also stored on known_entities)
+  // could bump recall in v2. One query — left join + DISTINCT ON.
+  const names = entities.map((e) => e.name);
+  const supplierLinks = await db.execute(sql`
+    WITH e AS (
+      SELECT unnest(${names}::text[]) AS entity_name
+    ),
+    matched AS (
+      SELECT DISTINCT ON (e.entity_name)
+        e.entity_name,
+        s.id AS supplier_id,
+        similarity(s.organisation_name, e.entity_name) AS sim
+      FROM e
+      JOIN external_suppliers s
+        ON similarity(s.organisation_name, e.entity_name) > 0.55
+      ORDER BY e.entity_name, sim DESC
+    )
+    SELECT entity_name, supplier_id FROM matched
+  `);
+  const supplierByName = new Map<string, string>();
+  for (const row of supplierLinks.rows as Array<Record<string, unknown>>) {
+    supplierByName.set(String(row.entity_name), String(row.supplier_id));
+  }
+
+  // Fetch capability-summary rows for the matched supplier ids.
+  const supplierIds = Array.from(supplierByName.values());
+  const capByCounter = new Map<string, {
+    totalAwards: number;
+    totalValueUsd: number | null;
+    awardsLast90d: number;
+    awardsPrev90d: number;
+    mostRecentAwardDate: string | null;
+  }>();
+  if (supplierIds.length > 0) {
+    const capResult = await db.execute(sql`
+      SELECT
+        supplier_id, total_awards, total_value_usd,
+        awards_last_90d, awards_prev_90d, most_recent_award_date
+      FROM supplier_capability_summary
+      WHERE supplier_id = ANY(${supplierIds}::uuid[])
+    `);
+    for (const row of capResult.rows as Array<Record<string, unknown>>) {
+      capByCounter.set(String(row.supplier_id), {
+        totalAwards: Number(row.total_awards ?? 0),
+        totalValueUsd: row.total_value_usd != null ? Number.parseFloat(String(row.total_value_usd)) : null,
+        awardsLast90d: Number(row.awards_last_90d ?? 0),
+        awardsPrev90d: Number(row.awards_prev_90d ?? 0),
+        mostRecentAwardDate:
+          row.most_recent_award_date instanceof Date
+            ? row.most_recent_award_date.toISOString().slice(0, 10)
+            : row.most_recent_award_date == null ? null : String(row.most_recent_award_date),
+      });
+    }
+  }
+
+  // News events count + most recent per entity. Single batched query.
+  const entityIds = entities.map((e) => e.id);
+  const newsResult = await db.execute(sql`
+    SELECT
+      known_entity_id,
+      COUNT(*) FILTER (WHERE event_date >= CURRENT_DATE - INTERVAL '90 days') AS events_90d,
+      (
+        SELECT json_build_object(
+          'summary', summary,
+          'event_date', event_date,
+          'event_type', event_type
+        )
+        FROM entity_news_events e2
+        WHERE e2.known_entity_id = e1.known_entity_id
+          AND (relevance_score IS NULL OR relevance_score >= 0.5)
+        ORDER BY event_date DESC
+        LIMIT 1
+      ) AS most_recent
+    FROM entity_news_events e1
+    WHERE known_entity_id = ANY(${entityIds}::uuid[])
+      AND (relevance_score IS NULL OR relevance_score >= 0.5)
+    GROUP BY known_entity_id
+  `);
+  const newsByEntity = new Map<string, {
+    eventsLast90d: number;
+    mostRecentTitle: string | null;
+    mostRecentDate: string | null;
+  }>();
+  for (const row of newsResult.rows as Array<Record<string, unknown>>) {
+    const recent = (row.most_recent as { summary?: string; event_date?: string } | null) ?? null;
+    newsByEntity.set(String(row.known_entity_id), {
+      eventsLast90d: Number(row.events_90d ?? 0),
+      mostRecentTitle: recent?.summary ? recent.summary.slice(0, 200) : null,
+      mostRecentDate: recent?.event_date ?? null,
+    });
+  }
+
+  return entities.map((e) => {
+    const supplierId = supplierByName.get(e.name) ?? null;
+    const cap = supplierId ? capByCounter.get(supplierId) : null;
+    const news = newsByEntity.get(e.id);
+    const headquarters = ((e.metadata as { headquarters?: string } | null) ?? null)?.headquarters ?? null;
+    const velocity =
+      cap && cap.awardsPrev90d > 0
+        ? cap.awardsLast90d / cap.awardsPrev90d - 1
+        : null;
+    return {
+      knownEntityId: e.id,
+      slug: e.slug,
+      name: e.name,
+      country: e.country,
+      role: e.role,
+      categories: e.categories,
+      tags: e.tags,
+      notes: e.notes,
+      headquarters,
+      matchedSupplierId: supplierId,
+      totalAwards: cap?.totalAwards ?? 0,
+      totalValueUsd: cap?.totalValueUsd ?? null,
+      awardsLast90d: cap?.awardsLast90d ?? 0,
+      awardsPrev90d: cap?.awardsPrev90d ?? 0,
+      velocityChangePct: velocity,
+      mostRecentAwardDate: cap?.mostRecentAwardDate ?? null,
+      newsEventsLast90d: news?.eventsLast90d ?? 0,
+      mostRecentNewsTitle: news?.mostRecentTitle ?? null,
+      mostRecentNewsDate: news?.mostRecentDate ?? null,
+    };
+  });
+}
+
+/**
+ * Recent news events across all competitor entities. Powers the
+ * "Recent news" feed at the bottom of /suppliers/competitors. Joins
+ * known_entities so the renderer can deep-link to the unified
+ * profile page.
+ */
+export async function getRecentCompetitorNews(filters: {
+  daysBack?: number;
+  limit?: number;
+} = {}): Promise<RecentCompetitorNewsItem[]> {
+  const daysBack = filters.daysBack ?? 30;
+  const limit = Math.min(filters.limit ?? 30, 100);
+
+  const result = await db.execute(sql`
+    SELECT
+      n.id,
+      n.known_entity_id,
+      ke.slug AS known_entity_slug,
+      ke.name AS known_entity_name,
+      n.source_entity_name,
+      n.event_type,
+      n.event_date,
+      n.summary,
+      n.source,
+      n.source_url,
+      n.relevance_score
+    FROM entity_news_events n
+    JOIN known_entities ke ON ke.id = n.known_entity_id
+    WHERE 'competitor' = ANY(ke.tags)
+      AND n.event_date >= CURRENT_DATE - ${daysBack}::int
+      AND (n.relevance_score IS NULL OR n.relevance_score >= 0.5)
+    ORDER BY n.event_date DESC, n.ingested_at DESC
+    LIMIT ${limit}
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    id: String(r.id),
+    knownEntityId: r.known_entity_id == null ? null : String(r.known_entity_id),
+    knownEntitySlug: r.known_entity_slug == null ? null : String(r.known_entity_slug),
+    knownEntityName: r.known_entity_name == null ? null : String(r.known_entity_name),
+    sourceEntityName: String(r.source_entity_name),
+    eventType: String(r.event_type),
+    eventDate:
+      r.event_date instanceof Date
+        ? r.event_date.toISOString().slice(0, 10)
+        : String(r.event_date),
+    summary: String(r.summary),
+    source: String(r.source),
+    sourceUrl: r.source_url == null ? null : String(r.source_url),
+    relevanceScore:
+      r.relevance_score != null ? Number.parseFloat(String(r.relevance_score)) : null,
+  }));
+}
