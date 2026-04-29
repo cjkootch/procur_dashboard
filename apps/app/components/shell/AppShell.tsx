@@ -48,6 +48,7 @@ const NAV: NavGroup[] = [
     items: [
       { href: '/suppliers/intelligence', label: 'Market intelligence' },
       { href: '/suppliers/competitors', label: 'Competitors' },
+      { href: '/suppliers/vessels', label: 'Vessels' },
       { href: '/insights', label: 'My pipeline' },
     ],
   },
