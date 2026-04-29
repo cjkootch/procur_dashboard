@@ -317,25 +317,59 @@ export async function ingestAisStream(opts: {
   let messagesReceived = 0;
   const startedAt = Date.now();
 
-  // Periodic flush — keeps memory bounded + writes in healthy chunks.
+  // Periodic heartbeat — fires every 5s regardless of whether we
+  // have buffered messages so silent failures (bad API key, dead
+  // bbox) are visible immediately instead of looking like normal
+  // post-subscribe quiet. When messages ARE arriving, the same
+  // tick flushes the buffers.
   const FLUSH_EVERY_MS = 5000;
+  let lastMsgsAtFlush = 0;
   const flushTimer = setInterval(async () => {
-    if (positionBuffer.length === 0 && staticBuffer.length === 0) return;
+    const elapsedMin = ((Date.now() - startedAt) / 60_000).toFixed(1);
     const posChunk = positionBuffer.splice(0, positionBuffer.length);
     const staticChunk = staticBuffer.splice(0, staticBuffer.length);
-    try {
-      const wp = await flushPositions(db, posChunk);
-      const ws2 = await flushStatics(db, staticChunk);
-      positionsWritten += wp;
-      staticsWritten += ws2;
-      const elapsedMin = ((Date.now() - startedAt) / 60_000).toFixed(1);
+    if (posChunk.length > 0 || staticChunk.length > 0) {
+      try {
+        const wp = await flushPositions(db, posChunk);
+        const ws2 = await flushStatics(db, staticChunk);
+        positionsWritten += wp;
+        staticsWritten += ws2;
+        console.log(
+          `  [${elapsedMin}m] positions written: ${positionsWritten} | tankers: ${staticsWritten} | msgs: ${messagesReceived}`,
+        );
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        console.error(`  flush error: ${m}`);
+      }
+    } else if (messagesReceived === lastMsgsAtFlush) {
+      // No buffered data AND no new messages since last tick.
+      // After the first 10s of quiet, surface a hint at the
+      // most-likely culprits so the operator knows to debug.
+      const elapsedSec = (Date.now() - startedAt) / 1000;
+      if (elapsedSec < 11) {
+        console.log(`  [${elapsedMin}m] waiting for first message...`);
+      } else if (elapsedSec < 30) {
+        console.warn(
+          `  [${elapsedMin}m] ⚠ no messages received yet. ` +
+            `Check AISSTREAM_API_KEY (silent rejection is the most ` +
+            `common cause) and bbox traffic level.`,
+        );
+      } else {
+        console.warn(
+          `  [${elapsedMin}m] ⚠ still no messages. AISStream usually ` +
+            `streams within seconds of a valid subscribe; ${elapsedMin}m of ` +
+            `silence almost certainly means the API key was silently ` +
+            `rejected. Verify it at aisstream.io/account.`,
+        );
+      }
+    } else {
+      // Messages flowing but none parsed into our buffers — log
+      // raw counts so the operator can see the disconnect.
       console.log(
-        `  [${elapsedMin}m] positions written: ${positionsWritten} | tankers: ${staticsWritten} | msgs: ${messagesReceived}`,
+        `  [${elapsedMin}m] msgs: ${messagesReceived} (no PositionReport / ShipStaticData parsed yet)`,
       );
-    } catch (err) {
-      const m = err instanceof Error ? err.message : String(err);
-      console.error(`  flush error: ${m}`);
     }
+    lastMsgsAtFlush = messagesReceived;
   }, FLUSH_EVERY_MS);
 
   ws.addEventListener('open', () => {
