@@ -142,11 +142,16 @@ export class UngmAwardsExtractor extends AwardsExtractor {
     }
 
     const cookieHeader = await this.bootstrapCookies();
+    console.log(
+      `UNGM: bootstrap cookies ${cookieHeader ? `set (${cookieHeader.split('; ').length} cookies)` : 'EMPTY — request will likely 4xx'}`,
+    );
     const pageSize = this.options.pageSize ?? 100;
     const maxPages = this.options.maxPages ?? 5;
 
     const allAwardNotices: UngmSearchNotice[] = [];
-    for (let page = 0; page < maxPages; page += 1) {
+    let totalSearchHits = 0;
+    let exitReason = 'completed-all-pages';
+    pageLoop: for (let page = 0; page < maxPages; page += 1) {
       const body = buildSearchBody(page, pageSize);
       let res: Response;
       try {
@@ -161,20 +166,55 @@ export class UngmAwardsExtractor extends AwardsExtractor {
           timeoutMs: 45_000,
           retryableStatuses: [408, 429, 502, 503, 504],
         });
-      } catch {
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        console.warn(`UNGM: page ${page} fetch threw: ${m}`);
+        exitReason = `fetch-threw-page-${page}`;
         break;
       }
-      if (!res.ok) break;
+      if (!res.ok) {
+        const sample = await res.text().catch(() => '');
+        console.warn(
+          `UNGM: page ${page} HTTP ${res.status} ${res.statusText}. ` +
+            `body[:300]: ${sample.slice(0, 300)}`,
+        );
+        exitReason = `http-${res.status}-page-${page}`;
+        break;
+      }
 
       const text = await res.text();
       let payload: UngmSearchResponse;
       try {
         payload = JSON.parse(text) as UngmSearchResponse;
       } catch {
+        console.warn(
+          `UNGM: page ${page} got HTTP 200 but body is not JSON. ` +
+            `Length=${text.length}. body[:300]: ${text.slice(0, 300)}`,
+        );
+        exitReason = `non-json-page-${page}`;
         break;
       }
       const items = payload.Notices ?? payload.Results ?? [];
-      if (items.length === 0) break;
+      totalSearchHits += items.length;
+      if (page === 0) {
+        const responseKeys = Object.keys(payload).join(', ');
+        console.log(
+          `UNGM: page 0 returned ${items.length} notices ` +
+            `(TotalRecords=${payload.TotalRecords ?? 'n/a'}, ` +
+            `keys=[${responseKeys}])`,
+        );
+      }
+      if (items.length === 0) {
+        if (page === 0) {
+          console.warn(
+            `UNGM: page 0 returned zero notices — server returned a valid ` +
+              `response but with an empty Notices/Results array. Sample of ` +
+              `body[:300]: ${text.slice(0, 300)}`,
+          );
+        }
+        exitReason = `empty-page-${page}`;
+        break pageLoop;
+      }
 
       for (const n of items) {
         const noticeType = (n.NoticeTypeName ?? '').toLowerCase();
@@ -184,8 +224,18 @@ export class UngmAwardsExtractor extends AwardsExtractor {
           unmappedTypes.add(n.NoticeTypeName ?? '');
         }
       }
-      if (items.length < pageSize) break;
+      if (items.length < pageSize) {
+        exitReason = `final-page-${page}-short`;
+        break;
+      }
     }
+
+    console.log(
+      `UNGM: search done. exit=${exitReason}, ` +
+        `total_search_hits=${totalSearchHits}, ` +
+        `award_matches=${allAwardNotices.length}, ` +
+        `unmapped_types=${unmappedTypes.size}`,
+    );
 
     yield* this.processNotices(allAwardNotices, {}, unmappedTypes, false);
 

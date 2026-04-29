@@ -159,8 +159,14 @@ export class TedAwardsExtractor extends AwardsExtractor {
       : '';
     const query = `publication-date>=${since} AND ${noticeTypeClause}${cpvClause}`;
 
+    console.log(
+      `TED: query=[${query}] maxPages=${maxPages} pageSize=${MAX_PAGE_SIZE}`,
+    );
+
     let nextToken: string | undefined;
     let page = 0;
+    let totalYielded = 0;
+    let exitReason = 'completed-all-pages';
     while (page < maxPages) {
       const body: Record<string, unknown> = {
         query,
@@ -179,21 +185,67 @@ export class TedAwardsExtractor extends AwardsExtractor {
           timeoutMs: 60_000,
           retryableStatuses: [408, 429, 500, 502, 503, 504],
         });
-      } catch {
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        console.warn(`TED: page ${page} fetch threw: ${m}`);
+        exitReason = `fetch-threw-page-${page}`;
         break;
       }
-      if (!res.ok) break;
+      if (!res.ok) {
+        const sample = await res.text().catch(() => '');
+        console.warn(
+          `TED: page ${page} HTTP ${res.status} ${res.statusText}. ` +
+            `body[:300]: ${sample.slice(0, 300)}`,
+        );
+        exitReason = `http-${res.status}-page-${page}`;
+        break;
+      }
 
-      const json = (await res.json()) as TedSearchResponse;
+      let json: TedSearchResponse;
+      try {
+        json = (await res.json()) as TedSearchResponse;
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        console.warn(`TED: page ${page} JSON parse failed: ${m}`);
+        exitReason = `json-parse-page-${page}`;
+        break;
+      }
       const items = json.notices ?? [];
-      if (items.length === 0) break;
+      if (page === 0) {
+        console.log(
+          `TED: page 0 returned ${items.length} notices ` +
+            `(totalNoticeCount=${json.totalNoticeCount ?? 'n/a'}, ` +
+            `hasNextToken=${json.iterationNextToken != null})`,
+        );
+      }
+      if (items.length === 0) {
+        if (page === 0) {
+          console.warn(
+            `TED: page 0 returned zero notices. Either nothing matched ` +
+              `the query in the requested window, or the search filter ` +
+              `syntax was rejected silently. Try widening cpvPrefixes ` +
+              `or postedWithinDays.`,
+          );
+        }
+        exitReason = `empty-page-${page}`;
+        break;
+      }
 
       yield* this.parseResponse({ notices: items });
+      totalYielded += items.length;
 
       nextToken = json.iterationNextToken;
       page += 1;
-      if (!nextToken) break;
+      if (!nextToken) {
+        exitReason = `no-next-token-after-page-${page - 1}`;
+        break;
+      }
     }
+
+    console.log(
+      `TED: search done. exit=${exitReason}, ` +
+        `pages_walked=${page}, total_yielded=${totalYielded}`,
+    );
   }
 
   private *parseResponse(payload: TedSearchResponse): Generator<NormalizedAward> {
