@@ -6,6 +6,7 @@ import {
   getEntityVesselActivity,
   getOwnershipChain,
 } from '@procur/catalog';
+import { PushToVexButton } from './_components/PushToVexButton';
 
 /**
  * Unified entity profile — accepts either a known_entities.slug or
@@ -82,11 +83,14 @@ export default async function EntityProfilePage({ params }: Props) {
       <header className="mb-6">
         <div className="flex items-baseline justify-between gap-4">
           <h1 className="text-2xl font-semibold tracking-tight">{profile.name}</h1>
-          <span className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-            {profile.primarySource === 'known_entity'
-              ? 'curated rolodex'
-              : 'portal-scraped'}
-          </span>
+          <div className="flex items-baseline gap-2">
+            <span className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-muted-foreground)]">
+              {profile.primarySource === 'known_entity'
+                ? 'curated rolodex'
+                : 'portal-scraped'}
+            </span>
+            <PushToVexButton slug={profile.canonicalKey} />
+          </div>
         </div>
         <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
           {profile.country ?? 'Unknown country'}
