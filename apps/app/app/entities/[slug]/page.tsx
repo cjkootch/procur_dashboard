@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
+  getContactEnrichmentsBySlug,
   getDirectOwners,
   getEntityProfile,
   getEntityVesselActivity,
@@ -41,19 +42,21 @@ export default async function EntityProfilePage({ params }: Props) {
   // itself for traders / NOCs whose primary identity IS the operator.
   const cap = profile.capabilities;
   const ownershipQueryName = cap.operator ?? profile.name;
-  const [directOwners, ownershipChain, vesselActivity] = await Promise.all([
-    getDirectOwners(ownershipQueryName),
-    getOwnershipChain(ownershipQueryName, 5),
-    profile.latitude != null && profile.longitude != null
-      ? getEntityVesselActivity({
-          lat: profile.latitude,
-          lng: profile.longitude,
-          radiusNm: 50,
-          daysBack: 30,
-          recentLimit: 10,
-        }).catch(() => null)
-      : Promise.resolve(null),
-  ]);
+  const [directOwners, ownershipChain, vesselActivity, contactEnrichments] =
+    await Promise.all([
+      getDirectOwners(ownershipQueryName),
+      getOwnershipChain(ownershipQueryName, 5),
+      profile.latitude != null && profile.longitude != null
+        ? getEntityVesselActivity({
+            lat: profile.latitude,
+            lng: profile.longitude,
+            radiusNm: 50,
+            daysBack: 30,
+            recentLimit: 10,
+          }).catch(() => null)
+        : Promise.resolve(null),
+      getContactEnrichmentsBySlug(profile.canonicalKey).catch(() => []),
+    ]);
 
   const fmtUsd = (n: number | null) =>
     n != null ? `$${Math.round(n).toLocaleString()}` : '—';
@@ -218,6 +221,32 @@ export default async function EntityProfilePage({ params }: Props) {
               </>
             )}
           </div>
+        </section>
+      )}
+
+      {contactEnrichments.length > 0 && (
+        <section className="mb-6">
+          <h2 className="mb-2 flex items-baseline justify-between text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            <span>
+              Contacts{' '}
+              <span className="ml-1 normal-case tracking-normal text-[color:var(--color-muted-foreground)]">
+                ({contactEnrichments.length})
+              </span>
+            </span>
+            <span className="font-normal normal-case tracking-normal text-[10px]">
+              enriched by external integrations
+            </span>
+          </h2>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {contactEnrichments.map((c) => (
+              <ContactCard key={c.id} contact={c} />
+            ))}
+          </div>
+          <p className="mt-2 text-[10px] italic text-[color:var(--color-muted-foreground)]">
+            Discoveries from connected integrations (vex CRM today). Procur treats these
+            as suggestions — they don&apos;t overwrite your primary contact-of-record.
+            Confidence dots reflect the source&apos;s certainty.
+          </p>
         </section>
       )}
 
@@ -471,4 +500,164 @@ function Stat({
       )}
     </div>
   );
+}
+
+type ContactCardData = {
+  id: string;
+  contactName: string;
+  source: string;
+  enrichedAt: string;
+  email: { value: string; confidence: number; sourceUrl: string | null } | null;
+  title: { value: string; confidence: number; sourceUrl: string | null } | null;
+  phone: { value: string; confidence: number; sourceUrl: string | null } | null;
+  linkedinUrl:
+    | { value: string; confidence: number; sourceUrl: string | null }
+    | null;
+};
+
+function ContactCard({ contact }: { contact: ContactCardData }) {
+  return (
+    <article className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-4 shadow-sm">
+      <header className="mb-3 flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-semibold">{contact.contactName}</h3>
+          {contact.title && (
+            <p className="truncate text-xs text-[color:var(--color-muted-foreground)]">
+              {contact.title.value}
+            </p>
+          )}
+        </div>
+        <span
+          className="shrink-0 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]"
+          title={`Discovered ${formatRelative(contact.enrichedAt)}`}
+        >
+          via {contact.source}
+        </span>
+      </header>
+      <dl className="space-y-1.5 text-xs">
+        {contact.email && (
+          <ContactField
+            icon="✉"
+            href={`mailto:${contact.email.value}`}
+            value={contact.email.value}
+            confidence={contact.email.confidence}
+            sourceUrl={contact.email.sourceUrl}
+          />
+        )}
+        {contact.phone && (
+          <ContactField
+            icon="☎"
+            href={`tel:${contact.phone.value}`}
+            value={contact.phone.value}
+            confidence={contact.phone.confidence}
+            sourceUrl={contact.phone.sourceUrl}
+          />
+        )}
+        {contact.linkedinUrl && (
+          <ContactField
+            icon="in"
+            href={contact.linkedinUrl.value}
+            value={contact.linkedinUrl.value.replace(/^https?:\/\/(www\.)?/, '')}
+            confidence={contact.linkedinUrl.confidence}
+            sourceUrl={contact.linkedinUrl.sourceUrl}
+            external
+          />
+        )}
+        {contact.title?.sourceUrl && !contact.email && !contact.phone && !contact.linkedinUrl && (
+          // Title-only contact — surface the source so the card isn't blank.
+          <ContactField
+            icon="•"
+            href={contact.title.sourceUrl}
+            value={contact.title.sourceUrl.replace(/^https?:\/\/(www\.)?/, '')}
+            confidence={contact.title.confidence}
+            sourceUrl={null}
+            external
+          />
+        )}
+      </dl>
+    </article>
+  );
+}
+
+function ContactField({
+  icon,
+  href,
+  value,
+  confidence,
+  sourceUrl,
+  external,
+}: {
+  icon: string;
+  href: string;
+  value: string;
+  confidence: number;
+  sourceUrl: string | null;
+  external?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm bg-[color:var(--color-muted)]/60 text-[10px] text-[color:var(--color-muted-foreground)]"
+        aria-hidden
+      >
+        {icon}
+      </span>
+      <a
+        href={href}
+        target={external ? '_blank' : undefined}
+        rel={external ? 'noopener noreferrer' : undefined}
+        className="min-w-0 flex-1 truncate hover:underline"
+        title={value}
+      >
+        {value}
+      </a>
+      <ConfidenceDots confidence={confidence} />
+      {sourceUrl && (
+        <a
+          href={sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 text-[10px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+          title={`Source: ${sourceUrl}`}
+        >
+          src↗
+        </a>
+      )}
+    </div>
+  );
+}
+
+function ConfidenceDots({ confidence }: { confidence: number }) {
+  // 0.0–0.59 = 1 dot, 0.6–0.79 = 2 dots, 0.8–1.0 = 3 dots.
+  // Vex's filter is ≥ 0.6 so we'll typically see 2 or 3.
+  const filled = confidence >= 0.8 ? 3 : confidence >= 0.6 ? 2 : 1;
+  return (
+    <span
+      className="flex shrink-0 items-center gap-0.5"
+      title={`Confidence ${(confidence * 100).toFixed(0)}%`}
+      aria-label={`Confidence ${(confidence * 100).toFixed(0)}%`}
+    >
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className={`block h-1 w-1 rounded-full ${
+            i < filled
+              ? 'bg-[color:var(--color-foreground)]'
+              : 'bg-[color:var(--color-border)]'
+          }`}
+        />
+      ))}
+    </span>
+  );
+}
+
+function formatRelative(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return 'recently';
+  const days = Math.max(0, Math.floor((Date.now() - then) / (24 * 60 * 60 * 1000)));
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days}d ago`;
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
 }
