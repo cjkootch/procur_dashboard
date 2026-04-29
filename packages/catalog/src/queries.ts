@@ -6214,3 +6214,121 @@ export async function analyzeBuyerEntityPricing(filters: {
     byCategory,
   };
 }
+
+// ===========================================================================
+// Crude basis differentials — named crudes → marker + live spot
+// ===========================================================================
+
+export interface CrudeBasisQuote {
+  gradeSlug: string;
+  gradeName: string;
+  /** NULL when the grade is itself a marker. */
+  markerSlug: string | null;
+  markerName: string | null;
+  /** USD/bbl. Positive = grade trades above marker; negative = below. */
+  differentialUsdPerBbl: number | null;
+  /** Live marker spot pulled from commodity_prices. NULL when the
+      marker has no ingested feed (Dubai, for instance, isn't in
+      our FRED/EIA pulls today). */
+  markerSpotUsdPerBbl: number | null;
+  markerAsOf: string | null;
+  /** All-in fair-value estimate: markerSpot + differential. NULL
+      when either input is missing. */
+  fairValueUsdPerBbl: number | null;
+  notes: string | null;
+}
+
+/**
+ * Resolve a named crude grade to its pricing marker + live spot +
+ * structural differential. Powers the `get_crude_basis` chat tool.
+ *
+ * For marker grades (Brent / WTI / Dubai / Urals): returns the
+ * grade's own spot (since they're priced directly, not as a basis).
+ *
+ * For non-marker grades: looks up markerSlug + differential from
+ * crude_grades, fetches the marker's most-recent spot from
+ * commodity_prices, and computes fair value = spot + differential.
+ *
+ * Returns null when the grade slug doesn't exist.
+ */
+export async function getCrudeBasis(
+  gradeSlug: string,
+): Promise<CrudeBasisQuote | null> {
+  const result = await db.execute(sql`
+    WITH g AS (
+      SELECT slug, name, is_marker, marker_slug,
+             differential_usd_per_bbl, notes
+      FROM crude_grades
+      WHERE slug = ${gradeSlug}
+      LIMIT 1
+    ),
+    marker AS (
+      SELECT slug, name FROM crude_grades
+      WHERE slug = (SELECT marker_slug FROM g)
+      LIMIT 1
+    ),
+    spot_self AS (
+      SELECT price::numeric AS price, price_date
+      FROM commodity_prices
+      WHERE series_slug = (SELECT slug FROM g)
+        AND contract_type = 'spot'
+      ORDER BY price_date DESC
+      LIMIT 1
+    ),
+    spot_marker AS (
+      SELECT price::numeric AS price, price_date
+      FROM commodity_prices
+      WHERE series_slug = (SELECT slug FROM marker)
+        AND contract_type = 'spot'
+      ORDER BY price_date DESC
+      LIMIT 1
+    )
+    SELECT
+      g.slug, g.name, g.is_marker,
+      g.marker_slug,
+      m.name AS marker_name,
+      g.differential_usd_per_bbl,
+      g.notes,
+      CASE WHEN g.is_marker
+           THEN (SELECT price FROM spot_self)
+           ELSE (SELECT price FROM spot_marker)
+      END AS marker_spot,
+      CASE WHEN g.is_marker
+           THEN (SELECT price_date::text FROM spot_self)
+           ELSE (SELECT price_date::text FROM spot_marker)
+      END AS marker_as_of
+    FROM g
+    LEFT JOIN marker m ON true;
+  `);
+
+  const row = (result.rows as Array<Record<string, unknown>>)[0];
+  if (!row) return null;
+
+  const isMarker = row.is_marker === true;
+  const markerSpot =
+    row.marker_spot != null ? Number.parseFloat(String(row.marker_spot)) : null;
+  const differential =
+    row.differential_usd_per_bbl != null
+      ? Number.parseFloat(String(row.differential_usd_per_bbl))
+      : null;
+  // For markers: fair value = own spot. For non-markers: marker
+  // spot + differential. Either input being null collapses fair
+  // value to null.
+  const fairValue = isMarker
+    ? markerSpot
+    : markerSpot != null && differential != null
+      ? markerSpot + differential
+      : null;
+
+  return {
+    gradeSlug: String(row.slug),
+    gradeName: String(row.name),
+    markerSlug: isMarker ? null : (row.marker_slug == null ? null : String(row.marker_slug)),
+    markerName: isMarker ? null : (row.marker_name == null ? null : String(row.marker_name)),
+    differentialUsdPerBbl: isMarker ? null : differential,
+    markerSpotUsdPerBbl: markerSpot,
+    markerAsOf: row.marker_as_of == null ? null : String(row.marker_as_of),
+    fairValueUsdPerBbl: fairValue,
+    notes: row.notes == null ? null : String(row.notes),
+  };
+}

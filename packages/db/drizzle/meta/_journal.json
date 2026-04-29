@@ -344,6 +344,13 @@
       "when": 1777335300000,
       "tag": "0048_entity_news_events",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1777335400000,
+      "tag": "0049_crude_basis_differentials",
+      "breakpoints": true
     }
   ]
 }

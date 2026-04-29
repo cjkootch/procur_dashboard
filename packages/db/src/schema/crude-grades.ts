@@ -60,6 +60,17 @@ export const crudeGrades = pgTable(
         from Russia). */
     loadingCountry: text('loading_country'),
 
+    /** Pricing marker this grade trades against (FK to
+        crude_grades.slug, enforced in migration 0049). Named
+        crudes (Azeri Light, Es Sider, etc.) don't have their own
+        spot feeds — they trade as a basis differential to a
+        marker. Marker grades themselves have markerSlug=NULL. */
+    markerSlug: text('marker_slug'),
+    /** Structural premium (+) or discount (-) vs markerSlug, in
+        USD/bbl. Hand-curated; refresh quarterly. NULL on markers
+        and on grades whose differential we haven't researched. */
+    differentialUsdPerBbl: numeric('differential_usd_per_bbl'),
+
     /** Editorial line — pair with metadata for richer detail. */
     notes: text('notes'),
     /** Where the property figures came from: 'analyst-curated' | URL. */
