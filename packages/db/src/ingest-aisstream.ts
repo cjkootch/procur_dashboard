@@ -325,6 +325,12 @@ export async function ingestAisStream(opts: {
   const db = drizzle(client, { schema, casing: 'snake_case' });
 
   const ws = new WebSocket(AISSTREAM_URL);
+  // Node 22's built-in WebSocket defaults to binaryType='blob'.
+  // AISStream delivers JSON in binary frames, so without this every
+  // message arrives as a Blob whose .toString() is "[object Blob]"
+  // and fails JSON.parse 100% of the time. Forcing 'arraybuffer'
+  // routes binary frames through the TextDecoder path below.
+  ws.binaryType = 'arraybuffer';
   const positionBuffer: ParsedPosition[] = [];
   const staticBuffer: ParsedStatic[] = [];
   let positionsWritten = 0;
@@ -432,22 +438,31 @@ export async function ingestAisStream(opts: {
     console.log('  subscribed.');
   });
 
-  ws.addEventListener('message', (event) => {
+  ws.addEventListener('message', async (event) => {
     messagesReceived += 1;
-    // Normalize event.data — could be string, Buffer (Node ws), or
-    // ArrayBuffer (some Node 21+ builds). Buffer.toString() yields
-    // valid JSON; ArrayBuffer needs decoding via TextDecoder.
+    // Normalize event.data across the shapes Node's WebSocket can
+    // hand us:
+    //   - string         → use directly (text frame)
+    //   - ArrayBuffer    → TextDecoder.decode (binary frame, the
+    //                      common case on Node 22 once binaryType
+    //                      is set to 'arraybuffer' above)
+    //   - Blob           → await .text() (binary frame on a runtime
+    //                      where binaryType wasn't honored)
+    //   - Uint8Array     → TextDecoder.decode (some adapters)
+    //   - anything else  → count as parse-fail
+    // The Blob fallback is async; the listener returns Promise<void>
+    // and addEventListener fires-and-forgets, which is fine because
+    // we collect into shared buffers and flush periodically.
     let raw: string;
-    if (typeof event.data === 'string') {
-      raw = event.data;
-    } else if (event.data instanceof ArrayBuffer) {
-      raw = new TextDecoder('utf-8').decode(event.data);
-    } else if (
-      typeof event.data === 'object' &&
-      event.data !== null &&
-      'toString' in event.data
-    ) {
-      raw = (event.data as { toString(): string }).toString();
+    const data = event.data as unknown;
+    if (typeof data === 'string') {
+      raw = data;
+    } else if (data instanceof ArrayBuffer) {
+      raw = new TextDecoder('utf-8').decode(data);
+    } else if (typeof Blob !== 'undefined' && data instanceof Blob) {
+      raw = await data.text();
+    } else if (data instanceof Uint8Array) {
+      raw = new TextDecoder('utf-8').decode(data);
     } else {
       jsonParseErrors += 1;
       return;
