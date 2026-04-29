@@ -17,6 +17,7 @@ import {
   getCommodityPriceContext,
   getCommoditySpread,
   getCommodityTicker,
+  findDistressedSuppliers,
   findRecentPortCalls,
   findRecentSimilarAwards,
   analyzeSupplierPricing,
@@ -1508,6 +1509,82 @@ export function buildCatalogTools(): ToolRegistry {
             }),
           },
           async () => composeDealEconomics(input),
+        ),
+    }),
+
+    find_distressed_suppliers: defineTool({
+      name: 'find_distressed_suppliers',
+      description:
+        'Find suppliers showing distress signals — sharp drops in award ' +
+        'velocity (last 90d vs prior 90d), plus any associated public news ' +
+        'events (bankruptcy filings, leadership changes, force-majeure ' +
+        "press, sanctions actions). Use when the user asks \"who's slowing " +
+        'down", "who has open inventory", "who needs to deal", or any ' +
+        'origination-side question about counterparty motivation. Returns ' +
+        'velocityChangePct (negative = distress), recent news events ' +
+        '(empty until ingest workers ship; entity_news_events table exists ' +
+        'as of 0048), and a plain-text reasons array. Filter by ' +
+        'categoryTag, countries (ISO-2 array), or velocityChangeMax (e.g. ' +
+        '-0.7 for "down 70%+"). minPrevAwards (default 3) filters out ' +
+        'suppliers who never won much — drops from 1 to 0 are noise. ' +
+        'Surface this alongside find_buyers_for_offer when composing a ' +
+        'back-to-back deal: a distressed supplier paired with an aligned ' +
+        "buyer is the highest-leverage origination move you can make.",
+      kind: 'read',
+      schema: z.object({
+        categoryTag: z
+          .string()
+          .optional()
+          .describe(
+            "Category tag — 'crude-oil', 'diesel', 'gasoline', 'jet-fuel', " +
+              "'lpg', 'marine-bunker', 'food-commodities', 'vehicles', " +
+              "'petroleum-fuels'. Filters to suppliers with at least one " +
+              'award in this category.',
+          ),
+        countries: z
+          .array(z.string().length(2))
+          .optional()
+          .describe('ISO-2 country list. Empty = all.'),
+        minPrevAwards: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .describe('Minimum prior-period award count. Default 3.'),
+        velocityChangeMax: z
+          .number()
+          .min(-1)
+          .max(0)
+          .optional()
+          .describe(
+            'Velocity drop threshold. -0.5 = "dropped 50%+". Default -0.5. ' +
+              'Use -0.7 to surface only the sharpest declines.',
+          ),
+        includeNewsEvents: z
+          .boolean()
+          .optional()
+          .describe('Default true. Set false to skip the news-event JOIN.'),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe('Default 25.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_distressed_suppliers',
+            args: input,
+            summarize: (out: Array<unknown>) => ({
+              resultCount: out.length,
+              resultSummary: input,
+            }),
+          },
+          async () => findDistressedSuppliers(input),
         ),
     }),
 
