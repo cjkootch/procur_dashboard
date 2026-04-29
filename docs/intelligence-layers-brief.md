@@ -1,3 +1,34 @@
+> **IMPLEMENTATION STATUS — refreshed 2026-04-29**
+>
+> **Status: all three layers shipped.** This brief specified Layer 1 (vessel), Layer 2 (pricing), Layer 3 (distress). All three are operational.
+>
+> **Layer 1 — Vessel intelligence:** ✓ shipped
+> - Migration 0041 (`vessel_intelligence`) — `vessels`, `vessel_positions`, `port_calls` live
+> - `ingest-aisstream.ts` worker live with Trigger.dev cron; bounding boxes include Mediterranean, Caribbean, US Gulf, West Africa
+> - Cargo trip inference shipped as discrete commit (#268 — pairs load↔discharge port calls into cargo trips)
+> - Vessel-activity panel on entity profile pages; `/suppliers/vessels` map view
+> - **Beyond spec:** the inference goes one level deeper than described — generates `cargo_trips` records, not just `port_calls`
+>
+> **Layer 2 — Pricing intelligence:** ✓ shipped
+> - Migration 0040 (`commodity_prices`) live
+> - Migration 0049 (`crude_basis_differentials`) **goes beyond brief spec** — the brief described named-grade pricing as "use Brent + apply premium where known"; the implementation shipped a proper basis-differential model with structural premiums
+> - Workers: `ingest-eia-prices.ts`, `ingest-fred-prices.ts`, `ingest-ecb-fx.ts` all live with daily cron
+> - Caveat: OilPriceAPI free-tier worker not shipped; current coverage is EIA + FRED + ECB only. Adequate for Brent/WTI/refined products + grade differentials. International benchmarks (Dubai, Urals, Singapore VLSFO) require OilPriceAPI subscription per the brief — defer until needed.
+>
+> **Layer 3 — Distress signals:** ✓ shipped (all five workers live)
+> - Migration 0048 (`entity_news_events`) live
+> - Migration 0047 (`supplier_velocity_signals`) — rolling-window awards velocity in materialized view
+> - Workers: `ingest-sec-edgar.ts`, `ingest-bankruptcy-recap.ts` (PACER), `ingest-trade-press-rss.ts` all live
+> - LLM relevance scoring shipped (#266) — scores news events on EDGAR + RECAP feeds against operator-tunable threshold
+> - SEDAR worker not shipped — deferred per brief priority order
+> - LinkedIn Sales Navigator worker not shipped — deferred per brief priority order
+>
+> **Migration sequencing differs from brief:** the brief proposed migrations 0039-0042 for these three layers. Actual sequence is 0040, 0041, 0047, 0048, 0049 (interleaved with other work — `crude_grades` took 0039, `pricing_analytics_foundation` took 0042, etc.). End state is identical.
+>
+> **Divergence from brief:** the implementation went notably beyond spec on (a) cargo trip inference, (b) crude basis differentials, (c) cross-source refinery dedup (`dedup-refineries`). These are the components most directly enabling the proactive-matching capstone.
+>
+> ---
+
 # Cargo, Price, and Distress Intelligence — Combined Brief
 
 **Status:** spec, not yet implemented
