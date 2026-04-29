@@ -4,6 +4,7 @@ import { BudgetExceededError, getBudgetStatus, recordUsage } from './budget';
 import { costUsdCentsForTurn } from './pricing';
 import { buildAssistantSystem } from './system-prompt';
 import { buildToolsParam } from './tools/registry';
+import { getAnthropicServerTools } from './server-tools';
 import type { AssistantContext, ToolRegistry } from './types';
 import { DEFAULT_ASSISTANT_MAX_TOKENS } from './types';
 
@@ -71,7 +72,10 @@ export async function* streamAgentTurn(
       pageContext: input.ctx.pageContext,
       surfaceContext: input.surfaceContext,
     });
-    const toolParams = buildToolsParam(input.tools);
+    const toolParams: Anthropic.Messages.ToolUnion[] = [
+      ...buildToolsParam(input.tools),
+      ...getAnthropicServerTools(),
+    ];
 
     const messages: Anthropic.MessageParam[] = [
       ...input.history,
