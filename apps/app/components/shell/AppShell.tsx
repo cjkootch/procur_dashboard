@@ -47,6 +47,7 @@ const NAV: NavGroup[] = [
     heading: 'Intelligence',
     items: [
       { href: '/suppliers/intelligence', label: 'Market intelligence' },
+      { href: '/suppliers/competitors', label: 'Competitors' },
       { href: '/insights', label: 'My pipeline' },
     ],
   },
