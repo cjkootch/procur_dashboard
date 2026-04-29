@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import { getCompetitorOverview, getRecentCompetitorNews } from '@procur/catalog';
-import { AppShell } from '../../../components/shell/AppShell';
 import { CompetitorCard } from './_components/CompetitorCard';
 
 export const dynamic = 'force-dynamic';
@@ -77,9 +76,8 @@ export default async function CompetitorsPage({ searchParams }: Props) {
   };
 
   return (
-    <AppShell title="Competitors">
-      <div className="mx-auto max-w-7xl px-6 py-6 bg-[color:var(--color-muted)]/40 min-h-[calc(100vh-49px)]">
-        <header className="mb-5">
+    <div className="mx-auto max-w-7xl px-6 py-6 bg-[color:var(--color-muted)]/40 min-h-[calc(100vh-49px)]">
+      <header className="mb-5">
           <h1 className="text-xl font-semibold tracking-tight">Competitor universe</h1>
           <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
             Trading houses + state-affiliated traders operating in our lane. Click a card to open the unified
@@ -238,9 +236,8 @@ export default async function CompetitorsPage({ searchParams }: Props) {
               ))}
             </ul>
           )}
-        </section>
-      </div>
-    </AppShell>
+      </section>
+    </div>
   );
 }
 
