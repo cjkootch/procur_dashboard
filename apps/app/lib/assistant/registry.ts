@@ -20,6 +20,7 @@ import { proposeCreateAlertTool } from './tools/propose-create-alert';
 import { proposePushToVexTool } from './tools/propose-push-to-vex';
 import { proposePushManyToVexTool } from './tools/propose-push-many-to-vex';
 import { proposeCreateKnownEntityTool } from './tools/propose-create-known-entity';
+import { proposeUpdateKnownEntityTool } from './tools/propose-update-known-entity';
 
 export const readTools = {
   [searchOpportunitiesTool.name]: searchOpportunitiesTool,
@@ -44,6 +45,7 @@ export const writeTools = {
   [proposePushToVexTool.name]: proposePushToVexTool,
   [proposePushManyToVexTool.name]: proposePushManyToVexTool,
   [proposeCreateKnownEntityTool.name]: proposeCreateKnownEntityTool,
+  [proposeUpdateKnownEntityTool.name]: proposeUpdateKnownEntityTool,
 } satisfies ToolRegistry;
 
 /**

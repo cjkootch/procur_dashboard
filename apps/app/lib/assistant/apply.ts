@@ -627,6 +627,65 @@ const createKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
   }
 };
 
+const updateKnownEntitySchema = z.object({
+  slug: z.string().min(3),
+  notes: z.string().nullable(),
+  country: z.string().length(2),
+  role: z.string().min(2),
+  categories: z.array(z.string()).min(1),
+  aliases: z.array(z.string()),
+  tags: z.array(z.string()),
+  metadata: z.record(z.unknown()),
+  latitude: z.string().nullable(),
+  longitude: z.string().nullable(),
+});
+
+/**
+ * Apply a partial-update merge to an existing known_entities row.
+ * The proposal step has already computed the merged values and the
+ * diff; this step just persists them. UPDATE-by-slug is race-safe
+ * (no INSERT to collide), and audit_log capture in applyProposal
+ * gives us the before/after trail.
+ */
+const updateKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
+  const payload = updateKnownEntitySchema.parse(rawPayload);
+
+  const result = await db
+    .update(knownEntities)
+    .set({
+      notes: payload.notes,
+      country: payload.country,
+      role: payload.role,
+      categories: payload.categories,
+      aliases: payload.aliases,
+      tags: payload.tags,
+      metadata: payload.metadata,
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      updatedAt: new Date(),
+    })
+    .where(eq(knownEntities.slug, payload.slug))
+    .returning({ id: knownEntities.id, slug: knownEntities.slug });
+
+  const [updated] = result;
+  if (!updated) {
+    return {
+      ok: false,
+      error: 'entity_not_found',
+      message: `No entity with slug "${payload.slug}" — concurrent delete?`,
+    };
+  }
+
+  return {
+    ok: true,
+    result: {
+      entityId: updated.id,
+      slug: updated.slug,
+      redirectTo: `/entities/${updated.slug}`,
+    },
+  };
+};
+
 const HANDLERS: Record<string, ApplyHandler> = {
   propose_create_pursuit: createPursuit,
   propose_advance_stage: advanceStage,
@@ -636,6 +695,7 @@ const HANDLERS: Record<string, ApplyHandler> = {
   propose_push_to_vex_contact: pushToVex,
   propose_push_many_to_vex_contacts: pushManyToVex,
   propose_create_known_entity: createKnownEntity,
+  propose_update_known_entity: updateKnownEntity,
 };
 
 export async function applyProposal(
