@@ -40,6 +40,7 @@
     "seed-country-currencies": "tsx src/seed-country-currencies.ts",
     "seed-commodity-benchmarks": "tsx src/seed-commodity-benchmarks.ts",
     "backfill-award-quantities": "tsx src/backfill-award-quantities.ts",
+    "backfill-entity-coords": "tsx src/backfill-entity-coords.ts",
     "cleanup-cross-role-merges": "tsx src/cleanup-cross-role-merges.ts",
     "type-check": "tsc --noEmit",
     "test": "node --import tsx --test 'src/**/*.test.ts'",
