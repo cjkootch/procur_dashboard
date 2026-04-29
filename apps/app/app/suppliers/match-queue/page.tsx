@@ -51,9 +51,8 @@ export default async function MatchQueuePage({ searchParams }: Props) {
         <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
           Today&apos;s ranked deal-origination signals across the whole VTC lane: distress events
           (SEC EDGAR / RECAP / RSS), velocity drops in award flow, fresh procurement awards in
-          target categories × countries. Click &quot;Push to vex&quot; on a row to mark it for
-          outreach; the actual push happens from chat via{' '}
-          <code className="rounded bg-[color:var(--color-muted)]/40 px-1">propose_push_to_vex_contact</code>.
+          target categories × countries. Click &quot;Push to vex&quot; to forward the lead with
+          full commercial context — vex&apos;s CRM record opens in a new tab on success.
         </p>
       </header>
 
