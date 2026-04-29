@@ -132,14 +132,27 @@ type AisStreamMessage = {
     };
   };
   MessageType?: 'PositionReport' | 'ShipStaticData' | string;
-  MetaData?: {
-    MMSI?: number;
-    ShipName?: string;
-    time_utc?: string;
-    latitude?: number;
-    longitude?: number;
-  };
+  /**
+   * AISStream's documented spelling is `Metadata` (single 't', lower
+   * 'd'), but historical code used `MetaData`. Both are accepted on
+   * read so a server-side casing change won't silently null the
+   * fallback fields.
+   */
+  Metadata?: AisStreamMetadata;
+  MetaData?: AisStreamMetadata;
 };
+
+type AisStreamMetadata = {
+  MMSI?: number;
+  ShipName?: string;
+  time_utc?: string;
+  latitude?: number;
+  longitude?: number;
+};
+
+function metadata(msg: AisStreamMessage): AisStreamMetadata | undefined {
+  return msg.Metadata ?? msg.MetaData;
+}
 
 type ParsedPosition = {
   mmsi: string;
@@ -164,10 +177,11 @@ type ParsedStatic = {
 function parsePosition(msg: AisStreamMessage): ParsedPosition | null {
   const pr = msg.Message?.PositionReport;
   if (!pr) return null;
-  const mmsi = pr.UserID ?? msg.MetaData?.MMSI;
+  const meta = metadata(msg);
+  const mmsi = pr.UserID ?? meta?.MMSI;
   if (mmsi == null) return null;
-  const lat = pr.Latitude ?? msg.MetaData?.latitude;
-  const lng = pr.Longitude ?? msg.MetaData?.longitude;
+  const lat = pr.Latitude ?? meta?.latitude;
+  const lng = pr.Longitude ?? meta?.longitude;
   if (lat == null || lng == null) return null;
   return {
     mmsi: String(mmsi),
@@ -176,20 +190,21 @@ function parsePosition(msg: AisStreamMessage): ParsedPosition | null {
     speedKnots: pr.Sog ?? null,
     course: pr.Cog ?? null,
     navStatus: navStatusLabel(pr.NavigationalStatus),
-    timestamp: msg.MetaData?.time_utc ?? new Date().toISOString(),
+    timestamp: meta?.time_utc ?? new Date().toISOString(),
   };
 }
 
 function parseStatic(msg: AisStreamMessage): ParsedStatic | null {
   const ssd = msg.Message?.ShipStaticData;
   if (!ssd) return null;
-  const mmsi = ssd.UserID ?? msg.MetaData?.MMSI;
+  const meta = metadata(msg);
+  const mmsi = ssd.UserID ?? meta?.MMSI;
   if (mmsi == null) return null;
   const dim = ssd.Dimension;
   const lengthM = dim ? (dim.A ?? 0) + (dim.B ?? 0) : null;
   return {
     mmsi: String(mmsi),
-    name: ssd.Name?.trim() || msg.MetaData?.ShipName?.trim() || null,
+    name: ssd.Name?.trim() || meta?.ShipName?.trim() || null,
     imo: ssd.ImoNumber != null && ssd.ImoNumber !== 0 ? String(ssd.ImoNumber) : null,
     shipTypeCode: ssd.Type ?? null,
     shipTypeLabel: shipTypeLabel(ssd.Type),
@@ -315,6 +330,22 @@ export async function ingestAisStream(opts: {
   let positionsWritten = 0;
   let staticsWritten = 0;
   let messagesReceived = 0;
+  /** Track JSON.parse failures separately. Counts toward
+   *  messagesReceived but a non-zero value here means the envelope
+   *  isn't text-JSON the way we expect. */
+  let jsonParseErrors = 0;
+  /**
+   * Track shape mismatches. A "shape mismatch" is a successfully
+   * parsed JSON message that didn't yield either a PositionReport
+   * or ShipStaticData. The count by MessageType tag tells the
+   * operator whether we're getting unrelated AIS message types
+   * (the FilterMessageTypes subscription was ignored?), error
+   * envelopes, or a totally different shape.
+   */
+  const unparsedByType = new Map<string, number>();
+  /** Sample of the first 3 raw messages so we can see actual shape. */
+  const SAMPLE_LIMIT = 3;
+  const rawSamples: string[] = [];
   const startedAt = Date.now();
 
   // Periodic heartbeat — fires every 5s regardless of whether we
@@ -363,10 +394,20 @@ export async function ingestAisStream(opts: {
         );
       }
     } else {
-      // Messages flowing but none parsed into our buffers — log
-      // raw counts so the operator can see the disconnect.
+      // Messages flowing but none parsed into our buffers — surface
+      // the breakdown so the operator can see WHERE the disconnect
+      // is (JSON parse vs. shape mismatch vs. unrelated MessageType).
+      const topUnparsed = topNUnparsed(unparsedByType, 3);
+      const breakdown = [
+        jsonParseErrors > 0 ? `${jsonParseErrors} json-parse-fail` : null,
+        topUnparsed,
+      ]
+        .filter(Boolean)
+        .join(', ');
       console.log(
-        `  [${elapsedMin}m] msgs: ${messagesReceived} (no PositionReport / ShipStaticData parsed yet)`,
+        `  [${elapsedMin}m] msgs: ${messagesReceived} (no PositionReport / ShipStaticData parsed yet${
+          breakdown ? `: ${breakdown}` : ''
+        })`,
       );
     }
     lastMsgsAtFlush = messagesReceived;
@@ -393,16 +434,58 @@ export async function ingestAisStream(opts: {
 
   ws.addEventListener('message', (event) => {
     messagesReceived += 1;
-    let json: AisStreamMessage;
-    try {
-      json = JSON.parse(typeof event.data === 'string' ? event.data : event.data.toString());
-    } catch {
+    // Normalize event.data — could be string, Buffer (Node ws), or
+    // ArrayBuffer (some Node 21+ builds). Buffer.toString() yields
+    // valid JSON; ArrayBuffer needs decoding via TextDecoder.
+    let raw: string;
+    if (typeof event.data === 'string') {
+      raw = event.data;
+    } else if (event.data instanceof ArrayBuffer) {
+      raw = new TextDecoder('utf-8').decode(event.data);
+    } else if (
+      typeof event.data === 'object' &&
+      event.data !== null &&
+      'toString' in event.data
+    ) {
+      raw = (event.data as { toString(): string }).toString();
+    } else {
+      jsonParseErrors += 1;
       return;
     }
+
+    if (rawSamples.length < SAMPLE_LIMIT) {
+      // Truncate so a misbehaving server doesn't flood the log.
+      rawSamples.push(raw.length > 600 ? `${raw.slice(0, 600)}…` : raw);
+      console.log(
+        `  [sample ${rawSamples.length}/${SAMPLE_LIMIT}] ${rawSamples.at(-1)}`,
+      );
+    }
+
+    let json: AisStreamMessage;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      jsonParseErrors += 1;
+      return;
+    }
+
     const pos = parsePosition(json);
-    if (pos) positionBuffer.push(pos);
+    if (pos) {
+      positionBuffer.push(pos);
+      return;
+    }
     const stat = parseStatic(json);
-    if (stat) staticBuffer.push(stat);
+    if (stat) {
+      staticBuffer.push(stat);
+      return;
+    }
+
+    // Successfully parsed JSON but neither PositionReport nor
+    // ShipStaticData matched. Bucket by MessageType tag so the
+    // operator can see whether the server is sending unrelated
+    // types or our envelope expectation is wrong.
+    const tag = typeof json.MessageType === 'string' ? json.MessageType : '<no-MessageType>';
+    unparsedByType.set(tag, (unparsedByType.get(tag) ?? 0) + 1);
   });
 
   ws.addEventListener('error', (err) => {
@@ -427,8 +510,27 @@ export async function ingestAisStream(opts: {
   console.log(
     `Done. positions=${positionsWritten}, tanker_static_records=${staticsWritten}, raw_messages=${messagesReceived}`,
   );
+  if (jsonParseErrors > 0) {
+    console.log(`  json_parse_errors=${jsonParseErrors}`);
+  }
+  if (unparsedByType.size > 0) {
+    const breakdown = Array.from(unparsedByType.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([t, c]) => `${t}=${c}`)
+      .join(', ');
+    console.log(`  unparsed_by_message_type: ${breakdown}`);
+  }
 
   return { minutes, bboxes, positionsWritten, staticsWritten, messagesReceived };
+}
+
+function topNUnparsed(map: Map<string, number>, n: number): string {
+  if (map.size === 0) return '';
+  return Array.from(map.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([t, c]) => `${t}=${c}`)
+    .join(', ');
 }
 
 async function main(): Promise<void> {
