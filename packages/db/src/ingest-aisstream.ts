@@ -40,12 +40,26 @@ const AISSTREAM_URL = 'wss://stream.aisstream.io/v0/stream';
  *                      TT, PR, BS), Mexican Gulf supply routes, and
  *                      the broader Atlantic approach off the Bahamas
  *                      and Cuba. Covers ~8–28°N × 98–58°W.
+ *   4. West Africa coast — Mauritania → Senegal → Côte d'Ivoire →
+ *                      Ghana (Tema) → Togo (Lomé) → Nigeria (Lagos)
+ *                      → Cameroon → Gabon → Angola (Luanda/Cabinda)
+ *                      → Namibia (Walvis Bay). Covers Atlantic
+ *                      approaches for European/American cargoes
+ *                      arriving at WAF terminals.
+ *   5. East Africa coast — Cape Town → Durban → Mozambique →
+ *                      Tanzania (Dar) → Kenya (Mombasa) → Somalia,
+ *                      with offshore reach to catch Indian-Ocean
+ *                      crossings from the Middle East / India that
+ *                      would otherwise enter NW-Indian-Ocean's
+ *                      eastern half. Slightly overlaps NW-IO at
+ *                      ~5°N/40°E but the dedup is at write-time so
+ *                      duplicate position reports are cheap.
  *
  * Each box is [[lat_sw, lng_sw], [lat_ne, lng_ne]].
  *
  * Trade-off: each bbox adds proportional WebSocket message volume.
  * The 25-min/cycle Trigger.dev wrapper has comfortable headroom on
- * the standard tier even with three regions; if AISStream throttles,
+ * the standard tier even with five regions; if AISStream throttles,
  * narrow the boxes or split the regions across separate cron tasks.
  */
 const DEFAULT_BBOXES: number[][][] = [
@@ -61,6 +75,14 @@ const DEFAULT_BBOXES: number[][][] = [
     [8, -98],
     [28, -58],
   ], // Caribbean + US Gulf
+  [
+    [-25, -22],
+    [28, 16],
+  ], // West Africa coast (Mauritania → Angola/Namibia, with Atlantic offshore reach)
+  [
+    [-35, 30],
+    [12, 55],
+  ], // East Africa coast (Cape Town → Somalia, Mozambique to mid-Indian-Ocean)
 ];
 
 /** AIS ship_type codes for tankers (80-89) per the ITU spec. */
