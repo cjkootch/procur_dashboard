@@ -32,11 +32,21 @@ loadEnv({ path: '../../.env' });
 const AISSTREAM_URL = 'wss://stream.aisstream.io/v0/stream';
 
 /**
- * Default bounding boxes — the tightest crude-deal-relevant areas:
- *   1. Mediterranean (incl. Libyan loading + Italian/Spanish/Greek/Turkish refineries)
- *   2. Northwest Indian Ocean (the Indian state-refinery destination corridor)
+ * Default bounding boxes — the deal-relevant zones VTC operates in:
+ *   1. Mediterranean — Libyan loading terminals + Italian / Spanish /
+ *                      Greek / Turkish refineries.
+ *   2. NW Indian Ocean — Indian state-refinery destination corridor.
+ *   3. Caribbean basin + US Gulf — Caribbean refining hubs (DR, JM,
+ *                      TT, PR, BS), Mexican Gulf supply routes, and
+ *                      the broader Atlantic approach off the Bahamas
+ *                      and Cuba. Covers ~8–28°N × 98–58°W.
  *
  * Each box is [[lat_sw, lng_sw], [lat_ne, lng_ne]].
+ *
+ * Trade-off: each bbox adds proportional WebSocket message volume.
+ * The 25-min/cycle Trigger.dev wrapper has comfortable headroom on
+ * the standard tier even with three regions; if AISStream throttles,
+ * narrow the boxes or split the regions across separate cron tasks.
  */
 const DEFAULT_BBOXES: number[][][] = [
   [
@@ -47,6 +57,10 @@ const DEFAULT_BBOXES: number[][][] = [
     [5, 40],
     [27, 80],
   ], // NW Indian Ocean
+  [
+    [8, -98],
+    [28, -58],
+  ], // Caribbean + US Gulf
 ];
 
 /** AIS ship_type codes for tankers (80-89) per the ITU spec. */
