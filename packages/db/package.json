@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
     "./client": "./src/client.ts",
-    "./ingest-ecb-fx": "./src/ingest-ecb-fx.ts"
+    "./ingest-ecb-fx": "./src/ingest-ecb-fx.ts",
+    "./ingest-sec-edgar": "./src/ingest-sec-edgar.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",
@@ -37,6 +38,7 @@
     "ingest-aisstream": "tsx src/ingest-aisstream.ts",
     "seed-ports": "tsx src/seed-ports.ts",
     "ingest-ecb-fx": "tsx src/ingest-ecb-fx.ts",
+    "ingest-sec-edgar": "tsx src/ingest-sec-edgar.ts",
     "seed-country-currencies": "tsx src/seed-country-currencies.ts",
     "seed-commodity-benchmarks": "tsx src/seed-commodity-benchmarks.ts",
     "backfill-award-quantities": "tsx src/backfill-award-quantities.ts",
