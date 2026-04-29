@@ -252,27 +252,40 @@ async function flushStatics(
   return filtered.length;
 }
 
-async function main(): Promise<void> {
+export type IngestAisStreamResult = {
+  minutes: number;
+  bboxes: number[][][];
+  positionsWritten: number;
+  staticsWritten: number;
+  messagesReceived: number;
+};
+
+/**
+ * Connect to AISStream.io and write tanker positions + static data to
+ * the DB for `minutes` minutes, then exit. Pure-function shape so the
+ * Trigger.dev scheduled wrapper can reuse it; CLI shim below.
+ */
+export async function ingestAisStream(opts: {
+  /** Default 10. */
+  minutes?: number;
+  /**
+   * Optional bbox override. AISStream wants `[[latSW, lngSW],
+   * [latNE, lngNE]]`; pass an array of those. Defaults to the
+   * Mediterranean + NW Indian Ocean preset.
+   */
+  bboxes?: number[][][];
+} = {}): Promise<IngestAisStreamResult> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL not set');
   const apiKey = process.env.AISSTREAM_API_KEY;
   if (!apiKey) {
     throw new Error(
-      'AISSTREAM_API_KEY not set. Sign up at https://aisstream.io and add the key to .env.local.',
+      'AISSTREAM_API_KEY not set. Sign up at https://aisstream.io and add the key to env.',
     );
   }
 
-  const minutesArg = process.argv.find((a) => a.startsWith('--minutes='))?.split('=')[1];
-  const minutes = minutesArg ? Number.parseInt(minutesArg, 10) : 10;
-  const bboxArg = process.argv.find((a) => a.startsWith('--bbox='))?.split('=')[1];
-  const bboxes = bboxArg
-    ? [bboxArg.split(',').reduce<number[][]>((acc, n, i) => {
-        const v = Number.parseFloat(n);
-        if (i % 2 === 0) acc.push([v]);
-        else acc[acc.length - 1]!.push(v);
-        return acc;
-      }, [])]
-    : DEFAULT_BBOXES;
+  const minutes = opts.minutes ?? 10;
+  const bboxes = opts.bboxes ?? DEFAULT_BBOXES;
 
   console.log(
     `Connecting to AISStream.io for ${minutes} minute${minutes === 1 ? '' : 's'}...`,
@@ -360,9 +373,29 @@ async function main(): Promise<void> {
   console.log(
     `Done. positions=${positionsWritten}, tanker_static_records=${staticsWritten}, raw_messages=${messagesReceived}`,
   );
+
+  return { minutes, bboxes, positionsWritten, staticsWritten, messagesReceived };
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
-  process.exit(1);
-});
+async function main(): Promise<void> {
+  const minutesArg = process.argv.find((a) => a.startsWith('--minutes='))?.split('=')[1];
+  const minutes = minutesArg ? Number.parseInt(minutesArg, 10) : 10;
+  const bboxArg = process.argv.find((a) => a.startsWith('--bbox='))?.split('=')[1];
+  const bboxes = bboxArg
+    ? [bboxArg.split(',').reduce<number[][]>((acc, n, i) => {
+        const v = Number.parseFloat(n);
+        if (i % 2 === 0) acc.push([v]);
+        else acc[acc.length - 1]!.push(v);
+        return acc;
+      }, [])]
+    : undefined;
+
+  await ingestAisStream({ minutes, bboxes });
+}
+
+if (process.argv[1] && process.argv[1].endsWith('ingest-aisstream.ts')) {
+  main().catch((err: unknown) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
