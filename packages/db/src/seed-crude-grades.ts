@@ -36,7 +36,53 @@ type GradeSeed = {
   characterization: string | null;
   isMarker: boolean;
   loadingCountry?: string | null;
+  /** Pricing marker this grade trades against. NULL on markers
+      themselves. */
+  markerSlug?: string | null;
+  /** Structural premium (+) or discount (-) vs markerSlug, USD/bbl.
+      Hand-curated; refresh quarterly. */
+  differentialUsdPerBbl?: number | null;
   notes: string;
+};
+
+/**
+ * Basis differentials per non-marker grade. Hand-curated from
+ * recent Platts / Argus / Reuters published assessments — refresh
+ * quarterly as supply/demand dynamics shift. Sign convention:
+ * positive = premium over marker; negative = discount.
+ *
+ * Values populate crude_grades.marker_slug + .differential_usd_per_bbl
+ * via the upsert below. Marker grades themselves (brent, wti, dubai,
+ * urals) keep both columns NULL — they ARE the markers.
+ */
+const BASIS: Record<string, { marker: string; differential: number }> = {
+  // Libyan light sweets vs Brent — Es Sider is the regional flagship;
+  // Sharara prices a dollar above as it's lighter + sweeter.
+  'es-sider':       { marker: 'brent', differential:  1.5 },
+  'sharara':        { marker: 'brent', differential:  2.5 },
+  'sirtica':        { marker: 'brent', differential:  1.0 },
+  'brega':          { marker: 'brent', differential:  1.0 },
+  'bouri':          { marker: 'brent', differential: -2.0 }, // medium sour
+  // West African vs Brent
+  'bonny-light':    { marker: 'brent', differential:  1.5 },
+  'qua-iboe':       { marker: 'brent', differential:  1.5 },
+  'cabinda':        { marker: 'brent', differential: -1.0 }, // heavier sweet
+  // Algerian super-light
+  'saharan-blend':  { marker: 'brent', differential:  2.5 },
+  // Caspian
+  'azeri-light':    { marker: 'brent', differential:  2.0 }, // BTC-light premium
+  'cpc-blend':      { marker: 'brent', differential: -2.0 }, // longer-haul, slight sour
+  'kirkuk':         { marker: 'brent', differential: -3.0 }, // medium sour
+  // Middle East vs Dubai
+  'arab-light':     { marker: 'dubai', differential: -0.5 },
+  'arab-medium':    { marker: 'dubai', differential: -2.5 },
+  'arab-heavy':     { marker: 'dubai', differential: -5.0 },
+  'iran-heavy':     { marker: 'dubai', differential: -4.0 }, // sanctions-discount
+  'basrah-light':   { marker: 'dubai', differential: -1.5 },
+  // Americas heavies vs WTI
+  'maya':           { marker: 'wti',   differential: -8.0 },
+  'wcs':            { marker: 'wti',   differential: -15.0 },
+  'merey':          { marker: 'wti',   differential: -10.0 }, // Venezuelan sanctions-impacted
 };
 
 const GRADES: GradeSeed[] = [
@@ -375,6 +421,16 @@ async function main() {
         characterization: g.characterization,
         isMarker: g.isMarker,
         loadingCountry: g.loadingCountry ?? null,
+        // Resolve basis differential from the BASIS lookup (or
+        // override per-row via g.markerSlug / g.differentialUsdPerBbl
+        // on a future seed addition).
+        markerSlug: g.markerSlug ?? BASIS[g.slug]?.marker ?? null,
+        differentialUsdPerBbl:
+          g.differentialUsdPerBbl != null
+            ? String(g.differentialUsdPerBbl)
+            : BASIS[g.slug] != null
+              ? String(BASIS[g.slug]!.differential)
+              : null,
         notes: g.notes,
         source: 'analyst-curated',
       })
@@ -390,6 +446,13 @@ async function main() {
           characterization: g.characterization,
           isMarker: g.isMarker,
           loadingCountry: g.loadingCountry ?? null,
+          markerSlug: g.markerSlug ?? BASIS[g.slug]?.marker ?? null,
+          differentialUsdPerBbl:
+            g.differentialUsdPerBbl != null
+              ? String(g.differentialUsdPerBbl)
+              : BASIS[g.slug] != null
+                ? String(BASIS[g.slug]!.differential)
+                : null,
           notes: g.notes,
           source: 'analyst-curated',
           updatedAt: new Date(),

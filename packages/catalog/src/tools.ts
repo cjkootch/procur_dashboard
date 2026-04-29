@@ -17,6 +17,7 @@ import {
   getCommodityPriceContext,
   getCommoditySpread,
   getCommodityTicker,
+  getCrudeBasis,
   findDistressedSuppliers,
   findRecentPortCalls,
   findRecentSimilarAwards,
@@ -1214,6 +1215,58 @@ export function buildCatalogTools(): ToolRegistry {
                 slateNotes: r.slateNotes,
               })),
             };
+          },
+        ),
+    }),
+
+    get_crude_basis: defineTool({
+      name: 'get_crude_basis',
+      description:
+        'Resolve a named crude grade to its pricing marker + live spot + ' +
+        'structural differential, with the fair-value all-in price computed. ' +
+        'Use whenever the user references a named crude (Azeri Light, Es Sider, ' +
+        'Bonny Light, Urals, Maya, etc.) and wants to know fair value or ' +
+        'whether an offer is in-band. Returns markerSlug + differentialUsdPerBbl ' +
+        '+ markerSpotUsdPerBbl + fairValueUsdPerBbl + asOf. Composes cleanly ' +
+        'with get_market_snapshot — call this first for the basis, then ' +
+        'compose_deal_economics with productCostPerBbl set to the fair value ' +
+        'for the deal model. Differentials are hand-curated (refresh quarterly); ' +
+        'they reflect the structural quality / logistics / sanctions context, ' +
+        'not transient day-to-day moves.',
+      kind: 'read',
+      schema: z.object({
+        gradeSlug: z
+          .string()
+          .min(1)
+          .describe(
+            "crude_grades.slug. Common values: 'es-sider', 'sharara', 'sirtica', " +
+              "'bonny-light', 'qua-iboe', 'azeri-light', 'cpc-blend', 'kirkuk', " +
+              "'arab-light', 'arab-medium', 'arab-heavy', 'iran-heavy', " +
+              "'basrah-light', 'maya', 'wcs', 'merey'. For markers themselves " +
+              "(brent, wti, dubai, urals): returns the marker's own spot.",
+          ),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'get_crude_basis',
+            args: input,
+            summarize: (out: unknown) => ({
+              resultCount: out == null ? 0 : 1,
+              resultSummary: { gradeSlug: input.gradeSlug },
+            }),
+          },
+          async () => {
+            const result = await getCrudeBasis(input.gradeSlug);
+            if (!result) {
+              return {
+                error: 'unknown_grade',
+                gradeSlug: input.gradeSlug,
+                hint: 'Use list_crude_grades to discover available slugs.',
+              };
+            }
+            return result;
           },
         ),
     }),
