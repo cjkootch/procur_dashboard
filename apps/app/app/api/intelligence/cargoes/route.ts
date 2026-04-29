@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { findRecentPortCalls } from '@procur/catalog';
+import { inferCargoTripsFromAis } from '@procur/catalog';
 import { verifyIntelligenceToken } from '../../../../lib/intelligence-auth';
 
 export const runtime = 'nodejs';
@@ -9,30 +9,35 @@ export const dynamic = 'force-dynamic';
 /**
  * GET /api/intelligence/cargoes
  *   ?destination_country=US
- *   &destination_entity_slug=...
+ *   &destination_entity_slug=...      (reserved; not yet wired)
  *   &origin_country=...
- *   &vessel_category=tanker
+ *   &vessel_category=tanker            (reserved; not yet wired)
  *   &days_lookback=30
- *   &min_confidence=weak
+ *   &min_confidence=weak|medium|strong
  *
- * Vex's contract names this "cargoes" but procur's underlying data
- * is AIS-derived port calls — load/discharge linkage isn't
- * inferred yet. We surface every port call as a proto-cargo with
- * confidence='weak' so vex sees structured data and can wire its
- * UI; once cargo-trip inference lands (separate roadmap item) the
- * confidence rises and supplier/buyer attribution fills in.
+ * Vex contract response:
+ *   { cargoes: [{cargoId, supplierName, buyerCountry, commodity,
+ *               quantityMt, arrivedAt, vesselName, confidence}],
+ *     totalCount }
  *
- * Field provenance (today):
- *   - cargoId      : `${mmsi}:${portSlug}` (synthesised; survives across
- *                    runs because (mmsi, port_slug) is the natural key
- *                    of one call cluster)
- *   - supplierName : null — we don't know who owned the cargo
- *   - buyerCountry : portCountry (proxy: refining at port = buyer)
- *   - commodity    : null — not derivable from AIS alone
- *   - quantityMt   : null — same
- *   - arrivedAt    : the cluster's first-seen timestamp
- *   - vesselName   : from vessels.name when we have static data
- *   - confidence   : "weak" for all rows (proto-cargo, not inferred)
+ * Inference moves up from the original "every port call is a
+ * proto-cargo with confidence='weak'" passthrough (PR #263). This
+ * version pairs each MMSI's consecutive (load → discharge) port
+ * calls into a real cargo trip, with per-row confidence:
+ *
+ *   strong : load=crude-loading + discharge=refinery
+ *   medium : either end is mixed / transshipment
+ *   weak   : everything else (kept for the response envelope —
+ *            min_confidence=weak surfaces them; medium/strong
+ *            filter them out)
+ *
+ * Fields still null:
+ *   - supplierName : we don't yet attribute the vessel's load port
+ *                    to a known supplier (next iteration: join load
+ *                    port to operator via known_entities).
+ *   - commodity    : not derivable from AIS alone — vessel's last
+ *                    cargo isn't broadcast.
+ *   - quantityMt   : not derivable.
  */
 const QuerySchema = z.object({
   destination_country: z.string().length(2).optional(),
@@ -64,31 +69,23 @@ export async function GET(req: Request): Promise<Response> {
     );
   }
 
-  // Today's coverage: map destination_country directly. Other
-  // filters (origin_country, destination_entity_slug, vessel_category,
-  // min_confidence) require cargo-trip inference and are accepted
-  // for forward-compat but ignored.
-  // min_confidence="medium"/"strong" naturally returns empty since
-  // every row we emit is "weak" until inference ships.
-  if (parsed.data.min_confidence && parsed.data.min_confidence !== 'weak') {
-    return NextResponse.json({ cargoes: [], totalCount: 0 });
-  }
-
-  const calls = await findRecentPortCalls({
-    country: parsed.data.destination_country,
+  const trips = await inferCargoTripsFromAis({
     daysBack: parsed.data.days_lookback ?? 30,
+    destinationCountry: parsed.data.destination_country,
+    originCountry: parsed.data.origin_country,
+    minConfidence: parsed.data.min_confidence,
     limit: 200,
   });
 
-  const cargoes = calls.map((c) => ({
-    cargoId: `${c.mmsi}:${c.portSlug}`,
+  const cargoes = trips.map((t) => ({
+    cargoId: t.cargoId,
     supplierName: null as string | null,
-    buyerCountry: c.portCountry,
+    buyerCountry: t.dischargePortCountry,
     commodity: null as string | null,
     quantityMt: null as number | null,
-    arrivedAt: c.arrivalAt,
-    vesselName: c.vesselName,
-    confidence: 'weak' as const,
+    arrivedAt: t.arrivedAt,
+    vesselName: t.vesselName,
+    confidence: t.confidence,
   }));
 
   return NextResponse.json({ cargoes, totalCount: cargoes.length });
