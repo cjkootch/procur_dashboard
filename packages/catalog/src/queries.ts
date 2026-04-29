@@ -1324,6 +1324,25 @@ export interface FindSuppliersForTenderArgs {
   beneficiaryCountry?: string;
   yearsLookback?: number;
   limit?: number;
+  /**
+   * Optional geographic bias. When set, candidates are re-ranked by
+   *   adjustedScore = baseRank + proximityFactor * weightFactor
+   * where proximityFactor = max(0, 1 - distanceFromBiasNm / 6000).
+   * Distance is from the bias point to the supplier's country
+   *   centroid (averaged from known_entities lat/lng for that country).
+   * Suppliers with no country or no centroid coverage get
+   *   proximityFactor = 0 (no boost, no penalty).
+   *
+   * weightFactor is a multiplier on the [0..1] proximityFactor —
+   * pass e.g. 5 to make a 0-distance country worth 5 ranks of base
+   * rank. Caller's responsibility to choose a value that makes sense
+   * for the candidate-pool size.
+   */
+  originBias?: {
+    lat: number;
+    lon: number;
+    weightFactor: number;
+  };
 }
 
 export interface CandidateSupplier {
@@ -1335,6 +1354,13 @@ export interface CandidateSupplier {
   mostRecentAwardDate: string;
   recentBuyers: string[];
   matchReasons: string[];
+  /** Set when originBias was applied. Distance from bias point to
+   *  the supplier's country centroid in nautical miles. Null when the
+   *  supplier had no country or the centroid was unknown. */
+  distanceFromBiasNm?: number | null;
+  /** Set when originBias was applied. The proximity component of the
+   *  re-ranked score, in [0, weightFactor]. */
+  proximityBoost?: number;
 }
 
 export interface FindSuppliersForTenderResult {
@@ -1478,7 +1504,100 @@ export async function findSuppliersForTender(
     },
   );
 
+  if (args.originBias) {
+    const ranked = await applyOriginBias(suppliers, args.originBias);
+    return { derivedFrom, categoryTag, suppliers: ranked };
+  }
   return { derivedFrom, categoryTag, suppliers };
+}
+
+/**
+ * Re-rank suppliers by geographic proximity to a bias point.
+ *
+ * Country centroids are computed dynamically from known_entities
+ * (average lat/lng across all rows for each country). A supplier
+ * whose country has no centroid coverage gets proximityFactor = 0.
+ *
+ * Score model: keeps the original SQL ranking as `baseRank`
+ * (descending position → 0..N), adds proximityBoost in
+ * [0, weightFactor]. We then sort by (baseRank + proximityBoost)
+ * descending. weightFactor of 5 means a 0-distance country gets a
+ * 5-rank boost — calibrate to candidate-pool size.
+ */
+async function applyOriginBias(
+  suppliers: CandidateSupplier[],
+  bias: { lat: number; lon: number; weightFactor: number },
+): Promise<CandidateSupplier[]> {
+  if (suppliers.length === 0) return suppliers;
+  const countries = Array.from(
+    new Set(suppliers.map((s) => s.country).filter((c): c is string => c != null)),
+  );
+  if (countries.length === 0) {
+    return suppliers.map((s, i) => ({
+      ...s,
+      distanceFromBiasNm: null,
+      proximityBoost: 0,
+      // Preserve original order — no centroid data to bias on.
+      _originalRank: suppliers.length - i,
+    })) as CandidateSupplier[];
+  }
+
+  // Single query for all unique supplier countries.
+  const centroidResult = await db.execute(sql`
+    SELECT country,
+      avg(latitude::float8) AS lat,
+      avg(longitude::float8) AS lon
+    FROM known_entities
+    WHERE country = ANY(${countries}::text[])
+      AND latitude IS NOT NULL
+      AND longitude IS NOT NULL
+    GROUP BY country
+  `);
+  const centroidByCountry = new Map<string, { lat: number; lon: number }>();
+  for (const row of centroidResult.rows as Array<Record<string, unknown>>) {
+    centroidByCountry.set(String(row.country), {
+      lat: Number.parseFloat(String(row.lat)),
+      lon: Number.parseFloat(String(row.lon)),
+    });
+  }
+
+  // Score each supplier. baseRank is its current 1-indexed position
+  // from the bottom (so the top supplier gets the largest baseRank).
+  const N = suppliers.length;
+  const scored = suppliers.map((s, i) => {
+    const baseRank = N - i;
+    let distanceFromBiasNm: number | null = null;
+    let proximityBoost = 0;
+    if (s.country) {
+      const centroid = centroidByCountry.get(s.country);
+      if (centroid) {
+        distanceFromBiasNm = haversineNm(bias.lat, bias.lon, centroid.lat, centroid.lon);
+        const proximityFactor = Math.max(0, 1 - distanceFromBiasNm / 6000);
+        proximityBoost = proximityFactor * bias.weightFactor;
+      }
+    }
+    return {
+      ...s,
+      distanceFromBiasNm,
+      proximityBoost,
+      _adjustedScore: baseRank + proximityBoost,
+    };
+  });
+
+  scored.sort((a, b) => b._adjustedScore - a._adjustedScore);
+
+  return scored.map(({ _adjustedScore: _adj, ...rest }) => rest);
+}
+
+function haversineNm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R_NM = 3440.065;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R_NM * 2 * Math.asin(Math.sqrt(a));
 }
 
 export interface CompetingSellerArgs {
@@ -2654,6 +2773,99 @@ export async function lookupKnownEntities(
     metadata: r.metadata as Record<string, unknown> | null,
     latitude: r.latitude != null ? Number.parseFloat(String(r.latitude)) : null,
     longitude: r.longitude != null ? Number.parseFloat(String(r.longitude)) : null,
+  }));
+}
+
+export interface ProximityEntityRow extends KnownEntityRow {
+  /** Great-circle distance from the query point in nautical miles. */
+  distanceNm: number;
+}
+
+/**
+ * known_entities filtered by haversine distance from a query point.
+ * Powers /intelligence/proximity-suppliers — vex's tender-sourcing
+ * scout uses this to surface candidate suppliers within shipping
+ * range of a buyer's destination port.
+ *
+ * 3440.065 = Earth's radius in nautical miles. Computing inside SQL
+ * keeps the LIMIT honest (otherwise we'd over-fetch + filter in JS).
+ *
+ * Excludes entities where latitude IS NULL (run backfill-entity-coords
+ * to populate). The `roles` filter is OR'd; `categoryTag` is AND'd
+ * against the categories array; both are optional.
+ */
+export async function findEntitiesNearLocation(filters: {
+  destinationLat: number;
+  destinationLon: number;
+  /** Maximum distance in nautical miles. */
+  radiusNm: number;
+  /** Optional role filter (refiner, producer, terminal, port, trader, state-buyer). */
+  roles?: string[];
+  /** Optional category tag — must appear in entity's categories array. */
+  categoryTag?: string;
+  /** Optional tag filter — must appear in entity's tags array. */
+  tag?: string;
+  limit?: number;
+}): Promise<ProximityEntityRow[]> {
+  const lat = filters.destinationLat;
+  const lon = filters.destinationLon;
+  const limit = Math.min(filters.limit ?? 50, 500);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    throw new Error('destinationLat / destinationLon must be finite numbers');
+  }
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    throw new Error('destinationLat / destinationLon out of range');
+  }
+
+  const roleFilter = filters.roles && filters.roles.length > 0
+    ? sql`AND role = ANY(${filters.roles}::text[])`
+    : sql``;
+  const categoryFilter = filters.categoryTag
+    ? sql`AND ${filters.categoryTag} = ANY(categories)`
+    : sql``;
+  const tagFilter = filters.tag
+    ? sql`AND ${filters.tag} = ANY(tags)`
+    : sql``;
+
+  const result = await db.execute(sql`
+    WITH scored AS (
+      SELECT
+        id, slug, name, country, role, categories, notes,
+        contact_entity, aliases, tags, metadata, latitude, longitude,
+        3440.065 * 2 * asin(sqrt(
+          power(sin(radians((latitude::float8 - ${lat}) / 2)), 2) +
+          cos(radians(${lat})) * cos(radians(latitude::float8)) *
+          power(sin(radians((longitude::float8 - ${lon}) / 2)), 2)
+        )) AS distance_nm
+      FROM known_entities
+      WHERE latitude IS NOT NULL
+        AND longitude IS NOT NULL
+        ${roleFilter}
+        ${categoryFilter}
+        ${tagFilter}
+    )
+    SELECT *
+    FROM scored
+    WHERE distance_nm <= ${filters.radiusNm}
+    ORDER BY distance_nm ASC
+    LIMIT ${limit}
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    id: String(r.id),
+    slug: String(r.slug),
+    name: String(r.name),
+    country: String(r.country),
+    role: String(r.role),
+    categories: (r.categories as string[]) ?? [],
+    notes: r.notes != null ? String(r.notes) : null,
+    contactEntity: r.contact_entity != null ? String(r.contact_entity) : null,
+    aliases: (r.aliases as string[]) ?? [],
+    tags: (r.tags as string[]) ?? [],
+    metadata: (r.metadata as Record<string, unknown> | null) ?? null,
+    latitude: r.latitude != null ? Number.parseFloat(String(r.latitude)) : null,
+    longitude: r.longitude != null ? Number.parseFloat(String(r.longitude)) : null,
+    distanceNm: Number.parseFloat(String(r.distance_nm)),
   }));
 }
 

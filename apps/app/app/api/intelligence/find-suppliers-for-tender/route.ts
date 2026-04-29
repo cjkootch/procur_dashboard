@@ -8,12 +8,19 @@ export const dynamic = 'force-dynamic';
 
 /**
  * POST /api/intelligence/find-suppliers-for-tender
- * Body: FindSuppliersForTenderArgs
+ * Body: FindSuppliersForTenderArgs (incl. optional originBias)
  *
  * Wraps `findSuppliersForTender`. Sell-side bidder ranking. Pass either
  * an `opportunityId` (the function derives category/country from the
  * opportunity row) or explicit `categoryTag` / `buyerCountry` /
  * `descriptionKeywords` / `beneficiaryCountry`.
+ *
+ * `originBias: { lat, lon, weightFactor }` (optional) — re-ranks
+ * candidates by haversine distance from the bias point to each
+ * supplier's country centroid. weightFactor is the proximity boost a
+ * 0-distance country would receive (calibrate to candidate-pool size,
+ * typically 3–10). Returns `distanceFromBiasNm` + `proximityBoost` per
+ * supplier so the caller can audit the re-ranking.
  *
  * No companyId scope is applied — the underlying query treats all
  * public award data as visible. The first arg to the function is
@@ -27,6 +34,13 @@ const BodySchema = z.object({
   beneficiaryCountry: z.string().length(2).optional(),
   yearsLookback: z.number().int().min(1).max(20).optional(),
   limit: z.number().int().min(1).max(200).optional(),
+  originBias: z
+    .object({
+      lat: z.number().min(-90).max(90),
+      lon: z.number().min(-180).max(180),
+      weightFactor: z.number().positive().max(50),
+    })
+    .optional(),
 });
 
 export async function POST(req: Request): Promise<Response> {
