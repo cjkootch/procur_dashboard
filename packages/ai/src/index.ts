@@ -31,6 +31,13 @@ export {
   type ShredRfpResult,
 } from './tasks/shred-rfp';
 export {
+  extractDistressSignal,
+  ExtractDistressSignalOutput,
+  type ExtractDistressSignalInput,
+  type ExtractDistressSignalOutputT,
+  type ExtractDistressSignalResult,
+} from './tasks/extract-distress-signal';
+export {
   suggestRequirements,
   type SuggestRequirementsInput,
   type SuggestRequirementsResult,

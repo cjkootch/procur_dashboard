@@ -771,6 +771,9 @@ importers:
 
   services/scrapers:
     dependencies:
+      '@procur/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@procur/db':
         specifier: workspace:*
         version: link:../../packages/db
