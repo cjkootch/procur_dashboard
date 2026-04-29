@@ -330,6 +330,20 @@
       "when": 1777335100000,
       "tag": "0046_more_ocds_jurisdictions",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1777335200000,
+      "tag": "0047_supplier_velocity_signals",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1777335300000,
+      "tag": "0048_entity_news_events",
+      "breakpoints": true
     }
   ]
 }

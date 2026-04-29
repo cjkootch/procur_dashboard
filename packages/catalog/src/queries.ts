@@ -24,6 +24,7 @@ import {
   documents,
   externalSuppliers,
   jurisdictions,
+  knownEntities,
   opportunities,
   pastPerformance,
   supplierAliases,
@@ -5143,3 +5144,312 @@ export async function getSupplierProfile(
   return analyzeSupplier({ supplierId, yearsLookback });
 }
 
+
+// ===========================================================================
+// Layer 3 — distress and motivation signals
+// ===========================================================================
+
+export interface DistressedSuppliersSpec {
+  /** Optional category filter — match against suppliers whose
+      most-recent activity is in this category (uses supplier_signals
+      / capability summary columns). v1 only filters by velocity +
+      country + news events; the categoryTag arg is reserved for the
+      next iteration where we join supplier_capability_summary's
+      per-category counts. */
+  categoryTag?: string;
+  /** Optional country filter (ISO-2). */
+  countries?: string[];
+  /** Minimum prior-period awards count. Default 3. Filters out
+      suppliers who never won much anyway — a velocity drop from 1 to
+      0 is noise. */
+  minPrevAwards?: number;
+  /** Velocity drop threshold. -0.5 means "awards dropped 50%+ vs
+      the prior 90-day window". Default -0.5. */
+  velocityChangeMax?: number;
+  /** Whether to JOIN entity_news_events for each candidate. Default
+      true. Set false when the caller doesn't need the contextual
+      events (faster). */
+  includeNewsEvents?: boolean;
+  limit?: number;
+}
+
+export interface DistressedSupplier {
+  supplierId: string;
+  organisationName: string;
+  country: string;
+  awardsLast90d: number;
+  awardsPrev90d: number;
+  /** Negative = distress. (last - prev) / prev. */
+  velocityChangePct: number;
+  valueUsdLast90d: number | null;
+  valueUsdPrev90d: number | null;
+  mostRecentAwardDate: string;
+  /** Recent news events (last 90 days, relevance_score >= 0.5 or
+      NULL). Empty array when none / when includeNewsEvents=false. */
+  recentNewsEvents: Array<{
+    eventType: string;
+    eventDate: string;
+    summary: string;
+    relevanceScore: number | null;
+    sourceUrl: string | null;
+  }>;
+  /** Plain-text reasons this supplier is on the list. */
+  distressReasons: string[];
+}
+
+/**
+ * Suppliers whose award velocity has dropped sharply, optionally
+ * joined to recent news events. Powers vex's OriginationPartnerScout
+ * agent and the corresponding /api/intelligence/distressed-suppliers
+ * endpoint.
+ *
+ * Velocity is computed in supplier_capability_summary (rolling-window
+ * columns added in 0047). News events come from entity_news_events
+ * (table from 0048; population gated on ingest workers — empty
+ * until SEC EDGAR / PACER / RSS workers ship).
+ */
+export async function findDistressedSuppliers(
+  spec: DistressedSuppliersSpec = {},
+): Promise<DistressedSupplier[]> {
+  const minPrev = spec.minPrevAwards ?? 3;
+  const velMax = spec.velocityChangeMax ?? -0.5;
+  const limit = Math.min(spec.limit ?? 25, 100);
+  const includeNews = spec.includeNewsEvents !== false;
+
+  const countryFilter =
+    spec.countries && spec.countries.length > 0
+      ? sql`AND s.country = ANY(${spec.countries}::text[])`
+      : sql``;
+  const categoryFilter = spec.categoryTag
+    ? categoryColumnFilter(spec.categoryTag)
+    : sql``;
+
+  const result = await db.execute(sql`
+    SELECT
+      s.supplier_id,
+      s.organisation_name,
+      s.country,
+      s.awards_last_90d,
+      s.awards_prev_90d,
+      s.value_usd_last_90d,
+      s.value_usd_prev_90d,
+      s.most_recent_award_date
+    FROM supplier_capability_summary s
+    WHERE s.awards_prev_90d >= ${minPrev}
+      AND ((s.awards_last_90d::float / NULLIF(s.awards_prev_90d, 0)::float) - 1) <= ${velMax}
+      ${countryFilter}
+      ${categoryFilter}
+    ORDER BY ((s.awards_last_90d::float / NULLIF(s.awards_prev_90d, 0)::float) - 1) ASC,
+             s.awards_prev_90d DESC
+    LIMIT ${limit}
+  `);
+
+  const rows = result.rows as Array<Record<string, unknown>>;
+  if (rows.length === 0) return [];
+
+  // Optionally JOIN news events. Single batch query keyed by
+  // external_supplier_id rather than N+1 per row.
+  const supplierIds = rows.map((r) => String(r.supplier_id));
+  const newsBySupplier = new Map<string, DistressedSupplier['recentNewsEvents']>();
+  if (includeNews) {
+    const newsResult = await db.execute(sql`
+      SELECT
+        external_supplier_id,
+        event_type,
+        event_date,
+        summary,
+        relevance_score,
+        source_url
+      FROM entity_news_events
+      WHERE external_supplier_id = ANY(${supplierIds}::uuid[])
+        AND event_date >= CURRENT_DATE - INTERVAL '90 days'
+        AND (relevance_score IS NULL OR relevance_score >= 0.5)
+      ORDER BY event_date DESC
+    `);
+    for (const n of newsResult.rows as Array<Record<string, unknown>>) {
+      const sid = String(n.external_supplier_id);
+      const list = newsBySupplier.get(sid) ?? [];
+      list.push({
+        eventType: String(n.event_type),
+        eventDate:
+          n.event_date instanceof Date
+            ? n.event_date.toISOString().slice(0, 10)
+            : String(n.event_date),
+        summary: String(n.summary),
+        relevanceScore:
+          n.relevance_score != null ? Number.parseFloat(String(n.relevance_score)) : null,
+        sourceUrl: n.source_url == null ? null : String(n.source_url),
+      });
+      newsBySupplier.set(sid, list);
+    }
+  }
+
+  return rows.map((r) => {
+    const last90 = Number(r.awards_last_90d);
+    const prev90 = Number(r.awards_prev_90d);
+    const velocityChangePct = prev90 > 0 ? (last90 / prev90 - 1) : 0;
+    const reasons: string[] = [];
+    reasons.push(
+      `Awards down ${Math.abs(velocityChangePct * 100).toFixed(0)}% in last 90 days ` +
+        `(${last90} vs ${prev90} prior)`,
+    );
+    const sid = String(r.supplier_id);
+    const events = newsBySupplier.get(sid) ?? [];
+    for (const e of events.slice(0, 3)) {
+      reasons.push(`${e.eventType.replace(/_/g, ' ')} ${e.eventDate}`);
+    }
+    return {
+      supplierId: sid,
+      organisationName: String(r.organisation_name),
+      country: String(r.country),
+      awardsLast90d: last90,
+      awardsPrev90d: prev90,
+      velocityChangePct,
+      valueUsdLast90d:
+        r.value_usd_last_90d != null
+          ? Number.parseFloat(String(r.value_usd_last_90d))
+          : null,
+      valueUsdPrev90d:
+        r.value_usd_prev_90d != null
+          ? Number.parseFloat(String(r.value_usd_prev_90d))
+          : null,
+      mostRecentAwardDate:
+        r.most_recent_award_date instanceof Date
+          ? r.most_recent_award_date.toISOString().slice(0, 10)
+          : String(r.most_recent_award_date),
+      recentNewsEvents: events,
+      distressReasons: reasons,
+    };
+  });
+}
+
+/**
+ * Map a categoryTag to its supplier_capability_summary count column +
+ * filter "supplier has at least 1 award in this category". Keeping
+ * this as a tiny helper rather than a dynamic-column lookup so the
+ * SQL injection surface is zero.
+ */
+function categoryColumnFilter(categoryTag: string) {
+  switch (categoryTag) {
+    case 'petroleum-fuels':
+      return sql`AND s.petroleum_awards > 0`;
+    case 'crude-oil':
+      return sql`AND s.crude_awards > 0`;
+    case 'diesel':
+      return sql`AND s.diesel_awards > 0`;
+    case 'gasoline':
+      return sql`AND s.gasoline_awards > 0`;
+    case 'jet-fuel':
+    case 'aviation-fuels':
+      return sql`AND s.jet_awards > 0`;
+    case 'lpg':
+      return sql`AND s.lpg_awards > 0`;
+    case 'marine-bunker':
+      return sql`AND s.marine_bunker_awards > 0`;
+    case 'food-commodities':
+      return sql`AND s.food_awards > 0`;
+    case 'vehicles':
+      return sql`AND s.vehicle_awards > 0`;
+    default:
+      return sql``;
+  }
+}
+
+export interface EntityNewsEventRow {
+  id: string;
+  knownEntityId: string | null;
+  externalSupplierId: string | null;
+  sourceEntityName: string;
+  sourceEntityCountry: string | null;
+  eventType: string;
+  eventDate: string;
+  summary: string;
+  source: string;
+  sourceUrl: string | null;
+  relevanceScore: number | null;
+  ingestedAt: string;
+}
+
+/**
+ * News events for a single entity, resolved by either the
+ * known_entities slug or a free-text fuzzy-name match. Powers
+ * /api/intelligence/entity-news/[entitySlug].
+ *
+ * v1 strategy:
+ *   - If `entitySlug` matches a known_entities row → query by
+ *     known_entity_id.
+ *   - Otherwise fall back to source_entity_name trigram match
+ *     (gin_trgm_ops index on the column).
+ *
+ * Returns events ordered by event_date DESC. Filters to
+ * relevance_score >= 0.5 OR NULL by default — set
+ * `includeNoise=true` to override (useful for debugging extraction
+ * quality).
+ */
+export async function getEntityNewsEvents(filters: {
+  entitySlugOrName: string;
+  /** Lookback window in days. Default 365. */
+  daysBack?: number;
+  includeNoise?: boolean;
+  limit?: number;
+}): Promise<EntityNewsEventRow[]> {
+  const daysBack = filters.daysBack ?? 365;
+  const limit = Math.min(filters.limit ?? 50, 200);
+  const noiseFilter = filters.includeNoise
+    ? sql``
+    : sql`AND (relevance_score IS NULL OR relevance_score >= 0.5)`;
+
+  // Resolve slug → known_entity_id when possible.
+  const entityRow = await db
+    .select({ id: knownEntities.id })
+    .from(knownEntities)
+    .where(eq(knownEntities.slug, filters.entitySlugOrName))
+    .limit(1);
+
+  let scopeFilter;
+  if (entityRow.length > 0) {
+    scopeFilter = sql`known_entity_id = ${entityRow[0]!.id}::uuid`;
+  } else {
+    // Fuzzy-name fallback. similarity > 0.4 = lenient enough to catch
+    // typical scrape-vs-source name drift without flooding noise.
+    scopeFilter = sql`similarity(source_entity_name, ${filters.entitySlugOrName}) > 0.4`;
+  }
+
+  const result = await db.execute(sql`
+    SELECT
+      id, known_entity_id, external_supplier_id,
+      source_entity_name, source_entity_country,
+      event_type, event_date, summary, source, source_url,
+      relevance_score, ingested_at
+    FROM entity_news_events
+    WHERE ${scopeFilter}
+      AND event_date >= CURRENT_DATE - ${daysBack}::int
+      ${noiseFilter}
+    ORDER BY event_date DESC, ingested_at DESC
+    LIMIT ${limit}
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    id: String(r.id),
+    knownEntityId: r.known_entity_id == null ? null : String(r.known_entity_id),
+    externalSupplierId:
+      r.external_supplier_id == null ? null : String(r.external_supplier_id),
+    sourceEntityName: String(r.source_entity_name),
+    sourceEntityCountry:
+      r.source_entity_country == null ? null : String(r.source_entity_country),
+    eventType: String(r.event_type),
+    eventDate:
+      r.event_date instanceof Date
+        ? r.event_date.toISOString().slice(0, 10)
+        : String(r.event_date),
+    summary: String(r.summary),
+    source: String(r.source),
+    sourceUrl: r.source_url == null ? null : String(r.source_url),
+    relevanceScore:
+      r.relevance_score != null ? Number.parseFloat(String(r.relevance_score)) : null,
+    ingestedAt:
+      r.ingested_at instanceof Date
+        ? r.ingested_at.toISOString()
+        : String(r.ingested_at),
+  }));
+}
