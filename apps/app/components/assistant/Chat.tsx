@@ -303,6 +303,9 @@ export function Chat({
 
   return (
     <div className="flex h-full flex-col">
+      {messages.length > 0 && (
+        <ChatToolbar messages={messages} threadId={threadId} />
+      )}
       <div ref={scrollerRef} className="flex-1 overflow-y-auto px-4 py-4">
         {hydrating && messages.length === 0 && (
           <div className="mx-auto max-w-lg py-16 text-center text-sm text-[color:var(--color-muted-foreground)]">
@@ -317,7 +320,7 @@ export function Chat({
             }}
           />
         )}
-        <div className="mx-auto flex max-w-2xl flex-col gap-4">
+        <div className="mx-auto flex max-w-5xl flex-col gap-4">
           {messages.map((m) => (
             <MessageView key={m.id} message={m} threadId={threadId} />
           ))}
@@ -329,7 +332,7 @@ export function Chat({
         </div>
       </div>
       <div className="border-t border-[color:var(--color-border)] bg-[color:var(--color-background)] p-3">
-        <div className="mx-auto max-w-2xl">
+        <div className="mx-auto max-w-5xl">
           <textarea
             ref={textareaRef}
             value={input}
@@ -745,4 +748,153 @@ function EmptyStatePrompts({ onPick }: { onPick: (text: string) => void }) {
       </div>
     </div>
   );
+}
+
+// ─── Export ─────────────────────────────────────────────────────────────
+
+/**
+ * Tiny header toolbar with Copy + Download. Lets the user grab the
+ * full transcript (text + tool calls + tool results) as Markdown so
+ * they can paste it into a new chat / GitHub issue / wherever for
+ * follow-up.
+ */
+function ChatToolbar({
+  messages,
+  threadId,
+}: {
+  messages: RenderedMessage[];
+  threadId: string | undefined;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const onCopy = async () => {
+    const md = formatChatAsMarkdown(messages, threadId);
+    try {
+      await navigator.clipboard.writeText(md);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Fallback for browsers without clipboard API permission — open
+      // the raw text in a new window so the user can copy manually.
+      const w = window.open('', '_blank');
+      if (w) {
+        w.document.title = 'procur chat export';
+        const pre = w.document.createElement('pre');
+        pre.textContent = md;
+        pre.style.whiteSpace = 'pre-wrap';
+        pre.style.padding = '16px';
+        pre.style.fontFamily = 'ui-monospace, monospace';
+        w.document.body.appendChild(pre);
+      }
+    }
+  };
+
+  const onDownload = () => {
+    const md = formatChatAsMarkdown(messages, threadId);
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const slug = threadId ? threadId.slice(0, 8) : 'untitled';
+    const date = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `procur-chat-${date}-${slug}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="flex items-center justify-end gap-1 border-b border-[color:var(--color-border)] bg-[color:var(--color-background)] px-3 py-1.5">
+      <button
+        type="button"
+        onClick={() => void onCopy()}
+        title="Copy the full transcript (text + tool calls + results) as Markdown"
+        className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-[11px] text-[color:var(--color-muted-foreground)] hover:border-[color:var(--color-foreground)] hover:text-[color:var(--color-foreground)]"
+      >
+        {copied ? '✓ Copied' : 'Copy as Markdown'}
+      </button>
+      <button
+        type="button"
+        onClick={onDownload}
+        title="Download the transcript as a .md file"
+        className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-[11px] text-[color:var(--color-muted-foreground)] hover:border-[color:var(--color-foreground)] hover:text-[color:var(--color-foreground)]"
+      >
+        Download
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Render a chat as Markdown — preserves user/assistant separation,
+ * inlines every tool call with input + result (or error) so the
+ * recipient can see exactly what the assistant tried and what came
+ * back. This is the canonical paste-back format for "the assistant
+ * did X and I want help refining" style hand-offs.
+ */
+function formatChatAsMarkdown(
+  messages: RenderedMessage[],
+  threadId: string | undefined,
+): string {
+  const lines: string[] = [];
+  lines.push(`# procur assistant chat`);
+  lines.push('');
+  lines.push(`- exported: ${new Date().toISOString()}`);
+  if (threadId) lines.push(`- thread: \`${threadId}\``);
+  lines.push(`- messages: ${messages.length}`);
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+
+  for (const m of messages) {
+    if (m.kind === 'user') {
+      lines.push(`## You`);
+      lines.push('');
+      lines.push(m.text || '_(empty)_');
+      lines.push('');
+      continue;
+    }
+
+    lines.push(`## Assistant`);
+    lines.push('');
+    for (const t of m.toolUses) {
+      lines.push(`### Tool: \`${t.name}\``);
+      lines.push('');
+      lines.push('**Input**');
+      lines.push('```json');
+      lines.push(safeStringify(t.input));
+      lines.push('```');
+      if (t.result) {
+        if (t.result.isError) {
+          lines.push('**Error**');
+          lines.push('```json');
+          lines.push(safeStringify(t.result.output));
+          lines.push('```');
+        } else {
+          lines.push('**Result**');
+          lines.push('```json');
+          lines.push(safeStringify(t.result.output));
+          lines.push('```');
+        }
+      } else {
+        lines.push('_(no result yet)_');
+      }
+      lines.push('');
+    }
+    if (m.text) {
+      lines.push(m.text);
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
