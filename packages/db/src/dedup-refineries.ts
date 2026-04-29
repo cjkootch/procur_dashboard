@@ -273,12 +273,23 @@ async function mergePair(
   // To unblock atomic merges we'd need to switch this script's
   // db client to neon-serverless's WebSocket driver (which does
   // support transactions) — overkill for a one-shot tool.
-  await db.execute(sql`
-    UPDATE entity_news_events
-    SET known_entity_id = ${canonical.id}::uuid,
-        updated_at = NOW()
-    WHERE known_entity_id = ${dup.id}::uuid
-  `);
+  //
+  // entity_news_events is from migration 0048 (Layer 3 distress
+  // intel foundation, PR #246). On a DB that hasn't run that
+  // migration the table doesn't exist; we tolerate that and skip
+  // the retarget so dedup still works on pre-Layer-3 schemas.
+  try {
+    await db.execute(sql`
+      UPDATE entity_news_events
+      SET known_entity_id = ${canonical.id}::uuid,
+          updated_at = NOW()
+      WHERE known_entity_id = ${dup.id}::uuid
+    `);
+  } catch (err) {
+    if (!isUndefinedTable(err)) throw err;
+    // Table doesn't exist — nothing to retarget. Continue with the
+    // merge; the canonical/dup are still ready to consolidate.
+  }
 
   await db.execute(sql`
     UPDATE known_entities
@@ -348,6 +359,20 @@ function trigrams(s: string): Set<string> {
     out.add(padded.slice(i, i + 3));
   }
   return out;
+}
+
+/**
+ * Postgres error code 42P01 = undefined_table. Both
+ * @neondatabase/serverless and pg surface this on the `code`
+ * field of the rejection.
+ */
+function isUndefinedTable(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code?: string }).code === '42P01'
+  );
 }
 
 function unique<T>(xs: T[]): T[] {
