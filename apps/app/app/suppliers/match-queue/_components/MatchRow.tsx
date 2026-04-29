@@ -35,6 +35,7 @@ const SIGNAL_BADGE: Record<string, { label: string; cls: string }> = {
 
 export function MatchRow(props: MatchRowProps) {
   const [optimisticStatus, setOptimisticStatus] = useState(props.status);
+  const [pushError, setPushError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
   const badge =
@@ -43,7 +44,7 @@ export function MatchRow(props: MatchRowProps) {
       cls: 'border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30 text-[color:var(--color-muted-foreground)]',
     };
 
-  const update = (status: 'dismissed' | 'pushed-to-vex' | 'actioned') => {
+  const update = (status: 'dismissed' | 'actioned') => {
     setOptimisticStatus(status);
     startTransition(async () => {
       await fetch(`/api/match-queue/${props.id}`, {
@@ -51,6 +52,32 @@ export function MatchRow(props: MatchRowProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
+      router.refresh();
+    });
+  };
+
+  const pushToVex = () => {
+    setPushError(null);
+    setOptimisticStatus('pushed-to-vex');
+    startTransition(async () => {
+      const res = await fetch(`/api/match-queue/${props.id}/push-to-vex`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          message?: string;
+          error?: string;
+        };
+        setOptimisticStatus('open');
+        setPushError(body.message ?? body.error ?? `push failed (${res.status})`);
+        return;
+      }
+      const body = (await res.json()) as { vexRecordUrl?: string };
+      if (body.vexRecordUrl && typeof window !== 'undefined') {
+        window.open(body.vexRecordUrl, '_blank', 'noopener,noreferrer');
+      }
       router.refresh();
     });
   };
@@ -89,32 +116,37 @@ export function MatchRow(props: MatchRowProps) {
         <span className="ml-2 text-[color:var(--color-muted-foreground)]">{props.rationale}</span>
         <span className="ml-2 text-[10px] text-[color:var(--color-muted-foreground)]">{props.observedAt}</span>
       </div>
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => update('pushed-to-vex')}
-          title="Mark this lead as pushed to vex (use chat to actually push)"
-          className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] hover:border-[color:var(--color-foreground)] disabled:opacity-40"
-        >
-          Push to vex
-        </button>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => update('actioned')}
-          className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] hover:border-[color:var(--color-foreground)] disabled:opacity-40"
-        >
-          Actioned
-        </button>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => update('dismissed')}
-          className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] text-[color:var(--color-muted-foreground)] hover:border-[color:var(--color-foreground)] disabled:opacity-40"
-        >
-          Dismiss
-        </button>
+      <div className="flex flex-col items-end gap-1">
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            disabled={pending}
+            onClick={pushToVex}
+            title="Push this lead to vex CRM with full procur commercial context"
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-foreground)] bg-[color:var(--color-foreground)] px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-background)] hover:opacity-90 disabled:opacity-40"
+          >
+            Push to vex
+          </button>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => update('actioned')}
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] hover:border-[color:var(--color-foreground)] disabled:opacity-40"
+          >
+            Actioned
+          </button>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => update('dismissed')}
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] text-[color:var(--color-muted-foreground)] hover:border-[color:var(--color-foreground)] disabled:opacity-40"
+          >
+            Dismiss
+          </button>
+        </div>
+        {pushError && (
+          <span className="text-[10px] text-red-700">{pushError}</span>
+        )}
       </div>
     </li>
   );
