@@ -339,8 +339,14 @@ export async function ingestAisStream(opts: {
   }, FLUSH_EVERY_MS);
 
   ws.addEventListener('open', () => {
+    // `APIKey` (canonical capitalisation per AISStream's docs +
+    // Go SDK) — the JSON field is case-insensitive in their server
+    // implementation today, but the documented spelling is the
+    // safer baseline. Earlier versions of this worker shipped
+    // `Apikey` which silently worked; if a future server change
+    // tightens parsing, the documented form survives.
     const sub = {
-      Apikey: apiKey,
+      APIKey: apiKey,
       BoundingBoxes: bboxes,
       // Tanker-only — keeps the stream tractable. AISStream filter
       // syntax doesn't support ship_type directly, so the static-data
