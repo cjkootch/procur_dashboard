@@ -198,6 +198,18 @@ function findDupPairs(
         if (d > distanceKm) continue;
         const sim = trigramSimilarity(normaliseName(a.name), normaliseName(b.name));
         if (sim < nameSim) continue;
+        // Both-curated guard. Two analyst-curated rows at the same
+        // coords aren't a dup — they're two separate businesses
+        // intentionally entered at the same cluster coordinates
+        // (e.g. BPCL Mumbai and HPCL Mumbai both sit in the Mahul
+        // refinery complex but are operated by different state
+        // companies). The curated-row author had reason to keep
+        // them distinct; auto-merging would erase a real signal.
+        // Cross-source pairs (curated×osm, osm×ft, etc.) still
+        // merge — those are the genuine ingest-time dups.
+        if (a.slug.startsWith('curated-') && b.slug.startsWith('curated-')) {
+          continue;
+        }
         const { canonical, dup } = pickCanonical(a, b);
         pairs.push({ canonical, dup, distanceKm: d, similarity: sim });
       }
@@ -249,31 +261,39 @@ async function mergePair(
   };
   const mergedNotes = mergeNotes(canonical.notes, dup.notes, dup.slug);
 
-  await db.transaction(async (tx) => {
-    // Retarget any entity_news_events the dup owned. ON DELETE
-    // SET NULL would otherwise drop the link.
-    await tx.execute(sql`
-      UPDATE entity_news_events
-      SET known_entity_id = ${canonical.id}::uuid,
-          updated_at = NOW()
-      WHERE known_entity_id = ${dup.id}::uuid
-    `);
+  // Sequential execute() rather than db.transaction() — Neon's HTTP
+  // driver doesn't support transactions. Order matters: retarget
+  // FK references BEFORE deleting the dup so ON DELETE SET NULL
+  // can't null the news-event link mid-flight. Worst-case partial
+  // failure (e.g. UPDATE merged metadata succeeds but DELETE fails):
+  // re-run the script — pickCanonical is deterministic so the same
+  // pair is identified, the array unions are idempotent (already-
+  // merged values just dedup again), and the DELETE retries.
+  //
+  // To unblock atomic merges we'd need to switch this script's
+  // db client to neon-serverless's WebSocket driver (which does
+  // support transactions) — overkill for a one-shot tool.
+  await db.execute(sql`
+    UPDATE entity_news_events
+    SET known_entity_id = ${canonical.id}::uuid,
+        updated_at = NOW()
+    WHERE known_entity_id = ${dup.id}::uuid
+  `);
 
-    await tx.execute(sql`
-      UPDATE known_entities
-      SET aliases = ${mergedAliases}::text[],
-          tags = ${mergedTags}::text[],
-          categories = ${mergedCategories}::text[],
-          metadata = ${JSON.stringify(mergedMetadata)}::jsonb,
-          notes = ${mergedNotes},
-          updated_at = NOW()
-      WHERE id = ${canonical.id}::uuid
-    `);
+  await db.execute(sql`
+    UPDATE known_entities
+    SET aliases = ${mergedAliases}::text[],
+        tags = ${mergedTags}::text[],
+        categories = ${mergedCategories}::text[],
+        metadata = ${JSON.stringify(mergedMetadata)}::jsonb,
+        notes = ${mergedNotes},
+        updated_at = NOW()
+    WHERE id = ${canonical.id}::uuid
+  `);
 
-    await tx.execute(sql`
-      DELETE FROM known_entities WHERE id = ${dup.id}::uuid
-    `);
-  });
+  await db.execute(sql`
+    DELETE FROM known_entities WHERE id = ${dup.id}::uuid
+  `);
 }
 
 function mergeNotes(
