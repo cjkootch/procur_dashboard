@@ -6128,3 +6128,89 @@ export async function getEntityVesselActivity(args: {
     recentVessels: payload?.recentVessels ?? [],
   };
 }
+
+// ===========================================================================
+// Per-buyer-entity pricing rollup
+// ===========================================================================
+
+export interface BuyerEntityPricingProfile {
+  buyerEntityId: string;
+  legalName: string;
+  avgDeltaPct: number | null;
+  medianDeltaPct: number | null;
+  stddevDeltaPct: number | null;
+  sampleSize: number;
+  byCategory: Array<{
+    categoryTag: string;
+    avgDeltaPct: number | null;
+    sampleSize: number;
+  }>;
+}
+
+/**
+ * Pricing rollup for a single buyer entity across every category
+ * they appear in. Used by the vex /buyer-pricing endpoint, which
+ * keys by entity rather than (country × category).
+ *
+ * `buyer_entity_id` here is just `buyer:{COUNTRY}:{slug-name}`
+ * synthesised by /find-buyers — we resolve back to the buyer_name
+ * portion to query award_price_deltas.
+ *
+ * Honors the same minConfidence + daysBack defaults as
+ * analyzeBuyerPricing for stylistic parity.
+ */
+export async function analyzeBuyerEntityPricing(filters: {
+  buyerName: string;
+  minConfidence?: number;
+  daysBack?: number;
+}): Promise<BuyerEntityPricingProfile> {
+  const minConfidence = filters.minConfidence ?? 0.6;
+  const daysBack = filters.daysBack ?? 1095;
+
+  const aggResult = await db.execute(sql`
+    SELECT
+      COUNT(*)::int                                              AS sample_size,
+      AVG(delta_pct)                                             AS avg_pct,
+      percentile_cont(0.5) WITHIN GROUP (ORDER BY delta_pct)     AS median_pct,
+      stddev_samp(delta_pct)                                     AS stddev_pct
+    FROM award_price_deltas
+    WHERE LOWER(buyer_name) = LOWER(${filters.buyerName})
+      AND overall_confidence >= ${minConfidence}::numeric
+      AND award_date >= CURRENT_DATE - (${daysBack}::int * INTERVAL '1 day')
+      AND delta_pct IS NOT NULL;
+  `);
+  const agg = (aggResult.rows as Array<Record<string, unknown>>)[0] ?? {};
+
+  const catResult = await db.execute(sql`
+    SELECT
+      tag                                                        AS category_tag,
+      COUNT(*)::int                                              AS sample_size,
+      AVG(delta_pct)                                             AS avg_pct
+    FROM award_price_deltas, unnest(category_tags) AS tag
+    WHERE LOWER(buyer_name) = LOWER(${filters.buyerName})
+      AND overall_confidence >= ${minConfidence}::numeric
+      AND award_date >= CURRENT_DATE - (${daysBack}::int * INTERVAL '1 day')
+      AND delta_pct IS NOT NULL
+    GROUP BY tag
+    ORDER BY COUNT(*) DESC;
+  `);
+  const byCategory = (catResult.rows as Array<Record<string, unknown>>).map((r) => ({
+    categoryTag: String(r.category_tag),
+    avgDeltaPct:
+      r.avg_pct != null ? Number.parseFloat(String(r.avg_pct)) : null,
+    sampleSize: Number(r.sample_size ?? 0),
+  }));
+
+  return {
+    buyerEntityId: `buyer:${filters.buyerName.toLowerCase().replace(/\s+/g, '-')}`,
+    legalName: filters.buyerName,
+    avgDeltaPct:
+      agg.avg_pct != null ? Number.parseFloat(String(agg.avg_pct)) : null,
+    medianDeltaPct:
+      agg.median_pct != null ? Number.parseFloat(String(agg.median_pct)) : null,
+    stddevDeltaPct:
+      agg.stddev_pct != null ? Number.parseFloat(String(agg.stddev_pct)) : null,
+    sampleSize: Number(agg.sample_size ?? 0),
+    byCategory,
+  };
+}

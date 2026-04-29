@@ -8,23 +8,39 @@ export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/intelligence/cargoes
- *   ?portSlug=ras-lanuf&country=LY&portType=crude-loading&daysBack=30&limit=50
+ *   ?destination_country=US
+ *   &destination_entity_slug=...
+ *   &origin_country=...
+ *   &vessel_category=tanker
+ *   &days_lookback=30
+ *   &min_confidence=weak
  *
- * Returns recent vessel port calls — the closest data we currently
- * have to an inferred cargo timeline. True cargo inference (linking
- * loading-port calls to discharge-port calls into a single cargo
- * entity) is a follow-up; today's response is one row per port call
- * and the `inferred=false` flag in the envelope tells callers so
- * downstream tooling can frame results accordingly.
+ * Vex's contract names this "cargoes" but procur's underlying data
+ * is AIS-derived port calls — load/discharge linkage isn't
+ * inferred yet. We surface every port call as a proto-cargo with
+ * confidence='weak' so vex sees structured data and can wire its
+ * UI; once cargo-trip inference lands (separate roadmap item) the
+ * confidence rises and supplier/buyer attribution fills in.
+ *
+ * Field provenance (today):
+ *   - cargoId      : `${mmsi}:${portSlug}` (synthesised; survives across
+ *                    runs because (mmsi, port_slug) is the natural key
+ *                    of one call cluster)
+ *   - supplierName : null — we don't know who owned the cargo
+ *   - buyerCountry : portCountry (proxy: refining at port = buyer)
+ *   - commodity    : null — not derivable from AIS alone
+ *   - quantityMt   : null — same
+ *   - arrivedAt    : the cluster's first-seen timestamp
+ *   - vesselName   : from vessels.name when we have static data
+ *   - confidence   : "weak" for all rows (proto-cargo, not inferred)
  */
 const QuerySchema = z.object({
-  portSlug: z.string().optional(),
-  country: z.string().length(2).optional(),
-  portType: z
-    .enum(['crude-loading', 'refinery', 'transshipment', 'mixed'])
-    .optional(),
-  daysBack: z.coerce.number().int().min(1).max(365).optional(),
-  limit: z.coerce.number().int().min(1).max(500).optional(),
+  destination_country: z.string().length(2).optional(),
+  destination_entity_slug: z.string().optional(),
+  origin_country: z.string().length(2).optional(),
+  vessel_category: z.string().optional(),
+  days_lookback: z.coerce.number().int().min(1).max(365).optional(),
+  min_confidence: z.enum(['weak', 'medium', 'strong']).optional(),
 });
 
 export async function GET(req: Request): Promise<Response> {
@@ -33,11 +49,13 @@ export async function GET(req: Request): Promise<Response> {
 
   const url = new URL(req.url);
   const parsed = QuerySchema.safeParse({
-    portSlug: url.searchParams.get('portSlug') ?? undefined,
-    country: url.searchParams.get('country') ?? undefined,
-    portType: url.searchParams.get('portType') ?? undefined,
-    daysBack: url.searchParams.get('daysBack') ?? undefined,
-    limit: url.searchParams.get('limit') ?? undefined,
+    destination_country: url.searchParams.get('destination_country') ?? undefined,
+    destination_entity_slug:
+      url.searchParams.get('destination_entity_slug') ?? undefined,
+    origin_country: url.searchParams.get('origin_country') ?? undefined,
+    vessel_category: url.searchParams.get('vessel_category') ?? undefined,
+    days_lookback: url.searchParams.get('days_lookback') ?? undefined,
+    min_confidence: url.searchParams.get('min_confidence') ?? undefined,
   });
   if (!parsed.success) {
     return NextResponse.json(
@@ -46,12 +64,32 @@ export async function GET(req: Request): Promise<Response> {
     );
   }
 
-  const portCalls = await findRecentPortCalls(parsed.data);
-  return NextResponse.json({
-    inferred: false,
-    note:
-      'Returning AIS-derived port calls one row per vessel-port event. ' +
-      'Cargo inference (load↔discharge linkage) is a follow-up.',
-    portCalls,
+  // Today's coverage: map destination_country directly. Other
+  // filters (origin_country, destination_entity_slug, vessel_category,
+  // min_confidence) require cargo-trip inference and are accepted
+  // for forward-compat but ignored.
+  // min_confidence="medium"/"strong" naturally returns empty since
+  // every row we emit is "weak" until inference ships.
+  if (parsed.data.min_confidence && parsed.data.min_confidence !== 'weak') {
+    return NextResponse.json({ cargoes: [], totalCount: 0 });
+  }
+
+  const calls = await findRecentPortCalls({
+    country: parsed.data.destination_country,
+    daysBack: parsed.data.days_lookback ?? 30,
+    limit: 200,
   });
+
+  const cargoes = calls.map((c) => ({
+    cargoId: `${c.mmsi}:${c.portSlug}`,
+    supplierName: null as string | null,
+    buyerCountry: c.portCountry,
+    commodity: null as string | null,
+    quantityMt: null as number | null,
+    arrivedAt: c.arrivalAt,
+    vesselName: c.vesselName,
+    confidence: 'weak' as const,
+  }));
+
+  return NextResponse.json({ cargoes, totalCount: cargoes.length });
 }
