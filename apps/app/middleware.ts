@@ -6,11 +6,21 @@ const isPublicRoute = createRouteMatcher([
   '/sign-up(.*)',
   '/api/webhooks/(.*)',
   '/api/health',
+  // Root-level liveness probe — used by Fly.io / vex's
+  // /admin/procur/healthcheck to confirm the service is reachable.
+  '/health',
   // Word add-in API: token-authed via Authorization: Bearer header.
   // Clerk session does not exist on these requests (the taskpane runs
   // outside the browser cookie context); each route handler calls
   // authenticateWordAddinRequest() to gate access.
   '/api/word-addin/(.*)',
+  // Intelligence API: token-authed via Authorization: Bearer
+  // ${PROCUR_API_TOKEN}. Called by vex's procur_enrichment agent
+  // (and any future S2S consumer); no Clerk session exists on the
+  // request. Each route handler calls verifyIntelligenceToken() to
+  // gate access — Clerk must let these through unauthenticated so
+  // the bearer check is what actually decides.
+  '/api/intelligence/(.*)',
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
