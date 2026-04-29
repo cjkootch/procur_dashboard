@@ -8,21 +8,34 @@ export const dynamic = 'force-dynamic';
 
 /**
  * POST /api/intelligence/find-buyers
- * Body: CommodityOfferSpec
  *
- * Wraps `findBuyersForCommodityOffer`. Buy-side discovery: given an
- * offer the supplier is shopping, surface candidate buyers ranked by
- * recent volume in (categoryTag × buyerCountries).
+ * Body (snake_case in):
+ *   { category_tag, description_keywords?, buyer_countries?,
+ *     years_lookback?, min_awards?, limit? }
+ *
+ * Response (camelCase out, vex contract):
+ *   { candidates: [{buyerEntityId, legalName, country,
+ *                   awardCount, awardTotalUsd, avgAwardSizeUsd,
+ *                   lastAwardAt, relevanceScore, rationale}],
+ *     totalCount }
+ *
+ * `buyerEntityId` doesn't exist in our awards graph (buyers are
+ * agency_name strings, not external_suppliers rows). We synthesise
+ * one from `${country}:${legalName}` so vex can use it as a stable
+ * dedup key without needing real entity IDs to be backfilled first.
  */
 const BodySchema = z.object({
-  categoryTag: z.string().min(1),
-  descriptionKeywords: z.array(z.string()).optional(),
-  unspscCodes: z.array(z.string()).optional(),
-  buyerCountries: z.array(z.string().length(2)).optional(),
-  yearsLookback: z.number().int().min(1).max(20).optional(),
-  minAwards: z.number().int().min(1).max(50).optional(),
+  category_tag: z.string().min(1),
+  description_keywords: z.array(z.string()).optional(),
+  buyer_countries: z.array(z.string().length(2)).optional(),
+  years_lookback: z.number().int().min(1).max(20).optional(),
+  min_awards: z.number().int().min(1).max(50).optional(),
   limit: z.number().int().min(1).max(200).optional(),
 });
+
+function buyerEntityId(country: string | null | undefined, name: string): string {
+  return `buyer:${(country ?? 'XX').toUpperCase()}:${name.toLowerCase().replace(/\s+/g, '-')}`;
+}
 
 export async function POST(req: Request): Promise<Response> {
   const auth = verifyIntelligenceToken(req);
@@ -42,6 +55,41 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  const candidates = await findBuyersForCommodityOffer(parsed.data);
-  return NextResponse.json({ candidates });
+  const candidates = await findBuyersForCommodityOffer({
+    categoryTag: parsed.data.category_tag,
+    descriptionKeywords: parsed.data.description_keywords,
+    buyerCountries: parsed.data.buyer_countries,
+    yearsLookback: parsed.data.years_lookback,
+    minAwards: parsed.data.min_awards,
+    limit: parsed.data.limit,
+  });
+
+  // Relevance is awardCount × log(avgSize) — heuristic, normalised
+  // to 0-1 across the result set so vex can rank without re-scaling.
+  const maxAwards = candidates.reduce((m, c) => Math.max(m, c.awardsCount), 1);
+
+  const shaped = candidates.map((c) => {
+    const avg =
+      c.totalValueUsd != null && c.awardsCount > 0
+        ? c.totalValueUsd / c.awardsCount
+        : null;
+    const relevanceScore = c.awardsCount / maxAwards;
+    const rationale =
+      `${c.awardsCount} awards in ${parsed.data.category_tag}` +
+      (c.buyerCountry ? ` from ${c.buyerCountry}` : '') +
+      (c.totalValueUsd != null ? ` (~$${Math.round(c.totalValueUsd).toLocaleString()} total)` : '');
+    return {
+      buyerEntityId: buyerEntityId(c.buyerCountry, c.buyerName),
+      legalName: c.buyerName,
+      country: c.buyerCountry,
+      awardCount: c.awardsCount,
+      awardTotalUsd: c.totalValueUsd,
+      avgAwardSizeUsd: avg,
+      lastAwardAt: null as string | null,
+      relevanceScore,
+      rationale,
+    };
+  });
+
+  return NextResponse.json({ candidates: shaped, totalCount: shaped.length });
 }

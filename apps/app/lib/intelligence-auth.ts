@@ -5,20 +5,25 @@ import { timingSafeEqual } from 'node:crypto';
  * Service-to-service bearer token verification for the
  * `/api/intelligence/*` surface.
  *
- * The token lives in `VEX_API_TOKEN` (set on Vercel for the project).
- * Vex sends it as `Authorization: Bearer <token>`. We do a constant-time
- * comparison so token-length leaks aren't observable to a malicious
- * caller.
+ * The token lives in `PROCUR_API_TOKEN` — vex sets the same value on
+ * its own side via `fly secrets set -a vex-api PROCUR_API_TOKEN=...`,
+ * and the procur deployment must carry the same value via
+ * `fly secrets set -a procur-prod PROCUR_API_TOKEN=...`. Vex sends it
+ * as `Authorization: Bearer <token>`. Constant-time comparison so
+ * token-length leaks aren't observable to a malicious caller.
+ *
+ * The reverse direction (procur calling vex) would carry a separate
+ * `VEX_API_TOKEN`; that's a future slice and not used here.
  *
  * Returns `null` when the token is valid → caller proceeds with the
  * handler. Returns a `NextResponse` (401 / 500) when invalid → caller
  * returns it directly.
  */
 export function verifyIntelligenceToken(req: Request): NextResponse | null {
-  const expected = process.env.VEX_API_TOKEN;
+  const expected = process.env.PROCUR_API_TOKEN;
   if (!expected) {
     return NextResponse.json(
-      { error: 'service_unavailable', detail: 'VEX_API_TOKEN not configured' },
+      { error: 'service_unavailable', detail: 'PROCUR_API_TOKEN not configured' },
       { status: 500 },
     );
   }

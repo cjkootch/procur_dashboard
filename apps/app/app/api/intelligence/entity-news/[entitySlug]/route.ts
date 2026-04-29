@@ -7,25 +7,34 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * GET /api/intelligence/entity-news/[entitySlug]
- *   ?days_back=365&include_noise=false&limit=50
+ * GET /api/intelligence/entity-news/{entitySlug}
+ *   ?days_lookback=30
  *
- * Wraps `getEntityNewsEvents`. Resolves entitySlug against
- * known_entities.slug first; falls back to a trigram fuzzy match on
- * source_entity_name when no slug match.
+ * Vex contract:
+ *   { events: [{id, entitySlug, publishedAt, source, url, headline,
+ *               summary, sentiment, tags[]}] }
  *
- * The backing entity_news_events table exists as of migration 0048
- * but stays empty until ingest workers ship (SEC EDGAR / PACER / RSS
- * — separate PRs). Until then this endpoint returns
- * `{ events: [], note: '...' }`.
+ * Resolves entitySlug against known_entities.slug first; falls back
+ * to a trigram fuzzy-match on source_entity_name when no slug match.
+ *
+ * Field mapping from our entity_news_events row:
+ *   - publishedAt: from event_date (YYYY-MM-DD; promote to ISO at
+ *                  midnight UTC since date is the only granularity
+ *                  we capture)
+ *   - source     : from source ('sec-edgar' | 'recap-bankruptcy' |
+ *                  'rss-trade-press')
+ *   - url        : from source_url
+ *   - headline   : derived — first 80 chars of summary or, if the
+ *                  summary is short enough to be a headline already,
+ *                  the whole thing
+ *   - summary    : from summary
+ *   - sentiment  : null today; LLM extraction step doesn't surface
+ *                  sentiment yet (extract-distress-signal returns
+ *                  hasDistressSignal but not polarity). Reserved.
+ *   - tags       : derived from event_type
  */
 const QuerySchema = z.object({
-  days_back: z.coerce.number().int().min(1).max(3650).optional(),
-  include_noise: z
-    .enum(['true', 'false'])
-    .optional()
-    .transform((v) => (v == null ? undefined : v === 'true')),
-  limit: z.coerce.number().int().min(1).max(200).optional(),
+  days_lookback: z.coerce.number().int().min(1).max(3650).optional(),
 });
 
 export async function GET(
@@ -38,9 +47,7 @@ export async function GET(
   const { entitySlug } = await params;
   const url = new URL(req.url);
   const parsed = QuerySchema.safeParse({
-    days_back: url.searchParams.get('days_back') ?? undefined,
-    include_noise: url.searchParams.get('include_noise') ?? undefined,
-    limit: url.searchParams.get('limit') ?? undefined,
+    days_lookback: url.searchParams.get('days_lookback') ?? undefined,
   });
   if (!parsed.success) {
     return NextResponse.json(
@@ -49,21 +56,28 @@ export async function GET(
     );
   }
 
+  const decoded = decodeURIComponent(entitySlug);
   const events = await getEntityNewsEvents({
-    entitySlugOrName: decodeURIComponent(entitySlug),
-    daysBack: parsed.data.days_back,
-    includeNoise: parsed.data.include_noise,
-    limit: parsed.data.limit,
+    entitySlugOrName: decoded,
+    daysBack: parsed.data.days_lookback,
   });
 
-  return NextResponse.json({
-    entitySlugOrName: decodeURIComponent(entitySlug),
-    events,
-    note:
-      events.length === 0
-        ? 'No events. entity_news_events stays empty until ingest workers ' +
-          '(SEC EDGAR / PACER / trade-press RSS) ship — see ' +
-          'docs/intelligence-layers-brief.md §6.4.'
-        : undefined,
+  const shaped = events.map((e) => {
+    const headline =
+      e.summary.length <= 80 ? e.summary : `${e.summary.slice(0, 77).trimEnd()}...`;
+    const tags = [e.eventType.replace(/^sec_filing_/, '')];
+    return {
+      id: e.id,
+      entitySlug: decoded,
+      publishedAt: `${e.eventDate}T00:00:00Z`,
+      source: e.source,
+      url: e.sourceUrl,
+      headline,
+      summary: e.summary,
+      sentiment: null as 'positive' | 'neutral' | 'negative' | null,
+      tags,
+    };
   });
+
+  return NextResponse.json({ events: shaped });
 }

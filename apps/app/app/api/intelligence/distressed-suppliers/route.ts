@@ -9,18 +9,25 @@ export const dynamic = 'force-dynamic';
 /**
  * GET /api/intelligence/distressed-suppliers
  *   ?category_tag=diesel
- *   &countries=DO,JM,TT
+ *   &countries=CH,DE
  *   &min_prev_awards=3
  *   &velocity_change_max=-0.5
  *   &include_news_events=true
  *   &limit=25
  *
- * Wraps `findDistressedSuppliers`. Velocity columns come from the
- * supplier_capability_summary MV (refreshed nightly). The news-event
- * JOIN reads from entity_news_events — the table exists as of
- * migration 0048 but stays empty until ingest workers ship
- * (SEC EDGAR / PACER / RSS — separate PRs). Until then the
- * recentNewsEvents arrays are empty.
+ * Vex contract:
+ *   { suppliers: [{supplierEntityId, legalName, country,
+ *                  distressSignal: {kind, detail, observedAt},
+ *                  awardVelocityChangePct}],
+ *     totalCount }
+ *
+ * Velocity comes from supplier_capability_summary (rolling 90/90
+ * windows from migration 0047). distressSignal is sourced from the
+ * supplier's most-recent entity_news_events row when available;
+ * when no event exists we synthesise a velocity-only signal so vex
+ * sees structured data (kind: 'velocity_drop', detail: the
+ * distressReasons[0] from the underlying query, observedAt:
+ * mostRecentAwardDate).
  */
 const QuerySchema = z.object({
   category_tag: z.string().optional(),
@@ -68,5 +75,27 @@ export async function GET(req: Request): Promise<Response> {
     limit: parsed.data.limit,
   });
 
-  return NextResponse.json({ suppliers });
+  const shaped = suppliers.map((s) => {
+    const news = s.recentNewsEvents[0] ?? null;
+    const distressSignal = news
+      ? {
+          kind: news.eventType,
+          detail: news.summary,
+          observedAt: news.eventDate,
+        }
+      : {
+          kind: 'velocity_drop',
+          detail: s.distressReasons[0] ?? 'award velocity dropped',
+          observedAt: s.mostRecentAwardDate,
+        };
+    return {
+      supplierEntityId: s.supplierId,
+      legalName: s.organisationName,
+      country: s.country,
+      distressSignal,
+      awardVelocityChangePct: s.velocityChangePct * 100,
+    };
+  });
+
+  return NextResponse.json({ suppliers: shaped, totalCount: shaped.length });
 }
