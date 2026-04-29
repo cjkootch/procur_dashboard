@@ -1,3 +1,18 @@
+> **IMPLEMENTATION STATUS — refreshed 2026-04-29**
+>
+> **Status: shipped.** Schema, migrations, materialized view, and the three reverse-search assistant tools are live on `main`.
+>
+> - Migrations 0032 (`supplier_graph`), 0033 (`supplier_capability_summary`) shipped as specified.
+> - Materialized view extended in migration 0047 (`supplier_velocity_signals`) — added rolling-window velocity columns (`awards_last_90d`, `awards_prev_90d`, `value_usd_last_90d`, etc.). The brief originally specced this in the intelligence-layers brief §6; the actual sequence shipped it as a discrete migration here.
+> - Schema files: `awards.ts`, `award-awardees.ts`, `external-suppliers.ts`, `supplier-aliases.ts`, `supplier-signals.ts` all live.
+> - Trigram + GIN indexes shipped per spec.
+>
+> **Divergence from brief:** none material. Foundation is implemented as described.
+>
+> The body of this brief below remains accurate as a description of the schema. Read it for design rationale; for current state, query `main` directly.
+>
+> ---
+
 # Supplier Graph + Reverse Search — Claude Code Brief
 
 **Status:** spec, not yet implemented
