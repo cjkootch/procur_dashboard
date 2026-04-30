@@ -7199,6 +7199,10 @@ export type ListEntityNewsFilters = {
   /** Filter to a single entity by slug. Mutually exclusive with
    *  approvedSuppliersOnly. */
   entitySlug?: string;
+  /** Restrict to specific event_type values (e.g. ['press_distress_signal']
+   *  for the counterparty-news panel, ['fuel_market_news'] for the
+   *  fuel-market panel). When omitted, returns all event types. */
+  eventTypes?: string[];
   /** Minimum relevance threshold. The ingest task already drops
    *  <0.4 noise; a default of 0.5 here surfaces the high-signal
    *  half. */
@@ -7253,6 +7257,14 @@ export async function listEntityNews(
       ${
         filters.entitySlug
           ? sql`AND ke.slug = ${filters.entitySlug}`
+          : sql``
+      }
+      ${
+        filters.eventTypes && filters.eventTypes.length > 0
+          ? sql`AND ne.event_type IN (${sql.join(
+              filters.eventTypes.map((t) => sql`${t}`),
+              sql`, `,
+            )})`
           : sql``
       }
     ORDER BY ne.event_date DESC, ne.relevance_score DESC NULLS LAST

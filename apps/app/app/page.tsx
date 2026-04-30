@@ -67,34 +67,46 @@ export default async function BriefPage() {
   // 24h cutoff for "new tenders" — anything published in the last day.
   const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  const [matchQueueItems, recentOpps, counterpartyNews] = await Promise.all([
-    getMatchQueue({ status: 'open', daysBack: 7, limit: 100 }),
-    alertProfile
-      ? listOpportunities({
-          // OpportunityFilters takes single values, so pick the first
-          // jurisdiction/category from the profile; client-side filter
-          // below tightens the rest. Approximate but ships v1.
-          jurisdiction: alertProfile.jurisdictions?.[0],
-          category: alertProfile.categories?.[0],
-          publishedAfter: dayAgo,
-          scope: 'open',
-          sort: 'recent',
-          perPage: 25,
-        })
-      : Promise.resolve({ rows: [], total: 0 }),
-    // Counterparty news — last 7d, only on approved suppliers, only
-    // medium+ relevance. Empty until the cron has run a few cycles
-    // and the user has at least one approved supplier; the panel
-    // renders nothing in that case rather than showing a stale
-    // placeholder.
-    listEntityNews({
-      approvedSuppliersOnly: true,
-      companyId: company.id,
-      minRelevance: 0.5,
-      daysBack: 7,
-      limit: 12,
-    }).catch(() => [] as EntityNewsRow[]),
-  ]);
+  const [matchQueueItems, recentOpps, counterpartyNews, fuelMarketNews] =
+    await Promise.all([
+      getMatchQueue({ status: 'open', daysBack: 7, limit: 100 }),
+      alertProfile
+        ? listOpportunities({
+            // OpportunityFilters takes single values, so pick the first
+            // jurisdiction/category from the profile; client-side filter
+            // below tightens the rest. Approximate but ships v1.
+            jurisdiction: alertProfile.jurisdictions?.[0],
+            category: alertProfile.categories?.[0],
+            publishedAfter: dayAgo,
+            scope: 'open',
+            sort: 'recent',
+            perPage: 25,
+          })
+        : Promise.resolve({ rows: [], total: 0 }),
+      // Counterparty news — last 7d, only on approved suppliers, only
+      // medium+ relevance. Empty until the cron has run a few cycles
+      // and the user has at least one approved supplier; the panel
+      // renders nothing in that case rather than showing a stale
+      // placeholder.
+      listEntityNews({
+        approvedSuppliersOnly: true,
+        companyId: company.id,
+        eventTypes: ['press_distress_signal'],
+        minRelevance: 0.5,
+        daysBack: 7,
+        limit: 12,
+      }).catch(() => [] as EntityNewsRow[]),
+      // Fuel-market news — last 3d, all entities, eventType=
+      // fuel_market_news. Higher relevance bar (0.6) since this
+      // panel doesn't filter by approval scope and we don't want
+      // the stream to drown the brief.
+      listEntityNews({
+        eventTypes: ['fuel_market_news'],
+        minRelevance: 0.6,
+        daysBack: 3,
+        limit: 8,
+      }).catch(() => [] as EntityNewsRow[]),
+    ]);
 
   // Client-side narrow on the rest of the alert-profile filters
   // (additional jurisdictions/categories beyond the first, plus
@@ -220,8 +232,69 @@ export default async function BriefPage() {
         {counterpartyNews.length > 0 && (
           <CounterpartyNewsPanel news={counterpartyNews} />
         )}
+
+        {fuelMarketNews.length > 0 && (
+          <FuelMarketNewsPanel news={fuelMarketNews} />
+        )}
       </div>
     </AppShell>
+  );
+}
+
+/**
+ * Fuel-market news panel — broader feed than the counterparty one.
+ * Captures Brent moves with named drivers, OPEC+ decisions,
+ * refining margins, freight rate moves, sanctions changes, and
+ * geopolitical events with fuel-market consequences. Items don't
+ * have to mention an approved supplier to surface.
+ *
+ * Sits below the counterparty panel because counterparty news is
+ * higher-leverage when present (it's about deals you're working
+ * RIGHT NOW); fuel-market news is the broader context that helps
+ * sense-check pricing and timing.
+ */
+function FuelMarketNewsPanel({ news }: { news: EntityNewsRow[] }) {
+  return (
+    <section className="mt-6">
+      <header className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          Fuel market
+        </h2>
+        <span className="text-[11px] text-[color:var(--color-muted-foreground)]">
+          Broader market context · last 3 days
+        </span>
+      </header>
+      <ul className="divide-y divide-[color:var(--color-border)] rounded-[var(--radius-lg)] border border-[color:var(--color-border)]">
+        {news.map((n) => (
+          <li key={n.id} className="px-4 py-3">
+            <div className="flex flex-wrap items-baseline gap-2">
+              <span className="inline-flex shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-900">
+                Market
+              </span>
+              <span className="ml-auto text-[11px] text-[color:var(--color-muted-foreground)]">
+                {formatDate(new Date(n.eventDate))} · {n.source}
+              </span>
+            </div>
+            <p className="mt-1 text-sm font-medium">{n.entityName}</p>
+            <p className="mt-1 text-sm text-[color:var(--color-foreground)]/85">
+              {n.summary}
+            </p>
+            {n.sourceUrl && (
+              <div className="mt-1 text-[11px]">
+                <a
+                  href={n.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[color:var(--color-muted-foreground)] underline hover:text-[color:var(--color-foreground)]"
+                >
+                  Read source →
+                </a>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

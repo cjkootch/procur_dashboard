@@ -159,36 +159,76 @@ export async function ingestTradePressRss(opts: {
           continue;
         }
 
-        if (!extracted.hasDistressSignal || extracted.relevanceScore < 0.5) {
+        const isMaterial =
+          (extracted.hasDistressSignal || extracted.isFuelMarketNews) &&
+          extracted.relevanceScore >= 0.5;
+        if (!isMaterial) {
           await sleep(ITEM_THROTTLE_MS);
           continue;
         }
         signalsFound += 1;
 
-        // One row per matched entity. Items with no entities still
-        // get one row using a synthesised source_entity_name (the
-        // article title) so the analyst can backlink later.
-        const entitiesToInsert = extracted.entities.length > 0
-          ? extracted.entities
-          : [{ name: item.title.slice(0, 200), country: null, role: null }];
+        // Distress branch: one row per named entity (existing
+        // behaviour; eventType='press_distress_signal').
+        // Market branch: one row per article (no entity link
+        // required; eventType='fuel_market_news'). The two branches
+        // can both fire on the same article when both flags are
+        // true — the source_doc_id includes the eventType prefix
+        // so they don't collide on the unique index.
+        type Insert = {
+          eventType: 'press_distress_signal' | 'fuel_market_news';
+          sourceEntityName: string;
+          sourceEntityCountry: string | null;
+          entityRole: string | null;
+          sourceDocId: string;
+        };
+        const inserts: Insert[] = [];
 
-        for (const entity of entitiesToInsert) {
-          const sourceDocId = `${feed.slug}:${item.guid}:${slugifyName(entity.name)}`;
+        if (extracted.hasDistressSignal) {
+          const entitiesToInsert = extracted.entities.length > 0
+            ? extracted.entities
+            : [{ name: item.title.slice(0, 200), country: null, role: null }];
+          for (const entity of entitiesToInsert) {
+            inserts.push({
+              eventType: 'press_distress_signal',
+              sourceEntityName: entity.name,
+              sourceEntityCountry: entity.country,
+              entityRole: entity.role,
+              sourceDocId: `${feed.slug}:${item.guid}:${slugifyName(entity.name)}`,
+            });
+          }
+        }
+        if (extracted.isFuelMarketNews && !extracted.hasDistressSignal) {
+          // For pure market news (no distress angle), use the article
+          // title as the "entity name" so the brief panel + chat
+          // tool have something to render. Distress + market dual
+          // hits get the per-entity rows above and skip this branch
+          // to avoid duplication.
+          inserts.push({
+            eventType: 'fuel_market_news',
+            sourceEntityName: item.title.slice(0, 200),
+            sourceEntityCountry: null,
+            entityRole: null,
+            sourceDocId: `${feed.slug}:${item.guid}:fuel-market`,
+          });
+        }
+
+        for (const ins of inserts) {
           if (dryRun) {
             console.log(
-              `  [dry] ${feed.slug} → ${entity.name} (${extracted.distressKeyword ?? 'distress'}, ` +
-                `score=${extracted.relevanceScore.toFixed(2)})`,
+              `  [dry] ${feed.slug} → ${ins.eventType} / ${ins.sourceEntityName} ` +
+                `(score=${extracted.relevanceScore.toFixed(2)})`,
             );
             continue;
           }
           const inserted = await upsertEvent({
-            sourceEntityName: entity.name,
-            sourceEntityCountry: entity.country,
-            eventType: 'press_distress_signal',
+            sourceEntityName: ins.sourceEntityName,
+            sourceEntityCountry: ins.sourceEntityCountry,
+            eventType: ins.eventType,
             eventDate: (item.pubDate ?? new Date().toISOString()).slice(0, 10),
             summary: extracted.summary,
             sourceUrl: item.link,
-            sourceDocId,
+            sourceDocId: ins.sourceDocId,
             relevanceScore: extracted.relevanceScore,
             rawPayload: {
               feed: feed.name,
@@ -196,15 +236,17 @@ export async function ingestTradePressRss(opts: {
               guid: item.guid,
               title: item.title,
               distressKeyword: extracted.distressKeyword,
-              entityRole: entity.role,
+              entityRole: ins.entityRole,
               llmUsage: extracted.usage,
+              hasDistressSignal: extracted.hasDistressSignal,
+              isFuelMarketNews: extracted.isFuelMarketNews,
             },
           });
           if (inserted) {
             hitsInserted += 1;
             console.log(
-              `  ✓ ${feed.slug} → ${entity.name} (${extracted.distressKeyword ?? 'distress'}, ` +
-                `score=${extracted.relevanceScore.toFixed(2)})`,
+              `  ✓ ${feed.slug} → ${ins.eventType} / ${ins.sourceEntityName} ` +
+                `(score=${extracted.relevanceScore.toFixed(2)})`,
             );
           } else {
             hitsSkippedDuplicate += 1;
