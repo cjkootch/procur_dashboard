@@ -37,6 +37,19 @@ export const ExtractDistressSignalOutput = z
           'routine market commentary, price movements without context, ' +
           'or general industry news.',
       ),
+    isFuelMarketNews: z
+      .boolean()
+      .describe(
+        'True iff the article is materially about the petroleum / fuel ' +
+          'trading market — Brent/WTI/refined-spot moves with named ' +
+          'drivers, OPEC+ decisions, refinery margins, freight / shipping ' +
+          'rate moves, sanctions changes affecting supply, geopolitical ' +
+          'events with a clear fuel-market consequence. Even when no ' +
+          'specific tracked counterparty is named — operators want this ' +
+          'context on the brief. False for general industry chatter, ' +
+          'corporate earnings, equity-market reactions without a fuel-' +
+          'specific lens, or off-topic commodity news (gold, ag, etc.).',
+      ),
     distressKeyword: z
       .string()
       .nullable()
@@ -115,29 +128,51 @@ export type ExtractDistressSignalResult = ExtractDistressSignalOutputT & {
   usage: CacheUsage;
 };
 
-const INSTRUCTION = `You read trade-press articles about petroleum, mining, shipping, and metals counterparties and extract distress / motivation signals.
+const INSTRUCTION = `You read trade-press articles about petroleum, fuel trading, refining, shipping, and metals. Tag each article with TWO independent signals.
 
-What counts as a distress signal:
+═══ SIGNAL 1 — hasDistressSignal ═══
+
+True iff the article describes a counterparty-distress event tied to a NAMED company / refinery / port / trading house:
 - Force majeure declarations or supply disruptions
 - Refinery turnarounds, capacity reductions, prolonged outages
 - Surplus / glut / oversupply mentions tied to a specific producer or terminal
 - Bankruptcy filings, restructurings, asset sales
 - Sanctions actions affecting a counterparty
-- Leadership changes at producers/traders (especially commercial / trading roles)
+- Leadership changes at producers / traders (especially commercial / trading roles)
 - Layoffs at producers, refiners, or trading houses
 
-What does NOT count:
+What does NOT count as distress:
 - General market commentary or price movements without an entity-specific event
 - Routine corporate announcements (earnings, dividends) unless they name distress
 - Articles purely about regulators or policy without a counterparty involved
 - Stock-market reactions
 
-Calibrating relevanceScore:
-- 0.0-0.4: keyword present but no concrete event (e.g. "no force majeure events occurred")
-- 0.5-0.7: event mentioned but vaguely scoped (no clear entity, fuzzy timeline)
-- 0.8-1.0: specific entity, specific event, specific timeframe
+═══ SIGNAL 2 — isFuelMarketNews ═══
 
-Be conservative. False positives degrade the assistant's downstream recommendations. Prefer hasDistressSignal=false when in doubt.`;
+True iff the article gives material fuel-market context that an oil trader would want to see on their morning brief, EVEN WHEN no tracked counterparty is named:
+- Brent / WTI / refined-product spot moves with named drivers ("Brent up 3% on Mideast tensions")
+- OPEC+ decisions, voluntary cuts, compliance discussions
+- Refinery-margin moves (crack spreads widening / narrowing)
+- Freight / tanker rate moves (Worldscale, dirty/clean)
+- Sanctions changes affecting global supply (Russian oil, Venezuelan crude, Iran)
+- Geopolitical events with a clear fuel-market consequence (canal disruptions, pipeline attacks)
+
+What does NOT count as fuel-market news:
+- Off-topic commodity news (gold, copper, ag, lithium without a fuel angle)
+- Equity-market commentary on energy stocks (price action without a fundamental driver)
+- Corporate earnings recaps (unless they name supply / cost shifts that move physical markets)
+- Generic ESG / energy-transition commentary without a near-term physical-trade implication
+
+═══ The two flags are INDEPENDENT ═══
+
+An article CAN have both true (e.g. "Vitol declares force majeure on Libyan loadings, lifts global diesel cracks 5%" → both distress and market). Most articles will have at most one true. False for both = noise; the worker drops it.
+
+Calibrating relevanceScore (single value, applies to whichever signal is dominant):
+- 0.0-0.4: keyword present but no concrete event
+- 0.5-0.7: event mentioned but vaguely scoped (no clear entity, fuzzy timeline / driver)
+- 0.8-1.0: specific entity / specific market move / specific timeframe
+
+Be conservative on distress (false positives in counterparty news degrade deal recommendations). Be moderately permissive on fuel-market news — operators would rather see a slightly soft market story than miss a real move.`;
 
 export async function extractDistressSignal(
   input: ExtractDistressSignalInput,
