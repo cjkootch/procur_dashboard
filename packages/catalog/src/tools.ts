@@ -1774,13 +1774,22 @@ export function buildCatalogTools(): ToolRegistry {
         'sell price), peak cash exposure, and a 9-step freight-rate ' +
         'sensitivity grid. The chat surface renders this with adjustable ' +
         'sliders so the user can probe different assumptions without ' +
-        'another tool call. Only product + volume + sellPrice are required; ' +
+        'another tool call.\n\n' +
+        'REQUIRED: product, exactly one of (volumeUsg | volumeBbls | volumeMt), ' +
+        'and exactly one of (sellPricePerUsg | sellPricePerBbl). If any are ' +
+        'missing the tool returns ALL missing fields in one error — do not ' +
+        'retry one field at a time.\n\n' +
         'productCost is auto-pulled from the latest spot benchmark when ' +
-        'omitted. Volume + price accept either USG or bbls — pick whichever ' +
-        'matches how the user is talking (refined products → USG, crude/' +
-        'bunker → bbls). For products without a spot benchmark feed (jet, ' +
-        'hfo, lng, lpg, food, crude grades), supply productCostPerUsg or ' +
-        'productCostPerBbl explicitly.',
+        'omitted. For products WITHOUT a spot benchmark feed (jet, hfo, ' +
+        'lng, lpg, crude grades), supply productCostPerUsg or ' +
+        'productCostPerBbl explicitly — otherwise the tool errors.\n\n' +
+        'CRITICAL: if your sell price is below the auto-pulled benchmark ' +
+        'cost (e.g. modeling diesel at $135/bbl when NYH ULSD is $151/bbl), ' +
+        'the result will include a top-level `topLevelWarning` and the ' +
+        'scorecard will be do_not_proceed. LEAD with that warning in your ' +
+        'response — do not present the line as part of "the plan." Either ' +
+        'raise the sell price or provide a lower productCostPerBbl from a ' +
+        'real supplier quote.',
       kind: 'read',
       schema: z.object({
         product: z
@@ -1790,6 +1799,7 @@ export function buildCatalogTools(): ToolRegistry {
             'gasoline_91',
             'jet_a',
             'jet_a1',
+            'kerosene',
             'avgas',
             'lfo',
             'hfo',
@@ -1798,21 +1808,33 @@ export function buildCatalogTools(): ToolRegistry {
             'biodiesel_b20',
           ])
           .describe(
-            "Product code. For crude grades (Azeri Light, Brent, etc.) use 'lfo' " +
-              "for light-sweet (~0.85 kg/L) or 'hfo' for heavier sour. The choice " +
-              "drives density default + benchmark lookup; cost-stack semantics are " +
-              "the same.",
+            "Product code. Use 'kerosene' for kerosene specifically (NOT 'lfo' " +
+              "which is light fuel oil — different product). For crude grades " +
+              "(Azeri Light, Brent, etc.) use 'lfo' for light-sweet (~0.85 kg/L) " +
+              "or 'hfo' for heavier sour. The choice drives density default + " +
+              "benchmark lookup; cost-stack semantics are the same.",
           ),
         volumeUsg: z
           .number()
           .positive()
           .optional()
-          .describe('Deal volume in US gallons. Provide this OR volumeBbls.'),
+          .describe(
+            'Deal volume in US gallons. Provide one of volumeUsg / volumeBbls / volumeMt.',
+          ),
         volumeBbls: z
           .number()
           .positive()
           .optional()
           .describe('Deal volume in barrels (1 bbl = 42 USG). Use for crude / bunker.'),
+        volumeMt: z
+          .number()
+          .positive()
+          .optional()
+          .describe(
+            'Deal volume in metric tonnes — useful for buyer RFQs that quote in ' +
+              'MT (e.g. "200,000 MT EN590"). Internally converted to USG via the ' +
+              "product's density.",
+          ),
         sellPricePerUsg: z
           .number()
           .positive()

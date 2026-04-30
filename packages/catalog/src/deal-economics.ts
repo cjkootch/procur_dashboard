@@ -18,9 +18,12 @@ import {
  */
 export type ComposeDealInput = {
   product: ProductType;
-  /** Provide volumeUsg OR volumeBbls. */
+  /** Provide volumeUsg OR volumeBbls OR volumeMt. */
   volumeUsg?: number;
   volumeBbls?: number;
+  /** Volume in metric tonnes — useful for buyer RFQs that quote in MT.
+      Internally converted to USG via the resolved product density. */
+  volumeMt?: number;
   /** Provide one of these for the sell price. */
   sellPricePerUsg?: number;
   sellPricePerBbl?: number;
@@ -66,9 +69,27 @@ export type ComposeDealResult = {
      */
     usedAsProductCost: boolean;
   } | null;
+  /**
+   * Top-level critical signal the model should lead with in chat —
+   * separate from `results.warnings` which are calculator-internal.
+   * Today: surfaces "sell price below product cost" upfront so the
+   * model can't silently present a guaranteed-loss deal as "the
+   * plan." Null when the deal economics are coherent.
+   */
+  topLevelWarning: string | null;
   /** Tells the client renderer this is a deal-economics output. */
   kind: 'deal_economics';
 };
+
+/** L per metric tonne (1 MT = 1000 kg / density). */
+function litresPerMt(densityKgL: number): number {
+  return 1000 / densityKgL;
+}
+
+/** USG per metric tonne, given density. 1 L = 0.264172 USG. */
+function usgPerMt(densityKgL: number): number {
+  return litresPerMt(densityKgL) * 0.264172;
+}
 
 /**
  * Build a fully-populated FuelDealInputs from a sparse user-facing
@@ -81,7 +102,30 @@ export async function composeDealEconomics(
   input: ComposeDealInput,
 ): Promise<ComposeDealResult> {
   const density = input.densityKgL ?? defaultDensityFor(input.product);
-  const volumeUsg = resolveVolumeUsg(input);
+
+  // Single upfront validation pass — gather every missing-required
+  // problem and surface them in one error rather than failing one
+  // field at a time. The previous shape forced the LLM to retry up
+  // to 3× before getting a runnable input; that's wasteful and
+  // user-visible (visible in the Senegal RFQ trace where the model
+  // hit volume → sellPrice → productCost errors sequentially).
+  const missing: string[] = [];
+  const hasVolume =
+    (input.volumeUsg != null && input.volumeUsg > 0) ||
+    (input.volumeBbls != null && input.volumeBbls > 0) ||
+    (input.volumeMt != null && input.volumeMt > 0);
+  if (!hasVolume) missing.push('volumeUsg | volumeBbls | volumeMt');
+  const hasSellPrice =
+    input.sellPricePerUsg != null || input.sellPricePerBbl != null;
+  if (!hasSellPrice) missing.push('sellPricePerUsg | sellPricePerBbl');
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required input(s): ${missing.join(' AND ')}. ` +
+        `Volume accepts USG, bbls, or MT; sell price accepts USG or bbls.`,
+    );
+  }
+
+  const volumeUsg = resolveVolumeUsg(input, density);
   const sellPricePerUsg = resolveSellPricePerUsg(input);
 
   let benchmark: ComposeDealResult['benchmark'] = null;
@@ -119,6 +163,27 @@ export async function composeDealEconomics(
     }
   }
 
+  // Top-level guard: if the sell price is below the resolved product
+  // cost, the deal cannot be profitable at any scale or freight rate.
+  // Surface this at the top of the result so the model leads with it
+  // instead of presenting a -$36M EBITDA as part of "the plan." The
+  // calculator still runs and emits its own critical warning, but
+  // having a non-null `topLevelWarning` is the cleaner signal for
+  // chat-side rendering and system-prompt discipline.
+  let topLevelWarning: string | null = null;
+  if (sellPricePerUsg < productCostPerUsg) {
+    const sellBbl = sellPricePerUsg * USG_PER_BBL;
+    const costBbl = productCostPerUsg * USG_PER_BBL;
+    const gap = ((sellPricePerUsg - productCostPerUsg) / productCostPerUsg) * 100;
+    topLevelWarning =
+      `Sell price ($${sellBbl.toFixed(2)}/bbl) is below product cost ` +
+      `($${costBbl.toFixed(2)}/bbl${
+        benchmark?.usedAsProductCost ? ` — auto-pulled from ${benchmark.slug} spot` : ''
+      }) by ${gap.toFixed(1)}%. This deal cannot be profitable at any volume/freight ` +
+      `assumption. Either raise the sell price, provide a lower productCostPerBbl ` +
+      `(e.g. a supplier FOB quote below benchmark), or drop this line.`;
+  }
+
   const inputs = buildFuelDealInputs({
     input,
     volumeUsg,
@@ -127,21 +192,25 @@ export async function composeDealEconomics(
     productCostPerUsg,
   });
   const results = calculateFuelDeal(inputs);
-  return { inputs, results, benchmark, kind: 'deal_economics' };
+  return { inputs, results, benchmark, topLevelWarning, kind: 'deal_economics' };
 }
 
-function resolveVolumeUsg(input: ComposeDealInput): number {
+function resolveVolumeUsg(input: ComposeDealInput, densityKgL: number): number {
   if (input.volumeUsg != null && input.volumeUsg > 0) return input.volumeUsg;
   if (input.volumeBbls != null && input.volumeBbls > 0) {
     return input.volumeBbls * USG_PER_BBL;
   }
-  throw new Error('Either volumeUsg or volumeBbls must be provided.');
+  if (input.volumeMt != null && input.volumeMt > 0) {
+    return input.volumeMt * usgPerMt(densityKgL);
+  }
+  // Validation upfront should prevent reaching here, but throw for safety.
+  throw new Error('Volume required.');
 }
 
 function resolveSellPricePerUsg(input: ComposeDealInput): number {
   if (input.sellPricePerUsg != null) return input.sellPricePerUsg;
   if (input.sellPricePerBbl != null) return input.sellPricePerBbl / USG_PER_BBL;
-  throw new Error('Either sellPricePerUsg or sellPricePerBbl must be provided.');
+  throw new Error('Sell price required.');
 }
 
 function resolveProductCostPerUsg(input: ComposeDealInput): number | null {
@@ -228,6 +297,10 @@ function defaultDensityFor(product: ProductType): number {
       return 0.745;
     case 'jet_a':
     case 'jet_a1':
+      return 0.81;
+    case 'kerosene':
+      // Kerosene tracks jet density closely (same middle distillate cut,
+      // jet is essentially kerosene with additives).
       return 0.81;
     case 'avgas':
       return 0.71;
