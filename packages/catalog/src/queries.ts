@@ -28,9 +28,12 @@ import {
   opportunities,
   pastPerformance,
   supplierAliases,
+  supplierApprovals,
   supplierSignals,
   taxonomyCategories,
   users,
+  type SupplierApproval,
+  type SupplierApprovalStatus,
 } from '@procur/db';
 
 /**
@@ -2812,6 +2815,18 @@ export interface KnownEntityFilters {
    *  with ILIKE '%query%'. Useful for "do we have X in the rolodex"
    *  questions where the user types a fragment of a company name. */
   name?: string;
+  /** When provided, joins supplier_approvals for this company so each
+   *  row includes the company's approvalStatus + approvedAt + expiresAt.
+   *  Required for the `approvalStatus` filter to work. */
+  companyId?: string;
+  /** Filter rows by their approval status (relative to companyId).
+   *   - 'approved'  — approved_with_kyc OR approved_without_kyc
+   *   - 'pending'   — pending OR kyc_in_progress
+   *   - 'rejected'  — rejected
+   *   - 'expired'   — expired (KYC lapsed)
+   *   - 'none'      — no approval row exists yet
+   *  No-op when companyId is omitted. */
+  approvalStatus?: 'approved' | 'pending' | 'rejected' | 'expired' | 'none';
   /** Default 100, hard cap 500 to keep the page render bounded. */
   limit?: number;
 }
@@ -2830,7 +2845,25 @@ export interface KnownEntityRow {
   metadata: Record<string, unknown> | null;
   latitude: number | null;
   longitude: number | null;
+  /** Per-tenant approval state. Populated only when KnownEntityFilters
+   *  was called with companyId. Null = no approval row for this entity. */
+  approvalStatus: SupplierApprovalStatusValue | null;
+  /** ISO-8601. When the row's status moved into approved_*. */
+  approvalApprovedAt: string | null;
+  /** ISO-8601. KYC re-cert date, when set. */
+  approvalExpiresAt: string | null;
 }
+
+/** Mirrors SupplierApprovalStatus in @procur/db; duplicated here to
+ *  avoid a cross-package import on the public query shape. Keep in
+ *  sync with packages/db/src/schema/supplier-approvals.ts. */
+export type SupplierApprovalStatusValue =
+  | 'pending'
+  | 'kyc_in_progress'
+  | 'approved_without_kyc'
+  | 'approved_with_kyc'
+  | 'rejected'
+  | 'expired';
 
 /**
  * Query the analyst-curated known_entities rolodex. Distinct from the
@@ -2843,33 +2876,62 @@ export async function lookupKnownEntities(
   filters: KnownEntityFilters,
 ): Promise<KnownEntityRow[]> {
   const limit = Math.min(filters.limit ?? 100, 5000);
+  const companyId = filters.companyId ?? null;
+  // Approval-status filter is a no-op without companyId — without
+  // the join there's nothing to filter on. Returning [] would silently
+  // hide every entity; passing through (filter ignored) matches the
+  // existing "filter unmet, return rows" pattern of the other params.
+  const approvalFilter = companyId ? filters.approvalStatus : undefined;
   const result = await db.execute(sql`
     SELECT
-      id, slug, name, country, role, categories, notes,
-      contact_entity, aliases, tags, metadata, latitude, longitude
-    FROM known_entities
+      ke.id, ke.slug, ke.name, ke.country, ke.role, ke.categories, ke.notes,
+      ke.contact_entity, ke.aliases, ke.tags, ke.metadata,
+      ke.latitude, ke.longitude,
+      ${companyId ? sql`sa.status` : sql`NULL::text`} AS approval_status,
+      ${companyId ? sql`sa.approved_at` : sql`NULL::timestamptz`} AS approval_approved_at,
+      ${companyId ? sql`sa.expires_at` : sql`NULL::timestamptz`} AS approval_expires_at
+    FROM known_entities ke
+    ${
+      companyId
+        ? sql`LEFT JOIN supplier_approvals sa
+            ON sa.entity_slug = ke.slug AND sa.company_id = ${companyId}::uuid`
+        : sql``
+    }
     WHERE 1=1
       ${
         filters.categoryTag
-          ? sql`AND ${filters.categoryTag} = ANY(categories)`
+          ? sql`AND ${filters.categoryTag} = ANY(ke.categories)`
           : sql``
       }
-      ${filters.country ? sql`AND country = ${filters.country}` : sql``}
-      ${filters.role ? sql`AND role = ${filters.role}` : sql``}
-      ${filters.tag ? sql`AND ${filters.tag} = ANY(tags)` : sql``}
+      ${filters.country ? sql`AND ke.country = ${filters.country}` : sql``}
+      ${filters.role ? sql`AND ke.role = ${filters.role}` : sql``}
+      ${filters.tag ? sql`AND ${filters.tag} = ANY(ke.tags)` : sql``}
       ${
         filters.name
           ? sql`AND (
-              name ILIKE ${`%${filters.name}%`}
-              OR slug ILIKE ${`%${filters.name.toLowerCase().replace(/\s+/g, '-')}%`}
+              ke.name ILIKE ${`%${filters.name}%`}
+              OR ke.slug ILIKE ${`%${filters.name.toLowerCase().replace(/\s+/g, '-')}%`}
               OR EXISTS (
-                SELECT 1 FROM unnest(aliases) AS a
+                SELECT 1 FROM unnest(ke.aliases) AS a
                 WHERE a ILIKE ${`%${filters.name}%`}
               )
             )`
           : sql``
       }
-    ORDER BY country ASC, name ASC
+      ${
+        approvalFilter === 'approved'
+          ? sql`AND sa.status IN ('approved_with_kyc','approved_without_kyc')`
+          : approvalFilter === 'pending'
+            ? sql`AND sa.status IN ('pending','kyc_in_progress')`
+            : approvalFilter === 'rejected'
+              ? sql`AND sa.status = 'rejected'`
+              : approvalFilter === 'expired'
+                ? sql`AND sa.status = 'expired'`
+                : approvalFilter === 'none'
+                  ? sql`AND sa.status IS NULL`
+                  : sql``
+      }
+    ORDER BY ke.country ASC, ke.name ASC
     LIMIT ${limit};
   `);
   return (result.rows as Array<Record<string, unknown>>).map((r) => ({
@@ -2886,6 +2948,19 @@ export async function lookupKnownEntities(
     metadata: r.metadata as Record<string, unknown> | null,
     latitude: r.latitude != null ? Number.parseFloat(String(r.latitude)) : null,
     longitude: r.longitude != null ? Number.parseFloat(String(r.longitude)) : null,
+    approvalStatus: (r.approval_status as SupplierApprovalStatusValue | null) ?? null,
+    approvalApprovedAt:
+      r.approval_approved_at instanceof Date
+        ? r.approval_approved_at.toISOString()
+        : r.approval_approved_at == null
+          ? null
+          : String(r.approval_approved_at),
+    approvalExpiresAt:
+      r.approval_expires_at instanceof Date
+        ? r.approval_expires_at.toISOString()
+        : r.approval_expires_at == null
+          ? null
+          : String(r.approval_expires_at),
   }));
 }
 
@@ -2979,6 +3054,11 @@ export async function findEntitiesNearLocation(filters: {
     latitude: r.latitude != null ? Number.parseFloat(String(r.latitude)) : null,
     longitude: r.longitude != null ? Number.parseFloat(String(r.longitude)) : null,
     distanceNm: Number.parseFloat(String(r.distance_nm)),
+    // Approval state isn't fetched in this proximity query — callers
+    // who need it should use lookupKnownEntities with companyId.
+    approvalStatus: null,
+    approvalApprovedAt: null,
+    approvalExpiresAt: null,
   }));
 }
 
@@ -6825,4 +6905,90 @@ export async function getContactEnrichmentsBySlug(
       linkedinUrl: field(r.linkedin_url, r.linkedin_confidence, r.linkedin_source_url),
     };
   });
+}
+
+// ─── Supplier approvals (per-tenant KYC state) ──────────────────
+
+export type SupplierApprovalRow = {
+  id: string;
+  entitySlug: string;
+  entityName: string | null;
+  status: SupplierApprovalStatus;
+  approvedAt: string | null;
+  expiresAt: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function approvalRowFromDb(row: SupplierApproval): SupplierApprovalRow {
+  return {
+    id: row.id,
+    entitySlug: row.entitySlug,
+    entityName: row.entityName,
+    status: row.status,
+    approvedAt: row.approvedAt ? row.approvedAt.toISOString() : null,
+    expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
+    notes: row.notes,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+/**
+ * Fetch a single approval row for (companyId, entitySlug). Returns
+ * null when the company hasn't engaged with this supplier yet —
+ * caller should treat null as "not engaged" and offer the
+ * "Mark approval" CTA.
+ */
+export async function getSupplierApproval(
+  companyId: string,
+  entitySlug: string,
+): Promise<SupplierApprovalRow | null> {
+  const row = await db.query.supplierApprovals.findFirst({
+    where: and(
+      eq(supplierApprovals.companyId, companyId),
+      eq(supplierApprovals.entitySlug, entitySlug),
+    ),
+  });
+  return row ? approvalRowFromDb(row) : null;
+}
+
+/**
+ * List every approval row for a company. Used by the settings
+ * "Supplier approvals" summary panel and the rolodex filter chip.
+ * Optional status filter narrows to a specific bucket.
+ */
+export async function listSupplierApprovals(
+  companyId: string,
+  statusFilter?: SupplierApprovalStatus,
+): Promise<SupplierApprovalRow[]> {
+  const rows = await db.query.supplierApprovals.findMany({
+    where: statusFilter
+      ? and(
+          eq(supplierApprovals.companyId, companyId),
+          eq(supplierApprovals.status, statusFilter),
+        )
+      : eq(supplierApprovals.companyId, companyId),
+    orderBy: (t, { desc: d }) => [d(t.updatedAt)],
+  });
+  return rows.map(approvalRowFromDb);
+}
+
+/**
+ * Quick set lookup: which entity slugs has the company been
+ * approved by (with or without KYC). Used by the assistant's
+ * supplier-ranking step to bias toward approved counterparties.
+ */
+export async function getApprovedEntitySlugs(companyId: string): Promise<Set<string>> {
+  const rows = await db
+    .select({ entitySlug: supplierApprovals.entitySlug })
+    .from(supplierApprovals)
+    .where(
+      and(
+        eq(supplierApprovals.companyId, companyId),
+        inArray(supplierApprovals.status, ['approved_with_kyc', 'approved_without_kyc']),
+      ),
+    );
+  return new Set(rows.map((r) => r.entitySlug));
 }

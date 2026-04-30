@@ -1,6 +1,9 @@
+import Link from 'next/link';
 import { requireCompany } from '@procur/auth';
+import { listSupplierApprovals } from '@procur/catalog';
 import { clearSampleDataAction } from '../onboarding/sample-data-action';
 import { hasSampleData } from '../../lib/sample-data';
+import { KycBadge } from '../../components/KycBadge';
 import { updateCompanyProfileAction } from './actions';
 import { AutofillCompanyProfileForm } from './AutofillCompanyProfileForm';
 
@@ -8,7 +11,10 @@ export const dynamic = 'force-dynamic';
 
 export default async function CompanyProfilePage() {
   const { company } = await requireCompany();
-  const showSampleClear = await hasSampleData(company.id);
+  const [showSampleClear, approvals] = await Promise.all([
+    hasSampleData(company.id),
+    listSupplierApprovals(company.id),
+  ]);
 
   return (
     <div className="mx-auto max-w-3xl px-8 py-10">
@@ -160,6 +166,53 @@ export default async function CompanyProfilePage() {
           </button>
         </div>
       </form>
+
+      <section className="mt-10 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Supplier approvals ({approvals.length})
+          </h2>
+          <Link
+            href="/suppliers/known-entities?approval=approved"
+            className="text-xs underline text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+          >
+            Browse rolodex →
+          </Link>
+        </div>
+        <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+          Per-supplier KYC / approval state. Edit on the entity profile page.
+          The assistant uses these to bias supplier rankings toward
+          counterparties you can transact with this week.
+        </p>
+        {approvals.length === 0 ? (
+          <p className="mt-3 text-sm text-[color:var(--color-muted-foreground)]">
+            No supplier approvals yet. Visit any entity profile and use the
+            "Edit approval" form to record state.
+          </p>
+        ) : (
+          <ul className="mt-3 divide-y divide-[color:var(--color-border)]">
+            {approvals.map((a) => (
+              <li key={a.id} className="flex flex-wrap items-center gap-3 py-2">
+                <Link
+                  href={`/entities/${encodeURIComponent(a.entitySlug)}`}
+                  className="font-medium hover:underline"
+                >
+                  {a.entityName ?? a.entitySlug}
+                </Link>
+                <KycBadge status={a.status} expiresAt={a.expiresAt} />
+                {a.notes && (
+                  <span className="text-xs text-[color:var(--color-muted-foreground)] truncate max-w-md">
+                    {a.notes}
+                  </span>
+                )}
+                <span className="ml-auto text-[11px] text-[color:var(--color-muted-foreground)]">
+                  Updated {new Date(a.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section className="mt-10 rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-5">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">

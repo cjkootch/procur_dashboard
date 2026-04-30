@@ -34,7 +34,12 @@ import {
   whatsNewForUser,
   type OpportunityScope,
 } from './queries';
-import { addOpportunityToPursuit, createAlertProfile } from './mutations';
+import {
+  addOpportunityToPursuit,
+  createAlertProfile,
+  upsertSupplierApproval,
+} from './mutations';
+import { SUPPLIER_APPROVAL_STATUSES } from '@procur/db';
 import { composeDealEconomics, type CompanyDealDefaults } from './deal-economics';
 import {
   isFreightOriginRegion,
@@ -481,6 +486,88 @@ export function buildCatalogTools(): ToolRegistry {
           companyId: ctx.companyId,
           opportunitySlug: input.opportunitySlug,
         });
+      },
+    }),
+
+    set_supplier_approval: defineTool({
+      name: 'set_supplier_approval',
+      description:
+        "Update the user company's KYC/approval state with a supplier entity. Use when the user " +
+        'says things like "we got KYC approval from CEPSA", "mark Reficar as approved", "we ' +
+        'are pending KYC with Vitol", "Trafigura\'s KYC just expired". Status taxonomy:\n' +
+        '  • pending              — outreach started, no docs exchanged\n' +
+        '  • kyc_in_progress      — KYC docs submitted, awaiting their review\n' +
+        '  • approved_without_kyc — supplier accepts trade contractually, no formal KYC\n' +
+        '  • approved_with_kyc    — full approval, KYC complete (the strongest state)\n' +
+        '  • rejected             — supplier declined to onboard\n' +
+        '  • expired              — KYC lapsed (typically 12-month re-cert)\n' +
+        'IDEMPOTENT — re-engagement after rejection or expiry is a status update on the ' +
+        'existing row, not a new row. Confirm the user\'s intent in plain language BEFORE ' +
+        'calling — this writes to their account. After the write, surface the badge state ' +
+        '("CEPSA Gibraltar is now flagged KYC Approved on the rolodex").',
+      kind: 'write',
+      schema: z.object({
+        entitySlug: z
+          .string()
+          .min(1)
+          .describe(
+            'The slug returned in profileUrl by lookup_known_entities (e.g. ' +
+              '"ft-es-cepsa-gibraltar-refinery") OR an external_suppliers.id ' +
+              '(UUID). Whatever the entity profile page accepts as its slug ' +
+              'parameter. Pull this from a prior tool result; do NOT invent.',
+          ),
+        entityName: z
+          .string()
+          .optional()
+          .describe(
+            "Display name snapshot — used by the settings summary panel " +
+              "when the entity row hasn't been fetched. Pass the name you " +
+              'just saw in lookup_known_entities.',
+          ),
+        status: z
+          .enum(SUPPLIER_APPROVAL_STATUSES)
+          .describe(
+            'New approval status. See description for the taxonomy. Default ' +
+              'to approved_with_kyc when the user says "approved" without ' +
+              'qualifying — KYC-complete is the assumption for major ' +
+              'counterparties.',
+          ),
+        expiresAt: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional()
+          .describe(
+            'YYYY-MM-DD. KYC re-cert date. Set when status is approved_with_kyc ' +
+              'and you know the renewal cycle. Default unset (no expiry tracked).',
+          ),
+        notes: z
+          .string()
+          .max(2000)
+          .optional()
+          .describe(
+            'Free-text notes about the approval — e.g. who signed off, any ' +
+              'conditions, contract reference. Visible on the entity profile.',
+          ),
+      }),
+      handler: async (ctx, input) => {
+        const result = await upsertSupplierApproval({
+          companyId: ctx.companyId,
+          userId: ctx.userId,
+          entitySlug: input.entitySlug,
+          entityName: input.entityName ?? null,
+          status: input.status,
+          expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+          notes: input.notes ?? null,
+        });
+        return {
+          ...result,
+          status: input.status,
+          entitySlug: input.entitySlug,
+          profileUrl: buildEntityProfileUrl({
+            kind: 'known_entity',
+            slug: input.entitySlug,
+          }),
+        };
       },
     }),
 
@@ -1146,6 +1233,18 @@ export function buildCatalogTools(): ToolRegistry {
               "'region:asia-state', 'public-tender-visible', 'libya-historic', 'sweet-crude-runner', " +
               "'top-tier' (for trading houses), 'size:mega'.",
           ),
+        approvalStatus: z
+          .enum(['approved', 'pending', 'rejected', 'expired', 'none'])
+          .optional()
+          .describe(
+            "Filter by the user's company KYC/approval state with this " +
+              "supplier. 'approved' = approved_with_kyc OR approved_without_kyc " +
+              "(can transact today). 'pending' = pending OR kyc_in_progress. " +
+              "'expired' = KYC needs renewal. 'none' = no engagement yet. " +
+              'When ranking suppliers for a deal, filter or sort by ' +
+              "'approved' first — those are the only counterparties the user " +
+              'can actually trade with this week.',
+          ),
         limit: z.number().min(1).max(200).optional(),
       }),
       handler: async (ctx, input) =>
@@ -1162,6 +1261,7 @@ export function buildCatalogTools(): ToolRegistry {
                 country: input.country,
                 role: input.role,
                 tag: input.tag,
+                approvalStatus: input.approvalStatus,
               },
             }),
           },
@@ -1172,6 +1272,8 @@ export function buildCatalogTools(): ToolRegistry {
               country: input.country,
               role: input.role,
               tag: input.tag,
+              companyId: ctx.companyId,
+              approvalStatus: input.approvalStatus,
               limit: input.limit ?? 50,
             });
             return {
@@ -1187,12 +1289,17 @@ export function buildCatalogTools(): ToolRegistry {
                 contactEntity: r.contactEntity,
                 tags: r.tags,
                 metadata: r.metadata,
+                approvalStatus: r.approvalStatus,
+                approvalApprovedAt: r.approvalApprovedAt,
+                approvalExpiresAt: r.approvalExpiresAt,
               })),
               caveat:
                 'Curated analyst rolodex — facts here are public-knowledge basics (refinery name, ' +
                 'operator, country, capacity). Not a substitute for customs/AIS data (Kpler, Vortexa) ' +
                 'when current import flows matter. The notes field captures editorial; treat it as a ' +
-                'starting point, not ground truth.',
+                'starting point, not ground truth. approvalStatus reflects the calling company\'s ' +
+                'KYC/approval state with this entity (null = not engaged yet); lead with approved ' +
+                'counterparties when ranking for a deal.',
             };
           },
         ),
