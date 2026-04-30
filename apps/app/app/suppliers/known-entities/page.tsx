@@ -69,6 +69,7 @@ interface Props {
     country?: string;
     role?: string;
     tag?: string;
+    q?: string;
     view?: string;
   }>;
 }
@@ -131,8 +132,9 @@ function isNoiseTag(t: string): boolean {
 }
 
 export default async function KnownEntitiesPage({ searchParams }: Props) {
-  const { category, country, role, tag, view } = await searchParams;
+  const { category, country, role, tag, q, view } = await searchParams;
   const categoryTag = category && category !== 'all' ? category : undefined;
+  const nameQuery = q?.trim() || undefined;
   const activeView: 'list' | 'map' = view === 'map' ? 'map' : 'list';
 
   // Map clustering handles thousands of points fine; list rendering is the
@@ -144,6 +146,7 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
     country: country?.trim() || undefined,
     role: role?.trim() || undefined,
     tag: tag?.trim() || undefined,
+    name: nameQuery,
     limit: queryLimit,
   });
   const truncated = rows.length === queryLimit;
@@ -167,22 +170,69 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
       country: string;
       role: string;
       tag: string;
+      q: string;
       view: string;
     }>,
   ) => {
     const next = new URLSearchParams();
     const cat = override.category ?? category ?? 'all';
-    if (cat) next.set('category', cat);
+    if (cat && cat !== 'all') next.set('category', cat);
     const c = override.country ?? country;
     if (c) next.set('country', c);
     const r = override.role ?? role;
     if (r) next.set('role', r);
     const t = override.tag ?? tag;
     if (t) next.set('tag', t);
+    const qNext = override.q ?? q;
+    if (qNext) next.set('q', qNext);
     const v = override.view ?? activeView;
     if (v && v !== 'list') next.set('view', v);
-    return `/suppliers/known-entities?${next.toString()}`;
+    const qs = next.toString();
+    return qs ? `/suppliers/known-entities?${qs}` : '/suppliers/known-entities';
   };
+
+  // Active-filter chips: one per non-default filter, with × to clear
+  // that single filter. The chip click target navigates to the same
+  // page with that param dropped.
+  const activeFilters: Array<{ key: string; label: string; clearHref: string }> = [];
+  if (nameQuery) {
+    activeFilters.push({
+      key: 'q',
+      label: `Name: ${nameQuery}`,
+      clearHref: baseHref({ q: '' }),
+    });
+  }
+  if (categoryTag) {
+    activeFilters.push({
+      key: 'category',
+      label: `Category: ${categoryTag}`,
+      clearHref: baseHref({ category: 'all' }),
+    });
+  }
+  if (country) {
+    activeFilters.push({
+      key: 'country',
+      label: `Country: ${formatCountry(country)}`,
+      clearHref: baseHref({ country: '' }),
+    });
+  }
+  if (role) {
+    const roleLabel = ROLE_OPTIONS.find((r) => r.value === role)?.label ?? role;
+    activeFilters.push({
+      key: 'role',
+      label: `Role: ${roleLabel}`,
+      clearHref: baseHref({ role: '' }),
+    });
+  }
+  if (tag) {
+    const tagLabel =
+      COMPATIBILITY_QUICK_FILTERS.find((c) => c.tag === tag)?.label ?? tag;
+    activeFilters.push({
+      key: 'tag',
+      label: `Tag: ${tagLabel}`,
+      clearHref: baseHref({ tag: '' }),
+    });
+  }
 
   const mapEntities: MapEntity[] = rows
     .filter((r) => r.latitude != null && r.longitude != null)
@@ -229,79 +279,128 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
         </p>
       </header>
 
-      <section className="mb-6 space-y-2 text-xs">
+      <section className="mb-6 space-y-3 text-xs">
+        {/* Always-visible top row: name search + active filters + the
+            full-filters disclosure trigger. The full chip walls live
+            inside <details> so the page stays scannable when nothing
+            is selected. */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[color:var(--color-muted-foreground)]">Category:</span>
-          {CATEGORY_OPTIONS.map((c) => (
+          <form
+            action="/suppliers/known-entities"
+            method="get"
+            className="flex items-center gap-1"
+          >
+            {/* Hidden inputs preserve every other active filter on
+                submit so search doesn't wipe out the rest of the
+                URL state. */}
+            {category && category !== 'all' && (
+              <input type="hidden" name="category" value={category} />
+            )}
+            {country && <input type="hidden" name="country" value={country} />}
+            {role && <input type="hidden" name="role" value={role} />}
+            {tag && <input type="hidden" name="tag" value={tag} />}
+            {activeView !== 'list' && (
+              <input type="hidden" name="view" value={activeView} />
+            )}
+            <input
+              type="search"
+              name="q"
+              defaultValue={nameQuery ?? ''}
+              placeholder="Search name…"
+              className="w-48 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs outline-none placeholder:text-[color:var(--color-muted-foreground)] focus:border-[color:var(--color-foreground)]/50"
+            />
+          </form>
+
+          {activeFilters.map((f) => (
             <Link
-              key={c}
-              href={baseHref({ category: c })}
-              className={`rounded-[var(--radius-sm)] border px-2 py-1 hover:border-[color:var(--color-foreground)] ${
-                (category ?? 'all') === c
-                  ? 'border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40'
-                  : 'border-[color:var(--color-border)]'
-              }`}
+              key={f.key}
+              href={f.clearHref}
+              className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40 px-2 py-1 hover:bg-[color:var(--color-muted)]"
+              title={`Clear ${f.key}`}
             >
-              {c}
+              <span>{f.label}</span>
+              <span aria-hidden="true" className="text-[color:var(--color-muted-foreground)]">
+                ×
+              </span>
             </Link>
           ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[color:var(--color-muted-foreground)]">Role:</span>
-          {ROLE_OPTIONS.map((r) => (
+          {activeFilters.length > 1 && (
             <Link
-              key={r.value}
-              href={baseHref({ role: r.value })}
-              className={`rounded-[var(--radius-sm)] border px-2 py-1 hover:border-[color:var(--color-foreground)] ${
-                (role ?? '') === r.value
-                  ? 'border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40'
-                  : 'border-[color:var(--color-border)]'
-              }`}
+              href="/suppliers/known-entities"
+              className="text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
             >
-              {r.label}
-            </Link>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[color:var(--color-muted-foreground)]">Crude grade:</span>
-          {COMPATIBILITY_QUICK_FILTERS.map((c) => (
-            <Link
-              key={c.tag}
-              href={baseHref({ tag: c.tag })}
-              title={c.tag}
-              className={`rounded-[var(--radius-sm)] border px-2 py-1 hover:border-[color:var(--color-foreground)] ${
-                tag === c.tag
-                  ? 'border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40'
-                  : 'border-[color:var(--color-border)]'
-              }`}
-            >
-              {c.label}
-            </Link>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[color:var(--color-muted-foreground)]">Tags:</span>
-          {TAG_QUICK_FILTERS.map((t) => (
-            <Link
-              key={t}
-              href={baseHref({ tag: t })}
-              className={`rounded-[var(--radius-sm)] border px-2 py-1 hover:border-[color:var(--color-foreground)] ${
-                tag === t
-                  ? 'border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40'
-                  : 'border-[color:var(--color-border)]'
-              }`}
-            >
-              {t}
-            </Link>
-          ))}
-          {tag && (
-            <Link
-              href={baseHref({ tag: '' })}
-              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 hover:border-[color:var(--color-foreground)]"
-            >
-              clear tag
+              clear all
             </Link>
           )}
+          {activeFilters.length === 0 && !nameQuery && (
+            <span className="text-[color:var(--color-muted-foreground)]">
+              No filters applied — showing first {queryLimit} entities.
+            </span>
+          )}
+
+          {/* Disclosure trigger lives at the right edge of the same
+              row when there's space, drops to next line when it
+              wraps. */}
+          <details className="group ml-auto">
+            <summary className="cursor-pointer list-none rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 hover:border-[color:var(--color-foreground)]">
+              <span>Filters</span>
+              <span
+                aria-hidden="true"
+                className="ml-1 inline-block transition-transform group-open:rotate-180"
+              >
+                ▾
+              </span>
+            </summary>
+            {/* Panel rendered as a sibling block. Tailwind doesn't
+                surface a `details[open]` selector so we use the
+                `group-open:` variant on the trigger for the chevron
+                and rely on details' native open/close for the panel.
+                The panel is INSIDE <details> so it's only in the DOM
+                when expanded. */}
+            <div className="mt-3 space-y-2 rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-3">
+              <FilterRow label="Category">
+                {CATEGORY_OPTIONS.map((c) => (
+                  <FilterChip
+                    key={c}
+                    href={baseHref({ category: c })}
+                    active={(category ?? 'all') === c}
+                    label={c}
+                  />
+                ))}
+              </FilterRow>
+              <FilterRow label="Role">
+                {ROLE_OPTIONS.map((r) => (
+                  <FilterChip
+                    key={r.value}
+                    href={baseHref({ role: r.value })}
+                    active={(role ?? '') === r.value}
+                    label={r.label}
+                  />
+                ))}
+              </FilterRow>
+              <FilterRow label="Crude grade">
+                {COMPATIBILITY_QUICK_FILTERS.map((c) => (
+                  <FilterChip
+                    key={c.tag}
+                    href={baseHref({ tag: c.tag })}
+                    active={tag === c.tag}
+                    label={c.label}
+                    title={c.tag}
+                  />
+                ))}
+              </FilterRow>
+              <FilterRow label="Tags">
+                {TAG_QUICK_FILTERS.map((t) => (
+                  <FilterChip
+                    key={t}
+                    href={baseHref({ tag: t })}
+                    active={tag === t}
+                    label={t}
+                  />
+                ))}
+              </FilterRow>
+            </div>
+          </details>
         </div>
       </section>
 
@@ -309,6 +408,7 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
         <p className="text-sm text-[color:var(--color-muted-foreground)]">
           {rows.length} entit{rows.length === 1 ? 'y' : 'ies'}
           {truncated ? '+ (capped)' : ''} matched
+          {nameQuery ? ` matching “${nameQuery}”` : ''}
           {category && category !== 'all' ? ` in ${category}` : ''}
           {country ? ` in ${formatCountry(country)}` : ''}
           {role ? `, ${role}` : ''}
@@ -466,5 +566,46 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
         substitute for customs / AIS data when current import flows matter.
       </footer>
     </div>
+  );
+}
+
+function FilterRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="min-w-20 text-[color:var(--color-muted-foreground)]">{label}:</span>
+      {children}
+    </div>
+  );
+}
+
+function FilterChip({
+  href,
+  active,
+  label,
+  title,
+}: {
+  href: string;
+  active: boolean;
+  label: string;
+  title?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      title={title}
+      className={`rounded-[var(--radius-sm)] border px-2 py-1 hover:border-[color:var(--color-foreground)] ${
+        active
+          ? 'border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40'
+          : 'border-[color:var(--color-border)]'
+      }`}
+    >
+      {label}
+    </Link>
   );
 }
