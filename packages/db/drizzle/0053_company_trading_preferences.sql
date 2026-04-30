@@ -18,14 +18,16 @@
 -- defaults into the input before running the calculator (the input
 -- still wins per call so the user can override on a per-deal basis).
 
--- Neon HTTP driver only allows one SQL command per call — split each
--- statement with `--> statement-breakpoint` so migrate.ts dispatches
--- them individually. (default_sourcing_region matches the
--- FreightOriginRegion enum in packages/catalog/src/freight-routes.ts:
--- med | nwe | usgc | singapore | mideast | india | west-africa |
--- east-africa | black-sea. Not enforced as a Postgres enum because
--- the canonical list lives in TypeScript and we want to add origins
--- without a migration.)
+-- default_sourcing_region matches the FreightOriginRegion enum in
+-- packages/catalog/src/freight-routes.ts: med | nwe | usgc |
+-- singapore | mideast | india | west-africa | east-africa |
+-- black-sea. Not enforced as a Postgres enum because the canonical
+-- list lives in TypeScript and we want to add origins without a
+-- migration.
+--
+-- Note: each statement in this file is separated by a drizzle
+-- breakpoint marker (the literal token must NOT appear inside any
+-- comment, since migrate.ts splits the file on that exact string).
 
 ALTER TABLE companies
   ADD COLUMN IF NOT EXISTS default_sourcing_region text,
