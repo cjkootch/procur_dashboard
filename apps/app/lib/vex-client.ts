@@ -293,6 +293,17 @@ function mapToVexLeadBody(payload: VexContactPayload): Record<string, unknown> {
   const cc = payload.commercialContext;
   const oc = payload.originationContext;
 
+  // Stable company identifier for explicit lead↔contact linkage on
+  // the vex side. Derived from sourceRef so re-pushes of the same
+  // entity always land under the same companyKey (the entity slug
+  // when available; ad-hoc:<name>:<country> for unsaved entities).
+  // Vex should treat this as the authoritative join key when
+  // associating contacts with the org/lead — relying on the
+  // request-body shape alone has produced unlinked records when
+  // vex's pipeline forks org and contact ingestion.
+  const companyKey = payload.sourceRef;
+  const companyDomain = deriveCompanyDomain(payload);
+
   const contacts: Array<Record<string, unknown>> = [];
   if (
     payload.contactName ||
@@ -307,6 +318,14 @@ function mapToVexLeadBody(payload: VexContactPayload): Record<string, unknown> {
     if (payload.contactPhone) contact.phone = payload.contactPhone;
     if (payload.contactTitle) contact.title = payload.contactTitle;
     if (payload.contactLinkedinUrl) contact.linkedinUrl = payload.contactLinkedinUrl;
+    // Explicit back-pointer to the buyer/org. Three flavors so vex
+    // can join on whichever it's already keyed on:
+    //   - companyKey: stable procur sourceRef (best for dedup)
+    //   - companyLegalName: human-readable, matches buyer.legalName
+    //   - companyDomain: derived from contact email when present
+    contact.companyKey = companyKey;
+    contact.companyLegalName = payload.legalName;
+    if (companyDomain) contact.companyDomain = companyDomain;
     contacts.push(contact);
   }
 
@@ -315,10 +334,14 @@ function mapToVexLeadBody(payload: VexContactPayload): Record<string, unknown> {
   return {
     procurOpportunityId: payload.sourceRef,
     buyer: {
+      // companyKey mirrors the per-contact field — vex's ingest
+      // worker uses the same string on both sides to associate.
+      companyKey,
       legalName: payload.legalName,
       ...(payload.country ? { country: payload.country } : {}),
       ...(payload.role ? { role: payload.role } : {}),
       ...(cc.categories.length > 0 ? { categories: cc.categories } : {}),
+      ...(companyDomain ? { domain: companyDomain } : {}),
       ...(cc.procurEntityProfileUrl
         ? { procurEntityProfileUrl: cc.procurEntityProfileUrl }
         : {}),
@@ -408,4 +431,42 @@ function composeNotes(payload: VexContactPayload): string | null {
   if (cc.notes) parts.push(cc.notes);
 
   return parts.length > 0 ? parts.join('\n\n') : null;
+}
+
+/**
+ * Derive the company's public domain from the contact email or the
+ * websiteUrl that was proposed alongside the entity. Returns null
+ * when nothing usable surfaces — vex doesn't need this to be set,
+ * but when present it gives a third dedup signal alongside
+ * companyKey + companyLegalName.
+ *
+ * Skips obvious personal-mail providers (gmail, outlook, yahoo,
+ * icloud, hotmail, proton) — those say nothing about the company
+ * the contact represents.
+ */
+const PERSONAL_EMAIL_DOMAINS = new Set([
+  'gmail.com',
+  'googlemail.com',
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'yahoo.com',
+  'icloud.com',
+  'me.com',
+  'mac.com',
+  'protonmail.com',
+  'proton.me',
+  'aol.com',
+  'gmx.com',
+]);
+
+function deriveCompanyDomain(payload: VexContactPayload): string | null {
+  if (payload.contactEmail) {
+    const at = payload.contactEmail.lastIndexOf('@');
+    if (at >= 0) {
+      const domain = payload.contactEmail.slice(at + 1).toLowerCase();
+      if (domain && !PERSONAL_EMAIL_DOMAINS.has(domain)) return domain;
+    }
+  }
+  return null;
 }
