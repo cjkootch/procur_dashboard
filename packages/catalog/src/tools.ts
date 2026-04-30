@@ -1506,11 +1506,13 @@ export function buildCatalogTools(): ToolRegistry {
           ),
         destCountry: z
           .string()
-          .length(2)
+          .regex(/^[A-Z]{2}$/, 'destCountry must be an ISO-2 country code (uppercase, e.g. GH, KE, TG). Full country names like "Ghana" will fail.')
           .optional()
           .describe(
-            'ISO-2 country filter. Use when you want all ports in a ' +
-              'country (e.g. country=KE returns Mombasa + others).',
+            'ISO-2 country code (e.g. \'GH\', \'KE\', \'TG\', \'NG\'). ' +
+              'Full country names like \'Ghana\' will fail — pass the 2-letter ' +
+              'code. Use when you want all ports in a country (e.g. ' +
+              "destCountry='KE' returns Mombasa + any other Kenyan ports).",
           ),
         productType: z
           .enum(['clean', 'crude'])
@@ -1555,16 +1557,21 @@ export function buildCatalogTools(): ToolRegistry {
     evaluate_target_price: defineTool({
       name: 'evaluate_target_price',
       description:
-        "Plausibility check on a buyer's target CIF price. Given a " +
-        'product, target price (USD/MT or USD/bbl), and delivery port, ' +
-        "computes a realistic CIF range from live spot benchmark + crack " +
-        'spread + freight + typical seller margin, then returns the ' +
-        '% gap and a categorical verdict (overpriced | plausible | ' +
-        'aggressive | unrealistic | scam-flag). Use this whenever the ' +
-        'user shares a target price and asks "is this competitive" / ' +
-        '"can we hit this number" / "is this realistic". Especially ' +
-        'critical for West/East Africa RFQs where broker-chain anchors ' +
-        'often run 30-50% below physical delivery cost.',
+        "Plausibility check on a buyer's target CIF price OR a " +
+        '"what should I quote?" CIF estimator. Given a product, ' +
+        'delivery port, and (optional) target price, computes a ' +
+        'realistic CIF range from live spot benchmark + crack spread + ' +
+        'freight + typical seller margin.\n\n' +
+        'Two modes:\n' +
+        '  1. WITH target → returns % gap + verdict (overpriced | ' +
+        'plausible | aggressive | unrealistic | scam-flag). Use when ' +
+        'the user shares a buyer target ("they want $430/MT CIF Lomé").\n' +
+        '  2. WITHOUT target → returns realistic CIF range only with ' +
+        "verdict='no-target'. Use when the user asks \"what should I " +
+        'quote for X?" — gives a sourcing-cost anchor before they ' +
+        "decide pricing.\n\n" +
+        'Especially critical for West/East Africa RFQs in target mode ' +
+        '— broker-chain anchors often run 30-50% below physical cost.',
       kind: 'read',
       schema: z
         .object({
@@ -1592,16 +1599,17 @@ export function buildCatalogTools(): ToolRegistry {
             .positive()
             .optional()
             .describe(
-              "Buyer's target CIF in USD per metric ton. Either this " +
-                'or targetCifUsdPerBbl is required.',
+              "Buyer's target CIF in USD per metric ton. Optional — " +
+                'omit (along with targetCifUsdPerBbl) to get realistic ' +
+                'CIF range only without a verdict.',
             ),
           targetCifUsdPerBbl: z
             .number()
             .positive()
             .optional()
             .describe(
-              "Buyer's target CIF in USD per barrel. Either this or " +
-                'targetCifUsdPerMt is required.',
+              "Buyer's target CIF in USD per barrel. Optional — same " +
+                'as above.',
             ),
           destPortSlug: z
             .string()
@@ -1631,12 +1639,7 @@ export function buildCatalogTools(): ToolRegistry {
             .positive()
             .optional()
             .describe('Optional volume hint, used only for output context.'),
-        })
-        .refine(
-          (v) =>
-            v.targetCifUsdPerMt != null || v.targetCifUsdPerBbl != null,
-          { message: 'targetCifUsdPerMt or targetCifUsdPerBbl is required' },
-        ),
+        }),
       handler: async (ctx, input) =>
         withToolTelemetry(
           {
@@ -1668,48 +1671,48 @@ export function buildCatalogTools(): ToolRegistry {
     evaluate_multi_product_rfq: defineTool({
       name: 'evaluate_multi_product_rfq',
       description:
-        'Bulk plausibility check on a multi-product RFQ. Given an array ' +
-        'of (product, target CIF, dest port, optional volume) lines, ' +
-        'returns a per-line evaluation plus a consolidated scorecard: ' +
-        'worst-line verdict, weighted-avg % gap, total $ at buyer\'s ' +
-        'target vs realistic. Use when the user pastes a tender / ' +
-        "broker request with 2+ products (typical Senegal/Lagos/Mombasa " +
-        'pattern: EN590 + gasoline + jet + kerosene to West/East ' +
-        'Africa). Saves the model from chaining 4 separate ' +
-        'evaluate_target_price calls.',
+        'Bulk evaluator for multi-product RFQs. Two modes:\n\n' +
+        '  1. WITH per-line targets → plausibility check. Returns per-' +
+        'line verdicts + consolidated scorecard (worst-line verdict, ' +
+        "weighted-avg % gap, total $ at buyer's target vs realistic). " +
+        'Use when the user pastes a buyer RFQ that includes target ' +
+        'prices ("EN590 @ $430/MT CIF Lomé").\n\n' +
+        '  2. WITHOUT per-line targets → realistic CIF range per line ' +
+        'only. Use when the user has products + ports + volumes but ' +
+        "hasn't quoted a target — answers \"what should I quote?\" for " +
+        'the whole package in one call.\n\n' +
+        'Targets are optional PER LINE — you can mix targeted and non-' +
+        'targeted lines in one call. Saves the model from chaining N ' +
+        'separate evaluate_target_price calls. Typical Senegal/Lagos/' +
+        'Mombasa pattern: EN590 + gasoline + jet + kerosene to West/' +
+        'East Africa.',
       kind: 'read',
       schema: z.object({
         lines: z
           .array(
-            z
-              .object({
-                product: z.enum([
-                  'en590-ulsd',
-                  'gasoline-super',
-                  'jet-a1',
-                  'kerosene',
-                  'gasoil-0.5pct',
-                  'hsfo',
-                  'crude-light-sweet',
-                  'crude-medium-sour',
-                ]),
-                volumeMt: z.number().positive().optional(),
-                targetCifUsdPerMt: z.number().positive().optional(),
-                targetCifUsdPerBbl: z.number().positive().optional(),
-                destPortSlug: z.string(),
-              })
-              .refine(
-                (v) =>
-                  v.targetCifUsdPerMt != null || v.targetCifUsdPerBbl != null,
-                {
-                  message:
-                    'each line needs targetCifUsdPerMt or targetCifUsdPerBbl',
-                },
-              ),
+            z.object({
+              product: z.enum([
+                'en590-ulsd',
+                'gasoline-super',
+                'jet-a1',
+                'kerosene',
+                'gasoil-0.5pct',
+                'hsfo',
+                'crude-light-sweet',
+                'crude-medium-sour',
+              ]),
+              volumeMt: z.number().positive().optional(),
+              targetCifUsdPerMt: z.number().positive().optional(),
+              targetCifUsdPerBbl: z.number().positive().optional(),
+              destPortSlug: z.string(),
+            }),
           )
           .min(1)
           .max(20)
-          .describe('Array of RFQ lines, 1-20 entries.'),
+          .describe(
+            'Array of RFQ lines, 1-20 entries. Each line needs product + ' +
+              'destPortSlug; volume + target prices are optional.',
+          ),
         originRegion: z
           .enum([
             'med',
