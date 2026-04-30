@@ -10,6 +10,9 @@ import {
   type ProductType,
 } from '@procur/pricing';
 
+import type { FreightOriginRegion } from './freight-routes';
+import { getCommodityPriceContext } from './queries';
+
 /**
  * LLM-friendly input shape for `compose_deal_economics`. A small subset of
  * the calculator's full `FuelDealInputs` — the rest are filled by sensible
@@ -52,6 +55,20 @@ export type ComposeDealInput = {
   asOf?: string;
   /** Free-form deal label that flows into the result. */
   dealRef?: string;
+  /**
+   * Sourcing region for the cargo. Drives which cost model we use as
+   * the productCost fallback when neither productCostPerUsg nor
+   * productCostPerBbl is supplied:
+   *   - 'usgc' or omitted → NYH/USGC spot benchmark (NY-Harbor proxy
+   *     for Houston-origin cargoes; what `getBenchmarkPrice` returns).
+   *   - any other origin   → Brent + typical crack spread (matches the
+   *     ex-refinery cost model in plausibility.ts; closer to reality
+   *     for Med/Mideast/India/Singapore-origin cargoes where NYH spot
+   *     overstates cost by $15-25/bbl and produces false do_not_proceed
+   *     verdicts).
+   * Pass an explicit productCostPer* to override either model.
+   */
+  sourcingRegion?: FreightOriginRegion;
 };
 
 export type ComposeDealResult = {
@@ -79,6 +96,40 @@ export type ComposeDealResult = {
   topLevelWarning: string | null;
   /** Tells the client renderer this is a deal-economics output. */
   kind: 'deal_economics';
+};
+
+/**
+ * Mid-point crack spread (USD/bbl over Brent) per product. Mirrors
+ * the bands in `plausibility.ts` (the source of truth) — see
+ * `CRACK_SPREAD_USD_BBL` there for the low/high range. We keep an
+ * inline copy keyed by ProductType to avoid the ProductType ↔
+ * ProductSlug enum coupling between deal-economics and plausibility.
+ *
+ * `null` for products without a meaningful Brent-relative crack
+ * (LNG, LPG, biodiesel, food-line) — the Brent+crack fallback is
+ * skipped for those and we fall through to the NYH benchmark.
+ *
+ * Refresh cadence: keep in sync with plausibility.ts.
+ */
+const CRACK_SPREAD_MID_USD_BBL: Record<ProductType, number | null> = {
+  ulsd: 18.5, // (15+22)/2
+  gasoline_87: 14, // (10+18)/2
+  gasoline_91: 14,
+  jet_a: 21.5, // (18+25)/2
+  jet_a1: 21.5,
+  kerosene: 18.5, // tracks middle distillate
+  avgas: null,
+  lfo: 14, // gasoil-0.5pct band
+  hfo: -6.5, // residual trades at a discount
+  lng: null,
+  lpg: null,
+  biodiesel_b20: null,
+  rice: null,
+  beans: null,
+  pork: null,
+  chicken: null,
+  cooking_oil: null,
+  powdered_milk: null,
 };
 
 /** L per metric tonne (1 MT = 1000 kg / density). */
@@ -130,8 +181,35 @@ export async function composeDealEconomics(
 
   let benchmark: ComposeDealResult['benchmark'] = null;
   let productCostPerUsg = resolveProductCostPerUsg(input);
+  const asOf = input.asOf ?? new Date().toISOString().slice(0, 10);
+  // Non-USGC origins should price off Brent + crack rather than NYH
+  // spot — see `sourcingRegion` doc in ComposeDealInput.
+  const useBrentCrack =
+    productCostPerUsg == null &&
+    input.sourcingRegion != null &&
+    input.sourcingRegion !== 'usgc' &&
+    CRACK_SPREAD_MID_USD_BBL[input.product] != null;
+
+  if (productCostPerUsg == null && useBrentCrack) {
+    const brent = await getCommodityPriceContext('brent', 30);
+    const brentSpot = brent.latest?.price ?? null;
+    const crackMid = CRACK_SPREAD_MID_USD_BBL[input.product]!;
+    if (brentSpot != null) {
+      const fobPerBbl = brentSpot + crackMid;
+      const fobPerUsg = fobPerBbl / USG_PER_BBL;
+      benchmark = {
+        slug: `brent+crack(${input.product})`,
+        asOf: brent.latest!.date,
+        pricePerUsg: fobPerUsg,
+        pricePerBbl: fobPerBbl,
+        usedAsProductCost: true,
+      };
+      productCostPerUsg = fobPerUsg;
+    }
+    // If Brent isn't ingested, fall through to the NYH path below.
+  }
+
   if (productCostPerUsg == null) {
-    const asOf = input.asOf ?? new Date().toISOString().slice(0, 10);
     const bm = await getBenchmarkPrice(db, input.product, asOf);
     if (bm) {
       benchmark = {
@@ -148,9 +226,10 @@ export async function composeDealEconomics(
           `pass productCostPerUsg or productCostPerBbl explicitly.`,
       );
     }
-  } else {
-    // Benchmark still useful for the renderer to show "vs spot" context.
-    const asOf = input.asOf ?? new Date().toISOString().slice(0, 10);
+  } else if (benchmark == null) {
+    // Either an explicit productCost was supplied, or the Brent+crack
+    // path was skipped — pull the NYH benchmark as "vs spot" context
+    // for the renderer.
     const bm = await getBenchmarkPrice(db, input.product, asOf);
     if (bm) {
       benchmark = {
@@ -178,7 +257,7 @@ export async function composeDealEconomics(
     topLevelWarning =
       `Sell price ($${sellBbl.toFixed(2)}/bbl) is below product cost ` +
       `($${costBbl.toFixed(2)}/bbl${
-        benchmark?.usedAsProductCost ? ` — auto-pulled from ${benchmark.slug} spot` : ''
+        benchmark?.usedAsProductCost ? ` — auto-pulled from ${benchmark.slug}` : ''
       }) by ${gap.toFixed(1)}%. This deal cannot be profitable at any volume/freight ` +
       `assumption. Either raise the sell price, provide a lower productCostPerBbl ` +
       `(e.g. a supplier FOB quote below benchmark), or drop this line.`;

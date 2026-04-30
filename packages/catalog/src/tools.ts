@@ -1782,17 +1782,22 @@ export function buildCatalogTools(): ToolRegistry {
         'and exactly one of (sellPricePerUsg | sellPricePerBbl). If any are ' +
         'missing the tool returns ALL missing fields in one error — do not ' +
         'retry one field at a time.\n\n' +
-        'productCost is auto-pulled from the latest spot benchmark when ' +
-        'omitted. For products WITHOUT a spot benchmark feed (jet, hfo, ' +
-        'lng, lpg, crude grades), supply productCostPerUsg or ' +
-        'productCostPerBbl explicitly — otherwise the tool errors.\n\n' +
-        'CRITICAL: if your sell price is below the auto-pulled benchmark ' +
-        'cost (e.g. modeling diesel at $135/bbl when NYH ULSD is $151/bbl), ' +
-        'the result will include a top-level `topLevelWarning` and the ' +
-        'scorecard will be do_not_proceed. LEAD with that warning in your ' +
-        'response — do not present the line as part of "the plan." Either ' +
-        'raise the sell price or provide a lower productCostPerBbl from a ' +
-        'real supplier quote.',
+        'productCost is auto-pulled when omitted. The cost model depends on ' +
+        '`sourcingRegion`: USGC (or omitted) uses NYH spot — appropriate for ' +
+        'Houston-origin cargoes. Any other origin (med, mideast, india, ' +
+        'singapore, …) uses Brent + typical crack spread — appropriate for ' +
+        'cargoes lifted from those refineries, since NYH spot can overstate ' +
+        'cost by $15-25/bbl and produce false do_not_proceed verdicts. For ' +
+        'products without a Brent+crack mapping (lng, lpg, biodiesel) or a ' +
+        'spot feed (avgas), supply productCostPerUsg or productCostPerBbl ' +
+        'explicitly — otherwise the tool errors.\n\n' +
+        'CRITICAL: if your sell price is below the auto-pulled cost the ' +
+        'result will include a top-level `topLevelWarning` and the scorecard ' +
+        'will be do_not_proceed. LEAD with that warning in your response — ' +
+        'do not present the line as part of "the plan." Before treating the ' +
+        'verdict as final, double-check that `sourcingRegion` matches where ' +
+        'the cargo is actually being lifted from; an unset region defaults ' +
+        'to NYH which biases cost high for non-USGC sourcing.',
       kind: 'read',
       schema: z.object({
         product: z
@@ -1853,13 +1858,37 @@ export function buildCatalogTools(): ToolRegistry {
           .positive()
           .optional()
           .describe(
-            'Acquisition cost in USD/USG. Omit to auto-pull the latest spot benchmark for this product.',
+            'Acquisition cost in USD/USG. Omit to auto-pull from the cost ' +
+              'model selected by sourcingRegion (NYH spot for usgc, Brent+crack ' +
+              'for any other origin).',
           ),
         productCostPerBbl: z
           .number()
           .positive()
           .optional()
           .describe('Acquisition cost in USD/bbl.'),
+        sourcingRegion: z
+          .enum([
+            'med',
+            'nwe',
+            'usgc',
+            'singapore',
+            'mideast',
+            'india',
+            'west-africa',
+            'east-africa',
+            'black-sea',
+          ])
+          .optional()
+          .describe(
+            'Where the cargo is being lifted from. Drives the productCost ' +
+              'fallback when productCostPer* is omitted: usgc → NYH spot ' +
+              'benchmark; any other region → Brent + typical crack spread (the ' +
+              'cost model used by evaluate_target_price). Omit only when the ' +
+              'cargo is genuinely USGC-origin or when you are providing an ' +
+              'explicit productCost. Defaulting to omitted for non-USGC sourcing ' +
+              'biases cost high and can flag viable deals as do_not_proceed.',
+          ),
         freightPerUsg: z
           .number()
           .nonnegative()
