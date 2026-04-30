@@ -37,6 +37,7 @@ import {
 import {
   addOpportunityToPursuit,
   createAlertProfile,
+  SupplierApprovalEntityMissingError,
   upsertSupplierApproval,
 } from './mutations';
 import { SUPPLIER_APPROVAL_STATUSES } from '@procur/db';
@@ -550,24 +551,45 @@ export function buildCatalogTools(): ToolRegistry {
           ),
       }),
       handler: async (ctx, input) => {
-        const result = await upsertSupplierApproval({
-          companyId: ctx.companyId,
-          userId: ctx.userId,
-          entitySlug: input.entitySlug,
-          entityName: input.entityName ?? null,
-          status: input.status,
-          expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
-          notes: input.notes ?? null,
-        });
-        return {
-          ...result,
-          status: input.status,
-          entitySlug: input.entitySlug,
-          profileUrl: buildEntityProfileUrl({
-            kind: 'known_entity',
-            slug: input.entitySlug,
-          }),
-        };
+        try {
+          const result = await upsertSupplierApproval({
+            companyId: ctx.companyId,
+            userId: ctx.userId,
+            entitySlug: input.entitySlug,
+            entityName: input.entityName ?? null,
+            status: input.status,
+            expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+            notes: input.notes ?? null,
+          });
+          return {
+            ...result,
+            status: input.status,
+            entitySlug: input.entitySlug,
+            profileUrl: buildEntityProfileUrl({
+              kind: 'known_entity',
+              slug: input.entitySlug,
+            }),
+          };
+        } catch (err) {
+          // Surface the entity-missing case as a structured tool
+          // result so the model can correct course (apply the
+          // create proposal first) rather than silently producing
+          // an orphan approval row pointing at a 404'ing slug.
+          if (err instanceof SupplierApprovalEntityMissingError) {
+            return {
+              error: 'entity_not_found',
+              entitySlug: err.entitySlug,
+              message:
+                "This entity slug doesn't resolve to a known_entity or " +
+                'external_supplier yet. If you just proposed creating it via ' +
+                'propose_create_known_entity, ask the user to apply that ' +
+                'proposal first — the entity row needs to exist before its ' +
+                'approval state can be tracked. Re-run set_supplier_approval ' +
+                'after the create lands.',
+            };
+          }
+          throw err;
+        }
       },
     }),
 
