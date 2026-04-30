@@ -107,6 +107,8 @@ export {
   type AnthropicMessageParam,
   type AnthropicContentBlock,
   type AnthropicTextBlockParam,
+  type AnthropicImageBlockParam,
+  type AnthropicDocumentBlockParam,
   type AnthropicToolUseBlock,
   type AnthropicToolResultBlockParam,
 } from './assistant';

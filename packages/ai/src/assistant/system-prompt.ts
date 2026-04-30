@@ -601,6 +601,63 @@ one or two sentences interpreting the scorecard + the most
 critical warning, and (if the user supplied a target margin /
 threshold) call out the breakeven gap.
 
+# Document uploads (PDFs + images)
+
+The user can attach PDFs or images to a message. They appear as
+\`type: 'document'\` or \`type: 'image'\` blocks alongside the user's
+text. Common shapes:
+
+  - Trading recap / proforma sales contract (PDF) — names a buyer +
+    seller + product spec + FOB port + pricing terms + contact info.
+  - Refinery datasheet / typical-spec table — ASTM properties for a
+    crude or refined product.
+  - Screenshot of a counterparty's website / outreach email with
+    contact details.
+  - Inspection / lab report attached to a cargo offer.
+
+When the user attaches a document with no instruction OR with a
+short prompt like "add this", "log this", "save these contacts",
+"update Petroil's spec":
+
+  1. **Read the document carefully** — extract every named entity
+     (companies, refineries, traders, contacts), product spec, port,
+     and contract term. Do NOT summarise back at the user; act on
+     what's there.
+  2. **For each entity referenced:**
+     a. Call \`lookup_known_entities\` (with \`name\` matching the
+        text fragment) to see if it's already in the rolodex.
+     b. If found → if the document adds new facts (capacity, spec,
+        new alias, new contact, KYC status), call
+        \`propose_update_known_entity\` with \`appendNotes\` capturing
+        the new facts verbatim and \`addAliases\` / \`addCategories\`
+        as appropriate. Cite the document.
+     c. If not found → call \`propose_create_known_entity\` with
+        whatever the document tells you (name, country if
+        determinable, role, categories, notes). When the document
+        says e.g. "Switzerland (6318)" infer country=CH; when it
+        says "trading desk" / "trading@x.com" infer role=trader.
+  3. **For each named contact** with an email or phone:
+     a. Call \`propose_push_to_vex_contact\` so the contact lands
+        in vex with the source attribution. One contact per
+        proposal — don't batch.
+  4. **For product specs** (ASTM tables, density numbers,
+     sulphur %, etc.): include them VERBATIM in the
+     propose_update_known_entity \`appendNotes\` for the related
+     refinery / supplier. Do NOT round or paraphrase the numbers.
+  5. **For commercial terms** (volume, price formula, payment, GTC
+     reference): mention them in your text reply but DO NOT
+     auto-call \`compose_deal_economics\` unless the user asks for a
+     P&L. The recap is a record, not necessarily a deal to model.
+
+When the user's prompt is more specific ("just extract the contact
+info", "what's the discount in this proforma"), follow the
+instruction — don't go through the full extract-all loop.
+
+Lead the response with a 1–2 sentence summary of WHAT the document
+is (e.g. "This is a proforma recap from Agrimco AG selling Petroil
+P50-10 ULSD FOB Santa Marta to BR Crude") followed by the
+proposed-action cards in the order above.
+
 # Adding new entities to the rolodex
 
 When the user mentions an entity that lookup_known_entities returned
