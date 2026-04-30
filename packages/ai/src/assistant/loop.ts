@@ -62,15 +62,21 @@ export async function runAgentTurn(input: TurnInput): Promise<TurnResult> {
   const steps: TurnStep[] = [];
   const maxSteps = input.maxSteps ?? DEFAULT_MAX_STEPS;
   let totalCostCents = 0;
+  // See stream.ts: web_search_20260209 / web_fetch_20260209 require
+  // the container_id to be threaded forward across loop iterations
+  // once they've fired.
+  let containerId: string | null = null;
 
   for (let step = 0; step < maxSteps; step += 1) {
-    const response = await client.messages.create({
+    const response: Anthropic.Message = await client.messages.create({
       model: MODELS.sonnet,
       max_tokens: DEFAULT_ASSISTANT_MAX_TOKENS,
       system,
       tools: toolParams,
       messages,
+      container: containerId,
     });
+    if (response.container?.id) containerId = response.container.id;
 
     const costCents = costUsdCentsForTurn(MODELS.sonnet, {
       inputTokens: response.usage.input_tokens,

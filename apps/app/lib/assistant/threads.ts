@@ -186,6 +186,26 @@ export async function appendToolResults(
 }
 
 /**
+ * Block types produced by Anthropic's code-execution-backed server
+ * tools (web_search_20260209, web_fetch_20260209, code_execution).
+ * These reference a sandboxed container that expires (~1h), so we
+ * can't reliably replay them on follow-up user turns — the API
+ * would demand the original container_id, and even threading it
+ * through doesn't survive expiry. Stripping them lets the
+ * conversation continue; the model loses inline citations from
+ * prior turns but text summaries written into prior assistant
+ * messages survive.
+ */
+const SERVER_TOOL_BLOCK_TYPES = new Set([
+  'server_tool_use',
+  'web_search_tool_result',
+  'web_fetch_tool_result',
+  'code_execution_tool_result',
+  'bash_code_execution_tool_result',
+  'text_editor_code_execution_tool_result',
+]);
+
+/**
  * Rebuild Anthropic MessageParam history from persisted messages. Handles
  * user / assistant / tool rows. The tool rows are merged into the following
  * user message per Anthropic's API (tool_result blocks ride on a user turn).
@@ -198,10 +218,15 @@ export function messagesToHistory(rows: AssistantMessage[]): AnthropicMessagePar
       const text = blocks.map((b) => ('text' in b ? b.text : '')).join('');
       out.push({ role: 'user', content: text });
     } else if (m.role === 'assistant') {
-      out.push({
-        role: 'assistant',
-        content: m.content as AnthropicContentBlock[],
-      });
+      const content = (m.content as AnthropicContentBlock[]).filter(
+        (b) => !SERVER_TOOL_BLOCK_TYPES.has(b.type),
+      );
+      // An assistant turn that was 100% server-tool blocks (rare but
+      // possible if the model only fetched and we trimmed it all)
+      // would become an empty content array, which the API rejects.
+      // Skip it in that case.
+      if (content.length === 0) continue;
+      out.push({ role: 'assistant', content });
     } else if (m.role === 'tool') {
       out.push({
         role: 'user',
