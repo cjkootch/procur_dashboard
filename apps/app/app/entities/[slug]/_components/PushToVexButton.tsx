@@ -52,8 +52,15 @@ export function PushToVexButton({ slug }: { slug: string }) {
         href={pushedUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-3 py-1 text-xs font-medium text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+        className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-3 py-1 text-xs font-medium text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
       >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/brand/vex-icon-on-light.svg"
+          alt=""
+          aria-hidden
+          className="h-3.5 w-3.5"
+        />
         ✓ Open in vex →
       </a>
     );
@@ -66,8 +73,15 @@ export function PushToVexButton({ slug }: { slug: string }) {
         disabled={pending}
         onClick={onClick}
         title="Forward this counterparty to vex CRM with full procur commercial context"
-        className="rounded-[var(--radius-sm)] border border-[color:var(--color-foreground)] bg-[color:var(--color-foreground)] px-3 py-1 text-xs font-medium text-[color:var(--color-background)] hover:opacity-90 disabled:opacity-40"
+        className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[color:var(--color-foreground)] bg-[color:var(--color-foreground)] px-3 py-1 text-xs font-medium text-[color:var(--color-background)] hover:opacity-90 disabled:opacity-40"
       >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/brand/vex-icon-on-dark.svg"
+          alt=""
+          aria-hidden
+          className="h-3.5 w-3.5"
+        />
         {pending ? 'Pushing…' : 'Push to vex'}
       </button>
       {error && <span className="text-[10px] text-red-700">{error}</span>}
