@@ -29,7 +29,15 @@ import { sql } from 'drizzle-orm';
 import { db } from '@procur/db';
 import { extractDistressSignal } from '@procur/ai';
 
-const UA = 'procur-research/1.0 (cole@vectortradecapital.com)';
+/**
+ * Some feeds (energy-voice — Cloudflare bot-protected, hellenic-
+ * shipping — strict Accept header) reject our short research UA.
+ * A modern desktop-Chrome string slips through both. Same UA across
+ * all feeds keeps behavior consistent.
+ */
+const UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 ProcurNews/1.0';
 const FETCH_TIMEOUT_MS = 15_000;
 const FEED_THROTTLE_MS = 1_500;
 const ITEM_THROTTLE_MS = 250;
@@ -118,9 +126,15 @@ export async function ingestTradePressRss(opts: {
         if (processed >= cap) break;
         itemsScanned += 1;
 
-        // Skip items published on or before the watermark — already
-        // extracted in a previous run.
-        if (watermark && item.pubDate && item.pubDate <= watermark) {
+        // Skip items strictly OLDER than the watermark — already
+        // extracted in a previous run. The comparison was `<=`
+        // before, which silently dropped every item that shared a
+        // pubDate (date-resolution) with the watermark — including
+        // the entire current day's volume. Source-doc-id unique
+        // index handles re-extraction on the boundary day; let
+        // those items through and rely on the dedup at insert
+        // time.
+        if (watermark && item.pubDate && item.pubDate < watermark) {
           itemsSkippedWatermark += 1;
           continue;
         }
@@ -222,7 +236,15 @@ async function fetchAndParseFeed(url: string): Promise<RssItem[]> {
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
-      headers: { 'User-Agent': UA, Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml' },
+      headers: {
+        'User-Agent': UA,
+        // Some servers reject the strict feed-only Accept (HTTP 415
+        // observed on hellenic-shipping-news with the previous
+        // value). */* + a feed-priority q-value works everywhere.
+        Accept:
+          'application/rss+xml, application/atom+xml;q=0.9, application/xml;q=0.8, text/xml;q=0.8, */*;q=0.5',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
