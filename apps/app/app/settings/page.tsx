@@ -187,7 +187,7 @@ export default async function CompanyProfilePage() {
         {approvals.length === 0 ? (
           <p className="mt-3 text-sm text-[color:var(--color-muted-foreground)]">
             No supplier approvals yet. Visit any entity profile and use the
-            "Edit approval" form to record state.
+            &ldquo;Edit approval&rdquo; form to record state.
           </p>
         ) : (
           <ul className="mt-3 divide-y divide-[color:var(--color-border)]">
