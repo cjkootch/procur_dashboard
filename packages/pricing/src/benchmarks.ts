@@ -46,6 +46,11 @@ export function benchmarkFor(product: Product): BenchmarkRef | null {
       return { slug: 'nyh-gasoline', source: 'eia', nativeUnit: 'usd-gal' };
     case ProductType.Lfo:
       return { slug: 'nyh-heating-oil', source: 'eia', nativeUnit: 'usd-gal' };
+    case ProductType.Kerosene:
+      // Kerosene tracks heating-oil closely (same middle-distillate cut,
+      // similar API gravity, similar refining yield). Uses the same NYH
+      // series as a proxy until a dedicated kerosene feed lands.
+      return { slug: 'nyh-heating-oil', source: 'eia', nativeUnit: 'usd-gal' };
     // No published spot for: jet, avgas, hfo, lng, lpg, biodiesel, food.
     // Caller falls back to a user-supplied or comparable-award price.
     default:

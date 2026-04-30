@@ -16,6 +16,7 @@ export const ProductType = {
   Gasoline91: 'gasoline_91',
   JetA: 'jet_a',
   JetA1: 'jet_a1',
+  Kerosene: 'kerosene',
   Avgas: 'avgas',
   Lfo: 'lfo',
   Hfo: 'hfo',
