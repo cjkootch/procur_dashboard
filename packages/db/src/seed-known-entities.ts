@@ -561,6 +561,20 @@ const TRADING_HOUSES: Seed[] = [
     latitude: 39.9042,
     longitude: 116.4074,
   },
+  {
+    slug: 'curated-ch-sonatrach-trading-geneva',
+    name: 'Sonatrach Trading',
+    country: 'CH',
+    role: 'trader',
+    categories: ['crude-oil', 'diesel', 'gasoline', 'jet-fuel', 'lng'],
+    notes:
+      "Sonatrach's international marketing arm — primary counterparty for Saharan Blend off-take, Algerian Condensate, and product exports out of Skikda/Arzew. Geneva HQ. When asked 'who do you sign the term contract with for Algerian crude', this is the entity, not upstream Sonatrach.",
+    aliases: ['Sonatrach Trading SAS', 'STSA'],
+    tags: ['trader', 'state-affiliated', 'saharan-blend-active', 'mediterranean'],
+    metadata: { headquarters: 'Geneva', parentEntity: 'Sonatrach' },
+    latitude: 46.2044,
+    longitude: 6.1432,
+  },
 ];
 
 /**

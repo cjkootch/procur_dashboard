@@ -69,6 +69,7 @@ const BASIS: Record<string, { marker: string; differential: number }> = {
   'cabinda':        { marker: 'brent', differential: -1.0 }, // heavier sweet
   // Algerian super-light
   'saharan-blend':  { marker: 'brent', differential:  2.5 },
+  'algerian-condensate': { marker: 'brent', differential: 1.0 },
   // Caspian
   'azeri-light':    { marker: 'brent', differential:  2.0 }, // BTC-light premium
   'cpc-blend':      { marker: 'brent', differential: -2.0 }, // longer-haul, slight sour
@@ -254,6 +255,19 @@ const GRADES: GradeSeed[] = [
     characterization: 'paraffinic',
     isMarker: false,
     notes: 'Algerian super-light sweet — premium grade. Competes with Sharara and CPC Blend.',
+  },
+  {
+    slug: 'algerian-condensate',
+    name: 'Algerian Condensate',
+    originCountry: 'DZ',
+    region: 'mediterranean',
+    apiGravity: 52,
+    sulfurPct: 0.05,
+    tan: 0.03,
+    characterization: 'paraffinic',
+    isMarker: false,
+    notes:
+      "Sonatrach gas-field condensate (primarily Hassi R'Mel). Ultra-light paraffinic; loads at Skikda + Arzew alongside the LNG complex. Distinct from Saharan Blend (which is the field-crude blend pipelined out of Hassi Messaoud).",
   },
   {
     slug: 'azeri-light',
