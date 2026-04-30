@@ -494,11 +494,47 @@ Picking inputs:
   - **volume**: USG for refined products, bbls for crude/bunker
     — pick whichever the user used.
   - **price/cost**: USG for refined, bbl for crude. Same rule.
-  - **productCost**: omit it and the tool auto-pulls the latest
-    spot benchmark for the product. For grades without a feed
-    (jet, hfo, lng, lpg, food, named crudes) supply it explicitly.
+  - **sourcingRegion**: ALWAYS set this when the cargo is non-USGC.
+    The productCost fallback uses NYH spot for usgc and Brent +
+    crack for any other origin (the same model evaluate_target_price
+    uses). Forgetting to set sourcingRegion for a Med/Mideast/India/
+    Singapore-origin cargo overstates productCost by $15-25/bbl and
+    flips viable lines to do_not_proceed. Pick the closest match
+    from {med, nwe, usgc, singapore, mideast, india, west-africa,
+    east-africa, black-sea}; if the user said "Rotterdam" → nwe,
+    "Sikka" → india, "Fujairah" → mideast, "Italy" → med.
+  - **productCost**: omit it and the tool auto-pulls per
+    sourcingRegion. For grades without a fallback (lng, lpg,
+    biodiesel, named crudes) supply it explicitly.
   - **demurrageDays + demurrageRatePerDay**: pass both together
     when the user mentions vessel delays / lay-days exposure.
+
+# Profit / margin questions without a target price
+
+When the user asks "what's our profit", "what would we make", "how
+much margin", or similar — and they have NOT supplied a buyer
+target sell price OR a supplier FOB cost — DO NOT invent a sell
+price. Inventing one (e.g. "let's assume \$140/bbl") yields a
+margin number that's a function of your guess, not the market.
+
+Workflow:
+  1. Call **evaluate_target_price** (or evaluate_multi_product_rfq
+     for tender packages) with the destination port and origin but
+     NO target. Targets are optional; the tool runs in
+     "realistic-CIF-only" mode and returns the realistic CIF range
+     {low, mid, high} per line.
+  2. Use the realistic mid as the sell-price anchor for
+     **compose_deal_economics** (sellPricePerBbl = realistic CIF
+     mid / bblPerMt, OR sellPricePerMt = mid). Set sourcingRegion
+     to the same origin you used in step 1 so the cost side is
+     consistent.
+  3. Lead the response with "at the realistic CIF mid (~\$X/MT
+     for Y, ~\$Z/MT for W) the deal nets \$N margin / \$M EBITDA"
+     — anchored on real benchmarks, not a guessed price.
+
+If the user later supplies an actual buyer target or supplier
+quote, re-run with that number and call out the delta vs the
+realistic-mid baseline.
 
 After the card renders: don't restate the numbers in prose. Add
 one or two sentences interpreting the scorecard + the most
