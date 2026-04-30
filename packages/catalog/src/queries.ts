@@ -24,6 +24,7 @@ import {
   documents,
   externalSuppliers,
   jurisdictions,
+  entityNewsEvents,
   knownEntities,
   opportunities,
   pastPerformance,
@@ -7166,4 +7167,118 @@ export async function getMarketMoveBanner(
   );
 
   return { shouldDisplay, windowDays, thresholdAbs, series };
+}
+
+// ─── Entity news (RSS-ingested) ─────────────────────────────────
+
+export type EntityNewsRow = {
+  id: string;
+  knownEntityId: string | null;
+  entityName: string;
+  entityCountry: string | null;
+  /** Slug of the linked known_entity, when joinable. Powers the
+   *  "click through to entity profile" link on the brief panel. */
+  entitySlug: string | null;
+  eventType: string;
+  eventDate: string;
+  summary: string;
+  source: string;
+  sourceUrl: string | null;
+  relevanceScore: number;
+  ingestedAt: string;
+};
+
+export type ListEntityNewsFilters = {
+  /** Restrict to events linked to entities the company has marked
+   *  approved (any approved_* status). When false, returns events
+   *  for every entity in the rolodex — useful for the chat
+   *  assistant looking up news on a specific counterparty. */
+  approvedSuppliersOnly?: boolean;
+  /** Required when approvedSuppliersOnly is true. Ignored otherwise. */
+  companyId?: string;
+  /** Filter to a single entity by slug. Mutually exclusive with
+   *  approvedSuppliersOnly. */
+  entitySlug?: string;
+  /** Minimum relevance threshold. The ingest task already drops
+   *  <0.4 noise; a default of 0.5 here surfaces the high-signal
+   *  half. */
+  minRelevance?: number;
+  /** Lookback window in days. Default 7 (matches the brief
+   *  "what changed overnight" framing). */
+  daysBack?: number;
+  limit?: number;
+};
+
+/**
+ * Read entity_news_events filtered to a useful slice for the brief
+ * page or the chat assistant. Joins known_entities to surface the
+ * canonical slug + country. Optional approval-scope filter pulls
+ * only events linked to the company's approved suppliers — that's
+ * the brief-page default.
+ */
+export async function listEntityNews(
+  filters: ListEntityNewsFilters,
+): Promise<EntityNewsRow[]> {
+  const minRelevance = filters.minRelevance ?? 0.5;
+  const daysBack = filters.daysBack ?? 7;
+  const limit = Math.min(filters.limit ?? 25, 100);
+
+  const result = await db.execute(sql`
+    SELECT
+      ne.id,
+      ne.known_entity_id,
+      ne.source_entity_name,
+      ne.source_entity_country,
+      ke.slug          AS entity_slug,
+      ne.event_type,
+      ne.event_date,
+      ne.summary,
+      ne.source,
+      ne.source_url,
+      ne.relevance_score,
+      ne.ingested_at
+    FROM entity_news_events ne
+    LEFT JOIN known_entities ke ON ke.id = ne.known_entity_id
+    WHERE ne.event_date >= CURRENT_DATE - ${daysBack}::int
+      AND coalesce(ne.relevance_score, 0) >= ${minRelevance}
+      ${
+        filters.approvedSuppliersOnly && filters.companyId
+          ? sql`AND ke.slug IN (
+              SELECT entity_slug FROM supplier_approvals
+              WHERE company_id = ${filters.companyId}::uuid
+                AND status IN ('approved_with_kyc', 'approved_without_kyc')
+            )`
+          : sql``
+      }
+      ${
+        filters.entitySlug
+          ? sql`AND ke.slug = ${filters.entitySlug}`
+          : sql``
+      }
+    ORDER BY ne.event_date DESC, ne.relevance_score DESC NULLS LAST
+    LIMIT ${limit};
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    id: String(r.id),
+    knownEntityId: r.known_entity_id == null ? null : String(r.known_entity_id),
+    entityName: String(r.source_entity_name),
+    entityCountry:
+      r.source_entity_country == null ? null : String(r.source_entity_country),
+    entitySlug: r.entity_slug == null ? null : String(r.entity_slug),
+    eventType: String(r.event_type),
+    eventDate:
+      r.event_date instanceof Date
+        ? r.event_date.toISOString().slice(0, 10)
+        : String(r.event_date).slice(0, 10),
+    summary: String(r.summary),
+    source: String(r.source),
+    sourceUrl: r.source_url == null ? null : String(r.source_url),
+    relevanceScore:
+      r.relevance_score == null ? 0 : Number.parseFloat(String(r.relevance_score)),
+    ingestedAt:
+      r.ingested_at instanceof Date
+        ? r.ingested_at.toISOString()
+        : String(r.ingested_at),
+  }));
 }

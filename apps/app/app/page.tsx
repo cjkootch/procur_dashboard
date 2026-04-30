@@ -3,7 +3,12 @@ import { redirect } from 'next/navigation';
 import { and, desc, eq } from 'drizzle-orm';
 import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 import { alertProfiles, db } from '@procur/db';
-import { getMatchQueue, listOpportunities } from '@procur/catalog';
+import {
+  getMatchQueue,
+  listEntityNews,
+  listOpportunities,
+  type EntityNewsRow,
+} from '@procur/catalog';
 import { AppShell } from '../components/shell/AppShell';
 import { formatDate, formatMoney } from '../lib/format';
 
@@ -62,7 +67,7 @@ export default async function BriefPage() {
   // 24h cutoff for "new tenders" — anything published in the last day.
   const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  const [matchQueueItems, recentOpps] = await Promise.all([
+  const [matchQueueItems, recentOpps, counterpartyNews] = await Promise.all([
     getMatchQueue({ status: 'open', daysBack: 7, limit: 100 }),
     alertProfile
       ? listOpportunities({
@@ -77,6 +82,18 @@ export default async function BriefPage() {
           perPage: 25,
         })
       : Promise.resolve({ rows: [], total: 0 }),
+    // Counterparty news — last 7d, only on approved suppliers, only
+    // medium+ relevance. Empty until the cron has run a few cycles
+    // and the user has at least one approved supplier; the panel
+    // renders nothing in that case rather than showing a stale
+    // placeholder.
+    listEntityNews({
+      approvedSuppliersOnly: true,
+      companyId: company.id,
+      minRelevance: 0.5,
+      daysBack: 7,
+      limit: 12,
+    }).catch(() => [] as EntityNewsRow[]),
   ]);
 
   // Client-side narrow on the rest of the alert-profile filters
@@ -199,8 +216,141 @@ export default async function BriefPage() {
             empty="Proposals from chat (propose_create / propose_update) appear here once the approval queue lands. Today they live inline in chat — click Apply on the card to commit."
           />
         </div>
+
+        {counterpartyNews.length > 0 && (
+          <CounterpartyNewsPanel news={counterpartyNews} />
+        )}
       </div>
     </AppShell>
+  );
+}
+
+/**
+ * News on the company's approved suppliers from the last 7 days,
+ * sourced from the RSS-ingest task in services/ai-pipeline. Renders
+ * a tight one-row-per-event list with event-type pill, entity link,
+ * relative date, and an external link to the source.
+ */
+function CounterpartyNewsPanel({ news }: { news: EntityNewsRow[] }) {
+  return (
+    <section className="mt-8">
+      <header className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          Counterparty news
+        </h2>
+        <span className="text-[11px] text-[color:var(--color-muted-foreground)]">
+          Approved suppliers · last 7 days · auto-ingested every 4h
+        </span>
+      </header>
+      <ul className="divide-y divide-[color:var(--color-border)] rounded-[var(--radius-lg)] border border-[color:var(--color-border)]">
+        {news.map((n) => (
+          <li key={n.id} className="px-4 py-3">
+            <div className="flex flex-wrap items-baseline gap-2">
+              <EventTypePill kind={n.eventType} />
+              {n.entitySlug ? (
+                <Link
+                  href={`/entities/${encodeURIComponent(n.entitySlug)}`}
+                  className="text-sm font-medium hover:underline"
+                >
+                  {n.entityName}
+                </Link>
+              ) : (
+                <span className="text-sm font-medium">{n.entityName}</span>
+              )}
+              {n.entityCountry && (
+                <span className="text-[11px] text-[color:var(--color-muted-foreground)]">
+                  · {n.entityCountry}
+                </span>
+              )}
+              <span className="ml-auto text-[11px] text-[color:var(--color-muted-foreground)]">
+                {formatDate(new Date(n.eventDate))} · {n.source}
+              </span>
+            </div>
+            <p className="mt-1 text-sm text-[color:var(--color-foreground)]/85">
+              {n.summary}
+            </p>
+            {n.sourceUrl && (
+              <div className="mt-1 text-[11px]">
+                <a
+                  href={n.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[color:var(--color-muted-foreground)] underline hover:text-[color:var(--color-foreground)]"
+                >
+                  Read source →
+                </a>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+const EVENT_TYPE_LABEL: Record<string, { label: string; cls: string }> = {
+  refinery_outage: {
+    label: 'Outage',
+    cls: 'bg-red-100 text-red-900',
+  },
+  refinery_turnaround: {
+    label: 'Turnaround',
+    cls: 'bg-amber-100 text-amber-900',
+  },
+  sanctions_action: {
+    label: 'Sanctions',
+    cls: 'bg-red-100 text-red-900',
+  },
+  bankruptcy_filing: {
+    label: 'Bankruptcy',
+    cls: 'bg-red-100 text-red-900',
+  },
+  leadership_change: {
+    label: 'Leadership',
+    cls: 'bg-sky-100 text-sky-900',
+  },
+  force_majeure: {
+    label: 'Force majeure',
+    cls: 'bg-orange-100 text-orange-900',
+  },
+  pipeline_disruption: {
+    label: 'Pipeline',
+    cls: 'bg-orange-100 text-orange-900',
+  },
+  port_disruption: {
+    label: 'Port',
+    cls: 'bg-orange-100 text-orange-900',
+  },
+  mna_announcement: {
+    label: 'M&A',
+    cls: 'bg-violet-100 text-violet-900',
+  },
+  capacity_change: {
+    label: 'Capacity',
+    cls: 'bg-sky-100 text-sky-900',
+  },
+  press_distress_signal: {
+    label: 'Distress',
+    cls: 'bg-amber-100 text-amber-900',
+  },
+  price_event: {
+    label: 'Price',
+    cls: 'bg-slate-100 text-slate-900',
+  },
+  general_news: {
+    label: 'News',
+    cls: 'bg-slate-100 text-slate-900',
+  },
+};
+
+function EventTypePill({ kind }: { kind: string }) {
+  const spec = EVENT_TYPE_LABEL[kind] ?? EVENT_TYPE_LABEL.general_news!;
+  return (
+    <span
+      className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${spec.cls}`}
+    >
+      {spec.label}
+    </span>
   );
 }
 
