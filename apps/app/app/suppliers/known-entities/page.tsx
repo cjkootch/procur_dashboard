@@ -545,18 +545,21 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
                         className="border-b border-[color:var(--color-border)] last:border-b-0"
                       >
                         <td className="px-3 py-2 align-top">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Link
-                              href={`/entities/${encodeURIComponent(e.slug)}`}
-                              className="font-medium hover:underline"
-                            >
-                              {e.name}
-                            </Link>
-                            <KycBadge
-                              status={e.approvalStatus}
-                              expiresAt={e.approvalExpiresAt}
-                            />
-                          </div>
+                          <Link
+                            href={`/entities/${encodeURIComponent(e.slug)}`}
+                            className="font-medium hover:underline"
+                          >
+                            {e.name}
+                          </Link>
+                          {e.approvalStatus && (
+                            <>
+                              {' '}
+                              <KycBadge
+                                status={e.approvalStatus}
+                                expiresAt={e.approvalExpiresAt}
+                              />
+                            </>
+                          )}
                           {e.aliases.length > 1 && (
                             <div className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
                               aka {e.aliases.filter((a) => a !== e.name).slice(0, 2).join(', ')}

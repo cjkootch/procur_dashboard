@@ -134,7 +134,7 @@ export function KycBadge({ status, size = 'sm', expiresAt }: KycBadgeProps) {
       <span
         title={titleAttr}
         aria-label={titleAttr}
-        className={`inline-flex shrink-0 items-center justify-center rounded-full ring-2 ${diskSize} ${spec.iconStyle.bg} ${spec.iconStyle.fg} ${spec.iconStyle.ring}`}
+        className={`inline-flex shrink-0 items-center justify-center rounded-full ring-2 align-middle ${diskSize} ${spec.iconStyle.bg} ${spec.iconStyle.fg} ${spec.iconStyle.ring}`}
       >
         <Icon kind={spec.icon} />
         {expiringSoon && <span className="sr-only">renewal due soon</span>}
@@ -155,7 +155,7 @@ export function KycBadge({ status, size = 'sm', expiresAt }: KycBadgeProps) {
     <span
       title={titleAttr}
       aria-label={titleAttr}
-      className={`inline-flex items-center gap-1.5 rounded-full border border-transparent ${labelCls} ${
+      className={`inline-flex items-center gap-1.5 rounded-full border border-transparent align-middle ${labelCls} ${
         status == null
           ? 'border-dashed border-[color:var(--color-border)] text-[color:var(--color-muted-foreground)]'
           : 'bg-[color:var(--color-muted)]/40 text-[color:var(--color-foreground)]'
