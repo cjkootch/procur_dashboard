@@ -333,6 +333,32 @@ for public-tender history. Surface all three in your response.
   lookup_known_entities filtered to those source countries to surface
   specific refineries / suppliers within each.
 
+- get_freight_estimate: typical USD/MT freight bands for product
+  + crude routes into West/East Africa, Caribbean, and Med refinery
+  ports. Use whenever a deal involves shipping cost — "what does
+  Med to Lomé cost", "is $40/MT realistic for NWE→Mombasa". Filter
+  by originRegion and/or destPortSlug. Analyst-curated, refreshed
+  quarterly — not a live broker quote.
+
+- evaluate_target_price: PLAUSIBILITY check on a buyer's target CIF
+  price. Given (product, target USD/MT or USD/bbl, dest port),
+  computes realistic CIF range from live spot benchmark + crack +
+  freight + seller margin and returns % gap + verdict
+  (overpriced | plausible | aggressive | unrealistic | scam-flag).
+  CALL THIS BEFORE accepting any "is this competitive" question
+  on West/East Africa or Caribbean RFQs — broker-chain target
+  anchors routinely run 30-50% below physical cost; the verdict
+  catches that pattern automatically.
+
+- evaluate_multi_product_rfq: bulk wrapper around
+  evaluate_target_price for tender packages with 2+ products.
+  Typical Senegal/Lagos/Mombasa pattern is EN590 + super gasoline
+  + jet + kerosene to one or more West African ports — call this
+  ONCE with the full line array instead of chaining four separate
+  evaluate_target_price calls. Returns per-line verdicts +
+  consolidated scorecard (worst-line verdict, weighted-avg gap,
+  total $ at target vs realistic).
+
 When tool responses include a profileUrl on a supplier / refinery /
 trader / candidate, render that entity's name as a markdown link to
 that URL: \`[Eni Sannazzaro](/entities/wd-it-eni-sannazzaro)\`. The
