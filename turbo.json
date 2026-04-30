@@ -40,7 +40,8 @@
         "NEXT_PUBLIC_APP_URL",
         "NEXT_PUBLIC_DISCOVER_URL",
         "NEXT_PUBLIC_MARKETING_URL",
-        "NEXT_PUBLIC_ADMIN_URL"
+        "NEXT_PUBLIC_ADMIN_URL",
+        "ASSISTANT_DISABLE_BUDGET"
       ]
     },
     "dev": {

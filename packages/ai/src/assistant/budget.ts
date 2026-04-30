@@ -60,7 +60,6 @@ export async function getBudgetStatus(companyId: string): Promise<BudgetStatus> 
     columns: { planTier: true, monthlyAiBudgetCents: true },
   });
   const planTier = (company?.planTier ?? 'free') as PlanTier;
-  const limitCents = effectiveBudgetCents(planTier, company?.monthlyAiBudgetCents);
   const ms = monthStart();
 
   const [row] = await db
@@ -71,6 +70,25 @@ export async function getBudgetStatus(companyId: string): Promise<BudgetStatus> 
     );
 
   const usedCents = row?.total ?? 0;
+
+  // Global kill switch — when ASSISTANT_DISABLE_BUDGET=1 the budget
+  // check is bypassed for every tenant. Used during single-tenant
+  // operation when the per-plan caps are getting in the way; flip
+  // back to '0' (or unset) once we're onboarding multi-tenant
+  // again. Spending is still recorded to ai_usage so dashboards
+  // remain accurate — only the enforcement is disabled.
+  if (process.env.ASSISTANT_DISABLE_BUDGET === '1') {
+    return {
+      planTier,
+      limitCents: null,
+      usedCents,
+      remainingCents: null,
+      exceeded: false,
+      monthStart: ms,
+    };
+  }
+
+  const limitCents = effectiveBudgetCents(planTier, company?.monthlyAiBudgetCents);
   const exceeded = limitCents !== null && usedCents >= limitCents;
   return {
     planTier,
