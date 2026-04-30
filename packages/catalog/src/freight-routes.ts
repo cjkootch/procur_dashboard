@@ -237,6 +237,32 @@ export const FREIGHT_ROUTES: FreightRoute[] = [
     usdPerMtLow: 52,
     usdPerMtHigh: 70,
   },
+  // USGC → E. Africa is a long haul (US Gulf or Cartagena → Cape of
+  // Good Hope, or via Suez when not disrupted). Bands reflect LR1
+  // economics — MR is uneconomic at these distances. Premium vs
+  // mideast/india routes is the structural cost of using a Western-
+  // hemisphere refinery for E. African product. Relevant for traders
+  // with a Latin-American (esp. Colombian / Venezuelan) supply leg.
+  {
+    originRegion: 'usgc',
+    destPortSlug: 'mombasa-port',
+    destCountry: 'KE',
+    productType: 'clean',
+    vesselClassTypical: 'lr1',
+    usdPerMtLow: 78,
+    usdPerMtHigh: 105,
+    notes:
+      'Long-haul (US Gulf / Caribbean → E. Africa via Cape or Suez). LR1 economics; MR is uneconomic. Premium vs Med/AG/India sourcing is the structural cost of Western-hemisphere supply into Kenya.',
+  },
+  {
+    originRegion: 'usgc',
+    destPortSlug: 'dar-es-salaam-port',
+    destCountry: 'TZ',
+    productType: 'clean',
+    vesselClassTypical: 'lr1',
+    usdPerMtLow: 80,
+    usdPerMtHigh: 108,
+  },
 
   // ── Clean products → Caribbean (other active region) ─────────
   {

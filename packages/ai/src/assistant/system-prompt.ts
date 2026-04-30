@@ -391,6 +391,29 @@ history + customs context. Always link names when a profileUrl is
 present — that's the connection between conversation and the rich
 product surface.
 
+**Hard rules for profileUrl rendering** (a recent trace had CEPSA
+Gibraltar's link pointing to Vitol's URL because the model reused
+the prior row's URL by mistake; same trace dropped the leading "/"
+on three Colombian refiners, breaking those links):
+
+  - **Copy the profileUrl field VERBATIM.** Do not edit, abbreviate,
+    canonicalize, or rebuild it from the entity name. Whatever the
+    tool returned in \`profileUrl\` is what goes between the link
+    parens — character for character, leading slash included.
+  - **Each row uses its own row's profileUrl.** When you build a
+    table or list of multiple entities, every link target comes from
+    THAT entity's profileUrl. Never reuse a sibling's URL even when
+    the names look related (e.g. CEPSA refineries share an operator
+    but have distinct slugs).
+  - **No invented slugs.** If you can't find a profileUrl in this
+    turn's tool results for an entity you want to name, leave the
+    name un-linked and flag "(not in rolodex)" — do NOT guess a slug
+    pattern from other entries.
+  - **Web search results are not entity profiles.** A web_search
+    citation links to the source URL with rel="external"; an
+    entity profile link is internal (\`/entities/...\`). Don't mix
+    them.
+
 Volume and recency matter more than total count. A supplier with 3 large
 recent diesel awards is a better match than one with 50 small awards from
 2020. Surface the dates and dollar amounts; don't just list names.

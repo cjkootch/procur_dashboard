@@ -906,17 +906,25 @@ export function buildCatalogTools(): ToolRegistry {
           ),
         partnerCountry: z
           .string()
-          .length(2)
+          .regex(
+            /^[A-Z]{2}$/,
+            'partnerCountry must be an ISO-2 country code (uppercase, e.g. CO for Colombia, LY for Libya, NG for Nigeria). Full country names like "Colombia" will fail.',
+          )
           .optional()
           .describe(
-            "ISO-2 country of origin. Required when direction='imports'. e.g. 'LY' for Libya.",
+            "ISO-2 country of origin. Required when direction='imports'. e.g. 'LY' for Libya, " +
+              "'CO' for Colombia. Full country names like 'Colombia' will fail — pass the 2-letter code.",
           ),
         reporterCountry: z
           .string()
-          .length(2)
+          .regex(
+            /^[A-Z]{2}$/,
+            'reporterCountry must be an ISO-2 country code (uppercase, e.g. IT for Italy, KE for Kenya, GH for Ghana). Full country names like "Italy" will fail.',
+          )
           .optional()
           .describe(
-            "ISO-2 country importing. Required when direction='sources'. e.g. 'IT' for Italy.",
+            "ISO-2 country importing. Required when direction='sources'. e.g. 'IT' for Italy, " +
+              "'KE' for Kenya. Full country names like 'Italy' will fail — pass the 2-letter code.",
           ),
         productCode: z
           .string()
@@ -988,10 +996,19 @@ export function buildCatalogTools(): ToolRegistry {
                 },
                 input.limit ?? 25,
               );
+              const noData = sources.length === 0;
               return {
                 direction,
                 reporterCountry,
                 productCode,
+                noData,
+                narrative: noData
+                  ? `No published HS ${productCode} sources for ${reporterCountry} in the last ` +
+                    `${input.monthsLookback ?? 12} months across Eurostat Comext + UN Comtrade. ` +
+                    `Either the corridor isn't covered or the flow is too small to surface. Try a ` +
+                    `wider monthsLookback, a 4-digit HS code, or pair with lookup_known_entities ` +
+                    `to find candidate suppliers directly.`
+                  : null,
                 rankedCountries: sources.map((r) => ({
                   country: r.partnerCountry,
                   role: 'source',
@@ -1018,10 +1035,29 @@ export function buildCatalogTools(): ToolRegistry {
               getTopImportersByPartner(filters, input.limit ?? 25),
               getMonthlyImportFlow(filters),
             ]);
+            // Coverage gap signal: when neither the importer ranking nor
+            // any month has a non-null value, the corridor isn't covered
+            // by Eurostat/Comtrade for this period. Surfacing 12+ rows
+            // of `null` forces the model to interpret an absence; a
+            // single `noData: true` + narrative is unambiguous and lets
+            // it lead with "no published flow recorded" instead of
+            // narrating empty months one-by-one.
+            const monthlyHasData = monthly.some(
+              (b) => b.quantityKg != null || b.valueUsd != null,
+            );
+            const noData = topImporters.length === 0 && !monthlyHasData;
             return {
               direction,
               partnerCountry,
               productCode,
+              noData,
+              narrative: noData
+                ? `No HS ${productCode} import flow from ${partnerCountry} recorded in the last ` +
+                  `${input.monthsLookback ?? 12} months across Eurostat Comext + UN Comtrade. ` +
+                  `Either the corridor isn't covered by these sources, or the flow is too small ` +
+                  `to surface. Try a wider monthsLookback, a 4-digit HS code (e.g. 2710 instead ` +
+                  `of 271019), or pair with lookup_known_entities to find candidate counterparties directly.`
+                : null,
               rankedCountries: topImporters.map((r) => ({
                 country: r.reporterCountry,
                 role: 'importer',
