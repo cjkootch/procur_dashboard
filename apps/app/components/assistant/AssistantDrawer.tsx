@@ -95,20 +95,21 @@ export function AssistantDrawer() {
         if (e.target === backdropRef.current) setOpen(false);
       }}
     >
-      {/* Floating chat-window popover anchored bottom-right above the
-          launcher. Sits clearly on top of the page rather than splitting
-          the viewport into "page" + "side rail" halves. */}
-      <div className="absolute bottom-4 right-4 flex h-[min(70vh,560px)] w-[min(95vw,420px)] flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] shadow-2xl">
-        <header className="flex items-center justify-between border-b border-[color:var(--color-border)] px-4 py-2.5">
-          <div>
+      {/* Mobile: near-fullscreen panel (8px inset). Desktop: floating
+          chat-window popover anchored bottom-right above the launcher.
+          Sits clearly on top of the page rather than splitting the
+          viewport into "page" + "side rail" halves. */}
+      <div className="absolute inset-2 flex flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] shadow-2xl sm:inset-auto sm:bottom-4 sm:right-4 sm:h-[min(70vh,560px)] sm:w-[min(95vw,420px)]">
+        <header className="flex items-center justify-between gap-2 border-b border-[color:var(--color-border)] px-3 py-2.5 sm:px-4">
+          <div className="min-w-0">
             <div className="text-sm font-semibold">Procur Assistant</div>
             {pageContext && (
-              <div className="text-[11px] text-[color:var(--color-muted-foreground)]">
+              <div className="truncate text-[11px] text-[color:var(--color-muted-foreground)]">
                 Context: {describeContext(pageContext)}
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
             {threadId && (
               <button
                 type="button"
@@ -116,14 +117,14 @@ export function AssistantDrawer() {
                 className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-muted-foreground)] hover:border-[color:var(--color-foreground)] hover:text-[color:var(--color-foreground)]"
                 title="Start a new conversation (current one stays in /assistant history)"
               >
-                New chat
+                New
               </button>
             )}
             {threadId ? (
               <Link
                 href={`/assistant/${threadId}`}
                 onClick={() => setOpen(false)}
-                className="text-xs text-[color:var(--color-muted-foreground)] hover:underline"
+                className="hidden text-xs text-[color:var(--color-muted-foreground)] hover:underline sm:inline"
               >
                 Open full view
               </Link>
@@ -131,7 +132,7 @@ export function AssistantDrawer() {
               <Link
                 href="/assistant"
                 onClick={() => setOpen(false)}
-                className="text-xs text-[color:var(--color-muted-foreground)] hover:underline"
+                className="hidden text-xs text-[color:var(--color-muted-foreground)] hover:underline sm:inline"
               >
                 Open /assistant
               </Link>
@@ -139,10 +140,23 @@ export function AssistantDrawer() {
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="rounded-[var(--radius-sm)] px-2 py-1 text-xs text-[color:var(--color-muted-foreground)] hover:bg-[color:var(--color-muted)]"
-              aria-label="Close"
+              className="rounded-[var(--radius-sm)] p-1.5 text-[color:var(--color-muted-foreground)] hover:bg-[color:var(--color-muted)] hover:text-[color:var(--color-foreground)]"
+              aria-label="Close assistant"
             >
-              Esc
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
             </button>
           </div>
         </header>
@@ -191,8 +205,12 @@ function LauncherButton({ onOpen }: { onOpen: () => void }) {
       onClick={onOpen}
       // z-[999] sits above Leaflet's marker pane + controls. The open
       // drawer goes one higher (z-[1000]) so the launcher tucks under
-      // it cleanly.
-      className="fixed bottom-4 right-4 z-[999] flex items-center gap-2 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-4 py-2.5 text-sm font-medium shadow-lg hover:bg-[color:var(--color-muted)]/40"
+      // it cleanly. Bottom offset is larger on mobile to clear browser
+      // chrome (Safari bottom bar / home indicator).
+      style={{
+        bottom: 'max(1rem, env(safe-area-inset-bottom, 0px))',
+      }}
+      className="fixed right-4 z-[999] flex items-center gap-2 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-4 py-2.5 text-sm font-medium shadow-lg hover:bg-[color:var(--color-muted)]/40"
       aria-label="Open Procur Assistant"
       title="Procur Assistant (⌘K)"
     >

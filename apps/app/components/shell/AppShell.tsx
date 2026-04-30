@@ -7,6 +7,7 @@ import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 import { NotificationsBell } from './NotificationsBell';
 import { QuickCreate } from './QuickCreate';
 import { SidebarNavLink } from './SidebarNavLink';
+import { MobileNav } from './MobileNav';
 
 type NavGroup = {
   heading?: string;
@@ -98,7 +99,7 @@ export async function AppShell({
 
   return (
     <div className="flex min-h-screen">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40">
+      <aside className="hidden w-60 shrink-0 flex-col border-r border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40 md:flex">
         <div className="p-3">
           <Link href="/" aria-label="Procur home" className="block">
             <Image
@@ -145,15 +146,21 @@ export async function AppShell({
         </div>
       </aside>
 
-      <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-[color:var(--color-border)] bg-[color:var(--color-background)] px-6 py-3">
-          <div className="text-sm text-[color:var(--color-muted-foreground)]">{title}</div>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center justify-between gap-3 border-b border-[color:var(--color-border)] bg-[color:var(--color-background)] px-3 py-3 md:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <MobileNav
+              nav={NAV}
+              companyLabel={company ? `${company.name} · ${company.planTier}` : null}
+            />
+            <div className="truncate text-sm text-[color:var(--color-muted-foreground)]">{title}</div>
+          </div>
           <div className="flex items-center gap-3 text-xs">
             <a
               href="https://docs.procur.app"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+              className="hidden text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] sm:inline"
             >
               Get help
             </a>
