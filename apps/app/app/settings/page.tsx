@@ -199,7 +199,7 @@ export default async function CompanyProfilePage() {
                 >
                   {a.entityName ?? a.entitySlug}
                 </Link>
-                <KycBadge status={a.status} expiresAt={a.expiresAt} />
+                <KycBadge status={a.status} size="md" expiresAt={a.expiresAt} />
                 {a.notes && (
                   <span className="text-xs text-[color:var(--color-muted-foreground)] truncate max-w-md">
                     {a.notes}
