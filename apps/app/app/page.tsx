@@ -163,7 +163,7 @@ export default async function BriefPage() {
               >
                 <div className="flex items-baseline justify-between gap-2">
                   <p className="truncate text-sm font-medium">{item.sourceEntityName}</p>
-                  <span className="shrink-0 rounded-full bg-[color:var(--color-accent-subtle)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[color:var(--color-accent)]">
+                  <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900">
                     {item.signalType.replace(/_/g, ' ')}
                   </span>
                 </div>
@@ -176,6 +176,7 @@ export default async function BriefPage() {
 
           <BriefCard
             title="Active deals"
+            iconSrc="/brand/vex-icon-on-light.svg"
             count={null}
             href="https://app.vexhq.ai"
             external
@@ -264,7 +265,7 @@ function FuelMarketNewsPanel({ news }: { news: EntityNewsRow[] }) {
   return (
     <section className="mt-6">
       <header className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-foreground)]">
           Fuel market
         </h2>
         <span className="text-[11px] text-[color:var(--color-muted-foreground)]">
@@ -275,7 +276,7 @@ function FuelMarketNewsPanel({ news }: { news: EntityNewsRow[] }) {
         {news.map((n) => (
           <li key={n.id} className="px-4 py-3">
             <div className="flex flex-wrap items-baseline gap-2">
-              <span className="inline-flex shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-900">
+              <span className="inline-flex shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-900">
                 Market
               </span>
               <span className="ml-auto text-[11px] text-[color:var(--color-muted-foreground)]">
@@ -315,7 +316,7 @@ function CounterpartyNewsPanel({ news }: { news: EntityNewsRow[] }) {
   return (
     <section className="mt-8">
       <header className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-foreground)]">
           Counterparty news
         </h2>
         <span className="text-[11px] text-[color:var(--color-muted-foreground)]">
@@ -427,7 +428,7 @@ function EventTypePill({ kind }: { kind: string }) {
   const spec = EVENT_TYPE_LABEL[kind] ?? EVENT_TYPE_LABEL.general_news!;
   return (
     <span
-      className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${spec.cls}`}
+      className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${spec.cls}`}
     >
       {spec.label}
     </span>
@@ -436,6 +437,7 @@ function EventTypePill({ kind }: { kind: string }) {
 
 function BriefCard({
   title,
+  iconSrc,
   count,
   countLabel,
   href,
@@ -445,6 +447,9 @@ function BriefCard({
   children,
 }: {
   title: string;
+  /** Optional brand icon shown next to the title. Currently used by
+   *  the "Active deals" card to visually mark it as the vex surface. */
+  iconSrc?: string;
   count: number | null;
   countLabel?: string;
   href: string;
@@ -463,7 +468,13 @@ function BriefCard({
       style={{ boxShadow: 'var(--shadow-sm)' }}
     >
       <header className="mb-3 flex items-baseline justify-between gap-2">
-        <h2 className="text-base font-semibold">{title}</h2>
+        <h2 className="flex items-center gap-2 text-base font-semibold">
+          {iconSrc && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={iconSrc} alt="" aria-hidden className="h-4 w-4" />
+          )}
+          {title}
+        </h2>
         {count != null && (
           <span className="text-xs text-[color:var(--color-muted-foreground)]">
             {count} {countLabel ?? 'items'}
