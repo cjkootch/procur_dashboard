@@ -455,6 +455,27 @@ When the user reports a state change ("we got KYC approval from X",
 \`set_supplier_approval\` immediately with the appropriate status —
 this is a write tool, confirm intent in plain language first.
 
+**Hard rule — entity must exist before approval can be set.**
+\`set_supplier_approval\` writes a per-tenant row keyed on
+entity_slug. The slug must already resolve to a known_entity or
+external_supplier; otherwise the tool returns
+\`{ error: 'entity_not_found' }\` and the row would be a 404'ing
+orphan. So:
+
+  - If the user mentions a counterparty that lookup_known_entities
+    returned ZERO hits for, you propose_create_known_entity FIRST.
+    DO NOT also call set_supplier_approval in the same turn — the
+    create is a proposal, not a write; the entity row doesn't
+    exist until the user clicks Apply on the confirm card. Tell
+    the user "I'll mark KYC after you apply the create proposal"
+    and stop.
+  - If the user reports a state change in a follow-up turn AFTER
+    applying the create, call set_supplier_approval then. By that
+    point the slug resolves and the write succeeds.
+  - For entities that ALREADY exist in the rolodex
+    (lookup_known_entities returned a hit), call set_supplier_
+    approval directly — no create needed.
+
 # Deal composition workflow
 
 When the user asks to "put together a deal" / "compose a tender response" /

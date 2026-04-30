@@ -3,6 +3,8 @@ import { and, eq } from 'drizzle-orm';
 import {
   db,
   alertProfiles,
+  externalSuppliers,
+  knownEntities,
   opportunities,
   pursuits,
   supplierApprovals,
@@ -198,15 +200,68 @@ export type UpsertSupplierApprovalInput = {
 };
 
 /**
+ * Soft-error class so callers (server actions, AI tool handlers,
+ * route handlers) can branch on a known shape rather than parsing
+ * `Error.message`. Used for "entity doesn't exist" — the caller
+ * surfaces it as a 400 / Zod-shaped error instead of crashing.
+ */
+export class SupplierApprovalEntityMissingError extends Error {
+  readonly entitySlug: string;
+  constructor(entitySlug: string) {
+    super(
+      `Cannot record an approval for entity_slug='${entitySlug}' — no known_entity ` +
+        `or external_supplier matches that slug. If this came from a chat-curated ` +
+        `propose_create_known_entity proposal, apply that proposal first; the ` +
+        `entity row needs to exist before its approval state can be tracked.`,
+    );
+    this.name = 'SupplierApprovalEntityMissingError';
+    this.entitySlug = entitySlug;
+  }
+}
+
+/**
+ * Returns true when the slug resolves to either a known_entities
+ * row or an external_suppliers row (the same shape getEntityProfile
+ * accepts as canonicalKey). Used by upsertSupplierApproval to
+ * refuse writes against orphan slugs — see the trace where chat
+ * created a supplier_approvals row pointing at a slug whose
+ * propose_create_known_entity proposal had not been applied yet
+ * (resulting in /entities/<slug> 404).
+ */
+export async function entitySlugExists(entitySlug: string): Promise<boolean> {
+  const [ke, es] = await Promise.all([
+    db.query.knownEntities.findFirst({
+      where: eq(knownEntities.slug, entitySlug),
+      columns: { id: true },
+    }),
+    db.query.externalSuppliers.findFirst({
+      where: eq(externalSuppliers.id, entitySlug),
+      columns: { id: true },
+    }),
+  ]);
+  return Boolean(ke || es);
+}
+
+/**
  * Insert or update the (company, entitySlug) approval row. UNIQUE
  * constraint on (company_id, entity_slug) means we use ON CONFLICT
  * to flip an existing row's status without creating a duplicate —
  * re-engagement is a status update, not a new row (matches the
  * design comment in 0054).
+ *
+ * Refuses to write when entitySlug doesn't resolve. The slug column
+ * is text (not FK) by design so it can match either known_entities
+ * or external_suppliers, but that means we have to enforce
+ * existence at the application layer — otherwise a chat session
+ * can leave orphan rows pointing at not-yet-applied proposed
+ * entities.
  */
 export async function upsertSupplierApproval(
   input: UpsertSupplierApprovalInput,
 ): Promise<{ id: string; created: boolean }> {
+  if (!(await entitySlugExists(input.entitySlug))) {
+    throw new SupplierApprovalEntityMissingError(input.entitySlug);
+  }
   const isApproved =
     input.status === 'approved_with_kyc' || input.status === 'approved_without_kyc';
   const approvedAt =
