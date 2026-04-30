@@ -117,6 +117,57 @@ const PORTS: PortSeed[] = [
     notes: 'Eni-operated via Mellitah Oil & Gas. Bouri offshore field crude.',
   },
 
+  // ── Algerian terminals (Sonatrach export complex) ─────────
+  {
+    slug: 'skikda-terminal',
+    name: 'Skikda Terminal',
+    country: 'DZ',
+    lat: 36.92,
+    lng: 6.96,
+    radiusNm: 3,
+    portType: 'mixed',
+    knownGrades: ['saharan-blend', 'algerian-condensate'],
+    linkedEntitySlug: 'curated-dz-sonatrach-skikda',
+    notes:
+      "Algeria's primary crude + product export complex. Co-located with Sonatrach Skikda 350 kbd refinery + LNG. Saharan Blend exits via Bejaia pipeline → Skikda or direct from In Amenas → Skikda.",
+  },
+  {
+    slug: 'arzew-terminal',
+    name: 'Arzew Terminal',
+    country: 'DZ',
+    lat: 35.83,
+    lng: -0.30,
+    radiusNm: 3,
+    portType: 'mixed',
+    knownGrades: ['saharan-blend', 'algerian-condensate'],
+    linkedEntitySlug: 'curated-dz-sonatrach-arzew',
+    notes:
+      'Algeria\'s second-largest export hub. LNG complex + ~60 kbd Sonatrach refinery + crude/condensate loading. Western basin output flows here.',
+  },
+  {
+    slug: 'bejaia-terminal',
+    name: 'Bejaia Terminal',
+    country: 'DZ',
+    lat: 36.77,
+    lng: 5.08,
+    radiusNm: 3,
+    portType: 'crude-loading',
+    knownGrades: ['saharan-blend'],
+    notes:
+      'Pipeline terminus from Hassi Messaoud field. Loads Saharan Blend crude for export. Smaller than Skikda but a primary crude-only outlet.',
+  },
+  {
+    slug: 'oran-port',
+    name: 'Oran Commercial Port',
+    country: 'DZ',
+    lat: 35.71,
+    lng: -0.65,
+    radiusNm: 2,
+    portType: 'mixed',
+    notes:
+      'Commercial port handling general cargo + some refined product imports. Less crude-focused than Skikda/Arzew/Bejaia; mainly diesel/gasoline product calls.',
+  },
+
   // ── Italian refinery ports (Tier 1 buyers) ────────────────
   {
     slug: 'sannazzaro-refinery',
