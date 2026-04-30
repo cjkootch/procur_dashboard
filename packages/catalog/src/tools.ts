@@ -26,6 +26,7 @@ import {
   evaluateOfferAgainstHistory,
   getCompanyDealDefaults,
   getCompanyProfile,
+  listEntityNews,
   listJurisdictions,
   listOpportunities,
   getOpportunityBySlug,
@@ -591,6 +592,120 @@ export function buildCatalogTools(): ToolRegistry {
           throw err;
         }
       },
+    }),
+
+    lookup_entity_news: defineTool({
+      name: 'lookup_entity_news',
+      description:
+        'Recent news events for procur-tracked counterparties (refiners, ' +
+        'traders, producers). Sourced from a curated set of energy / shipping ' +
+        'RSS feeds and tagged by Haiku into structured event types: ' +
+        'refinery_outage, refinery_turnaround, sanctions_action, ' +
+        'bankruptcy_filing, leadership_change, force_majeure, ' +
+        'pipeline_disruption, port_disruption, mna_announcement, ' +
+        'capacity_change, price_event, press_distress_signal, general_news. ' +
+        '\n\n' +
+        'Use when the user asks "what\'s happening with X", "any news on the ' +
+        'Mediterranean refiners", "did anything happen overnight with our ' +
+        'suppliers", or before composing a deal that involves a specific ' +
+        'counterparty (a refinery outage or sanctions action is material to ' +
+        'sourcing decisions). Each event carries summary + sourceUrl — cite ' +
+        'the URL inline when narrating, the same way web_search citations work.\n\n' +
+        'Two modes:\n' +
+        '  - approvedSuppliersOnly=true (default for "what\'s happening with ' +
+        'our counterparties" framing) — narrows to entities the user has ' +
+        'marked approved.\n' +
+        '  - entitySlug=<slug> — pulls news for one specific entity.\n' +
+        '\n' +
+        'Returns up to 25 rows by default, sorted newest-first.',
+      kind: 'read',
+      schema: z.object({
+        approvedSuppliersOnly: z
+          .boolean()
+          .optional()
+          .describe(
+            'When true, restrict to entities the calling company has marked ' +
+              'approved (any approved_* status). Default false (returns news ' +
+              'across the entire rolodex).',
+          ),
+        entitySlug: z
+          .string()
+          .optional()
+          .describe(
+            'When set, restrict to news for one specific entity. Pass the ' +
+              'profileUrl slug returned by lookup_known_entities (e.g. ' +
+              '"curated-ch-vitol-geneva"). Mutually exclusive with ' +
+              'approvedSuppliersOnly.',
+          ),
+        minRelevance: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe(
+            'Floor on the Haiku-assigned relevance score (0-1). Default 0.5; ' +
+              'raise to 0.7+ to surface only material events.',
+          ),
+        daysBack: z
+          .number()
+          .int()
+          .min(1)
+          .max(90)
+          .optional()
+          .describe('Lookback window in days. Default 7.'),
+        limit: z.number().min(1).max(100).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_entity_news',
+            args: input,
+            summarize: (out: { count: number }) => ({
+              resultCount: out.count,
+              resultSummary: {
+                approvedSuppliersOnly: input.approvedSuppliersOnly === true,
+                entitySlug: input.entitySlug,
+                daysBack: input.daysBack ?? 7,
+              },
+            }),
+          },
+          async () => {
+            const rows = await listEntityNews({
+              approvedSuppliersOnly: input.approvedSuppliersOnly === true,
+              companyId: ctx.companyId,
+              entitySlug: input.entitySlug,
+              minRelevance: input.minRelevance,
+              daysBack: input.daysBack,
+              limit: input.limit,
+            });
+            return {
+              count: rows.length,
+              events: rows.map((r) => ({
+                eventDate: r.eventDate,
+                eventType: r.eventType,
+                entityName: r.entityName,
+                entityCountry: r.entityCountry,
+                profileUrl: r.entitySlug
+                  ? buildEntityProfileUrl({
+                      kind: 'known_entity',
+                      slug: r.entitySlug,
+                    })
+                  : null,
+                summary: r.summary,
+                source: r.source,
+                sourceUrl: r.sourceUrl,
+                relevanceScore: r.relevanceScore,
+              })),
+              caveat:
+                'RSS-ingested + Haiku-tagged. Coverage is the curated feed list ' +
+                '(OilPrice, Hellenic Shipping News, Energy Voice, Reuters Energy) ' +
+                'and updates every 4h. Empty result means either no high-relevance ' +
+                "news in the window or the entity isn't in the feed coverage — " +
+                'fall back to web_search when verifying time-sensitive claims.',
+            };
+          },
+        ),
     }),
 
     get_company_profile: defineTool({
