@@ -44,6 +44,16 @@ export default withSentryConfig(nextConfig, {
   // Upload a larger set of source maps for prettier stack traces (increases build time)
   widenClientFileUpload: true,
 
+  // Delete the source-map files from the Vercel build output after
+  // uploading them to Sentry. They've already done their job (Sentry
+  // resolves stack traces server-side via debug-id) — keeping them
+  // in the deployed bundle just bloats cold-start payload and serves
+  // them publicly. Silences the build-time warning the SDK emits
+  // when this is unset.
+  sourcemaps: {
+    deleteSourcemapsAfterUpload: true,
+  },
+
   // Route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
   // This can increase your server load as well as your hosting bill.
   // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-

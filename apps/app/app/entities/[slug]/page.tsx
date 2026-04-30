@@ -128,6 +128,7 @@ export default async function EntityProfilePage({ params }: Props) {
           initialStatus={approval?.status ?? null}
           initialExpiresAt={approval?.expiresAt ?? null}
           initialNotes={approval?.notes ?? null}
+          entityTags={profile.tags}
         />
       </header>
 

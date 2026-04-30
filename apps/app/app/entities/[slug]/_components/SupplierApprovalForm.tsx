@@ -6,10 +6,22 @@ import type { SupplierApprovalStatus } from '@procur/db';
 import { setSupplierApprovalAction } from '../actions';
 
 /**
- * Manage approval state from the entity profile page. The badge
- * itself is rendered by the parent (server component); this card
- * appears below it as the write surface — collapsed by default,
- * expands when the user clicks Edit.
+ * Manage approval state from the entity profile page.
+ *
+ * Three render modes, by initialStatus:
+ *
+ *  1. **null + has legacy tag** → amber "import the chat-curated KYC
+ *     note as a tracked approval" callout. One-click button writes
+ *     approved_with_kyc with no expiry. The user can still expand
+ *     the full form for non-KYC variants.
+ *
+ *  2. **null** (no legacy tag) → primary "✓ Mark KYC Approved" CTA
+ *     with a "More options" link that expands the full form. The
+ *     CTA defaults to approved_with_kyc + no expiry — the most
+ *     common state.
+ *
+ *  3. **non-null** → muted "Edit approval" link (collapsed by
+ *     default; expands the form on click).
  */
 export type SupplierApprovalFormProps = {
   entitySlug: string;
@@ -17,6 +29,9 @@ export type SupplierApprovalFormProps = {
   initialStatus: SupplierApprovalStatus | null;
   initialExpiresAt: string | null;
   initialNotes: string | null;
+  /** Free-text tags from known_entities.tags. Triggers the legacy-
+   *  KYC callout when 'kyc-approved' is present without a row. */
+  entityTags?: string[];
 };
 
 const STATUS_OPTIONS: Array<{ value: SupplierApprovalStatus; label: string }> = [
@@ -34,11 +49,12 @@ export function SupplierApprovalForm({
   initialStatus,
   initialExpiresAt,
   initialNotes,
+  entityTags = [],
 }: SupplierApprovalFormProps) {
   const router = useRouter();
-  const [open, setOpen] = useState(initialStatus == null);
+  const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<SupplierApprovalStatus>(
-    initialStatus ?? 'pending',
+    initialStatus ?? 'approved_with_kyc',
   );
   const [expiresAt, setExpiresAt] = useState(
     initialExpiresAt ? initialExpiresAt.slice(0, 10) : '',
@@ -46,17 +62,25 @@ export function SupplierApprovalForm({
   const [notes, setNotes] = useState(initialNotes ?? '');
   const [pending, startTransition] = useTransition();
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="text-xs text-[color:var(--color-muted-foreground)] underline hover:text-[color:var(--color-foreground)]"
-      >
-        Edit approval
-      </button>
-    );
-  }
+  const hasLegacyKycTag =
+    initialStatus == null && entityTags.some((t) => t === 'kyc-approved');
+
+  /** One-click write — fires the action with the supplied status and
+   *  whatever expiry / notes are currently in the form. Used by both
+   *  the primary CTA and the legacy-tag import button. */
+  const quickWrite = (newStatus: SupplierApprovalStatus, presetNotes?: string) => {
+    startTransition(async () => {
+      await setSupplierApprovalAction({
+        entitySlug,
+        entityName,
+        status: newStatus,
+        expiresAt: null,
+        notes: presetNotes ?? null,
+      });
+      setOpen(false);
+      router.refresh();
+    });
+  };
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,6 +96,76 @@ export function SupplierApprovalForm({
       router.refresh();
     });
   };
+
+  // Mode 1: legacy `kyc-approved` tag, no structured row yet.
+  if (hasLegacyKycTag && !open) {
+    return (
+      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-[var(--radius-md)] border border-amber-300 bg-amber-50 px-4 py-3 text-sm">
+        <span className="text-amber-900">
+          Chat-curated <code className="font-mono text-xs">kyc-approved</code>{' '}
+          tag found — convert to a tracked approval to enable the badge + filter.
+        </span>
+        <button
+          type="button"
+          onClick={() =>
+            quickWrite(
+              'approved_with_kyc',
+              'Imported from legacy kyc-approved tag.',
+            )
+          }
+          disabled={pending}
+          className="rounded-[var(--radius-sm)] bg-amber-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-60"
+        >
+          {pending ? 'Saving…' : 'Import as KYC Approved'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          disabled={pending}
+          className="text-xs text-amber-900 underline hover:text-amber-700"
+        >
+          More options
+        </button>
+      </div>
+    );
+  }
+
+  // Mode 2: not engaged, no legacy tag — primary CTA + "More options".
+  if (initialStatus == null && !open) {
+    return (
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={() => quickWrite('approved_with_kyc')}
+          disabled={pending}
+          className="rounded-[var(--radius-sm)] bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
+        >
+          {pending ? 'Saving…' : '✓ Mark KYC Approved'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          disabled={pending}
+          className="text-xs text-[color:var(--color-muted-foreground)] underline hover:text-[color:var(--color-foreground)]"
+        >
+          More options
+        </button>
+      </div>
+    );
+  }
+
+  // Mode 3: engaged — collapsed "Edit approval" link.
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-3 text-xs text-[color:var(--color-muted-foreground)] underline hover:text-[color:var(--color-foreground)]"
+      >
+        Edit approval
+      </button>
+    );
+  }
 
   return (
     <form
