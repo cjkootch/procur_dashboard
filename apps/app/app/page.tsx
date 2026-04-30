@@ -10,6 +10,7 @@ import {
   type EntityNewsRow,
 } from '@procur/catalog';
 import { AppShell } from '../components/shell/AppShell';
+import { CommodityPriceTicker } from '../components/CommodityPriceTicker';
 import { formatDate, formatMoney } from '../lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -134,6 +135,12 @@ export default async function BriefPage() {
             Here&apos;s what changed overnight.
           </p>
         </header>
+
+        {/* Live commodity ticker — same five series the market
+            intelligence page surfaces. Renders nothing if the
+            benchmark fetch fails so a transient error doesn't
+            blank the morning brief. */}
+        <CommodityPriceTicker />
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <BriefCard
