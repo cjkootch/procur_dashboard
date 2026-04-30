@@ -1,5 +1,12 @@
 @import 'tailwindcss';
 
+/* Canonical design tokens (shared name-for-name with vex). Defines
+ * spacing, radii, typography sizing, shell dimensions, status colors,
+ * and procur's white-mode color overlay. The @theme block below adds
+ * Tailwind-utility-generating tokens; tokens.css is the source of
+ * truth for the additive set + cross-app naming. */
+@import '../styles/tokens.css';
+
 /* Pull in shared UI primitives so their Tailwind classes get scanned. */
 @source "../../../packages/ui/src/**/*.{ts,tsx}";
 

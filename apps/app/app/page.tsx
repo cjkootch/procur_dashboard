@@ -1,30 +1,29 @@
-import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { listCompanyActivity } from '../lib/activity-feed';
-import { getHomeData } from '../lib/home-queries';
-import { computeOnboardingProgress } from '../lib/onboarding-progress';
-import { getRecommendedOpportunities } from '../lib/recommended-queries';
-import { flagFor, formatDate, formatMoney, timeUntil } from '../lib/format';
-import { ActivityFeed } from '../components/home/ActivityFeed';
-import { SetupChecklist } from '../components/home/SetupChecklist';
+import { and, desc, eq } from 'drizzle-orm';
+import { getCurrentCompany, getCurrentUser } from '@procur/auth';
+import { alertProfiles, db } from '@procur/db';
+import { getMatchQueue, listOpportunities } from '@procur/catalog';
 import { AppShell } from '../components/shell/AppShell';
-import { db, users } from '@procur/db';
-import { eq, sql } from 'drizzle-orm';
+import { formatDate, formatMoney } from '../lib/format';
 
 export const dynamic = 'force-dynamic';
 
-const STAGE_LABEL: Record<string, string> = {
-  identification: 'Identification',
-  qualification: 'Qualification',
-  capture_planning: 'Capture planning',
-  proposal_development: 'Proposal drafting',
-  submitted: 'Submitted',
-  awarded: 'Awarded',
-  lost: 'Lost',
-};
-
-export default async function DashboardPage() {
+/**
+ * Daily-driver Brief. Replaces the previous welcome dashboard with a
+ * tight 4-card surface answering "what should I look at right now?":
+ *
+ *   1. Match queue       — operator-curated supplier signals
+ *   2. Active deals      — pointer into vex (deals live there)
+ *   3. New tenders       — opps published in last 24h matching bid criteria
+ *   4. Entity proposals  — chat-emitted propose_create/update awaiting approval
+ *
+ * Section #4 is currently a placeholder; a `pending_entity_proposals`
+ * table doesn't exist yet — the model emits proposal cards inline in
+ * chat and the user clicks Apply there. Surfacing them here is a
+ * follow-up once the queue is persisted.
+ */
+export default async function BriefPage() {
   const user = await getCurrentUser();
   if (!user) redirect('/sign-in');
 
@@ -34,350 +33,239 @@ export default async function DashboardPage() {
 
   if (!company) {
     return (
-      <AppShell title="Home">
-        <div className="mx-auto max-w-3xl px-6 py-12">
-          <h1 className="text-3xl font-semibold tracking-tight">Welcome, {displayName}</h1>
-          <p className="mt-4 text-sm text-[color:var(--color-muted-foreground)]">
-            <Link className="underline" href="/onboarding">
+      <AppShell title="Brief">
+        <div className="mx-auto max-w-3xl px-4 py-12 md:px-6">
+          <p className="text-base text-[color:var(--color-muted-foreground)]">
+            Welcome, {displayName}.{' '}
+            <Link className="text-[color:var(--color-accent)] underline" href="/onboarding">
               Complete onboarding to create your organization
             </Link>
+            .
           </p>
         </div>
       </AppShell>
     );
   }
 
-  const [data, recommended, teammateRow, activity] = await Promise.all([
-    getHomeData(company.id),
-    getRecommendedOpportunities(company, user.id, 6),
-    db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(users)
-      .where(eq(users.companyId, company.id)),
-    listCompanyActivity(company.id, 12),
+  // Pull the user's first active alert profile so the Tenders card can
+  // narrow to their actual bid criteria. If none, the card shifts to a
+  // "Configure bid criteria" CTA instead of dumping every recent opp.
+  const alertProfile = await db.query.alertProfiles.findFirst({
+    where: and(
+      eq(alertProfiles.userId, user.id),
+      eq(alertProfiles.companyId, company.id),
+      eq(alertProfiles.active, true),
+    ),
+    orderBy: desc(alertProfiles.createdAt),
+  });
+
+  // 24h cutoff for "new tenders" — anything published in the last day.
+  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const [matchQueueItems, recentOpps] = await Promise.all([
+    getMatchQueue({ status: 'open', daysBack: 7, limit: 100 }),
+    alertProfile
+      ? listOpportunities({
+          // OpportunityFilters takes single values, so pick the first
+          // jurisdiction/category from the profile; client-side filter
+          // below tightens the rest. Approximate but ships v1.
+          jurisdiction: alertProfile.jurisdictions?.[0],
+          category: alertProfile.categories?.[0],
+          publishedAfter: dayAgo,
+          scope: 'open',
+          sort: 'recent',
+          perPage: 25,
+        })
+      : Promise.resolve({ rows: [], total: 0 }),
   ]);
-  const teammateCount = teammateRow[0]?.n ?? 1;
-  const onboarding = await computeOnboardingProgress(company, user.id, teammateCount);
-  const discoverBase =
-    process.env.NEXT_PUBLIC_DISCOVER_URL ?? 'https://discover.procur.app';
+
+  // Client-side narrow on the rest of the alert-profile filters
+  // (additional jurisdictions/categories beyond the first, plus
+  // keyword matching). Cheap because perPage is capped at 25.
+  const profileJurs = alertProfile?.jurisdictions ?? null;
+  const profileCats = alertProfile?.categories ?? null;
+  const newTenders = recentOpps.rows.filter((o) => {
+    if (profileJurs && profileJurs.length > 0 && !profileJurs.includes(o.jurisdictionSlug)) {
+      return false;
+    }
+    if (profileCats && profileCats.length > 0 && o.category && !profileCats.includes(o.category)) {
+      return false;
+    }
+    return true;
+  });
 
   return (
-    <AppShell title="Home">
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        <header className="mb-8">
-          <p className="text-sm text-[color:var(--color-muted-foreground)]">Welcome back,</p>
-          <h1 className="text-3xl font-semibold tracking-tight">{displayName}</h1>
+    <AppShell title="">
+      <div className="px-4 py-6 md:px-6">
+        <header className="mb-6">
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Good morning, {user.firstName ?? 'there'}.
+          </h1>
+          <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
+            Here&apos;s what changed overnight.
+          </p>
         </header>
 
-        <SetupChecklist progress={onboarding} />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <BriefCard
+            title="Match queue"
+            count={matchQueueItems.length}
+            countLabel={matchQueueItems.length === 1 ? 'signal' : 'signals'}
+            href="/suppliers/match-queue"
+            ctaLabel="Open match queue"
+            empty="No new signals in the last 7 days."
+          >
+            {matchQueueItems.slice(0, 3).map((item) => (
+              <Link
+                key={item.id}
+                href={
+                  item.entityProfileSlug
+                    ? `/entities/${item.entityProfileSlug}`
+                    : '/suppliers/match-queue'
+                }
+                className="block rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-2 transition hover:border-[color:var(--color-foreground)]"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="truncate text-sm font-medium">{item.sourceEntityName}</p>
+                  <span className="shrink-0 rounded-full bg-[color:var(--color-accent-subtle)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[color:var(--color-accent)]">
+                    {item.signalType.replace(/_/g, ' ')}
+                  </span>
+                </div>
+                <p className="mt-0.5 line-clamp-2 text-xs text-[color:var(--color-muted-foreground)]">
+                  {item.rationale}
+                </p>
+              </Link>
+            ))}
+          </BriefCard>
 
-      <section className="mb-8 grid gap-4 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-6 md:grid-cols-4">
-        <Fact label="Open pursuits" value={data.openPursuits} linkHref="/capture/pipeline" />
-        <Fact label="Submitted" value={data.submittedProposals} linkHref="/proposal" />
-        <Fact label="Active contracts" value={data.activeContracts} linkHref="/contract" />
-        <Fact label="Total pursuits" value={data.totalPursuits} linkHref="/capture/pursuits" />
-      </section>
+          <BriefCard
+            title="Active deals"
+            count={null}
+            href="https://app.vexhq.ai"
+            external
+            ctaLabel="Open vex"
+            empty="Deals live in vex — open the CRM to act on candidates pushed from procur."
+          >
+            <p className="text-xs text-[color:var(--color-muted-foreground)]">
+              Once you push entities to vex from the rolodex or chat, they appear in vex&apos;s
+              origination queue with the chat-summary context attached.
+            </p>
+          </BriefCard>
 
-      {recommended.length > 0 && (
-        <section className="mb-8">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-              Recommended for you
-            </h2>
-            <Link
-              href="/settings"
-              className="text-xs underline text-[color:var(--color-muted-foreground)]"
-            >
-              Tune capabilities →
-            </Link>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {recommended.map((r) => {
-              const href = r.slug
-                ? `${discoverBase}/opportunities/${r.slug}`
-                : `/capture/new?opportunityId=${r.id}`;
-              const isExternal = href.startsWith('http');
-              const body = (
-                <>
-                  <div className="flex items-start gap-2">
-                    <span className="text-lg">{flagFor(r.jurisdictionCountry)}</span>
-                    <div className="flex-1">
-                      <p className="line-clamp-2 text-sm font-medium">{r.title}</p>
-                      <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-                        {r.agencyName ?? r.jurisdictionName}
-                        {r.category && <> · {r.category}</>}
-                      </p>
-                    </div>
-                  </div>
-                  {r.matchReasons.length > 0 && (
-                    <p className="mt-2 flex flex-wrap gap-1">
-                      {r.matchReasons.map((reason) => (
-                        <span
-                          key={reason}
-                          className="rounded-full bg-[color:var(--color-muted)]/60 px-2 py-0.5 text-[10px] tracking-wide"
-                        >
-                          {reason}
-                        </span>
-                      ))}
-                    </p>
-                  )}
-                  <div className="mt-2 flex items-center justify-between text-xs text-[color:var(--color-muted-foreground)]">
-                    <span>
-                      {formatMoney(r.valueEstimate, r.currency) ?? '—'}
-                    </span>
-                    {r.deadlineAt && <span>closes {formatDate(r.deadlineAt)}</span>}
-                  </div>
-                </>
-              );
-              const className =
-                'block rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4 transition hover:border-[color:var(--color-foreground)]';
-              return isExternal ? (
-                <a
-                  key={r.id}
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={className}
+          <BriefCard
+            title="New tenders"
+            count={alertProfile ? newTenders.length : null}
+            countLabel={newTenders.length === 1 ? 'tender' : 'tenders'}
+            href={alertProfile ? '/alerts' : '/alerts/new'}
+            ctaLabel={alertProfile ? 'View all alerts' : 'Configure bid criteria'}
+            empty={
+              alertProfile
+                ? 'No new tenders matching your criteria in the last 24 hours.'
+                : 'Configure a bid-criteria alert profile to surface matching tenders here.'
+            }
+          >
+            {alertProfile &&
+              newTenders.slice(0, 3).map((opp) => (
+                <Link
+                  key={opp.id}
+                  href={`/discover/${opp.slug}`}
+                  className="block rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-2 transition hover:border-[color:var(--color-foreground)]"
                 >
-                  {body}
-                </a>
-              ) : (
-                <Link key={r.id} href={href} className={className}>
-                  {body}
-                </Link>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      <ActivityFeed entries={activity} />
-
-      <div className="grid gap-6 md:grid-cols-2">
-        <section>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-              Upcoming deadlines
-            </h2>
-            <Link href="/capture/pipeline" className="text-xs underline text-[color:var(--color-muted-foreground)]">
-              Pipeline →
-            </Link>
-          </div>
-          {data.upcomingDeadlines.length === 0 ? (
-            <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-6 text-center text-xs text-[color:var(--color-muted-foreground)]">
-              No pursuits closing in the next 30 days.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {data.upcomingDeadlines.map((d) => {
-                const countdown = timeUntil(d.deadlineAt);
-                return (
-                  <Link
-                    key={d.pursuitId}
-                    href={`/capture/pursuits/${d.pursuitId}`}
-                    className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-3 text-sm transition hover:border-[color:var(--color-foreground)]"
-                  >
-                    <span className="text-lg">{flagFor(d.jurisdictionCountry)}</span>
-                    <div className="flex-1">
-                      <p className="line-clamp-1 font-medium">{d.opportunityTitle}</p>
-                      <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-                        {d.agencyName ?? d.jurisdictionName} · {STAGE_LABEL[d.stage] ?? d.stage}
-                      </p>
-                    </div>
-                    <div className="text-right text-xs">
-                      <p className="font-medium">{formatDate(d.deadlineAt)}</p>
-                      {countdown && countdown !== 'closed' && (
-                        <p className="text-[color:var(--color-muted-foreground)]">
-                          in {countdown}
-                        </p>
-                      )}
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        <section>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-              Proposals in progress
-            </h2>
-            <Link href="/proposal" className="text-xs underline text-[color:var(--color-muted-foreground)]">
-              All proposals →
-            </Link>
-          </div>
-          {data.draftingProposals.length === 0 ? (
-            <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-6 text-center text-xs text-[color:var(--color-muted-foreground)]">
-              No proposals in drafting.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {data.draftingProposals.map((p) => {
-                const compliancePct =
-                  p.totalRequirements > 0
-                    ? Math.round(
-                        ((p.totalRequirements - p.unaddressedRequirements) /
-                          p.totalRequirements) *
-                          100,
-                      )
-                    : null;
-                return (
-                  <Link
-                    key={p.pursuitId}
-                    href={`/proposal/${p.pursuitId}`}
-                    className="block rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-3 text-sm transition hover:border-[color:var(--color-foreground)]"
-                  >
-                    <p className="line-clamp-1 font-medium">{p.opportunityTitle}</p>
-                    <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-                      {p.status.replace('_', ' ')}
-                      {compliancePct != null && <> · {compliancePct}% addressed</>}
-                      {p.unaddressedRequirements > 0 && (
-                        <>
-                          {' '}
-                          · <span className="text-red-700">{p.unaddressedRequirements} gap{p.unaddressedRequirements === 1 ? '' : 's'}</span>
-                        </>
-                      )}
-                      {p.deadlineAt && <> · closes {formatDate(p.deadlineAt)}</>}
-                    </p>
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </section>
-      </div>
-
-      <section className="mt-8">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-            Upcoming obligations
-          </h2>
-          <Link href="/contract" className="text-xs underline text-[color:var(--color-muted-foreground)]">
-            All contracts →
-          </Link>
-        </div>
-        {data.upcomingObligations.length === 0 ? (
-          <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-6 text-center text-xs text-[color:var(--color-muted-foreground)]">
-            No obligations due in the next 30 days.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {data.upcomingObligations.map((o, i) => (
-              <Link
-                key={`${o.contractId}-${i}`}
-                href={`/contract/${o.contractId}`}
-                className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-3 text-sm transition hover:border-[color:var(--color-foreground)]"
-              >
-                <div className="flex-1">
-                  <p className="line-clamp-1 font-medium">{o.description}</p>
-                  <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-                    {o.contractTitle} · due {formatDate(new Date(o.dueDate))}
-                  </p>
-                </div>
-                <span className="rounded-full bg-[color:var(--color-muted)]/60 px-2 py-0.5 text-[10px] uppercase tracking-wide">
-                  {o.status.replace('_', ' ')}
-                </span>
-              </Link>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {data.recentWins.length > 0 && (
-        <section className="mt-8">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-              Recent wins
-            </h2>
-            <Link href="/contract" className="text-xs underline text-[color:var(--color-muted-foreground)]">
-              Contracts →
-            </Link>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {data.recentWins.map((w) => (
-              <Link
-                key={w.pursuitId}
-                href={`/capture/pursuits/${w.pursuitId}`}
-                className="flex items-start gap-3 rounded-[var(--radius-lg)] border border-emerald-200 bg-emerald-50/30 p-4 text-sm transition hover:border-emerald-500"
-              >
-                <span className="text-lg">{flagFor(w.jurisdictionCountry)}</span>
-                <div className="flex-1">
-                  <p className="line-clamp-2 font-medium text-emerald-900">
-                    {w.opportunityTitle}
-                  </p>
-                  <p className="mt-0.5 text-xs text-emerald-900/70">
-                    {w.agencyName ?? w.jurisdictionName}
-                    {w.awardedValueUsd && (
-                      <> · {formatMoney(w.awardedValueUsd, 'USD') ?? ''}</>
+                  <p className="truncate text-sm font-medium">{opp.title}</p>
+                  <div className="mt-0.5 flex items-center gap-2 text-xs text-[color:var(--color-muted-foreground)]">
+                    <span>{opp.jurisdictionName}</span>
+                    {opp.valueEstimateUsd && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span>{formatMoney(opp.valueEstimateUsd, 'USD')}</span>
+                      </>
                     )}
-                  </p>
-                  <p className="mt-1 text-[11px] text-emerald-900/60">
-                    Awarded {formatDate(w.updatedAt)}
-                  </p>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </section>
-      )}
+                    {opp.deadlineAt && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span>Due {formatDate(opp.deadlineAt)}</span>
+                      </>
+                    )}
+                  </div>
+                </Link>
+              ))}
+          </BriefCard>
 
-      <section className="mt-10">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-          Jump into a product
-        </h2>
-        <div className="grid gap-3 md:grid-cols-4">
-          <ProductLink href="/capture" name="Capture" desc="Pipeline, pursuits, tasks" />
-          <ProductLink href="/proposal" name="Proposal" desc="AI drafting, compliance matrix" />
-          <ProductLink href="/pricer" name="Pricer" desc="Labor categories, target value" />
-          <ProductLink href="/contract" name="Contract" desc="Awards, obligations" />
-          <ProductLink href="/past-performance" name="Past performance" desc="Reusable references" />
-          <ProductLink href="/library" name="Content library" desc="Reusable proposal content" />
-          <ProductLink href="/alerts" name="Alerts" desc="Saved opportunity searches" />
-          <ProductLink href="/insights" name="Insights" desc="Win rate, pipeline health" />
+          <BriefCard
+            title="Entity proposals"
+            count={null}
+            href="/assistant"
+            ctaLabel="Open assistant"
+            empty="Proposals from chat (propose_create / propose_update) appear here once the approval queue lands. Today they live inline in chat — click Apply on the card to commit."
+          />
         </div>
-      </section>
       </div>
     </AppShell>
   );
 }
 
-function Fact({
-  label,
-  value,
-  linkHref,
+function BriefCard({
+  title,
+  count,
+  countLabel,
+  href,
+  external,
+  ctaLabel,
+  empty,
+  children,
 }: {
-  label: string;
-  value: number;
-  linkHref?: string;
+  title: string;
+  count: number | null;
+  countLabel?: string;
+  href: string;
+  external?: boolean;
+  ctaLabel: string;
+  empty: string;
+  children?: React.ReactNode;
 }) {
-  const body = (
-    <div>
-      <p className="text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-        {label}
-      </p>
-      <p className="mt-1 text-2xl font-semibold">{value}</p>
-    </div>
-  );
-  if (linkHref) {
-    return (
-      <Link href={linkHref} className="block hover:opacity-70">
-        {body}
-      </Link>
-    );
-  }
-  return body;
-}
+  const hasItems = Array.isArray((children as { props?: unknown }[] | undefined))
+    ? ((children as { props?: unknown }[]).length > 0)
+    : children != null && children !== false;
 
-function ProductLink({ href, name, desc }: { href: string; name: string; desc: string }) {
   return (
-    <Link
-      href={href}
-      className="block rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4 transition hover:border-[color:var(--color-foreground)]"
+    <section
+      className="flex flex-col rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-4"
+      style={{ boxShadow: 'var(--shadow-sm)' }}
     >
-      <p className="text-sm font-semibold">{name}</p>
-      <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">{desc}</p>
-    </Link>
+      <header className="mb-3 flex items-baseline justify-between gap-2">
+        <h2 className="text-base font-semibold">{title}</h2>
+        {count != null && (
+          <span className="text-xs text-[color:var(--color-muted-foreground)]">
+            {count} {countLabel ?? 'items'}
+          </span>
+        )}
+      </header>
+      <div className="flex flex-1 flex-col gap-2">
+        {hasItems ? (
+          children
+        ) : (
+          <p className="text-xs text-[color:var(--color-muted-foreground)]">{empty}</p>
+        )}
+      </div>
+      <div className="mt-3 pt-3">
+        {external ? (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs font-medium text-[color:var(--color-accent)] hover:text-[color:var(--color-accent-hover)]"
+          >
+            {ctaLabel} →
+          </a>
+        ) : (
+          <Link
+            href={href}
+            className="text-xs font-medium text-[color:var(--color-accent)] hover:text-[color:var(--color-accent-hover)]"
+          >
+            {ctaLabel} →
+          </Link>
+        )}
+      </div>
+    </section>
   );
 }
