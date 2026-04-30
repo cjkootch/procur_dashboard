@@ -597,27 +597,53 @@ export function buildCatalogTools(): ToolRegistry {
     lookup_entity_news: defineTool({
       name: 'lookup_entity_news',
       description:
-        'Recent news events for procur-tracked counterparties (refiners, ' +
-        'traders, producers). Sourced from a curated set of energy / shipping ' +
-        'RSS feeds and tagged by Haiku into structured event types: ' +
-        'refinery_outage, refinery_turnaround, sanctions_action, ' +
-        'bankruptcy_filing, leadership_change, force_majeure, ' +
-        'pipeline_disruption, port_disruption, mna_announcement, ' +
-        'capacity_change, price_event, press_distress_signal, general_news. ' +
-        '\n\n' +
-        'Use when the user asks "what\'s happening with X", "any news on the ' +
-        'Mediterranean refiners", "did anything happen overnight with our ' +
-        'suppliers", or before composing a deal that involves a specific ' +
-        'counterparty (a refinery outage or sanctions action is material to ' +
-        'sourcing decisions). Each event carries summary + sourceUrl — cite ' +
-        'the URL inline when narrating, the same way web_search citations work.\n\n' +
-        'Two modes:\n' +
-        '  - approvedSuppliersOnly=true (default for "what\'s happening with ' +
-        'our counterparties" framing) — narrows to entities the user has ' +
-        'marked approved.\n' +
-        '  - entitySlug=<slug> — pulls news for one specific entity.\n' +
-        '\n' +
-        'Returns up to 25 rows by default, sorted newest-first.',
+        'Recent fuel-trading / counterparty news events. Sourced from a ' +
+        'curated set of energy + shipping RSS feeds, classified by Haiku ' +
+        'every hour, written into entity_news_events. Two flavors of row:\n' +
+        '  - press_distress_signal: tied to a specific counterparty ' +
+        '(refinery outage, sanctions, force majeure, leadership change).\n' +
+        '  - fuel_market_news: broader market context (Brent moves with ' +
+        'drivers, OPEC+ decisions, freight rates, sanctions affecting ' +
+        'global supply) without a specific counterparty.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • The user asks "any news on X", "what\'s happening with Y", ' +
+        '"did anything happen overnight" → call with entitySlug or ' +
+        'approvedSuppliersOnly=true.\n' +
+        '  • You\'re composing a deal that names a specific counterparty ' +
+        '→ call with entitySlug=<that-entity> first; refinery outages or ' +
+        'sanctions actions are material to whether the deal is workable.\n' +
+        '  • The user asks about market state ("how\'s diesel looking", ' +
+        '"any reason Brent moved this week") → call with eventTypes=' +
+        '[\'fuel_market_news\'].\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The user asks about their OWN data (pursuits, alerts, ' +
+        'capabilities, contracts) — no relevance.\n' +
+        '  • Generic / off-topic questions.\n' +
+        '  • You already called it earlier in the same turn — don\'t re-' +
+        'fan-out by entity.\n' +
+        '  • You\'re just rendering an entity in a list with no narration ' +
+        '— news is for context, not decoration.\n\n' +
+        'CITATION DISCIPLINE:\n' +
+        '  • Lead with the news ONLY when it materially changes the ' +
+        'answer. Don\'t pad responses with "FYI here\'s some news."\n' +
+        '  • Cite the sourceUrl inline as a markdown link: "[Reuters ' +
+        'reported](URL) Vitol declared force majeure on the Libyan loadings".\n' +
+        '  • Quote the eventDate ("3 days ago") so the user knows whether ' +
+        'it\'s fresh.\n' +
+        '  • If the most recent event is >5 days old, lead with that ' +
+        '"nothing recent" framing rather than treating stale news as a ' +
+        'live signal.\n' +
+        '  • Empty result + the user asked about a specific counterparty ' +
+        '→ say "no recent news in our coverage" rather than implying ' +
+        'silence is good news.\n\n' +
+        'Three modes:\n' +
+        '  • approvedSuppliersOnly=true → counterparty news scoped to ' +
+        'approved suppliers.\n' +
+        '  • entitySlug=<slug> → news for one specific entity (any ' +
+        'approval status).\n' +
+        '  • eventTypes=[\'fuel_market_news\'] → broader market context, ' +
+        'no entity required.\n' +
+        'Returns up to 25 rows, sorted newest-first.',
       kind: 'read',
       schema: z.object({
         approvedSuppliersOnly: z
