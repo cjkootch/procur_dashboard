@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export type ThreadListItemProps = {
   id: string;
@@ -16,6 +16,19 @@ export function ThreadListItem({ id, title, lastMessageAtIso, active }: ThreadLi
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(title);
   const [busy, setBusy] = useState(false);
+  // Two-step inline confirm replaces the blocking `confirm()` modal,
+  // which was pinning the main thread for ~1.2s on every delete and
+  // showing up as an INP regression. First click flips the Delete
+  // button to a red "Confirm" state for CONFIRM_TIMEOUT_MS; second
+  // click fires the request.
+  const [confirming, setConfirming] = useState(false);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    };
+  }, []);
 
   const save = async () => {
     const next = draft.trim();
@@ -36,15 +49,29 @@ export function ThreadListItem({ id, title, lastMessageAtIso, active }: ThreadLi
     }
   };
 
-  const remove = async () => {
-    if (!confirm('Delete this conversation? This cannot be undone.')) return;
-    setBusy(true);
-    const res = await fetch(`/api/assistant/threads/${id}`, { method: 'DELETE' });
-    setBusy(false);
-    if (res.ok) {
-      if (active) router.push('/assistant');
-      else router.refresh();
+  const CONFIRM_TIMEOUT_MS = 3000;
+  const onDeleteClick = () => {
+    if (!confirming) {
+      setConfirming(true);
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+      confirmTimer.current = setTimeout(() => setConfirming(false), CONFIRM_TIMEOUT_MS);
+      return;
     }
+    if (confirmTimer.current) {
+      clearTimeout(confirmTimer.current);
+      confirmTimer.current = null;
+    }
+    setConfirming(false);
+    setBusy(true);
+    // Fire-and-forget so the click handler returns immediately and
+    // the next paint isn't blocked by the network round-trip.
+    void fetch(`/api/assistant/threads/${id}`, { method: 'DELETE' }).then((res) => {
+      setBusy(false);
+      if (res.ok) {
+        if (active) router.push('/assistant');
+        else router.refresh();
+      }
+    });
   };
 
   const formattedDate = new Date(lastMessageAtIso).toLocaleDateString('en-US', {
@@ -100,11 +127,16 @@ export function ThreadListItem({ id, title, lastMessageAtIso, active }: ThreadLi
           </button>
           <button
             type="button"
-            onClick={() => void remove()}
+            onClick={onDeleteClick}
             disabled={busy}
-            className="rounded-[var(--radius-sm)] bg-[color:var(--color-muted)]/80 px-1.5 py-0.5 text-red-600"
+            aria-label={confirming ? 'Click again to confirm delete' : 'Delete conversation'}
+            className={`rounded-[var(--radius-sm)] px-1.5 py-0.5 text-red-600 ${
+              confirming
+                ? 'bg-red-100 font-medium ring-1 ring-red-400'
+                : 'bg-[color:var(--color-muted)]/80'
+            }`}
           >
-            Delete
+            {confirming ? 'Confirm?' : 'Delete'}
           </button>
         </div>
       </div>
