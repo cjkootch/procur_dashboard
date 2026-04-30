@@ -4,6 +4,7 @@ import { Montserrat } from 'next/font/google';
 import { ClerkProvider } from '@clerk/nextjs';
 import { PostHogProvider } from '@procur/analytics/client';
 import { ImpersonationBanner } from '../components/shell/ImpersonationBanner';
+import { MarketMoveBanner } from '../components/shell/MarketMoveBanner';
 import { RightRail } from '../components/shell/RightRail';
 import './globals.css';
 
@@ -31,6 +32,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           {/* Impersonation banner — renders nothing for normal sessions.
               Calls auth() server-side to detect the act claim. */}
           <ImpersonationBanner />
+          {/* Quiet by default — only renders when at least one
+              tracked benchmark moved more than the threshold over
+              the trailing window. See packages/catalog
+              getMarketMoveBanner. */}
+          <MarketMoveBanner />
           <PostHogProvider
             apiKey={process.env.NEXT_PUBLIC_POSTHOG_KEY}
             apiHost={process.env.NEXT_PUBLIC_POSTHOG_HOST}

@@ -31,6 +31,7 @@ import {
   summarizeRequirements,
 } from '../../../../lib/capability-queries';
 import { listTeamMembersForPursuit, summarizeTeam } from '../../../../lib/team-queries';
+import { SourcingReadinessPanel } from './_components/SourcingReadinessPanel';
 
 export const dynamic = 'force-dynamic';
 // suggestRequirementsForPursuitAction calls Claude Sonnet 4.6 with the
@@ -85,6 +86,7 @@ export default async function PursuitDetailPage({
       .select({
         description: opportunities.description,
         aiSummary: opportunities.aiSummary,
+        category: opportunities.category,
       })
       .from(opportunities)
       .where(eq(opportunities.id, card.opportunity.id))
@@ -182,6 +184,15 @@ export default async function PursuitDetailPage({
       </nav>
 
       <PursuitHero card={card} raw={oppRow ?? null} discoverUrl={DISCOVER_URL} />
+
+      {/* Sourcing readiness — counts approved counterparties in the
+          opportunity's category so the user can tell at a glance
+          whether this pursuit is sourceable today vs blocked on
+          supplier KYC. */}
+      <SourcingReadinessPanel
+        companyId={company.id}
+        opportunityCategory={oppRow?.category ?? null}
+      />
 
       {/* 3-col layout on desktop: left mini-nav | main content | right rail.
           Stacks vertically on narrow screens so nothing gets squeezed. */}

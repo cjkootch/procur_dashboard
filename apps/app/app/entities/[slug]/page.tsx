@@ -11,6 +11,7 @@ import {
 } from '@procur/catalog';
 import { KycBadge } from '../../../components/KycBadge';
 import { PushToVexButton } from './_components/PushToVexButton';
+import { QuoteAnchorsPanel } from './_components/QuoteAnchorsPanel';
 import { SupplierApprovalForm } from './_components/SupplierApprovalForm';
 
 /**
@@ -150,6 +151,14 @@ export default async function EntityProfilePage({ params }: Props) {
           )}
           {cap.status && <Stat label="Status" value={cap.status} />}
         </section>
+      )}
+
+      {/* Quote anchors — refiner-only. Renders the realistic CIF
+          mid for a default product into the desk's most-active dest
+          ports so every refiner profile becomes a one-glance answer
+          to "what could we quote out of here today." */}
+      {profile.role === 'refiner' && (
+        <QuoteAnchorsPanel entityCountry={profile.country ?? null} />
       )}
 
       {vesselActivity && (

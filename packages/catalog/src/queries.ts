@@ -6992,3 +6992,178 @@ export async function getApprovedEntitySlugs(companyId: string): Promise<Set<str
     );
   return new Set(rows.map((r) => r.entitySlug));
 }
+
+export type SupplierApprovalRollup = {
+  totalApproved: number;
+  approvedWithKyc: number;
+  approvedWithoutKyc: number;
+  inFlight: number; // pending OR kyc_in_progress
+  expired: number;
+};
+
+/**
+ * Cross-tabulation of the company's supplier approvals scoped to a
+ * specific known_entities.categoryTag. Powers the pursuit-detail
+ * "Sourcing readiness" panel — given a pursuit's category, how
+ * many counterparties can we transact with today?
+ *
+ * categoryTag is matched against the entity's categories[] array
+ * (same semantics as lookupKnownEntities). Pass null/undefined to
+ * count across all categories.
+ */
+export async function getSupplierApprovalRollup(
+  companyId: string,
+  categoryTag?: string | null,
+): Promise<SupplierApprovalRollup> {
+  const result = await db.execute(sql`
+    SELECT sa.status, COUNT(*)::int AS n
+    FROM supplier_approvals sa
+    ${
+      categoryTag
+        ? sql`JOIN known_entities ke ON ke.slug = sa.entity_slug
+              AND ${categoryTag} = ANY(ke.categories)`
+        : sql``
+    }
+    WHERE sa.company_id = ${companyId}::uuid
+    GROUP BY sa.status;
+  `);
+  const counts: Record<string, number> = {};
+  for (const r of result.rows as Array<{ status: string; n: number }>) {
+    counts[r.status] = r.n;
+  }
+  const approvedWithKyc = counts['approved_with_kyc'] ?? 0;
+  const approvedWithoutKyc = counts['approved_without_kyc'] ?? 0;
+  return {
+    totalApproved: approvedWithKyc + approvedWithoutKyc,
+    approvedWithKyc,
+    approvedWithoutKyc,
+    inFlight: (counts['pending'] ?? 0) + (counts['kyc_in_progress'] ?? 0),
+    expired: counts['expired'] ?? 0,
+  };
+}
+
+// ─── Market move (banner) ───────────────────────────────────────
+
+export type MarketMoveSeries = {
+  seriesSlug: string;
+  /** Display-friendly series name (e.g. "Brent", "NYH ULSD"). */
+  label: string;
+  unit: string;
+  latestPrice: number;
+  latestAsOf: string;
+  /** Decimal change over the lookback window. -0.18 = -18%. Null when
+   *  not enough data points to compute (one trading day or zero). */
+  pctChange: number | null;
+};
+
+export type MarketMoveBanner = {
+  /** True when at least one series moved more than the threshold over
+   *  the lookback window. UI uses this to decide whether to render. */
+  shouldDisplay: boolean;
+  windowDays: number;
+  /** Threshold the trader cares about, as a decimal. 0.05 = ±5%. */
+  thresholdAbs: number;
+  series: MarketMoveSeries[];
+};
+
+const BANNER_SERIES: Array<{ slug: string; label: string }> = [
+  { slug: 'brent', label: 'Brent' },
+  { slug: 'nyh-diesel', label: 'NYH ULSD' },
+  { slug: 'nyh-gasoline', label: 'NYH Gasoline' },
+  { slug: 'nyh-heating-oil', label: 'NYH Heating Oil' },
+];
+
+/**
+ * Fetch a fixed set of benchmark price series and compute the
+ * lookback-window pct change for each. Returns a "shouldDisplay" flag
+ * that's true when at least one series moved more than thresholdAbs
+ * — so the layout-level banner can render conditionally without
+ * having to interpret the data.
+ *
+ * Uses the same window-pct-change semantics as
+ * getCommodityPriceContext, but issues a single multi-series query
+ * so the layout doesn't fan out to four separate calls per render.
+ */
+export async function getMarketMoveBanner(
+  windowDays = 7,
+  thresholdAbs = 0.05,
+): Promise<MarketMoveBanner> {
+  const slugs = BANNER_SERIES.map((s) => s.slug);
+  const result = await db.execute(sql`
+    WITH series AS (
+      SELECT
+        cp.series_slug,
+        cp.unit,
+        cp.price::numeric AS price,
+        cp.price_date,
+        ROW_NUMBER() OVER (
+          PARTITION BY cp.series_slug
+          ORDER BY cp.price_date DESC
+        ) AS rn_desc,
+        ROW_NUMBER() OVER (
+          PARTITION BY cp.series_slug
+          ORDER BY cp.price_date ASC
+        ) AS rn_asc
+      FROM commodity_prices cp
+      WHERE cp.series_slug = ANY(${slugs}::text[])
+        AND cp.contract_type = 'spot'
+        AND cp.price_date >= CURRENT_DATE - ${windowDays}::int
+    )
+    SELECT
+      latest.series_slug,
+      latest.unit,
+      latest.price        AS latest_price,
+      latest.price_date   AS latest_date,
+      earliest.price      AS earliest_price
+    FROM (SELECT * FROM series WHERE rn_desc = 1) latest
+    LEFT JOIN (SELECT * FROM series WHERE rn_asc = 1) earliest
+      ON latest.series_slug = earliest.series_slug;
+  `);
+
+  const rows = result.rows as Array<{
+    series_slug: string;
+    unit: string;
+    latest_price: string | number;
+    latest_date: string | Date;
+    earliest_price: string | number | null;
+  }>;
+  const bySlug = new Map(rows.map((r) => [r.series_slug, r]));
+
+  const series: MarketMoveSeries[] = BANNER_SERIES.map((s) => {
+    const row = bySlug.get(s.slug);
+    if (!row) {
+      return {
+        seriesSlug: s.slug,
+        label: s.label,
+        unit: 'usd-bbl',
+        latestPrice: 0,
+        latestAsOf: '',
+        pctChange: null,
+      };
+    }
+    const latest = Number.parseFloat(String(row.latest_price));
+    const earliest =
+      row.earliest_price != null
+        ? Number.parseFloat(String(row.earliest_price))
+        : null;
+    const pctChange =
+      earliest != null && earliest !== 0 ? (latest - earliest) / earliest : null;
+    return {
+      seriesSlug: s.slug,
+      label: s.label,
+      unit: row.unit,
+      latestPrice: latest,
+      latestAsOf:
+        row.latest_date instanceof Date
+          ? row.latest_date.toISOString().slice(0, 10)
+          : String(row.latest_date).slice(0, 10),
+      pctChange,
+    };
+  }).filter((s) => s.latestAsOf !== '');
+
+  const shouldDisplay = series.some(
+    (s) => s.pctChange != null && Math.abs(s.pctChange) >= thresholdAbs,
+  );
+
+  return { shouldDisplay, windowDays, thresholdAbs, series };
+}
