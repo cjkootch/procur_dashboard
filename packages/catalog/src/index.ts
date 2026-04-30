@@ -17,3 +17,12 @@ export {
   describeFilters,
   DISCOVER_BASE,
 } from './tools';
+export {
+  evaluateTargetPrice,
+  evaluateMultiProductRfq,
+  type ProductSlug,
+  type EvaluateTargetPriceInput,
+  type EvaluateTargetPriceResult,
+  type RfqLine,
+  type Verdict,
+} from './plausibility';
