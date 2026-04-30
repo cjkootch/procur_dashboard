@@ -35,6 +35,15 @@ import {
 } from './queries';
 import { addOpportunityToPursuit, createAlertProfile } from './mutations';
 import { composeDealEconomics } from './deal-economics';
+import {
+  lookupFreightEstimate,
+  type FreightOriginRegion,
+} from './freight-routes';
+import {
+  evaluateTargetPrice,
+  evaluateMultiProductRfq,
+  type ProductSlug,
+} from './plausibility';
 
 /**
  * Discover catalog URL base — opportunities are viewed on Discover
@@ -1450,6 +1459,305 @@ export function buildCatalogTools(): ToolRegistry {
                 'discount range over the live marker price returned here.',
             };
           },
+        ),
+    }),
+
+    get_freight_estimate: defineTool({
+      name: 'get_freight_estimate',
+      description:
+        'Lump-sum / per-MT freight bands for product or crude routes ' +
+        'into West/East Africa, Caribbean, and Mediterranean refinery ' +
+        'ports. Use whenever a deal involves shipping cost — "how much ' +
+        'is freight Med to Lomé", "what does NWE→Mombasa cost on an ' +
+        'MR1", "is $40/MT realistic for USGC→Tema". Returns USD/MT band ' +
+        '(low/high) plus the typical vessel class. If destPortSlug is ' +
+        'omitted you get all routes for the origin region; if origin is ' +
+        'omitted you see every sourcing option for that destination — ' +
+        "useful for cheapest-source comparisons. Data is analyst-curated, " +
+        'refreshed quarterly — not a live broker quote.',
+      kind: 'read',
+      schema: z.object({
+        originRegion: z
+          .enum([
+            'med',
+            'nwe',
+            'usgc',
+            'singapore',
+            'mideast',
+            'india',
+            'west-africa',
+            'east-africa',
+            'black-sea',
+          ])
+          .optional()
+          .describe(
+            'Sourcing region. med = Mediterranean (incl. NAfrica), nwe = NW ' +
+              'Europe / ARA (Rotterdam/Antwerp/Amsterdam), usgc = US Gulf ' +
+              'Coast, mideast = AG (Fujairah/Jubail), india = Indian export ' +
+              'refineries, etc.',
+          ),
+        destPortSlug: z
+          .string()
+          .optional()
+          .describe(
+            "Destination port slug as seeded in the ports table " +
+              "(e.g. 'lome-port', 'mombasa-port', 'tema-port'). Find via " +
+              'find_recent_port_calls or the entity profile.',
+          ),
+        destCountry: z
+          .string()
+          .length(2)
+          .optional()
+          .describe(
+            'ISO-2 country filter. Use when you want all ports in a ' +
+              'country (e.g. country=KE returns Mombasa + others).',
+          ),
+        productType: z
+          .enum(['clean', 'crude'])
+          .optional()
+          .describe(
+            'clean = refined products (diesel, gasoline, jet, kero); ' +
+              'crude = crude oil cargoes.',
+          ),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'get_freight_estimate',
+            args: input,
+            summarize: (out: { count: number }) => ({
+              resultCount: out.count,
+              resultSummary: input,
+            }),
+          },
+          async () => {
+            const routes = lookupFreightEstimate({
+              originRegion: input.originRegion as FreightOriginRegion | undefined,
+              destPortSlug: input.destPortSlug,
+              destCountry: input.destCountry,
+              productType: input.productType,
+            });
+            return {
+              count: routes.length,
+              routes,
+              caveat:
+                'Analyst-curated freight bands, refreshed quarterly. ' +
+                'Real spot rates fluctuate daily with vessel availability ' +
+                'and seasonal premiums (e.g. Suez disruption, winter ' +
+                'demand). Treat as a sanity-check anchor, not a live ' +
+                'charter quote.',
+            };
+          },
+        ),
+    }),
+
+    evaluate_target_price: defineTool({
+      name: 'evaluate_target_price',
+      description:
+        "Plausibility check on a buyer's target CIF price. Given a " +
+        'product, target price (USD/MT or USD/bbl), and delivery port, ' +
+        "computes a realistic CIF range from live spot benchmark + crack " +
+        'spread + freight + typical seller margin, then returns the ' +
+        '% gap and a categorical verdict (overpriced | plausible | ' +
+        'aggressive | unrealistic | scam-flag). Use this whenever the ' +
+        'user shares a target price and asks "is this competitive" / ' +
+        '"can we hit this number" / "is this realistic". Especially ' +
+        'critical for West/East Africa RFQs where broker-chain anchors ' +
+        'often run 30-50% below physical delivery cost.',
+      kind: 'read',
+      schema: z
+        .object({
+          product: z
+            .enum([
+              'en590-ulsd',
+              'gasoline-super',
+              'jet-a1',
+              'kerosene',
+              'gasoil-0.5pct',
+              'hsfo',
+              'crude-light-sweet',
+              'crude-medium-sour',
+            ])
+            .describe(
+              'Product slug. en590-ulsd = European 10ppm diesel; ' +
+                'gasoline-super = 95RON+ gasoline; jet-a1 = aviation ' +
+                'kerosene; kerosene = lamp/heating kerosene; ' +
+                'gasoil-0.5pct = low-sulfur marine gasoil; hsfo = high-' +
+                'sulfur fuel oil; crude-light-sweet = Brent-spec generic; ' +
+                'crude-medium-sour = Dubai-spec generic.',
+            ),
+          targetCifUsdPerMt: z
+            .number()
+            .positive()
+            .optional()
+            .describe(
+              "Buyer's target CIF in USD per metric ton. Either this " +
+                'or targetCifUsdPerBbl is required.',
+            ),
+          targetCifUsdPerBbl: z
+            .number()
+            .positive()
+            .optional()
+            .describe(
+              "Buyer's target CIF in USD per barrel. Either this or " +
+                'targetCifUsdPerMt is required.',
+            ),
+          destPortSlug: z
+            .string()
+            .describe(
+              "Delivery port slug (e.g. 'lome-port', 'mombasa-port').",
+            ),
+          originRegion: z
+            .enum([
+              'med',
+              'nwe',
+              'usgc',
+              'singapore',
+              'mideast',
+              'india',
+              'west-africa',
+              'east-africa',
+              'black-sea',
+            ])
+            .optional()
+            .describe(
+              'Most likely sourcing region. If omitted, the cheapest ' +
+                'matching route across all origins is used (gives the ' +
+                'most generous plausibility check).',
+            ),
+          volumeMt: z
+            .number()
+            .positive()
+            .optional()
+            .describe('Optional volume hint, used only for output context.'),
+        })
+        .refine(
+          (v) =>
+            v.targetCifUsdPerMt != null || v.targetCifUsdPerBbl != null,
+          { message: 'targetCifUsdPerMt or targetCifUsdPerBbl is required' },
+        ),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'evaluate_target_price',
+            args: input,
+            summarize: (out: { verdict: string; pctGapVsMid: number | null }) => ({
+              resultCount: 1,
+              resultSummary: {
+                product: input.product,
+                destPortSlug: input.destPortSlug,
+                verdict: out.verdict,
+                pctGapVsMid: out.pctGapVsMid,
+              },
+            }),
+          },
+          async () =>
+            evaluateTargetPrice({
+              product: input.product as ProductSlug,
+              targetCifUsdPerMt: input.targetCifUsdPerMt,
+              targetCifUsdPerBbl: input.targetCifUsdPerBbl,
+              destPortSlug: input.destPortSlug,
+              originRegion: input.originRegion as FreightOriginRegion | undefined,
+              volumeMt: input.volumeMt,
+            }),
+        ),
+    }),
+
+    evaluate_multi_product_rfq: defineTool({
+      name: 'evaluate_multi_product_rfq',
+      description:
+        'Bulk plausibility check on a multi-product RFQ. Given an array ' +
+        'of (product, target CIF, dest port, optional volume) lines, ' +
+        'returns a per-line evaluation plus a consolidated scorecard: ' +
+        'worst-line verdict, weighted-avg % gap, total $ at buyer\'s ' +
+        'target vs realistic. Use when the user pastes a tender / ' +
+        "broker request with 2+ products (typical Senegal/Lagos/Mombasa " +
+        'pattern: EN590 + gasoline + jet + kerosene to West/East ' +
+        'Africa). Saves the model from chaining 4 separate ' +
+        'evaluate_target_price calls.',
+      kind: 'read',
+      schema: z.object({
+        lines: z
+          .array(
+            z
+              .object({
+                product: z.enum([
+                  'en590-ulsd',
+                  'gasoline-super',
+                  'jet-a1',
+                  'kerosene',
+                  'gasoil-0.5pct',
+                  'hsfo',
+                  'crude-light-sweet',
+                  'crude-medium-sour',
+                ]),
+                volumeMt: z.number().positive().optional(),
+                targetCifUsdPerMt: z.number().positive().optional(),
+                targetCifUsdPerBbl: z.number().positive().optional(),
+                destPortSlug: z.string(),
+              })
+              .refine(
+                (v) =>
+                  v.targetCifUsdPerMt != null || v.targetCifUsdPerBbl != null,
+                {
+                  message:
+                    'each line needs targetCifUsdPerMt or targetCifUsdPerBbl',
+                },
+              ),
+          )
+          .min(1)
+          .max(20)
+          .describe('Array of RFQ lines, 1-20 entries.'),
+        originRegion: z
+          .enum([
+            'med',
+            'nwe',
+            'usgc',
+            'singapore',
+            'mideast',
+            'india',
+            'west-africa',
+            'east-africa',
+            'black-sea',
+          ])
+          .optional()
+          .describe(
+            'Most likely sourcing region for all lines. If omitted, the ' +
+              'cheapest matching route per line is used.',
+          ),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'evaluate_multi_product_rfq',
+            args: input,
+            summarize: (out: {
+              worstVerdict: string;
+              flaggedLineCount: number;
+              lines: Array<unknown>;
+            }) => ({
+              resultCount: out.lines.length,
+              resultSummary: {
+                worstVerdict: out.worstVerdict,
+                flaggedLineCount: out.flaggedLineCount,
+                lineCount: input.lines.length,
+              },
+            }),
+          },
+          async () =>
+            evaluateMultiProductRfq({
+              lines: input.lines.map((l) => ({
+                product: l.product as ProductSlug,
+                volumeMt: l.volumeMt,
+                targetCifUsdPerMt: l.targetCifUsdPerMt,
+                targetCifUsdPerBbl: l.targetCifUsdPerBbl,
+                destPortSlug: l.destPortSlug,
+              })),
+              originRegion: input.originRegion as FreightOriginRegion | undefined,
+            }),
         ),
     }),
 
