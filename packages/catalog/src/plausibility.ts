@@ -79,7 +79,9 @@ const BENCHMARK_SLUG: Record<ProductSlug, string> = {
 
 export type EvaluateTargetPriceInput = {
   product: ProductSlug;
-  /** Either targetCifUsdPerMt OR targetCifUsdPerBbl is required. */
+  /** Optional. Pass either targetCifUsdPerMt or targetCifUsdPerBbl
+      to get a plausibility verdict. Omit both to get a realistic CIF
+      range only (use case: "what should I quote?"). */
   targetCifUsdPerMt?: number;
   targetCifUsdPerBbl?: number;
   /** Port slug as seeded in `ports` (e.g. 'lome-port'). */
@@ -102,8 +104,10 @@ export type EvaluateTargetPriceResult = {
   product: ProductSlug;
   destPortSlug: string;
   bblPerMt: number;
-  targetCifUsdPerMt: number;
-  targetCifUsdPerBbl: number;
+  /** Null when no target was supplied — result is a realistic CIF
+      range only (no plausibility verdict). */
+  targetCifUsdPerMt: number | null;
+  targetCifUsdPerBbl: number | null;
   benchmarkSlug: string;
   benchmarkSpotUsdPerBbl: number | null;
   benchmarkAsOf: string | null;
@@ -119,7 +123,10 @@ export type EvaluateTargetPriceResult = {
   realisticCifUsdPerMt: { low: number; mid: number; high: number } | null;
   realisticCifUsdPerBbl: { low: number; mid: number; high: number } | null;
   pctGapVsMid: number | null;
-  verdict: Verdict | 'no-data';
+  /** 'no-target' when the caller didn't supply a target price
+      (realistic-CIF-only mode). 'no-data' when benchmark or freight
+      data is missing. Otherwise a plausibility verdict. */
+  verdict: Verdict | 'no-data' | 'no-target';
   narrative: string;
 };
 
@@ -137,15 +144,18 @@ export async function evaluateTargetPrice(
   const bblPerMt = BBL_PER_MT[input.product];
   if (!bblPerMt) throw new Error(`unknown product: ${input.product}`);
 
-  const targetUsdPerMt =
-    input.targetCifUsdPerMt ??
-    (input.targetCifUsdPerBbl != null
-      ? input.targetCifUsdPerBbl * bblPerMt
-      : NaN);
-  if (!Number.isFinite(targetUsdPerMt)) {
-    throw new Error('targetCifUsdPerMt or targetCifUsdPerBbl is required');
-  }
-  const targetUsdPerBbl = targetUsdPerMt / bblPerMt;
+  // Targets are optional. When neither is supplied, run in
+  // realistic-CIF-only mode: skip plausibility verdict, return the
+  // CIF range so the caller can use it as "what should I quote?"
+  // anchor. When supplied, normalize to per-MT for the % gap math.
+  const targetUsdPerMt: number | null =
+    input.targetCifUsdPerMt != null
+      ? input.targetCifUsdPerMt
+      : input.targetCifUsdPerBbl != null
+        ? input.targetCifUsdPerBbl * bblPerMt
+        : null;
+  const targetUsdPerBbl: number | null =
+    targetUsdPerMt != null ? targetUsdPerMt / bblPerMt : null;
 
   const benchmarkSlug = BENCHMARK_SLUG[input.product];
   const benchmark = await getCommodityPriceContext(benchmarkSlug, 30);
@@ -196,7 +206,7 @@ export async function evaluateTargetPrice(
   let realisticPerMt: { low: number; mid: number; high: number } | null = null;
   let realisticPerBbl: { low: number; mid: number; high: number } | null = null;
   let pctGap: number | null = null;
-  let verdict: Verdict | 'no-data' = 'no-data';
+  let verdict: Verdict | 'no-data' | 'no-target' = 'no-data';
 
   if (benchmarkSpot != null && freightLow != null && freightHigh != null) {
     const fobLowPerBbl = benchmarkSpot + crack.low;
@@ -212,8 +222,13 @@ export async function evaluateTargetPrice(
       mid: cifMidPerMt / bblPerMt,
       high: cifHighPerMt / bblPerMt,
     };
-    pctGap = (targetUsdPerMt - cifMidPerMt) / cifMidPerMt;
-    verdict = classify(pctGap);
+    if (targetUsdPerMt != null) {
+      pctGap = (targetUsdPerMt - cifMidPerMt) / cifMidPerMt;
+      verdict = classify(pctGap);
+    } else {
+      // Have benchmark + freight but no target — realistic-CIF-only.
+      verdict = 'no-target';
+    }
   }
 
   const narrative = buildNarrative({
@@ -257,13 +272,13 @@ export async function evaluateTargetPrice(
 
 function buildNarrative(args: {
   input: EvaluateTargetPriceInput;
-  targetUsdPerMt: number;
-  targetUsdPerBbl: number;
+  targetUsdPerMt: number | null;
+  targetUsdPerBbl: number | null;
   benchmarkSpot: number | null;
   benchmarkSlug: string;
   realisticPerMt: { low: number; mid: number; high: number } | null;
   pctGap: number | null;
-  verdict: Verdict | 'no-data';
+  verdict: Verdict | 'no-data' | 'no-target';
   freightOrigin: FreightOriginRegion | null;
   routesCount: number;
 }): string {
@@ -276,8 +291,11 @@ function buildNarrative(args: {
     }
     return 'Insufficient data.';
   }
-  const pct = (args.pctGap! * 100).toFixed(1);
   const r = args.realisticPerMt!;
+  if (args.verdict === 'no-target') {
+    return `Realistic CIF ${args.input.destPortSlug} ≈ \$${r.low.toFixed(0)}–${r.high.toFixed(0)}/MT (mid ~\$${r.mid.toFixed(0)}). No target supplied — pass targetCifUsdPerMt or targetCifUsdPerBbl for a plausibility verdict.`;
+  }
+  const pct = (args.pctGap! * 100).toFixed(1);
   const verdictPhrase: Record<Verdict, string> = {
     overpriced: `target sits ${pct}% above realistic mid — buyer is paying premium.`,
     plausible: `target sits ${pct}% from realistic mid — within typical seller margin.`,
@@ -305,17 +323,23 @@ export type EvaluateMultiProductRfqInput = {
 
 export type EvaluateMultiProductRfqResult = {
   lines: EvaluateTargetPriceResult[];
-  worstVerdict: Verdict | 'no-data';
+  worstVerdict: Verdict | 'no-data' | 'no-target';
   weightedAvgPctGap: number | null;
-  totalTargetUsd: number;
+  /** Null when no line had both a target and a volume — i.e. caller
+      is in realistic-CIF-only mode. */
+  totalTargetUsd: number | null;
   totalRealisticUsd: number | null;
   flaggedLineCount: number;
   summary: string;
 };
 
-const VERDICT_RANK: Record<Verdict | 'no-data', number> = {
+// Lower rank = better; the aggregator picks the highest-ranked
+// (worst) verdict across all lines. 'no-target' and 'no-data' are
+// neutral (don't override a real verdict).
+const VERDICT_RANK: Record<Verdict | 'no-data' | 'no-target', number> = {
   overpriced: 0,
   plausible: 1,
+  'no-target': 2,
   'no-data': 2,
   aggressive: 3,
   unrealistic: 4,
@@ -338,8 +362,8 @@ export async function evaluateMultiProductRfq(
     ),
   );
 
-  let worstVerdict: Verdict | 'no-data' = 'plausible';
-  let totalTargetUsd = 0;
+  let worstVerdict: Verdict | 'no-data' | 'no-target' = 'plausible';
+  let totalTargetUsd: number | null = null;
   let totalRealisticUsd: number | null = 0;
   let weightedGapNumerator = 0;
   let weightedGapDenominator = 0;
@@ -359,7 +383,9 @@ export async function evaluateMultiProductRfq(
       flaggedLineCount += 1;
     }
     if (reqLine.volumeMt != null) {
-      totalTargetUsd += reqLine.volumeMt * result.targetCifUsdPerMt;
+      if (result.targetCifUsdPerMt != null) {
+        totalTargetUsd = (totalTargetUsd ?? 0) + reqLine.volumeMt * result.targetCifUsdPerMt;
+      }
       if (result.realisticCifUsdPerMt != null && totalRealisticUsd != null) {
         totalRealisticUsd += reqLine.volumeMt * result.realisticCifUsdPerMt.mid;
       } else {
@@ -396,26 +422,26 @@ export async function evaluateMultiProductRfq(
 }
 
 function buildRfqSummary(args: {
-  worstVerdict: Verdict | 'no-data';
+  worstVerdict: Verdict | 'no-data' | 'no-target';
   weightedAvgPctGap: number | null;
-  totalTargetUsd: number;
+  totalTargetUsd: number | null;
   totalRealisticUsd: number | null;
   flaggedLineCount: number;
   lineCount: number;
 }): string {
   const parts: string[] = [];
-  if (args.totalTargetUsd > 0) {
+  if (args.totalTargetUsd != null && args.totalTargetUsd > 0) {
     parts.push(
       `RFQ total at buyer's target: \$${(args.totalTargetUsd / 1e6).toFixed(1)}M.`,
     );
   }
   if (args.totalRealisticUsd != null && args.totalRealisticUsd > 0) {
+    const gapPart =
+      args.totalTargetUsd != null && args.weightedAvgPctGap != null
+        ? ` (gap ${(args.weightedAvgPctGap * 100).toFixed(1)}%)`
+        : '';
     parts.push(
-      `Realistic mid for the same volume: \$${(args.totalRealisticUsd / 1e6).toFixed(1)}M (gap ${
-        args.weightedAvgPctGap != null
-          ? `${(args.weightedAvgPctGap * 100).toFixed(1)}%`
-          : 'unknown'
-      }).`,
+      `Realistic mid for the same volume: \$${(args.totalRealisticUsd / 1e6).toFixed(1)}M${gapPart}.`,
     );
   }
   if (args.flaggedLineCount > 0) {
@@ -423,6 +449,12 @@ function buildRfqSummary(args: {
       `${args.flaggedLineCount} of ${args.lineCount} lines below typical seller margin.`,
     );
   }
-  parts.push(`Worst-line verdict: ${args.worstVerdict}.`);
+  if (args.worstVerdict === 'no-target') {
+    parts.push(
+      'No targets supplied — realistic CIF range only. Pass targetCifUsdPerMt per line for plausibility verdicts.',
+    );
+  } else {
+    parts.push(`Worst-line verdict: ${args.worstVerdict}.`);
+  }
   return parts.join(' ');
 }

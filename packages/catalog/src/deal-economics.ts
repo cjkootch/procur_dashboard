@@ -192,6 +192,23 @@ export async function composeDealEconomics(
     productCostPerUsg,
   });
   const results = calculateFuelDeal(inputs);
+
+  // Second top-level guard: even when sell > cost, freight + insurance
+  // + min-margin requirement can push the fully-loaded CIF above the
+  // sell price. The calculator catches this with scorecard
+  // recommendation='do_not_proceed' + a critical warning, but those
+  // get buried in `results.scorecard.*` and `results.warnings[]`.
+  // Surface at top level so renderers and system-prompt discipline
+  // can lead with it.
+  if (topLevelWarning == null && results.scorecard.recommendation === 'do_not_proceed') {
+    topLevelWarning =
+      `${results.scorecard.recommendationReason}. Scorecard ${results.scorecard.overallScore.toFixed(0)}/100. ` +
+      `Breakeven sell ${results.breakeven.sellPricePerUsg.toFixed(4)}/USG ` +
+      `($${(results.breakeven.sellPricePerUsg * USG_PER_BBL).toFixed(2)}/bbl) ` +
+      `vs your ${sellPricePerUsg.toFixed(4)}/USG. Lift sell price, tighten freight, ` +
+      `or get a lower supplier cost before treating this line as viable.`;
+  }
+
   return { inputs, results, benchmark, topLevelWarning, kind: 'deal_economics' };
 }
 
