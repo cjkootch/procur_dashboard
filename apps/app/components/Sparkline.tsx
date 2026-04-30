@@ -1,6 +1,11 @@
 /**
- * Inline sparkline — fixed pixel size, no axis labels. Used in the
- * commodity ticker so each price has a 30-day shape next to it.
+ * Inline sparkline — fixed pixel size, no axis labels. Used by the
+ * commodity ticker (brief + market intelligence) so each price has
+ * a 30-day shape next to it.
+ *
+ * Lifted to apps/app/components from the intelligence page _components
+ * folder so the brief can reuse it without a deep import path. Behavior
+ * is identical to the original.
  */
 import { type ReactNode } from 'react';
 
