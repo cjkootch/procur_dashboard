@@ -141,6 +141,8 @@ export async function POST(
     contactName: parsed.data.contactName ?? null,
     contactEmail: parsed.data.contactEmail ?? null,
     contactPhone: parsed.data.contactPhone ?? null,
+    contactTitle: null,
+    contactLinkedinUrl: null,
     commercialContext: {
       categories,
       awardCount,
@@ -156,6 +158,15 @@ export async function POST(
       userNote: parsed.data.userNote ?? null,
       pushedAt: new Date().toISOString(),
     },
+    // Match-queue pushes don't currently resolve approval / market /
+    // trading-defaults; vex's worker can fall back to its own data
+    // for those. Future iteration can mirror the entity-profile
+    // route's resolution path here too.
+    approvalContext: null,
+    productSpecs: [],
+    sourceDocuments: [],
+    marketContext: null,
+    procurTradingDefaults: null,
   });
 
   if (!result.ok) {
