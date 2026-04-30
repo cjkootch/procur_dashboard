@@ -1,13 +1,17 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { requireCompany } from '@procur/auth';
 import {
   getContactEnrichmentsBySlug,
   getDirectOwners,
   getEntityProfile,
   getEntityVesselActivity,
   getOwnershipChain,
+  getSupplierApproval,
 } from '@procur/catalog';
+import { KycBadge } from '../../../components/KycBadge';
 import { PushToVexButton } from './_components/PushToVexButton';
+import { SupplierApprovalForm } from './_components/SupplierApprovalForm';
 
 /**
  * Unified entity profile — accepts either a known_entities.slug or
@@ -35,6 +39,9 @@ export default async function EntityProfilePage({ params }: Props) {
   if (profile.primarySource === 'not_found') {
     notFound();
   }
+
+  const { company } = await requireCompany();
+  const approval = await getSupplierApproval(company.id, profile.canonicalKey);
 
   // Walk the ownership chain. Try the operator first (refineries usually
   // store operator in metadata.operator and that's the one whose parents
@@ -85,7 +92,14 @@ export default async function EntityProfilePage({ params }: Props) {
 
       <header className="mb-6">
         <div className="flex items-baseline justify-between gap-4">
-          <h1 className="text-2xl font-semibold tracking-tight">{profile.name}</h1>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight">{profile.name}</h1>
+            <KycBadge
+              status={approval?.status ?? null}
+              size="lg"
+              expiresAt={approval?.expiresAt ?? null}
+            />
+          </div>
           <div className="flex items-baseline gap-2">
             <span className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-muted-foreground)]">
               {profile.primarySource === 'known_entity'
@@ -108,6 +122,13 @@ export default async function EntityProfilePage({ params }: Props) {
             </>
           )}
         </p>
+        <SupplierApprovalForm
+          entitySlug={profile.canonicalKey}
+          entityName={profile.name}
+          initialStatus={approval?.status ?? null}
+          initialExpiresAt={approval?.expiresAt ?? null}
+          initialNotes={approval?.notes ?? null}
+        />
       </header>
 
       {(cap.capacityBpd != null ||

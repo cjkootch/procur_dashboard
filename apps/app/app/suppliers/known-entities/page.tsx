@@ -1,5 +1,7 @@
 import Link from 'next/link';
+import { requireCompany } from '@procur/auth';
 import { lookupKnownEntities } from '@procur/catalog';
+import { KycBadge } from '../../../components/KycBadge';
 import { MapViewClient } from './_components/MapViewClient';
 import type { MapEntity } from './_components/MapView';
 
@@ -71,7 +73,32 @@ interface Props {
     tag?: string;
     q?: string;
     view?: string;
+    approval?: string;
   }>;
+}
+
+const APPROVAL_FILTERS = [
+  { value: '', label: 'all' },
+  { value: 'approved', label: 'approved' },
+  { value: 'pending', label: 'pending' },
+  { value: 'expired', label: 'expired' },
+  { value: 'none', label: 'not engaged' },
+] as const;
+type ApprovalFilter = 'approved' | 'pending' | 'rejected' | 'expired' | 'none';
+
+const VALID_APPROVAL_FILTERS: readonly ApprovalFilter[] = [
+  'approved',
+  'pending',
+  'rejected',
+  'expired',
+  'none',
+];
+
+function parseApprovalFilter(s: string | undefined): ApprovalFilter | undefined {
+  if (!s) return undefined;
+  return (VALID_APPROVAL_FILTERS as readonly string[]).includes(s)
+    ? (s as ApprovalFilter)
+    : undefined;
 }
 
 const REGION_NAMES = new Intl.DisplayNames(['en'], { type: 'region' });
@@ -132,10 +159,15 @@ function isNoiseTag(t: string): boolean {
 }
 
 export default async function KnownEntitiesPage({ searchParams }: Props) {
-  const { category, country, role, tag, q, view } = await searchParams;
+  const { category, country, role, tag, q, view, approval } = await searchParams;
   const categoryTag = category && category !== 'all' ? category : undefined;
   const nameQuery = q?.trim() || undefined;
   const activeView: 'list' | 'map' = view === 'map' ? 'map' : 'list';
+  const approvalFilter = parseApprovalFilter(approval);
+
+  // Per-tenant approval state: requires the company id, so resolve
+  // the auth context here (the rolodex is an authenticated surface).
+  const { company } = await requireCompany();
 
   // Map clustering handles thousands of points fine; list rendering is the
   // slower path. Map gets the bigger budget so the user sees the full
@@ -147,6 +179,8 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
     role: role?.trim() || undefined,
     tag: tag?.trim() || undefined,
     name: nameQuery,
+    companyId: company.id,
+    approvalStatus: approvalFilter,
     limit: queryLimit,
   });
   const truncated = rows.length === queryLimit;
@@ -172,6 +206,7 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
       tag: string;
       q: string;
       view: string;
+      approval: string;
     }>,
   ) => {
     const next = new URLSearchParams();
@@ -187,6 +222,8 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
     if (qNext) next.set('q', qNext);
     const v = override.view ?? activeView;
     if (v && v !== 'list') next.set('view', v);
+    const a = override.approval ?? approvalFilter ?? '';
+    if (a) next.set('approval', a);
     const qs = next.toString();
     return qs ? `/suppliers/known-entities?${qs}` : '/suppliers/known-entities';
   };
@@ -231,6 +268,15 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
       key: 'tag',
       label: `Tag: ${tagLabel}`,
       clearHref: baseHref({ tag: '' }),
+    });
+  }
+  if (approvalFilter) {
+    const approvalLabel =
+      APPROVAL_FILTERS.find((f) => f.value === approvalFilter)?.label ?? approvalFilter;
+    activeFilters.push({
+      key: 'approval',
+      label: `Approval: ${approvalLabel}`,
+      clearHref: baseHref({ approval: '' }),
     });
   }
 
@@ -399,6 +445,16 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
                   />
                 ))}
               </FilterRow>
+              <FilterRow label="Approval">
+                {APPROVAL_FILTERS.map((f) => (
+                  <FilterChip
+                    key={f.value || 'all'}
+                    href={baseHref({ approval: f.value })}
+                    active={(approvalFilter ?? '') === f.value}
+                    label={f.label}
+                  />
+                ))}
+              </FilterRow>
             </div>
           </details>
         </div>
@@ -489,12 +545,18 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
                         className="border-b border-[color:var(--color-border)] last:border-b-0"
                       >
                         <td className="px-3 py-2 align-top">
-                          <Link
-                            href={`/entities/${encodeURIComponent(e.slug)}`}
-                            className="font-medium hover:underline"
-                          >
-                            {e.name}
-                          </Link>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Link
+                              href={`/entities/${encodeURIComponent(e.slug)}`}
+                              className="font-medium hover:underline"
+                            >
+                              {e.name}
+                            </Link>
+                            <KycBadge
+                              status={e.approvalStatus}
+                              expiresAt={e.approvalExpiresAt}
+                            />
+                          </div>
                           {e.aliases.length > 1 && (
                             <div className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
                               aka {e.aliases.filter((a) => a !== e.name).slice(0, 2).join(', ')}

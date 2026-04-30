@@ -1,6 +1,13 @@
 import 'server-only';
 import { and, eq } from 'drizzle-orm';
-import { db, alertProfiles, opportunities, pursuits } from '@procur/db';
+import {
+  db,
+  alertProfiles,
+  opportunities,
+  pursuits,
+  supplierApprovals,
+  type SupplierApprovalStatus,
+} from '@procur/db';
 
 /**
  * Discover-side mutations for the AI assistant write tools.
@@ -171,4 +178,75 @@ export async function addOpportunityToPursuit(
     alreadyExisted: true,
     manageUrl: `${appUrl}/capture/pursuits/${existing.id}`,
   };
+}
+
+// ─── Supplier approvals ────────────────────────────────────────
+
+export type UpsertSupplierApprovalInput = {
+  companyId: string;
+  userId?: string | null;
+  entitySlug: string;
+  /** Snapshot of the entity name at write time. Useful for the
+   *  settings summary panel when the entity row hasn't been fetched. */
+  entityName?: string | null;
+  status: SupplierApprovalStatus;
+  /** When to set approvedAt. Defaults to now() iff status moved into
+   *  approved_*; otherwise null (clears any prior approvedAt). */
+  approvedAt?: Date | null;
+  expiresAt?: Date | null;
+  notes?: string | null;
+};
+
+/**
+ * Insert or update the (company, entitySlug) approval row. UNIQUE
+ * constraint on (company_id, entity_slug) means we use ON CONFLICT
+ * to flip an existing row's status without creating a duplicate —
+ * re-engagement is a status update, not a new row (matches the
+ * design comment in 0054).
+ */
+export async function upsertSupplierApproval(
+  input: UpsertSupplierApprovalInput,
+): Promise<{ id: string; created: boolean }> {
+  const isApproved =
+    input.status === 'approved_with_kyc' || input.status === 'approved_without_kyc';
+  const approvedAt =
+    input.approvedAt !== undefined ? input.approvedAt : isApproved ? new Date() : null;
+
+  const existing = await db.query.supplierApprovals.findFirst({
+    where: and(
+      eq(supplierApprovals.companyId, input.companyId),
+      eq(supplierApprovals.entitySlug, input.entitySlug),
+    ),
+    columns: { id: true },
+  });
+
+  if (existing) {
+    await db
+      .update(supplierApprovals)
+      .set({
+        status: input.status,
+        approvedAt,
+        expiresAt: input.expiresAt ?? null,
+        notes: input.notes ?? null,
+        entityName: input.entityName ?? undefined,
+        updatedAt: new Date(),
+      })
+      .where(eq(supplierApprovals.id, existing.id));
+    return { id: existing.id, created: false };
+  }
+
+  const inserted = await db
+    .insert(supplierApprovals)
+    .values({
+      companyId: input.companyId,
+      createdBy: input.userId ?? null,
+      entitySlug: input.entitySlug,
+      entityName: input.entityName ?? null,
+      status: input.status,
+      approvedAt,
+      expiresAt: input.expiresAt ?? null,
+      notes: input.notes ?? null,
+    })
+    .returning({ id: supplierApprovals.id });
+  return { id: inserted[0]!.id, created: true };
 }
