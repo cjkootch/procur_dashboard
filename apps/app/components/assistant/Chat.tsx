@@ -3,8 +3,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { PageContextInput, RenderedMessage, RenderedToolUse } from './types';
+import { upload } from '@vercel/blob/client';
+import type {
+  ChatAttachment,
+  PageContextInput,
+  RenderedMessage,
+  RenderedToolUse,
+} from './types';
 import { DealEconomicsCard, isDealEconomicsOutput } from './DealEconomicsCard';
+
+/**
+ * Allowed for chat upload: PDF + the four image MIME types Anthropic's
+ * vision input accepts. Mirrors the server-side allowlist in
+ * /api/assistant/upload-token.
+ */
+const ATTACHMENT_ACCEPT = 'application/pdf,image/png,image/jpeg,image/webp,image/gif';
+const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
 
 type StreamEvent =
   | { type: 'thread'; threadId: string }
@@ -59,9 +73,12 @@ export function Chat({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hydrating, setHydrating] = useState(false);
+  const [stagedAttachments, setStagedAttachments] = useState<ChatAttachment[]>([]);
+  const [uploadingNames, setUploadingNames] = useState<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const el = scrollerRef.current;
@@ -140,16 +157,28 @@ export function Chat({
 
   const send = useCallback(async () => {
     const userText = input.trim();
-    if (!userText || sending) return;
+    // Allow attachment-only sends — sometimes the user just drops a
+    // PDF and expects the model to extract from it without a typed
+    // prompt. The server treats an empty userText as the implicit
+    // "look at the attached file" instruction.
+    if ((!userText && stagedAttachments.length === 0) || sending) return;
+    if (uploadingNames.size > 0) return;
     setInput('');
     setError(null);
     setSending(true);
+    const attachments = stagedAttachments;
+    setStagedAttachments([]);
 
     const userMessageId = `local-user-${Date.now()}`;
     const assistantMessageId = `local-assistant-${Date.now()}`;
     setMessages((prev) => [
       ...prev,
-      { id: userMessageId, kind: 'user', text: userText },
+      {
+        id: userMessageId,
+        kind: 'user',
+        text: userText,
+        attachments: attachments.length > 0 ? attachments : undefined,
+      },
       { id: assistantMessageId, kind: 'assistant', text: '', toolUses: [], streaming: true },
     ]);
 
@@ -160,7 +189,7 @@ export function Chat({
       const res = await fetch('/api/assistant/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ threadId, userText, pageContext }),
+        body: JSON.stringify({ threadId, userText, pageContext, attachments }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {
@@ -207,7 +236,15 @@ export function Chat({
         ),
       );
     }
-  }, [input, sending, threadId, pageContext, onThreadChange]);
+  }, [
+    input,
+    sending,
+    threadId,
+    pageContext,
+    onThreadChange,
+    stagedAttachments,
+    uploadingNames.size,
+  ]);
 
   function applyEvent(
     event: StreamEvent,
@@ -301,6 +338,65 @@ export function Chat({
     }
   };
 
+  /**
+   * Stage a file: upload to Vercel Blob, then add the resulting URL
+   * to stagedAttachments. The model never sees the file contents
+   * inline — Anthropic fetches it via the URL when we send the
+   * message.
+   */
+  const handleFiles = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
+    setError(null);
+
+    for (const file of files) {
+      if (file.size > ATTACHMENT_MAX_BYTES) {
+        setError(
+          `"${file.name}" is too large (max ${(ATTACHMENT_MAX_BYTES / 1024 / 1024).toFixed(0)} MB).`,
+        );
+        continue;
+      }
+      const allowed = ATTACHMENT_ACCEPT.split(',').includes(file.type);
+      if (!allowed) {
+        setError(`"${file.name}" — unsupported type. Upload PDF, PNG, JPG, WEBP, or GIF.`);
+        continue;
+      }
+
+      setUploadingNames((prev) => {
+        const next = new Set(prev);
+        next.add(file.name);
+        return next;
+      });
+      try {
+        const blob = await upload(
+          `assistant-uploads/${crypto.randomUUID()}/${file.name}`,
+          file,
+          {
+            access: 'public',
+            handleUploadUrl: '/api/assistant/upload-token',
+          },
+        );
+        setStagedAttachments((prev) => [
+          ...prev,
+          { url: blob.url, contentType: file.type, filename: file.name },
+        ]);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(`Upload failed for "${file.name}": ${msg}`);
+      } finally {
+        setUploadingNames((prev) => {
+          const next = new Set(prev);
+          next.delete(file.name);
+          return next;
+        });
+      }
+    }
+  };
+
+  const removeStagedAttachment = (url: string) => {
+    setStagedAttachments((prev) => prev.filter((a) => a.url !== url));
+  };
+
   return (
     <div className="flex h-full flex-col">
       {messages.length > 0 && (
@@ -333,6 +429,38 @@ export function Chat({
       </div>
       <div className="border-t border-[color:var(--color-border)] bg-[color:var(--color-background)] p-3">
         <div className="mx-auto max-w-5xl">
+          {(stagedAttachments.length > 0 || uploadingNames.size > 0) && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {stagedAttachments.map((a) => (
+                <AttachmentChip
+                  key={a.url}
+                  attachment={a}
+                  onRemove={() => removeStagedAttachment(a.url)}
+                />
+              ))}
+              {[...uploadingNames].map((name) => (
+                <span
+                  key={name}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-[color:var(--color-border)] px-2 py-0.5 text-[11px] text-[color:var(--color-muted-foreground)]"
+                >
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-[color:var(--color-muted-foreground)]" />
+                  Uploading {name}…
+                </span>
+              ))}
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={ATTACHMENT_ACCEPT}
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              void handleFiles(e.target.files);
+              // Reset so re-selecting the same file fires onChange.
+              e.target.value = '';
+            }}
+          />
           <textarea
             ref={textareaRef}
             value={input}
@@ -345,11 +473,27 @@ export function Chat({
             disabled={sending}
           />
           <div className="mt-2 flex items-center justify-between text-xs text-[color:var(--color-muted-foreground)]">
-            <span>Enter to send · Shift+Enter for newline</span>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={sending}
+                aria-label="Attach a file"
+                title="Attach a PDF or image (max 20 MB)"
+                className="flex h-7 w-7 items-center justify-center rounded-[var(--radius-sm)] text-[color:var(--color-muted-foreground)] hover:bg-[color:var(--color-muted)]/40 hover:text-[color:var(--color-foreground)] disabled:opacity-40"
+              >
+                <PaperclipIcon />
+              </button>
+              <span>Enter to send · Shift+Enter for newline</span>
+            </div>
             <button
               type="button"
               onClick={() => void send()}
-              disabled={sending || input.trim().length === 0}
+              disabled={
+                sending ||
+                uploadingNames.size > 0 ||
+                (input.trim().length === 0 && stagedAttachments.length === 0)
+              }
               className="rounded-[var(--radius-sm)] bg-[color:var(--color-foreground)] px-3 py-1 text-xs font-medium text-[color:var(--color-background)] disabled:opacity-40"
             >
               {sending ? 'Thinking…' : 'Send'}
@@ -391,10 +535,19 @@ function MessageView({
 }) {
   if (message.kind === 'user') {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-2 text-sm text-[color:var(--color-background)]">
-          {message.text}
-        </div>
+      <div className="flex flex-col items-end gap-1.5">
+        {message.attachments && message.attachments.length > 0 && (
+          <div className="flex flex-wrap justify-end gap-2">
+            {message.attachments.map((a) => (
+              <AttachmentChip key={a.url} attachment={a} />
+            ))}
+          </div>
+        )}
+        {message.text && (
+          <div className="max-w-[85%] whitespace-pre-wrap rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-2 text-sm text-[color:var(--color-background)]">
+            {message.text}
+          </div>
+        )}
       </div>
     );
   }
@@ -897,4 +1050,91 @@ function safeStringify(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+/**
+ * Compact chip that represents one attached file. Used both in the
+ * composer (with × remove) and inside user message bubbles (read-only,
+ * clickable to open the source). Image attachments render with a 20×20
+ * thumbnail; PDFs get a generic doc icon.
+ */
+function AttachmentChip({
+  attachment,
+  onRemove,
+}: {
+  attachment: ChatAttachment;
+  onRemove?: () => void;
+}) {
+  const isImage = attachment.contentType.startsWith('image/');
+  const sizeLabel = isImage ? 'image' : 'PDF';
+
+  return (
+    <span className="inline-flex max-w-[260px] items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-0.5 text-[11px] text-[color:var(--color-foreground)]">
+      {isImage ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={attachment.url}
+          alt=""
+          className="h-4 w-4 shrink-0 rounded-sm object-cover"
+        />
+      ) : (
+        <DocIcon />
+      )}
+      <a
+        href={attachment.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="truncate hover:underline"
+        title={attachment.filename}
+      >
+        {attachment.filename}
+      </a>
+      <span className="text-[10px] uppercase text-[color:var(--color-muted-foreground)]">
+        {sizeLabel}
+      </span>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove ${attachment.filename}`}
+          className="ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-[color:var(--color-muted-foreground)] hover:bg-[color:var(--color-muted)] hover:text-[color:var(--color-foreground)]"
+        >
+          ×
+        </button>
+      )}
+    </span>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-4 w-4"
+      aria-hidden
+    >
+      <path d="M14 6.5L7.8 12.7a2.5 2.5 0 003.5 3.5L17 10.5a4 4 0 00-5.7-5.7L5 11.2a5.5 5.5 0 007.8 7.8" />
+    </svg>
+  );
+}
+
+function DocIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      className="h-3.5 w-3.5 shrink-0 text-[color:var(--color-muted-foreground)]"
+      aria-hidden
+    >
+      <path d="M4 1.5h5L12.5 5v9a.5.5 0 01-.5.5H4a.5.5 0 01-.5-.5v-13a.5.5 0 01.5-.5z" />
+      <path d="M9 1.5V5h3.5" />
+    </svg>
+  );
 }

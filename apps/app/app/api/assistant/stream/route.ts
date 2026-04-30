@@ -20,11 +20,58 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+type RequestAttachment = {
+  url: string;
+  contentType: string;
+  filename: string;
+};
+
 type RequestBody = {
   threadId?: string;
   userText: string;
   pageContext?: PageContext;
+  attachments?: RequestAttachment[];
 };
+
+const BLOB_URL_PREFIXES = [
+  'https://blob.vercel-storage.com/',
+  'https://public.blob.vercel-storage.com/',
+];
+function isAcceptableBlobUrl(url: string): boolean {
+  // Only allow URLs that point at our Vercel Blob store, regardless
+  // of the user-supplied content-type. Stops a model jailbreak from
+  // pulling arbitrary URLs into the message context.
+  if (BLOB_URL_PREFIXES.some((p) => url.startsWith(p))) return true;
+  // Tenant-specific subdomains (vercel-storage.com is the canonical
+  // host but Vercel mints `*.public.blob.vercel-storage.com` per
+  // store).
+  return /^https:\/\/[a-z0-9-]+\.public\.blob\.vercel-storage\.com\//.test(url);
+}
+
+const ALLOWED_ATTACHMENT_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+]);
+
+function sanitizeAttachments(
+  raw: RequestAttachment[] | undefined,
+): RequestAttachment[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(
+      (a): a is RequestAttachment =>
+        !!a &&
+        typeof a.url === 'string' &&
+        typeof a.contentType === 'string' &&
+        typeof a.filename === 'string',
+    )
+    .filter((a) => isAcceptableBlobUrl(a.url))
+    .filter((a) => ALLOWED_ATTACHMENT_TYPES.has(a.contentType))
+    .slice(0, 6); // hard cap to keep token + cost bounded per turn
+}
 
 export async function POST(req: Request): Promise<Response> {
   let body: RequestBody;
@@ -33,7 +80,14 @@ export async function POST(req: Request): Promise<Response> {
   } catch {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
   }
-  if (!body.userText || typeof body.userText !== 'string') {
+  const attachments = sanitizeAttachments(body.attachments);
+  // Allow attachment-only sends — the model treats the file as the
+  // implicit prompt ("look at this and act"). userText must be a
+  // string; empty is OK.
+  if (typeof body.userText !== 'string') {
+    return NextResponse.json({ error: 'missing_user_text' }, { status: 400 });
+  }
+  if (body.userText.length === 0 && attachments.length === 0) {
     return NextResponse.json({ error: 'missing_user_text' }, { status: 400 });
   }
 
@@ -54,7 +108,7 @@ export async function POST(req: Request): Promise<Response> {
     threadId = t.id;
   }
 
-  await appendUserMessage(threadId, body.userText);
+  await appendUserMessage(threadId, body.userText, attachments);
   const prior = await listMessages(threadId);
   // Drop the last message (the user text we just appended) — streamAgentTurn
   // takes it as a separate argument.
@@ -82,6 +136,7 @@ export async function POST(req: Request): Promise<Response> {
           tools,
           history,
           userText: body.userText,
+          attachments,
           companyName: ctx.companyName,
           userFirstName: ctx.userFirstName,
           planTier: ctx.planTier,

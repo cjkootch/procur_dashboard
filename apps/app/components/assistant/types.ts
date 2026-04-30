@@ -5,8 +5,24 @@ export type RenderedToolUse = {
   result?: { output: unknown; isError: boolean };
 };
 
+/**
+ * File attached to a user turn (image or PDF). The blob URL points at
+ * Vercel Blob; Anthropic fetches the file directly via that URL when
+ * we send it as an `image` or `document` content block.
+ */
+export type ChatAttachment = {
+  url: string;
+  contentType: string;
+  filename: string;
+};
+
 export type RenderedMessage =
-  | { id: string; kind: 'user'; text: string }
+  | {
+      id: string;
+      kind: 'user';
+      text: string;
+      attachments?: ChatAttachment[];
+    }
   | {
       id: string;
       kind: 'assistant';

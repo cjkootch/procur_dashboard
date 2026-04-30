@@ -1,10 +1,13 @@
 import type {
   AnthropicContentBlock,
+  AnthropicDocumentBlockParam,
+  AnthropicImageBlockParam,
   AnthropicTextBlockParam,
   AnthropicToolResultBlockParam,
 } from '@procur/ai';
 import type { AssistantMessage } from '@procur/db';
 import type {
+  ChatAttachment,
   RenderedMessage,
   RenderedToolUse,
 } from '../../components/assistant/types';
@@ -24,9 +27,38 @@ export function hydrateMessages(rows: AssistantMessage[]): RenderedMessage[] {
   const out: RenderedMessage[] = [];
   for (const m of rows) {
     if (m.role === 'user') {
-      const blocks = m.content as AnthropicTextBlockParam[];
-      const text = blocks.map((b) => ('text' in b ? b.text : '')).join('');
-      out.push({ id: m.id, kind: 'user', text });
+      const blocks = m.content as Array<
+        | AnthropicTextBlockParam
+        | AnthropicImageBlockParam
+        | AnthropicDocumentBlockParam
+      >;
+      let text = '';
+      const attachments: ChatAttachment[] = [];
+      for (const b of blocks) {
+        if (b.type === 'text') {
+          text += b.text;
+        } else if (b.type === 'image' && b.source.type === 'url') {
+          attachments.push({
+            url: b.source.url,
+            contentType: 'image/*',
+            // We don't know the original filename from the persisted
+            // block; derive from the URL path's last segment.
+            filename: filenameFromUrl(b.source.url),
+          });
+        } else if (b.type === 'document' && b.source.type === 'url') {
+          attachments.push({
+            url: b.source.url,
+            contentType: 'application/pdf',
+            filename: b.title ?? filenameFromUrl(b.source.url),
+          });
+        }
+      }
+      out.push({
+        id: m.id,
+        kind: 'user',
+        text,
+        attachments: attachments.length > 0 ? attachments : undefined,
+      });
     } else if (m.role === 'assistant') {
       const content = m.content as AnthropicContentBlock[];
       let text = '';
@@ -73,4 +105,14 @@ function parseToolResultContent(
     }
   }
   return content;
+}
+
+function filenameFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const last = u.pathname.split('/').filter(Boolean).pop();
+    return last ? decodeURIComponent(last) : 'attachment';
+  } catch {
+    return 'attachment';
+  }
 }

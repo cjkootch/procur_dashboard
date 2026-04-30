@@ -30,11 +30,23 @@ export type StreamEvent =
   | { type: 'turn_complete'; totalCostCents: number }
   | { type: 'error'; message: string };
 
+/** Files attached to the current user turn. URLs point at storage
+ *  (Vercel Blob) — Anthropic fetches the file directly via the URL
+ *  source. PDFs render as `type: 'document'`, images as `type:
+ *  'image'`. Other content types are ignored at the build step. */
+export type StreamTurnAttachment = {
+  url: string;
+  contentType: string;
+  filename: string;
+};
+
 export type StreamTurnInput = {
   ctx: AssistantContext;
   tools: ToolRegistry;
   history: Anthropic.MessageParam[];
   userText: string;
+  /** Optional. Image / PDF files the user attached to this turn. */
+  attachments?: StreamTurnAttachment[];
   companyName: string;
   userFirstName?: string | null;
   planTier: string;
@@ -46,6 +58,50 @@ export type StreamTurnInput = {
    */
   surfaceContext?: string;
 };
+
+/** Build the content array for a user turn out of optional text +
+ *  attachments. Empty text + no attachments would produce an empty
+ *  array which the API rejects, so fall back to a single space when
+ *  the caller forgot to validate upstream. */
+export function buildUserTurnContent(
+  text: string,
+  attachments?: StreamTurnAttachment[],
+): string | Array<Anthropic.ContentBlockParam> {
+  const blocks: Anthropic.ContentBlockParam[] = [];
+  if (text && text.trim().length > 0) {
+    blocks.push({ type: 'text', text });
+  }
+  for (const a of attachments ?? []) {
+    if (a.contentType === 'application/pdf') {
+      blocks.push({
+        type: 'document',
+        source: { type: 'url', url: a.url },
+        title: a.filename,
+      });
+    } else if (a.contentType.startsWith('image/')) {
+      blocks.push({
+        type: 'image',
+        source: {
+          type: 'url',
+          url: a.url,
+        },
+      });
+    }
+    // Other types (text, docx, etc.) aren't supported here yet —
+    // capture-uploads have their own pipeline.
+  }
+  if (blocks.length === 0) {
+    // Defensive: keep API shape valid even if upstream sent nothing.
+    return ' ';
+  }
+  // The API accepts a string or a content-block array. Use string
+  // when text-only (preserves legacy cache-key behavior); use array
+  // when there are any non-text blocks.
+  if (blocks.length === 1 && blocks[0]!.type === 'text') {
+    return (blocks[0] as Anthropic.TextBlockParam).text;
+  }
+  return blocks;
+}
 
 /**
  * Streaming variant of the agent loop. Yields StreamEvents that a caller
@@ -79,7 +135,10 @@ export async function* streamAgentTurn(
 
     const messages: Anthropic.MessageParam[] = [
       ...input.history,
-      { role: 'user', content: input.userText },
+      {
+        role: 'user',
+        content: buildUserTurnContent(input.userText, input.attachments),
+      },
     ];
 
     const maxSteps = input.maxSteps ?? DEFAULT_MAX_STEPS;

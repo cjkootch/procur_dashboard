@@ -2,6 +2,8 @@ import 'server-only';
 import { and, desc, eq } from 'drizzle-orm';
 import type {
   AnthropicContentBlock,
+  AnthropicDocumentBlockParam,
+  AnthropicImageBlockParam,
   AnthropicMessageParam,
   AnthropicTextBlockParam,
   AnthropicToolResultBlockParam,
@@ -13,6 +15,14 @@ import {
   type AssistantMessage,
   type AssistantThread,
 } from '@procur/db';
+
+/** Per-turn user attachment shape, mirrored across the API + the
+ *  AI stream layer. Persisted as image/document content blocks. */
+export type UserAttachment = {
+  url: string;
+  contentType: string;
+  filename: string;
+};
 
 export type ThreadListRow = Pick<
   AssistantThread,
@@ -115,13 +125,35 @@ export async function deleteThread(
 export async function appendUserMessage(
   threadId: string,
   text: string,
+  attachments?: UserAttachment[],
 ): Promise<AssistantMessage> {
+  // Build the content-block array. Always include the text block
+  // (even when empty — keeps the schema uniform for attachment-only
+  // turns; messagesToHistory handles the all-empty case). Then
+  // append image/document blocks for any attachments.
+  const blocks: Array<
+    AnthropicTextBlockParam | AnthropicImageBlockParam | AnthropicDocumentBlockParam
+  > = [{ type: 'text', text }];
+  for (const a of attachments ?? []) {
+    if (a.contentType === 'application/pdf') {
+      blocks.push({
+        type: 'document',
+        source: { type: 'url', url: a.url },
+        title: a.filename,
+      });
+    } else if (a.contentType.startsWith('image/')) {
+      blocks.push({
+        type: 'image',
+        source: { type: 'url', url: a.url },
+      });
+    }
+  }
   const [row] = await db
     .insert(assistantMessages)
     .values({
       threadId,
       role: 'user',
-      content: [{ type: 'text', text }],
+      content: blocks,
     })
     .returning();
   if (!row) throw new Error('failed to append user message');
@@ -214,9 +246,34 @@ export function messagesToHistory(rows: AssistantMessage[]): AnthropicMessagePar
   const out: AnthropicMessageParam[] = [];
   for (const m of rows) {
     if (m.role === 'user') {
-      const blocks = m.content as AnthropicTextBlockParam[];
-      const text = blocks.map((b) => ('text' in b ? b.text : '')).join('');
-      out.push({ role: 'user', content: text });
+      // User turns can carry image / document blocks alongside text
+      // (PDFs / screenshots dropped into the composer). Preserve
+      // those blocks so re-sent history still shows the model what
+      // the user attached. When the only content is a single text
+      // block, collapse to the legacy string shape so the
+      // prompt-cache key stays stable for text-only conversations.
+      const blocks = m.content as Array<
+        | AnthropicTextBlockParam
+        | AnthropicImageBlockParam
+        | AnthropicDocumentBlockParam
+      >;
+      const filtered = blocks.filter((b) => {
+        if (b.type === 'text') return b.text.length > 0;
+        return b.type === 'image' || b.type === 'document';
+      });
+      if (filtered.length === 0) {
+        // Empty user turn would be rejected by the API. Skip rather
+        // than crash; in practice this only happens on legacy rows.
+        continue;
+      }
+      if (filtered.length === 1 && filtered[0]!.type === 'text') {
+        out.push({
+          role: 'user',
+          content: (filtered[0] as AnthropicTextBlockParam).text,
+        });
+      } else {
+        out.push({ role: 'user', content: filtered });
+      }
     } else if (m.role === 'assistant') {
       const content = (m.content as AnthropicContentBlock[]).filter(
         (b) => !SERVER_TOOL_BLOCK_TYPES.has(b.type),
