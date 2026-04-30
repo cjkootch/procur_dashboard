@@ -14,16 +14,24 @@
  * If the dataset grows past ~200 rows or starts taking real-time
  * updates, promote to a DB table.
  */
-export type FreightOriginRegion =
-  | 'med' // Mediterranean (Italy, France, Spain, Greece, Turkey, NAfrica)
-  | 'nwe' // NW Europe / ARA (Rotterdam, Antwerp, Amsterdam, UK)
-  | 'usgc' // US Gulf Coast (Houston, NOLA)
-  | 'singapore' // Singapore + Far East product hubs
-  | 'mideast' // AG product / crude (Fujairah, Jubail, Sikka)
-  | 'india' // Indian export refineries (Sikka, Vadinar)
-  | 'west-africa' // intra-West-Africa (Lagos, Lomé, Tema reshipping)
-  | 'east-africa' // intra-East-Africa (Mombasa, Dar)
-  | 'black-sea'; // Novorossiysk, Constanța
+export const FREIGHT_ORIGIN_REGIONS = [
+  'med', // Mediterranean (Italy, France, Spain, Greece, Turkey, NAfrica)
+  'nwe', // NW Europe / ARA (Rotterdam, Antwerp, Amsterdam, UK)
+  'usgc', // US Gulf Coast (Houston, NOLA)
+  'singapore', // Singapore + Far East product hubs
+  'mideast', // AG product / crude (Fujairah, Jubail, Sikka)
+  'india', // Indian export refineries (Sikka, Vadinar)
+  'west-africa', // intra-West-Africa (Lagos, Lomé, Tema reshipping)
+  'east-africa', // intra-East-Africa (Mombasa, Dar)
+  'black-sea', // Novorossiysk, Constanța
+] as const;
+
+export type FreightOriginRegion = (typeof FREIGHT_ORIGIN_REGIONS)[number];
+
+/** Type-guard for narrowing free-text columns (e.g. companies.default_sourcing_region). */
+export function isFreightOriginRegion(s: string | null | undefined): s is FreightOriginRegion {
+  return s != null && (FREIGHT_ORIGIN_REGIONS as readonly string[]).includes(s);
+}
 
 export type FreightVesselClass =
   | 'mr1' // ~25-37k DWT, smallest clean

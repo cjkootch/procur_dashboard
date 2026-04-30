@@ -29,6 +29,21 @@ function int(formData: FormData, key: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function decimal(formData: FormData, key: string): string | null {
+  const v = str(formData, key);
+  if (!v) return null;
+  const n = Number.parseFloat(v);
+  return Number.isFinite(n) ? n.toString() : null;
+}
+
+/** Form input is a percent (5 = 5%); we store it as a decimal (0.05). */
+function pctToDecimal(formData: FormData, key: string): string | null {
+  const v = str(formData, key);
+  if (!v) return null;
+  const n = Number.parseFloat(v);
+  return Number.isFinite(n) ? (n / 100).toString() : null;
+}
+
 export async function updateCompanyProfileAction(formData: FormData): Promise<void> {
   const { company } = await requireCompany();
 
@@ -47,6 +62,13 @@ export async function updateCompanyProfileAction(formData: FormData): Promise<vo
       preferredCategories: arr(formData, 'preferredCategories'),
       targetContractSizeMin: int(formData, 'targetContractSizeMin'),
       targetContractSizeMax: int(formData, 'targetContractSizeMax'),
+      defaultSourcingRegion: str(formData, 'defaultSourcingRegion'),
+      targetGrossMarginPct: pctToDecimal(formData, 'targetGrossMarginPct'),
+      targetNetMarginPerUsg: decimal(formData, 'targetNetMarginPerUsg'),
+      monthlyFixedOverheadUsdDefault: int(
+        formData,
+        'monthlyFixedOverheadUsdDefault',
+      ),
       updatedAt: new Date(),
     })
     .where(eq(companies.id, company.id));

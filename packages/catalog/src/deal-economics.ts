@@ -99,6 +99,23 @@ export type ComposeDealResult = {
 };
 
 /**
+ * Per-company defaults that the assistant tool handler resolves once
+ * (from `companies` row) and passes alongside the per-call input.
+ * Each field is applied only when the equivalent per-call value is
+ * unset — the user can always override on a per-deal basis.
+ */
+export type CompanyDealDefaults = {
+  /** Falls back into ComposeDealInput.sourcingRegion. */
+  defaultSourcingRegion?: FreightOriginRegion | null;
+  /** Falls into thresholds.minGrossMarginPct. Decimal (0.05 = 5%). */
+  targetGrossMarginPct?: number | null;
+  /** Falls into thresholds.minNetMarginPerUsg. */
+  targetNetMarginPerUsg?: number | null;
+  /** Falls into FuelDealInputs.monthlyFixedOverheadUsd. */
+  monthlyFixedOverheadUsdDefault?: number | null;
+};
+
+/**
  * Mid-point crack spread (USD/bbl over Brent) per product. Mirrors
  * the bands in `plausibility.ts` (the source of truth) — see
  * `CRACK_SPREAD_USD_BBL` there for the low/high range. We keep an
@@ -151,7 +168,20 @@ function usgPerMt(densityKgL: number): number {
  */
 export async function composeDealEconomics(
   input: ComposeDealInput,
+  defaults: CompanyDealDefaults = {},
 ): Promise<ComposeDealResult> {
+  // Fold company-level defaults into the input first so downstream
+  // logic doesn't need to know about the defaults source.
+  const merged: ComposeDealInput = {
+    ...input,
+    sourcingRegion:
+      input.sourcingRegion ?? defaults.defaultSourcingRegion ?? undefined,
+    monthlyFixedOverheadUsd:
+      input.monthlyFixedOverheadUsd ??
+      defaults.monthlyFixedOverheadUsdDefault ??
+      undefined,
+  };
+  input = merged;
   const density = input.densityKgL ?? defaultDensityFor(input.product);
 
   // Single upfront validation pass — gather every missing-required
@@ -269,6 +299,7 @@ export async function composeDealEconomics(
     densityKgL: density,
     sellPricePerUsg,
     productCostPerUsg,
+    defaults,
   });
   const results = calculateFuelDeal(inputs);
 
@@ -321,9 +352,19 @@ function buildFuelDealInputs(args: {
   densityKgL: number;
   sellPricePerUsg: number;
   productCostPerUsg: number;
+  defaults: CompanyDealDefaults;
 }): FuelDealInputs {
-  const { input, volumeUsg, densityKgL, sellPricePerUsg, productCostPerUsg } = args;
+  const {
+    input,
+    volumeUsg,
+    densityKgL,
+    sellPricePerUsg,
+    productCostPerUsg,
+    defaults,
+  } = args;
   const freightPerUsg = input.freightPerUsg ?? 0;
+  const minGrossMarginPct = defaults.targetGrossMarginPct ?? 0.04;
+  const minNetMarginPerUsg = defaults.targetNetMarginPerUsg ?? 0.02;
   const inputs: FuelDealInputs = {
     dealRef: input.dealRef ?? `deal-${Date.now()}`,
     product: input.product,
@@ -351,8 +392,8 @@ function buildFuelDealInputs(args: {
     countryRiskScore: input.countryRiskScore ?? 50,
     thresholds: {
       maxPeakCashExposureUsd: 10_000_000,
-      minGrossMarginPct: 0.04,
-      minNetMarginPerUsg: 0.02,
+      minGrossMarginPct,
+      minNetMarginPerUsg,
       maxCounterpartyRiskScore: 70,
       maxCountryRiskScore: 75,
       maxDemurrageDays: 5,

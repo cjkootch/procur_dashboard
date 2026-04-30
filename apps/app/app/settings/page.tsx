@@ -97,6 +97,60 @@ export default async function CompanyProfilePage() {
           defaultValue={company.targetContractSizeMax?.toString() ?? ''}
         />
 
+        <div className="md:col-span-2 mt-4 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          Trading economics (compose_deal_economics defaults)
+        </div>
+        <Select
+          label="Default sourcing region"
+          name="defaultSourcingRegion"
+          defaultValue={company.defaultSourcingRegion ?? ''}
+          helper="Picks the productCost cost-model fallback when you don't pass an explicit cost on a deal: usgc → NYH spot, anything else → Brent + crack. Leave blank to require setting it per deal."
+          options={[
+            { value: '', label: '— Require per-deal —' },
+            { value: 'med', label: 'Mediterranean' },
+            { value: 'nwe', label: 'NW Europe / ARA' },
+            { value: 'usgc', label: 'US Gulf Coast' },
+            { value: 'singapore', label: 'Singapore / Far East' },
+            { value: 'mideast', label: 'Middle East (Fujairah, etc.)' },
+            { value: 'india', label: 'India (Sikka, Vadinar)' },
+            { value: 'west-africa', label: 'West Africa (intra)' },
+            { value: 'east-africa', label: 'East Africa (intra)' },
+            { value: 'black-sea', label: 'Black Sea' },
+          ]}
+          full
+        />
+        <Field
+          label="Target gross margin (%)"
+          name="targetGrossMarginPct"
+          type="number"
+          step="0.1"
+          placeholder="e.g. 5"
+          defaultValue={
+            company.targetGrossMarginPct != null
+              ? (Number(company.targetGrossMarginPct) * 100).toString()
+              : ''
+          }
+          helper="Min gross margin floor. Below this the scorecard flips to do_not_proceed. Default 4%."
+        />
+        <Field
+          label="Target net margin ($/USG)"
+          name="targetNetMarginPerUsg"
+          type="number"
+          step="0.001"
+          placeholder="e.g. 0.025"
+          defaultValue={company.targetNetMarginPerUsg?.toString() ?? ''}
+          helper="Min net margin per US gallon (after freight, finance, overhead). Default $0.020."
+        />
+        <Field
+          label="Monthly fixed overhead (USD)"
+          name="monthlyFixedOverheadUsdDefault"
+          type="number"
+          placeholder="e.g. 200000"
+          defaultValue={company.monthlyFixedOverheadUsdDefault?.toString() ?? ''}
+          helper="Default desk overhead allocated to deal P&L. Leave blank for $0."
+          full
+        />
+
         <div className="md:col-span-2">
           <button
             type="submit"
@@ -161,6 +215,8 @@ function Field({
   defaultValue,
   required,
   full,
+  step,
+  helper,
 }: {
   label: string;
   name: string;
@@ -169,6 +225,8 @@ function Field({
   defaultValue?: string;
   required?: boolean;
   full?: boolean;
+  step?: string;
+  helper?: string;
 }) {
   return (
     <label className={full ? 'md:col-span-2' : undefined}>
@@ -176,11 +234,55 @@ function Field({
       <input
         name={name}
         type={type}
+        step={step}
         required={required}
         placeholder={placeholder}
         defaultValue={defaultValue}
         className="mt-1 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
       />
+      {helper && (
+        <span className="mt-1 block text-xs text-[color:var(--color-muted-foreground)]">
+          {helper}
+        </span>
+      )}
+    </label>
+  );
+}
+
+function Select({
+  label,
+  name,
+  defaultValue,
+  options,
+  helper,
+  full,
+}: {
+  label: string;
+  name: string;
+  defaultValue?: string;
+  options: Array<{ value: string; label: string }>;
+  helper?: string;
+  full?: boolean;
+}) {
+  return (
+    <label className={full ? 'md:col-span-2' : undefined}>
+      <span className="text-xs text-[color:var(--color-muted-foreground)]">{label}</span>
+      <select
+        name={name}
+        defaultValue={defaultValue}
+        className="mt-1 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 text-sm"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      {helper && (
+        <span className="mt-1 block text-xs text-[color:var(--color-muted-foreground)]">
+          {helper}
+        </span>
+      )}
     </label>
   );
 }
