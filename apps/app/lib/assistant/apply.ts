@@ -370,6 +370,35 @@ const createAlert: ApplyHandler = async (ctx, rawPayload) => {
 
 // -- Registry ----------------------------------------------------------------
 
+const approvalContextSchema = z.object({
+  status: z.enum([
+    'pending',
+    'kyc_in_progress',
+    'approved_without_kyc',
+    'approved_with_kyc',
+    'rejected',
+    'expired',
+  ]),
+  approvedAt: z.string().nullable(),
+  expiresAt: z.string().nullable(),
+  notes: z.string().nullable(),
+});
+
+const productSpecSchema = z.object({
+  property: z.string(),
+  astmMethod: z.string().nullable(),
+  units: z.string().nullable(),
+  min: z.string().nullable(),
+  max: z.string().nullable(),
+  typical: z.string().nullable(),
+});
+
+const sourceDocumentSchema = z.object({
+  url: z.string().url(),
+  contentType: z.string(),
+  filename: z.string(),
+});
+
 const pushToVexSchema = z.object({
   sourceRef: z.string(),
   legalName: z.string(),
@@ -378,6 +407,8 @@ const pushToVexSchema = z.object({
   contactName: z.string().nullable(),
   contactEmail: z.string().nullable(),
   contactPhone: z.string().nullable(),
+  contactTitle: z.string().nullable().optional(),
+  contactLinkedinUrl: z.string().nullable().optional(),
   commercialContext: z.object({
     categories: z.array(z.string()),
     awardCount: z.number(),
@@ -397,11 +428,18 @@ const pushToVexSchema = z.object({
     chatSummary: z.string().nullable(),
     userNote: z.string().nullable(),
   }),
+  // Optional richer context — when the chat-tool proposal carries
+  // these (e.g. doc-extraction surfaced specs + the source PDF),
+  // ship them alongside the rest of the payload.
+  approvalContext: approvalContextSchema.nullable().optional(),
+  productSpecs: z.array(productSpecSchema).optional(),
+  sourceDocuments: z.array(sourceDocumentSchema).optional(),
 });
 
 const pushToVex: ApplyHandler = async (ctx, rawPayload) => {
   const payload = pushToVexSchema.parse(rawPayload);
   const { pushVexContact } = await import('../vex-client');
+  const richContext = await resolveRichVexContext(ctx, payload);
 
   const result = await pushVexContact({
     source: 'procur',
@@ -412,6 +450,8 @@ const pushToVex: ApplyHandler = async (ctx, rawPayload) => {
     contactName: payload.contactName,
     contactEmail: payload.contactEmail,
     contactPhone: payload.contactPhone,
+    contactTitle: payload.contactTitle ?? null,
+    contactLinkedinUrl: payload.contactLinkedinUrl ?? null,
     commercialContext: payload.commercialContext,
     originationContext: {
       triggeredBy: `procur-assistant:user:${ctx.userId}`,
@@ -419,6 +459,12 @@ const pushToVex: ApplyHandler = async (ctx, rawPayload) => {
       userNote: payload.originationContext.userNote,
       pushedAt: new Date().toISOString(),
     },
+    approvalContext:
+      payload.approvalContext ?? richContext.approvalContext,
+    productSpecs: payload.productSpecs ?? [],
+    sourceDocuments: payload.sourceDocuments ?? [],
+    marketContext: richContext.marketContext,
+    procurTradingDefaults: richContext.procurTradingDefaults,
   });
 
   if (!result.ok) {
@@ -437,6 +483,111 @@ const pushToVex: ApplyHandler = async (ctx, rawPayload) => {
       redirectTo: result.data.vexRecordUrl,
     },
   };
+};
+
+/**
+ * Resolve the procur-side context that vex's worker wants to see on
+ * every push but that the assistant tool doesn't have to thread
+ * through manually. Pulled at apply-time so the values are fresh.
+ *
+ * Three pieces:
+ *   1. Approval status for this entity, if procur tracks one.
+ *   2. The market snapshot at push time (Brent + NYH spots).
+ *   3. The procur company's trading-economics defaults so vex can
+ *      segment leads by desk profile.
+ */
+async function resolveRichVexContext(
+  ctx: { companyId: string },
+  payload: { sourceRef: string },
+): Promise<{
+  approvalContext: VexApprovalContextLite | null;
+  marketContext: VexMarketContextLite | null;
+  procurTradingDefaults: VexTradingDefaultsLite | null;
+}> {
+  const {
+    getCompanyDealDefaults,
+    getMarketMoveBanner,
+    getSupplierApproval,
+  } = await import('@procur/catalog');
+
+  // sourceRef shape varies (entity-profile:<slug>, match:<id>, …).
+  // We only auto-attach approval when the prefix tells us which
+  // entity to look up; chat tools that pass the entity slug
+  // directly should also include approvalContext on the payload.
+  let entitySlug: string | null = null;
+  if (payload.sourceRef.startsWith('entity-profile:')) {
+    entitySlug = payload.sourceRef.slice('entity-profile:'.length);
+  }
+
+  const [approval, banner, defaults] = await Promise.all([
+    entitySlug
+      ? getSupplierApproval(ctx.companyId, entitySlug).catch(() => null)
+      : Promise.resolve(null),
+    getMarketMoveBanner(7, 0).catch(() => null),
+    getCompanyDealDefaults(ctx.companyId).catch(() => null),
+  ]);
+
+  return {
+    approvalContext: approval
+      ? {
+          status: approval.status,
+          approvedAt: approval.approvedAt,
+          expiresAt: approval.expiresAt,
+          notes: approval.notes,
+        }
+      : null,
+    marketContext: banner
+      ? {
+          benchmarkAsOf: banner.series[0]?.latestAsOf ?? null,
+          brentSpotUsdPerBbl:
+            banner.series.find((s) => s.seriesSlug === 'brent')?.latestPrice ?? null,
+          nyhDieselSpotUsdPerGal:
+            banner.series.find((s) => s.seriesSlug === 'nyh-diesel')?.latestPrice ??
+            null,
+          nyhGasolineSpotUsdPerGal:
+            banner.series.find((s) => s.seriesSlug === 'nyh-gasoline')?.latestPrice ??
+            null,
+        }
+      : null,
+    procurTradingDefaults: defaults
+      ? {
+          defaultSourcingRegion: defaults.defaultSourcingRegion ?? null,
+          targetGrossMarginPct: defaults.targetGrossMarginPct ?? null,
+          targetNetMarginPerUsg: defaults.targetNetMarginPerUsg ?? null,
+          monthlyFixedOverheadUsdDefault: defaults.monthlyFixedOverheadUsdDefault ?? null,
+        }
+      : null,
+  };
+}
+
+// Local type aliases — the canonical shapes live in vex-client.ts
+// but apply.ts can't import from there without a circular `import`
+// graph since vex-client itself dynamically imports apply via
+// nothing today, so this is just to avoid pulling the runtime
+// module into a sync import path.
+type VexApprovalContextLite = {
+  status:
+    | 'pending'
+    | 'kyc_in_progress'
+    | 'approved_without_kyc'
+    | 'approved_with_kyc'
+    | 'rejected'
+    | 'expired';
+  approvedAt: string | null;
+  expiresAt: string | null;
+  notes: string | null;
+};
+type VexMarketContextLite = {
+  benchmarkAsOf: string | null;
+  brentSpotUsdPerBbl: number | null;
+  nyhDieselSpotUsdPerGal: number | null;
+  nyhGasolineSpotUsdPerGal: number | null;
+};
+type VexTradingDefaultsLite = {
+  defaultSourcingRegion: string | null;
+  targetGrossMarginPct: number | null;
+  targetNetMarginPerUsg: number | null;
+  monthlyFixedOverheadUsdDefault: number | null;
 };
 
 const pushManyToVexSchema = z.object({
@@ -500,8 +651,20 @@ const pushManyToVex: ApplyHandler = async (ctx, rawPayload) => {
   };
 
   const pushedAt = new Date().toISOString();
+  // Resolve the company-level rich context once — market snapshot
+  // and trading defaults don't vary per push within a single bulk
+  // request. Per-entity approval still resolves inside the loop.
+  const sharedRich = await resolveRichVexContext(ctx, { sourceRef: '' });
   const results: PerResult[] = [];
   for (const push of payload.pushes) {
+    const perEntityApproval = push.entitySlug
+      ? await (
+          await import('@procur/catalog')
+        )
+          .getSupplierApproval(ctx.companyId, push.entitySlug)
+          .catch(() => null)
+      : null;
+
     const r = await pushVexContact({
       source: 'procur',
       sourceRef: push.sourceRef,
@@ -511,6 +674,8 @@ const pushManyToVex: ApplyHandler = async (ctx, rawPayload) => {
       contactName: push.contactName,
       contactEmail: push.contactEmail,
       contactPhone: push.contactPhone,
+      contactTitle: null,
+      contactLinkedinUrl: null,
       commercialContext: push.commercialContext,
       originationContext: {
         triggeredBy: `procur-assistant-bulk:user:${ctx.userId}`,
@@ -518,6 +683,18 @@ const pushManyToVex: ApplyHandler = async (ctx, rawPayload) => {
         userNote: push.originationContext.userNote,
         pushedAt,
       },
+      approvalContext: perEntityApproval
+        ? {
+            status: perEntityApproval.status,
+            approvedAt: perEntityApproval.approvedAt,
+            expiresAt: perEntityApproval.expiresAt,
+            notes: perEntityApproval.notes,
+          }
+        : null,
+      productSpecs: [],
+      sourceDocuments: [],
+      marketContext: sharedRich.marketContext,
+      procurTradingDefaults: sharedRich.procurTradingDefaults,
     });
     if (r.ok) {
       results.push({

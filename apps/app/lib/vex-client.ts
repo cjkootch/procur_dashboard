@@ -37,6 +37,86 @@ const DEFAULT_BASE_URL = 'https://vex-api.fly.dev';
 const PATH = '/ingest/procur/leads';
 const TIMEOUT_MS = 10_000;
 
+/**
+ * Per-tenant KYC / approval state that procur tracks against this
+ * counterparty. Mirrors `supplier_approvals.status`. When present,
+ * vex should treat this as authoritative on the procur side and
+ * stamp the lead's transactability accordingly (a procur user
+ * who's KYC'd a supplier doesn't need vex to re-onboard them from
+ * scratch).
+ */
+export type VexApprovalContext = {
+  status:
+    | 'pending'
+    | 'kyc_in_progress'
+    | 'approved_without_kyc'
+    | 'approved_with_kyc'
+    | 'rejected'
+    | 'expired';
+  /** ISO-8601 timestamp the approval moved into approved_*. */
+  approvedAt: string | null;
+  /** ISO-8601 KYC re-cert date. When in the past, the badge shows
+   *  expired and the lead should be flagged for renewal in vex. */
+  expiresAt: string | null;
+  notes: string | null;
+};
+
+/**
+ * One product spec key/value extracted from an uploaded document
+ * (typically the ASTM table on a refinery datasheet). Sent verbatim
+ * — vex should NOT round or normalize, since spec deviations are
+ * material to deal acceptance.
+ */
+export type VexProductSpec = {
+  /** Free text — usually a parameter name (e.g. "Sulphur Content"). */
+  property: string;
+  /** Optional ASTM method code (e.g. "D5453"). */
+  astmMethod: string | null;
+  /** Free text — units (e.g. "mg/kg (ppm)", "Celsius"). */
+  units: string | null;
+  min: string | null;
+  max: string | null;
+  /** Free-text typical / target value when min/max aren't a range. */
+  typical: string | null;
+};
+
+/**
+ * Pointer to the source document the push originated from (proforma
+ * recap PDF, refinery datasheet, screenshot of a website). Helps
+ * vex's worker resolve the lead's provenance and lets a vex user
+ * click through to the original doc instead of re-asking procur.
+ */
+export type VexSourceDocument = {
+  /** Public Vercel Blob URL. Survives indefinitely (we don't expire
+   *  blobs); vex can mirror to its own storage if it wants. */
+  url: string;
+  /** image/* or application/pdf. */
+  contentType: string;
+  filename: string;
+};
+
+/** Snapshot of the live benchmark + the procur user's trading
+ *  defaults at push time. Gives vex the context to know what kind
+ *  of deal flow this counterparty fits — without round-tripping
+ *  back to procur for every enrichment step. */
+export type VexMarketContext = {
+  /** ISO-8601 of the latest benchmark row at push time. */
+  benchmarkAsOf: string | null;
+  brentSpotUsdPerBbl: number | null;
+  nyhDieselSpotUsdPerGal: number | null;
+  nyhGasolineSpotUsdPerGal: number | null;
+};
+
+/** Procur company's trading-economics defaults — same fields the
+ *  /settings page exposes. Lets vex segment leads by the buyer's
+ *  desk profile (e.g., "Med-default desks targeting >5% gross"). */
+export type VexProcurTradingDefaults = {
+  defaultSourcingRegion: string | null;
+  targetGrossMarginPct: number | null;
+  targetNetMarginPerUsg: number | null;
+  monthlyFixedOverheadUsdDefault: number | null;
+};
+
 export type VexContactPayload = {
   /** Source identifiers — let vex dedupe against any prior push.
       Sent as `procurOpportunityId` on the wire. */
@@ -54,6 +134,10 @@ export type VexContactPayload = {
   contactName: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
+  /** Optional contact metadata — title (e.g. "Board Member") and
+   *  LinkedIn URL when surfaced by the doc-extraction flow. */
+  contactTitle: string | null;
+  contactLinkedinUrl: string | null;
 
   /** Commercial context — feeds vex's enrichment worker so it
       understands who this counterparty is on landing. Sent as
@@ -84,6 +168,29 @@ export type VexContactPayload = {
     userNote: string | null;
     pushedAt: string;
   };
+
+  /** Per-tenant KYC / approval state. Null when the procur user has
+   *  not engaged with this counterparty yet. */
+  approvalContext: VexApprovalContext | null;
+
+  /** Product specs lifted from an uploaded datasheet / proforma.
+   *  Empty array when the push didn't originate from a document or
+   *  when the doc had no structured spec table. */
+  productSpecs: VexProductSpec[];
+
+  /** Set of source documents (PDFs / images) that informed the
+   *  push. Often the proforma recap or datasheet the chat
+   *  extraction came from. Empty when not applicable. */
+  sourceDocuments: VexSourceDocument[];
+
+  /** Live market snapshot at push time. Useful for vex to gauge
+   *  the price environment a deal flow is being initiated in. */
+  marketContext: VexMarketContext | null;
+
+  /** Procur company's trading-economics defaults — see
+   *  /settings → "Trading economics". Lets vex understand the
+   *  desk profile pushing the lead. */
+  procurTradingDefaults: VexProcurTradingDefaults | null;
 };
 
 export type VexContactResponse = {
@@ -187,11 +294,19 @@ function mapToVexLeadBody(payload: VexContactPayload): Record<string, unknown> {
   const oc = payload.originationContext;
 
   const contacts: Array<Record<string, unknown>> = [];
-  if (payload.contactName || payload.contactEmail || payload.contactPhone) {
+  if (
+    payload.contactName ||
+    payload.contactEmail ||
+    payload.contactPhone ||
+    payload.contactTitle ||
+    payload.contactLinkedinUrl
+  ) {
     const contact: Record<string, unknown> = {};
     if (payload.contactName) contact.name = payload.contactName;
     if (payload.contactEmail) contact.email = payload.contactEmail;
     if (payload.contactPhone) contact.phone = payload.contactPhone;
+    if (payload.contactTitle) contact.title = payload.contactTitle;
+    if (payload.contactLinkedinUrl) contact.linkedinUrl = payload.contactLinkedinUrl;
     contacts.push(contact);
   }
 
@@ -219,6 +334,23 @@ function mapToVexLeadBody(payload: VexContactPayload): Record<string, unknown> {
       awardTotalUsd: cc.awardTotalUsd,
       daysSinceLastAward: cc.daysSinceLastAward,
       distressSignals: cc.distressSignals,
+      // ── New fields (2026-Q2) ─────────────────────────────────
+      // Vex MAY or MAY NOT consume these depending on schema
+      // version; older vex deploys ignore unknown metadata keys.
+      // See `vex/integrations/procur` for the consumer side.
+      ...(payload.approvalContext
+        ? { procurApproval: payload.approvalContext }
+        : {}),
+      ...(payload.productSpecs.length > 0
+        ? { productSpecs: payload.productSpecs }
+        : {}),
+      ...(payload.sourceDocuments.length > 0
+        ? { sourceDocuments: payload.sourceDocuments }
+        : {}),
+      ...(payload.marketContext ? { marketContext: payload.marketContext } : {}),
+      ...(payload.procurTradingDefaults
+        ? { procurTradingDefaults: payload.procurTradingDefaults }
+        : {}),
     },
   };
 }
@@ -230,6 +362,19 @@ function composeNotes(payload: VexContactPayload): string | null {
   const parts: string[] = [];
   if (oc.chatSummary) parts.push(oc.chatSummary);
   if (oc.userNote) parts.push(`User note: ${oc.userNote}`);
+
+  // Approval line — surfaced in plain text so old vex deploys that
+  // only consume `notes` still see KYC state. New deploys use the
+  // structured procurApproval block under metadata.
+  if (payload.approvalContext) {
+    const a = payload.approvalContext;
+    const expBit = a.expiresAt
+      ? ` (KYC expires ${a.expiresAt.slice(0, 10)})`
+      : '';
+    parts.push(
+      `Procur approval: ${a.status}${expBit}${a.notes ? ` — ${a.notes}` : ''}`,
+    );
+  }
 
   const factBits: string[] = [];
   if (cc.awardCount > 0) {
@@ -247,6 +392,19 @@ function composeNotes(payload: VexContactPayload): string | null {
   if (factBits.length > 0) {
     parts.push(`Procur context: ${factBits.join(', ')}.`);
   }
+
+  if (payload.productSpecs.length > 0) {
+    parts.push(
+      `Product specs attached (${payload.productSpecs.length} parameters from uploaded datasheet).`,
+    );
+  }
+  if (payload.sourceDocuments.length > 0) {
+    const fileBits = payload.sourceDocuments
+      .map((d) => `${d.filename} (${d.url})`)
+      .join(', ');
+    parts.push(`Source document(s): ${fileBits}`);
+  }
+
   if (cc.notes) parts.push(cc.notes);
 
   return parts.length > 0 ? parts.join('\n\n') : null;

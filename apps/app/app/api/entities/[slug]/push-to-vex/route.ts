@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getEntityProfile } from '@procur/catalog';
-import { getCurrentUser } from '@procur/auth';
+import {
+  getCompanyDealDefaults,
+  getEntityProfile,
+  getMarketMoveBanner,
+  getSupplierApproval,
+} from '@procur/catalog';
+import { getCurrentUser, requireCompany } from '@procur/auth';
 import { pushVexContact } from '@/lib/vex-client';
 
 export const runtime = 'nodejs';
@@ -37,6 +42,7 @@ export async function POST(
   if (!user) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
+  const { company } = await requireCompany();
 
   const { slug } = await params;
 
@@ -72,6 +78,38 @@ export async function POST(
         )
       : null;
 
+  // Pull the per-tenant approval, market snapshot, and trading
+  // defaults in parallel — vex's enrichment worker treats all three
+  // as authoritative procur context, so shipping them on the push
+  // saves a follow-up callback for every lead.
+  const [approval, banner, defaults] = await Promise.all([
+    getSupplierApproval(company.id, profile.canonicalKey).catch(() => null),
+    getMarketMoveBanner(7, 0).catch(() => null), // threshold 0 → always returns the latest snapshot
+    getCompanyDealDefaults(company.id).catch(() => null),
+  ]);
+
+  const marketContext = banner
+    ? {
+        benchmarkAsOf: banner.series[0]?.latestAsOf ?? null,
+        brentSpotUsdPerBbl:
+          banner.series.find((s) => s.seriesSlug === 'brent')?.latestPrice ?? null,
+        nyhDieselSpotUsdPerGal:
+          banner.series.find((s) => s.seriesSlug === 'nyh-diesel')?.latestPrice ?? null,
+        nyhGasolineSpotUsdPerGal:
+          banner.series.find((s) => s.seriesSlug === 'nyh-gasoline')?.latestPrice ??
+          null,
+      }
+    : null;
+
+  const procurTradingDefaults = defaults
+    ? {
+        defaultSourcingRegion: defaults.defaultSourcingRegion ?? null,
+        targetGrossMarginPct: defaults.targetGrossMarginPct ?? null,
+        targetNetMarginPerUsg: defaults.targetNetMarginPerUsg ?? null,
+        monthlyFixedOverheadUsdDefault: defaults.monthlyFixedOverheadUsdDefault ?? null,
+      }
+    : null;
+
   const result = await pushVexContact({
     source: 'procur',
     sourceRef: `entity-profile:${profile.canonicalKey}`,
@@ -81,6 +119,8 @@ export async function POST(
     contactName: parsed.data.contactName ?? null,
     contactEmail: parsed.data.contactEmail ?? null,
     contactPhone: parsed.data.contactPhone ?? null,
+    contactTitle: null,
+    contactLinkedinUrl: null,
     commercialContext: {
       categories: profile.categories,
       awardCount: tender?.totalAwards ?? 0,
@@ -101,6 +141,18 @@ export async function POST(
       userNote: parsed.data.userNote ?? null,
       pushedAt: new Date().toISOString(),
     },
+    approvalContext: approval
+      ? {
+          status: approval.status,
+          approvedAt: approval.approvedAt,
+          expiresAt: approval.expiresAt,
+          notes: approval.notes,
+        }
+      : null,
+    productSpecs: [],
+    sourceDocuments: [],
+    marketContext,
+    procurTradingDefaults,
   });
 
   if (!result.ok) {

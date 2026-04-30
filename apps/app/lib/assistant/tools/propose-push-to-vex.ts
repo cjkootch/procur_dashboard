@@ -71,6 +71,19 @@ const inputSchema = z
       .describe('Specific person at the counterparty, if known.'),
     contactEmail: z.string().email().optional(),
     contactPhone: z.string().optional(),
+    contactTitle: z
+      .string()
+      .max(200)
+      .optional()
+      .describe(
+        'Contact job title, if extracted from a document or website ' +
+          '(e.g. "Board Member", "Trading Director").',
+      ),
+    contactLinkedinUrl: z
+      .string()
+      .url()
+      .optional()
+      .describe('LinkedIn profile URL when surfaced from a document.'),
     userNote: z
       .string()
       .max(2000)
@@ -88,6 +101,39 @@ const inputSchema = z
           'Include: what the user was looking for, why this entity surfaced, ' +
           'any pricing/volume context discussed. Vex\'s AI uses this to seed ' +
           'the contact\'s origination story.',
+      ),
+    sourceDocuments: z
+      .array(
+        z.object({
+          url: z.string().url(),
+          contentType: z.string(),
+          filename: z.string(),
+        }),
+      )
+      .optional()
+      .describe(
+        'When the push originated from a user-uploaded document ' +
+          '(proforma recap, datasheet, screenshot), list the source files ' +
+          'so vex can reference the original. Include every doc that ' +
+          'informed this push.',
+      ),
+    productSpecs: z
+      .array(
+        z.object({
+          property: z.string(),
+          astmMethod: z.string().nullable(),
+          units: z.string().nullable(),
+          min: z.string().nullable(),
+          max: z.string().nullable(),
+          typical: z.string().nullable(),
+        }),
+      )
+      .optional()
+      .describe(
+        'Structured product spec rows extracted from a datasheet ' +
+          '(typical: ASTM table on a refinery datasheet). Capture ' +
+          'numbers VERBATIM — vex stores them as-is and any rounding ' +
+          'here is material to deal acceptance.',
       ),
   })
   .refine((v) => v.entitySlug || (v.legalName && v.country), {
@@ -223,6 +269,8 @@ export const proposePushToVexTool = defineTool({
         contactName: args.contactName ?? null,
         contactEmail: args.contactEmail ?? null,
         contactPhone: args.contactPhone ?? null,
+        contactTitle: args.contactTitle ?? null,
+        contactLinkedinUrl: args.contactLinkedinUrl ?? null,
         commercialContext: {
           categories: resolved.categories,
           awardCount: resolved.awardCount,
@@ -236,6 +284,11 @@ export const proposePushToVexTool = defineTool({
           chatSummary: args.chatSummary ?? null,
           userNote: args.userNote ?? null,
         },
+        // Optional richer context — populated when the push
+        // originated from a doc upload. apply.ts will fall back to
+        // resolving approval / market / trading defaults itself.
+        sourceDocuments: args.sourceDocuments ?? [],
+        productSpecs: args.productSpecs ?? [],
       },
     };
   },
