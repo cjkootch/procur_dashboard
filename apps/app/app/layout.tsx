@@ -3,8 +3,8 @@ import type { ReactNode } from 'react';
 import { Montserrat } from 'next/font/google';
 import { ClerkProvider } from '@clerk/nextjs';
 import { PostHogProvider } from '@procur/analytics/client';
-import { AssistantDrawerMount } from '../components/assistant/AssistantDrawerMount';
 import { ImpersonationBanner } from '../components/shell/ImpersonationBanner';
+import { RightRail } from '../components/shell/RightRail';
 import './globals.css';
 
 // The authenticated app is 100% user-dependent — nothing should be
@@ -36,7 +36,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             apiHost={process.env.NEXT_PUBLIC_POSTHOG_HOST}
           >
             {children}
-            <AssistantDrawerMount />
+            <RightRail />
           </PostHogProvider>
         </body>
       </html>

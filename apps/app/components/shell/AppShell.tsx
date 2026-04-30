@@ -1,159 +1,128 @@
-import Link from 'next/link';
-import Image from 'next/image';
 import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 import { UserButton } from '@clerk/nextjs';
 import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 import { NotificationsBell } from './NotificationsBell';
-import { QuickCreate } from './QuickCreate';
-import { SidebarNavLink } from './SidebarNavLink';
-
-type NavGroup = {
-  heading?: string;
-  items: Array<{ href: string; label: string; external?: boolean }>;
-};
+import { PageHeader } from './PageHeader';
+import { Sidebar, MobileSidebar, type SidebarNavGroup } from './Sidebar';
 
 /**
- * Navigation reorganised around a commodity-trading workflow rather than
- * the broader govcon-shop module set:
+ * Navigation grouped to mirror vex's structural mental model:
  *
- *   1. find        — Discover (public), Reverse search, Rolodex
- *   2. intelligence — Market intelligence, Insights
- *   3. deals        — Pipeline, Pricer, Contracts
- *   4. tools        — Assistant, Alerts
- *   5. account      — Company profile, Billing
+ *   1. Brief / Assistant      — daily-driver entry points
+ *   2. Now                    — match queue, alerts (immediate work)
+ *   3. Pipeline               — capture, contracts, pricer
+ *   4. Counterparties         — rolodex, reverse-search, discover, competitors
+ *   5. Intelligence           — market intel, vessels
+ *   6. Account                — company profile, billing
  *
  * Hidden because they're proposal-shop heavy and not part of the active
  * trading workflow (the underlying pages still exist and route via direct
  * URL — only the nav surface is trimmed): /proposal, /past-performance,
  * /library, /search.
- *
- * If the platform later adds multi-tenant company tiers / workflows, this
- * should switch to a per-company / per-tier nav config.
  */
-const NAV: NavGroup[] = [
+const NAV: SidebarNavGroup[] = [
   {
-    items: [{ href: '/', label: 'Home' }],
-  },
-  {
-    heading: 'Find',
+    id: null,
+    heading: null,
     items: [
-      { href: 'https://discover.procur.app', label: 'Discover', external: true },
-      { href: '/suppliers/reverse-search', label: 'Reverse search' },
-      { href: '/suppliers/known-entities', label: 'Rolodex' },
+      { href: '/', label: 'Brief', iconName: 'sparkles' },
+      { href: '/assistant', label: 'Assistant', iconName: 'chat-bubble' },
     ],
   },
   {
+    id: 'now',
+    heading: 'Now',
+    items: [
+      { href: '/suppliers/match-queue', label: 'Match queue', iconName: 'lightning' },
+      { href: '/alerts', label: 'Alerts', iconName: 'bell' },
+    ],
+  },
+  {
+    id: 'pipeline',
+    heading: 'Pipeline',
+    items: [
+      { href: '/insights', label: 'My pipeline', iconName: 'kanban' },
+      { href: '/capture', label: 'Capture', iconName: 'kanban' },
+      { href: '/contract', label: 'Contracts', iconName: 'document-text' },
+      { href: '/pricer', label: 'Pricer', iconName: 'calculator' },
+    ],
+  },
+  {
+    id: 'counterparties',
+    heading: 'Counterparties',
+    items: [
+      { href: '/suppliers/known-entities', label: 'Rolodex', iconName: 'address-book' },
+      { href: '/suppliers/reverse-search', label: 'Reverse search', iconName: 'search' },
+      {
+        href: 'https://discover.procur.app',
+        label: 'Discover',
+        iconName: 'compass',
+        external: true,
+      },
+      { href: '/suppliers/competitors', label: 'Competitors', iconName: 'building-bank' },
+    ],
+  },
+  {
+    id: 'intelligence',
     heading: 'Intelligence',
     items: [
-      { href: '/suppliers/match-queue', label: 'Match queue' },
-      { href: '/suppliers/intelligence', label: 'Market intelligence' },
-      { href: '/suppliers/competitors', label: 'Competitors' },
-      { href: '/suppliers/vessels', label: 'Vessels' },
-      { href: '/insights', label: 'My pipeline' },
+      { href: '/suppliers/intelligence', label: 'Market intelligence', iconName: 'globe' },
+      { href: '/suppliers/vessels', label: 'Vessels', iconName: 'anchor' },
     ],
   },
   {
-    heading: 'Deals',
-    items: [
-      { href: '/capture', label: 'Pipeline' },
-      { href: '/pricer', label: 'Pricer' },
-      { href: '/contract', label: 'Contracts' },
-    ],
-  },
-  {
-    heading: 'Tools',
-    items: [
-      { href: '/assistant', label: 'Assistant' },
-      { href: '/alerts', label: 'Alerts' },
-    ],
-  },
-  {
+    id: 'account',
     heading: 'Account',
     items: [
-      { href: '/settings', label: 'Company profile' },
-      { href: '/billing', label: 'Billing' },
+      { href: '/settings', label: 'Company profile', iconName: 'settings' },
+      { href: '/billing', label: 'Billing', iconName: 'credit-card' },
     ],
   },
 ];
 
 /**
- * The shared authenticated-product shell. Every module layout should wrap
- * its children in <AppShell title="..."> instead of duplicating the
- * sidebar. Pages themselves remain in charge of their own content.
+ * The shared authenticated-product shell. Pages wrap their content in
+ * <AppShell title="Page name">.
  *
- * `title` renders in the top-left of the header, matching GovDash's
- * breadcrumb-style "Capture / Proposal / Contract" label.
+ * If `title` is supplied, AppShell auto-renders a <PageHeader> at the
+ * top of <main> — backwards-compatible with every existing caller. To
+ * opt into a custom header (breadcrumb, primary actions, tabs), pass
+ * `title=""` or `undefined` and render your own <PageHeader> inside
+ * the page.
  */
 export async function AppShell({
   children,
   title,
 }: {
   children: ReactNode;
-  title: string;
+  /** Title for the auto-rendered PageHeader. Pass undefined or empty
+      string to opt out and render a custom header inside the page. */
+  title?: string;
 }) {
   const user = await getCurrentUser();
   if (!user) redirect('/sign-in');
   const company = await getCurrentCompany();
+  const sidebarCompany = company
+    ? { name: company.name, planTier: company.planTier }
+    : null;
 
   return (
     <div className="flex min-h-screen">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40">
-        <div className="p-3">
-          <Link href="/" aria-label="Procur home" className="block">
-            <Image
-              src="/brand/procur-logo-dark.svg"
-              alt="Procur"
-              width={96}
-              height={40}
-              priority
-              className="h-10 w-auto"
-            />
-          </Link>
-          {company && (
-            <p className="mt-2 truncate text-xs text-[color:var(--color-muted-foreground)]">
-              {company.name} · {company.planTier}
-            </p>
-          )}
-          <div className="mt-3">
-            <QuickCreate />
-          </div>
-        </div>
-        <nav className="flex-1 overflow-y-auto px-2 pb-4">
-          {NAV.map((group, i) => (
-            <div key={group.heading ?? `g-${i}`} className={i === 0 ? '' : 'mt-4'}>
-              {group.heading && (
-                <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
-                  {group.heading}
-                </div>
-              )}
-              <div className="flex flex-col gap-0.5">
-                {group.items.map((item) => (
-                  <SidebarNavLink
-                    key={item.href}
-                    href={item.href}
-                    label={item.label}
-                    external={item.external}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </nav>
-        <div className="border-t border-[color:var(--color-border)] p-3 text-[10px] text-[color:var(--color-muted-foreground)]">
-          Press <kbd className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1">⌘K</kbd> to ask the assistant
-        </div>
-      </aside>
+      <Sidebar nav={NAV} company={sidebarCompany} />
 
-      <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-[color:var(--color-border)] bg-[color:var(--color-background)] px-6 py-3">
-          <div className="text-sm text-[color:var(--color-muted-foreground)]">{title}</div>
-          <div className="flex items-center gap-3 text-xs">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header
+          className="flex items-center justify-between gap-3 border-b border-[color:var(--color-border)] bg-[color:var(--color-background)] px-4 md:px-6"
+          style={{ height: 'var(--shell-topbar-height)' }}
+        >
+          <MobileSidebar nav={NAV} company={sidebarCompany} />
+          <div className="ml-auto flex items-center gap-3 text-xs">
             <a
               href="https://docs.procur.app"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+              className="hidden text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] sm:inline"
             >
               Get help
             </a>
@@ -161,7 +130,10 @@ export async function AppShell({
             <UserButton afterSignOutUrl="/sign-in" />
           </div>
         </header>
-        <main className="flex-1 overflow-auto">{children}</main>
+        <main className="flex-1 overflow-auto">
+          {title && <PageHeader title={title} />}
+          {children}
+        </main>
       </div>
     </div>
   );
