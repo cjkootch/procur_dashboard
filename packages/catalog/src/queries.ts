@@ -864,6 +864,20 @@ export type CompanyProfileResult = {
   /** Categories aggregated from past_performance.categories arrays —
    *  signals what kinds of work the company has actually delivered. */
   pastPerformanceTopCategories: string[];
+  /**
+   * Trading-economics preferences. Each field is null when the
+   * company hasn't set a desk-level default; the calculator falls
+   * back to its hard-coded defaults in that case. The assistant
+   * should still mention these when answering economics questions
+   * so the user knows which numbers came from their settings vs the
+   * calculator default.
+   */
+  tradingPreferences: {
+    defaultSourcingRegion: string | null;
+    targetGrossMarginPct: number | null;
+    targetNetMarginPerUsg: number | null;
+    monthlyFixedOverheadUsdDefault: number | null;
+  };
 };
 
 /**
@@ -884,7 +898,15 @@ export type CompanyProfileResult = {
 export async function getCompanyProfile(companyId: string): Promise<CompanyProfileResult | null> {
   const company = await db.query.companies.findFirst({
     where: eq(companies.id, companyId),
-    columns: { id: true, name: true, planTier: true },
+    columns: {
+      id: true,
+      name: true,
+      planTier: true,
+      defaultSourcingRegion: true,
+      targetGrossMarginPct: true,
+      targetNetMarginPerUsg: true,
+      monthlyFixedOverheadUsdDefault: true,
+    },
   });
   if (!company) return null;
 
@@ -959,6 +981,55 @@ export async function getCompanyProfile(companyId: string): Promise<CompanyProfi
       keywords: p.keywords,
     })),
     pastPerformanceTopCategories,
+    tradingPreferences: {
+      defaultSourcingRegion: company.defaultSourcingRegion ?? null,
+      targetGrossMarginPct: parseDecimal(
+        company.targetGrossMarginPct as string | null,
+      ),
+      targetNetMarginPerUsg: parseDecimal(
+        company.targetNetMarginPerUsg as string | null,
+      ),
+      monthlyFixedOverheadUsdDefault:
+        company.monthlyFixedOverheadUsdDefault ?? null,
+    },
+  };
+}
+
+export type CompanyDealDefaultsRow = {
+  defaultSourcingRegion: string | null;
+  targetGrossMarginPct: number | null;
+  targetNetMarginPerUsg: number | null;
+  monthlyFixedOverheadUsdDefault: number | null;
+};
+
+/**
+ * Fetch the company's trading-economics preferences for use as
+ * defaults in compose_deal_economics. All fields nullable — the
+ * calculator falls back to its hard-coded defaults when a column is
+ * NULL. Returns null when the company row doesn't exist.
+ *
+ * Numeric columns come back as strings from drizzle's numeric type;
+ * we parse them to numbers here so the calculator gets the shape it
+ * expects without each caller re-parsing.
+ */
+export async function getCompanyDealDefaults(
+  companyId: string,
+): Promise<CompanyDealDefaultsRow | null> {
+  const row = await db.query.companies.findFirst({
+    where: eq(companies.id, companyId),
+    columns: {
+      defaultSourcingRegion: true,
+      targetGrossMarginPct: true,
+      targetNetMarginPerUsg: true,
+      monthlyFixedOverheadUsdDefault: true,
+    },
+  });
+  if (!row) return null;
+  return {
+    defaultSourcingRegion: row.defaultSourcingRegion ?? null,
+    targetGrossMarginPct: parseDecimal(row.targetGrossMarginPct as string | null),
+    targetNetMarginPerUsg: parseDecimal(row.targetNetMarginPerUsg as string | null),
+    monthlyFixedOverheadUsdDefault: row.monthlyFixedOverheadUsdDefault ?? null,
   };
 }
 

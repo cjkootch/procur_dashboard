@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, integer } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, integer, numeric } from 'drizzle-orm/pg-core';
 import { planTierEnum } from './enums';
 
 export const companies = pgTable('companies', {
@@ -20,6 +20,16 @@ export const companies = pgTable('companies', {
   preferredCategories: text('preferred_categories').array(),
   targetContractSizeMin: integer('target_contract_size_min'),
   targetContractSizeMax: integer('target_contract_size_max'),
+
+  /**
+   * Trading-economics preferences — used as defaults by
+   * compose_deal_economics when the per-call input doesn't override.
+   * See migration 0053 for column-level docs.
+   */
+  defaultSourcingRegion: text('default_sourcing_region'),
+  targetGrossMarginPct: numeric('target_gross_margin_pct'),
+  targetNetMarginPerUsg: numeric('target_net_margin_per_usg'),
+  monthlyFixedOverheadUsdDefault: integer('monthly_fixed_overhead_usd_default'),
 
   planTier: planTierEnum('plan_tier').default('free').notNull(),
   stripeCustomerId: text('stripe_customer_id').unique(),

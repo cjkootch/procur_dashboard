@@ -24,6 +24,7 @@ import {
   analyzeSupplierPricing,
   analyzeBuyerPricing,
   evaluateOfferAgainstHistory,
+  getCompanyDealDefaults,
   getCompanyProfile,
   listJurisdictions,
   listOpportunities,
@@ -34,8 +35,9 @@ import {
   type OpportunityScope,
 } from './queries';
 import { addOpportunityToPursuit, createAlertProfile } from './mutations';
-import { composeDealEconomics } from './deal-economics';
+import { composeDealEconomics, type CompanyDealDefaults } from './deal-economics';
 import {
+  isFreightOriginRegion,
   lookupFreightEstimate,
   type FreightOriginRegion,
 } from './freight-routes';
@@ -486,13 +488,20 @@ export function buildCatalogTools(): ToolRegistry {
       name: 'get_company_profile',
       description:
         "Snapshot of the user's own company — name, plan tier, capability list (categorized: " +
-        "service / certification / technology / geography / personnel / past_performance), and " +
-        'sample past-performance projects with categories + NAICS codes + keywords. Call this ' +
+        "service / certification / technology / geography / personnel / past_performance), " +
+        'sample past-performance projects with categories + NAICS codes + keywords, AND ' +
+        'tradingPreferences (defaultSourcingRegion, targetGrossMarginPct, ' +
+        'targetNetMarginPerUsg, monthlyFixedOverheadUsdDefault — desk-level economics ' +
+        'defaults that compose_deal_economics applies automatically). Call this ' +
         'ONCE early in a conversation when the user asks for recommendations, "should I bid", ' +
-        '"is this a fit for us", "what should I look at", or anything that requires understanding ' +
-        "what they actually do. Don't re-fetch each turn — the data doesn't change within a " +
-        "session. Use the returned context to bias subsequent search_opportunities calls toward " +
-        "matching jurisdictions / categories / keywords, and to answer fit questions concretely.",
+        '"is this a fit for us", "what should I look at", any fuel-deal economics question ' +
+        '(so you know which margin floor + sourcing region they trade off), or anything that ' +
+        "requires understanding what they actually do. Don't re-fetch each turn — the data " +
+        "doesn't change within a session. Use the returned context to bias subsequent " +
+        "search_opportunities calls toward matching jurisdictions / categories / keywords, " +
+        'and to answer fit questions concretely. When tradingPreferences fields are non-null ' +
+        'mention them when narrating compose_deal_economics output (e.g. "above your 5% gross-' +
+        'margin floor"); when null call out the calculator default ("at the default 4% floor").',
       kind: 'read',
       schema: z.object({}),
       handler: async (ctx) => {
@@ -1995,7 +2004,26 @@ export function buildCatalogTools(): ToolRegistry {
               resultSummary: { recommendation: out.results.scorecard.recommendation },
             }),
           },
-          async () => composeDealEconomics(input),
+          async () => {
+            // Resolve per-company trading defaults (default sourcing
+            // region, target margin floors, monthly overhead) once
+            // and pass into the calculator. The per-call input still
+            // wins so the user can override on a deal-by-deal basis.
+            const row = await getCompanyDealDefaults(ctx.companyId);
+            const defaults: CompanyDealDefaults = row
+              ? {
+                  defaultSourcingRegion:
+                    isFreightOriginRegion(row.defaultSourcingRegion)
+                      ? row.defaultSourcingRegion
+                      : null,
+                  targetGrossMarginPct: row.targetGrossMarginPct,
+                  targetNetMarginPerUsg: row.targetNetMarginPerUsg,
+                  monthlyFixedOverheadUsdDefault:
+                    row.monthlyFixedOverheadUsdDefault,
+                }
+              : {};
+            return composeDealEconomics(input, defaults);
+          },
         ),
     }),
 
