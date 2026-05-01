@@ -25,6 +25,7 @@ import {
   externalSuppliers,
   jurisdictions,
   entityNewsEvents,
+  entitySanctionsScreens,
   knownEntities,
   opportunities,
   pastPerformance,
@@ -7293,4 +7294,199 @@ export async function listEntityNews(
         ? r.ingested_at.toISOString()
         : String(r.ingested_at),
   }));
+}
+
+// ─── Sanctions screens (vex push) ────────────────────────────────
+
+type SanctionsMatch = {
+  source_list: string;
+  sdn_uid: string;
+  programs: string[];
+  confidence_band: 'high_confidence' | 'fuzzy_review';
+  sdn_type: 'individual' | 'entity' | 'vessel' | 'aircraft';
+};
+
+export interface SanctionsScreenRow {
+  vexTenantId: string;
+  screenId: string;
+  legalName: string;
+  status: 'clear' | 'potential_match' | 'confirmed_match';
+  sourcesChecked: string[];
+  matches: SanctionsMatch[];
+  screenedAt: string;
+}
+
+export interface SanctionsBySource {
+  sourceList: string;
+  matched: boolean;
+  lastScreenedAt: string;
+  screeningTenant: string;
+}
+
+export interface SanctionsActiveMatch extends SanctionsMatch {
+  screenedAt: string;
+  screeningTenant: string;
+}
+
+export interface SanctionsScreensSummary {
+  entitySlug: string;
+  /** True when no screens have ever landed for this entity. The chat
+   *  tool surfaces a clear "no data" framing rather than implying
+   *  silence is exonerating. */
+  noData: boolean;
+  /** ISO date of the most recent screen across all tenants, or null. */
+  latestScreenedAt: string | null;
+  /** Worst-case roll-up across tenants and sources. 'no_data' when
+   *  noData is true; 'mixed' when tenants disagree and there's at
+   *  least one match. */
+  overall:
+    | 'clear'
+    | 'potential_match'
+    | 'confirmed_match'
+    | 'mixed'
+    | 'no_data';
+  /** Per source-list: when last screened + whether it matched. Each
+   *  source appears once with its most recent verdict. */
+  bySource: SanctionsBySource[];
+  /** Currently-active match records — deduped by sdn_uid + source_list,
+   *  taking the latest occurrence. Empty when no matches exist. */
+  matches: SanctionsActiveMatch[];
+  /** Full per-tenant breakdown so the assistant can surface
+   *  cross-tenant disagreement on demand. Latest row per tenant only. */
+  byTenant: Array<{
+    vexTenantId: string;
+    latestScreenedAt: string;
+    status: SanctionsScreenRow['status'];
+    sourcesChecked: string[];
+    matches: SanctionsMatch[];
+  }>;
+}
+
+/**
+ * Roll up vex's sanctions-screen rows for one entity into the shape
+ * the chat assistant + entity profile UI consume. Verdicts are
+ * append-only per (vex_tenant_id, screen_id); we resolve "current
+ * state" by taking the latest row per (vex_tenant_id) and the latest
+ * matching record per (source_list, sdn_uid).
+ *
+ * Returns noData=true when nothing has been screened for the entity
+ * yet — the assistant must say "no screens on record" rather than
+ * implying clear status from absence of data.
+ */
+export async function lookupSanctionsScreens(
+  entitySlug: string,
+): Promise<SanctionsScreensSummary> {
+  // 50-row cap is conservative — most entities will have 0-2 screens.
+  // Tenants can re-screen daily; the cap protects against runaway
+  // history queries without losing meaningful coverage.
+  const result = await db.execute(sql`
+    SELECT
+      vex_tenant_id,
+      screen_id,
+      legal_name,
+      status,
+      sources_checked,
+      matches,
+      screened_at
+    FROM ${entitySanctionsScreens}
+    WHERE entity_slug = ${entitySlug}
+    ORDER BY screened_at DESC
+    LIMIT 50;
+  `);
+
+  const rows: SanctionsScreenRow[] = (
+    result.rows as Array<Record<string, unknown>>
+  ).map((r) => ({
+    vexTenantId: String(r.vex_tenant_id),
+    screenId: String(r.screen_id),
+    legalName: String(r.legal_name),
+    status: String(r.status) as SanctionsScreenRow['status'],
+    sourcesChecked: (r.sources_checked as string[] | null) ?? [],
+    matches: (r.matches as SanctionsMatch[] | null) ?? [],
+    screenedAt:
+      r.screened_at instanceof Date
+        ? r.screened_at.toISOString()
+        : String(r.screened_at),
+  }));
+
+  if (rows.length === 0) {
+    return {
+      entitySlug,
+      noData: true,
+      latestScreenedAt: null,
+      overall: 'no_data',
+      bySource: [],
+      matches: [],
+      byTenant: [],
+    };
+  }
+
+  // Latest row per tenant.
+  const byTenantMap = new Map<string, SanctionsScreenRow>();
+  for (const row of rows) {
+    if (!byTenantMap.has(row.vexTenantId)) byTenantMap.set(row.vexTenantId, row);
+  }
+
+  // Latest verdict per source_list. Walk newest-first; first hit wins.
+  const bySourceMap = new Map<string, SanctionsBySource>();
+  for (const row of rows) {
+    for (const src of row.sourcesChecked) {
+      if (bySourceMap.has(src)) continue;
+      const matched = row.matches.some((m) => m.source_list === src);
+      bySourceMap.set(src, {
+        sourceList: src,
+        matched,
+        lastScreenedAt: row.screenedAt,
+        screeningTenant: row.vexTenantId,
+      });
+    }
+  }
+
+  // Active matches — dedupe by (source_list, sdn_uid), latest wins.
+  const matchMap = new Map<string, SanctionsActiveMatch>();
+  for (const row of rows) {
+    for (const m of row.matches) {
+      const key = `${m.source_list}::${m.sdn_uid}`;
+      if (matchMap.has(key)) continue;
+      matchMap.set(key, {
+        ...m,
+        screenedAt: row.screenedAt,
+        screeningTenant: row.vexTenantId,
+      });
+    }
+  }
+
+  // Overall roll-up: worst case across the latest row per tenant.
+  const tenantRows = [...byTenantMap.values()];
+  const statuses = new Set(tenantRows.map((r) => r.status));
+  let overall: SanctionsScreensSummary['overall'];
+  if (statuses.has('confirmed_match')) {
+    overall = 'confirmed_match';
+  } else if (statuses.size === 1 && statuses.has('clear')) {
+    overall = 'clear';
+  } else if (statuses.has('potential_match') && statuses.has('clear')) {
+    overall = 'mixed';
+  } else if (statuses.has('potential_match')) {
+    overall = 'potential_match';
+  } else {
+    overall = 'clear';
+  }
+
+  return {
+    entitySlug,
+    noData: false,
+    latestScreenedAt: rows[0]!.screenedAt,
+    overall,
+    bySource: [...bySourceMap.values()].sort((a, b) =>
+      a.sourceList.localeCompare(b.sourceList),
+    ),
+    matches: [...matchMap.values()],
+    byTenant: tenantRows.map((r) => ({
+      vexTenantId: r.vexTenantId,
+      latestScreenedAt: r.screenedAt,
+      status: r.status,
+      sourcesChecked: r.sourcesChecked,
+      matches: r.matches,
+    })),
+  };
 }
