@@ -69,6 +69,21 @@ export type ComposeDealInput = {
    * Pass an explicit productCostPer* to override either model.
    */
   sourcingRegion?: FreightOriginRegion;
+  /**
+   * Opt-in to model a wash sale (sellPrice == auto-defaulted product
+   * cost within 1¢/USG). By default the calculator refuses this
+   * combination and asks for either a real productCost (supplier FOB)
+   * or a sellPrice anchored on the realistic CIF mid — sell == cost
+   * is not a deal, it's a wash, and the resulting do_not_proceed
+   * verdict in chat traces has been confusing operators.
+   *
+   * Only set true when you explicitly want the wash modeled (e.g. to
+   * see the freight + insurance drag on a hypothetical zero-margin
+   * lift). When the user supplied productCost AND sellPrice both
+   * explicitly, this guard does not fire — those are user inputs,
+   * not auto-defaults.
+   */
+  allowWashSale?: boolean;
 };
 
 export type ComposeDealResult = {
@@ -211,6 +226,11 @@ export async function composeDealEconomics(
 
   let benchmark: ComposeDealResult['benchmark'] = null;
   let productCostPerUsg = resolveProductCostPerUsg(input);
+  // Track whether productCost came from the caller — used by the
+  // wash-sale guard below to distinguish "user explicitly chose to
+  // model a wash" from "the calculator auto-defaulted both sides to
+  // spot and produced nonsense."
+  const productCostUserSupplied = productCostPerUsg != null;
   const asOf = input.asOf ?? new Date().toISOString().slice(0, 10);
   // Non-USGC origins should price off Brent + crack rather than NYH
   // spot — see `sourcingRegion` doc in ComposeDealInput.
@@ -270,6 +290,41 @@ export async function composeDealEconomics(
         usedAsProductCost: false,
       };
     }
+  }
+
+  // Wash-sale guard. If the caller didn't supply productCost AND the
+  // calculator auto-defaulted it to the spot benchmark (or Brent +
+  // crack), AND the supplied sellPrice is within 1¢/USG of that
+  // auto-defaulted cost, refuse the call. Reason: every chat trace
+  // that hit this combo produced a "do_not_proceed scorecard 12/100"
+  // for what was actually a wash sale — the model anchored sellPrice
+  // on the same NYH spot it was about to pull as cost, and the
+  // operator saw a guaranteed-loss "deal" instead of a clear "your
+  // inputs describe nothing." The fix is to refuse upfront and tell
+  // the model exactly which input is missing (sell anchor or supplier
+  // FOB).
+  //
+  // Bypass via allowWashSale: true when the caller explicitly wants
+  // to model the freight/insurance drag on a zero-margin hypothetical.
+  if (
+    !productCostUserSupplied &&
+    !input.allowWashSale &&
+    productCostPerUsg != null &&
+    Math.abs(sellPricePerUsg - productCostPerUsg) < 0.01
+  ) {
+    const benchmarkSlug = benchmark?.slug ?? 'spot';
+    const sellBbl = sellPricePerUsg * USG_PER_BBL;
+    throw new Error(
+      `Wash sale: sellPricePerUsg ($${sellPricePerUsg.toFixed(4)}/USG, ` +
+        `$${sellBbl.toFixed(2)}/bbl) equals the auto-defaulted product cost ` +
+        `from ${benchmarkSlug} within 1¢/USG. That's not a deal — after ` +
+        `freight + insurance it goes negative by construction. ` +
+        `To model a real deal: pass productCostPerUsg (or productCostPerBbl) ` +
+        `with a real supplier FOB, OR pass sellPrice as the realistic CIF ` +
+        `mid from evaluate_multi_product_rfq (returns realisticCifUsdPerMt.mid ` +
+        `for the destination). To model the wash explicitly, set ` +
+        `allowWashSale: true.`,
+    );
   }
 
   // Top-level guard: if the sell price is below the resolved product

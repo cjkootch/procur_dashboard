@@ -2390,7 +2390,27 @@ export function buildCatalogTools(): ToolRegistry {
         'do not present the line as part of "the plan." Before treating the ' +
         'verdict as final, double-check that `sourcingRegion` matches where ' +
         'the cargo is actually being lifted from; an unset region defaults ' +
-        'to NYH which biases cost high for non-USGC sourcing.',
+        'to NYH which biases cost high for non-USGC sourcing.\n\n' +
+        'WHEN NOT TO CALL — wash-sale guard:\n' +
+        "  • If you have NO buyer target AND NO supplier FOB quote, do NOT " +
+        'call this tool with sellPrice = NYH spot and productCost auto-' +
+        'defaulted. That produces a wash sale (sell == cost) which after ' +
+        'freight + insurance lands negative by construction. The calculator ' +
+        'now refuses this combo and throws a structured error — saving you ' +
+        'a confusing do_not_proceed scorecard in chat.\n' +
+        '  • Correct play with no commercial info: call ' +
+        '`evaluate_multi_product_rfq` (or `evaluate_target_price`) to get ' +
+        'the realistic CIF range, present that to the user, and ASK for ' +
+        'either a buyer target price or a supplier FOB quote. Only AFTER ' +
+        'one of those numbers exists, call compose_deal_economics:\n' +
+        '    - With a buyer target: pass it as sellPrice; productCost ' +
+        'auto-pulls from spot for a realistic margin estimate.\n' +
+        '    - With a supplier FOB: pass it as productCostPerUsg; pass ' +
+        "the realistic CIF mid as sellPrice (from evaluate_multi_product_rfq's " +
+        '`realisticCifUsdPerMt.mid` divided by bblPerMt × 42).\n' +
+        '  • Override (rare): set `allowWashSale: true` ONLY when the user ' +
+        'explicitly wants to see the freight/insurance drag on a zero-' +
+        'margin hypothetical.',
       kind: 'read',
       schema: z.object({
         product: z
@@ -2540,6 +2560,16 @@ export function buildCatalogTools(): ToolRegistry {
           .max(80)
           .optional()
           .describe('Free-form deal label that flows into the result.'),
+        allowWashSale: z
+          .boolean()
+          .optional()
+          .describe(
+            'Bypass the wash-sale guard when sellPrice equals the auto-' +
+              'defaulted productCost (within 1¢/USG). Default false — the ' +
+              'tool refuses this combo because it produces a guaranteed-loss ' +
+              '"deal" by construction. Only set true when the user explicitly ' +
+              'wants the freight/insurance drag on a zero-margin hypothetical.',
+          ),
       }),
       handler: async (ctx, input) =>
         withToolTelemetry(
