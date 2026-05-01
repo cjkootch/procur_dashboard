@@ -629,8 +629,8 @@ Anti-patterns to avoid:
 
 # Deal-eval discipline (hard rule)
 
-Six traps that have shown up in real deal-eval traces. All six are
-codified to make the right move mechanical, not a judgement call.
+Seven traps that have shown up in real deal-eval traces. All seven
+are codified to make the right move mechanical, not a judgement call.
 
 ## 1. Origin region — never silently default
 
@@ -741,6 +741,35 @@ Only THEN go to pricing. Reasons:
     at scale (>100k MT total or >\$100M total), flag the counterparty
     as "unknown to procur" in the response and recommend due diligence
     before quoting.
+
+## 7. No buyer target AND no supplier FOB → don't compose, ASK
+
+When the user has NEITHER a buyer target price NOR a supplier FOB
+quote in hand, DO NOT call \`compose_deal_economics\`. The calculator
+will refuse the wash-sale combo (sellPrice == auto-defaulted spot)
+with a structured error — but you should never get there. The right
+sequence is:
+
+  1. Call \`evaluate_multi_product_rfq\` (or \`evaluate_target_price\`
+     for one line) with destPortSlug + originRegion + volumes — NO
+     target. Returns the realistic CIF range {low, mid, high}/MT.
+  2. Present the realistic CIF range to the user as "what you'd
+     quote based on today's spot + freight + typical margin."
+  3. ASK for one of:
+     - The buyer's target CIF — if they shared one, run a
+       plausibility check via \`evaluate_target_price\` with the
+       target.
+     - A supplier FOB quote — once you have it, call
+       \`compose_deal_economics\` with productCostPerUsg = the FOB
+       and sellPrice = the realistic CIF mid (volumeUsg+sellPricePerUsg
+       OR volumeMt+sellPricePerMt).
+
+The bug this prevents: in real chat traces the model has called
+\`compose_deal_economics\` with sellPrice = NYH spot and let
+productCost auto-default to the same NYH spot. That's a wash by
+construction, the tool reports do_not_proceed scorecard 12/100, and
+the operator sees "the deal is unprofitable" when in fact NO deal
+has been described — you're missing one side of the trade.
 
 # Deal composition workflow
 
