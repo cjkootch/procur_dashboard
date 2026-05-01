@@ -96,15 +96,11 @@ export async function scoreMatchQueue(): Promise<ScoreMatchQueueResult> {
             ELSE 0
           END
       )::numeric(4, 2),
-      CONCAT(
-        n.event_type, ' · ',
-        n.source_entity_name,
-        CASE WHEN n.source_entity_country IS NOT NULL
-             THEN CONCAT(' (', n.source_entity_country, ')')
-             ELSE ''
-        END,
-        ' · ', n.event_date::text
-      )
+      -- Use the LLM-extracted 1-2 sentence summary as rationale.
+      -- The legacy template ("event_type · entity (country) · date")
+      -- duplicated info already rendered in the row's score, signal
+      -- pill, entity, and date columns — every line read identically.
+      n.summary
     FROM entity_news_events n
     WHERE n.event_date >= CURRENT_DATE - INTERVAL '7 days'
       AND (n.relevance_score IS NULL OR n.relevance_score >= 0.5)
@@ -185,8 +181,9 @@ export async function scoreMatchQueue(): Promise<ScoreMatchQueueResult> {
             ELSE 0
           END
       )::numeric(4, 2),
+      -- Buyer name + country are already rendered in the row's
+      -- entity column. Rationale carries category + value only.
       CONCAT(
-        'new ',
         COALESCE(
           (SELECT t FROM unnest(a.category_tags) AS t
            WHERE t = ANY(${sql.join(
@@ -196,9 +193,7 @@ export async function scoreMatchQueue(): Promise<ScoreMatchQueueResult> {
            LIMIT 1),
           'fuel'
         ),
-        ' award · ',
-        a.buyer_name,
-        ' (', a.buyer_country, ')',
+        ' award',
         CASE WHEN a.contract_value_usd IS NOT NULL
              THEN CONCAT(' · $', ROUND(a.contract_value_usd / 1000000.0, 1)::text, 'M')
              ELSE ''
