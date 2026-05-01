@@ -12,6 +12,7 @@ import {
   getTopImportersByPartner,
   getTopSourcesForReporter,
   lookupKnownEntities,
+  lookupSanctionsScreens,
   listCrudeGrades,
   lookupRefineriesByGrade,
   getCommodityPriceContext,
@@ -1470,6 +1471,95 @@ export function buildCatalogTools(): ToolRegistry {
                 'starting point, not ground truth. approvalStatus reflects the calling company\'s ' +
                 'KYC/approval state with this entity (null = not engaged yet); lead with approved ' +
                 'counterparties when ranking for a deal.',
+            };
+          },
+        ),
+    }),
+
+    lookup_sanctions_screens: defineTool({
+      name: 'lookup_sanctions_screens',
+      description:
+        'Sanctions-screen verdicts for one entity, pushed by vex\'s ' +
+        'SanctionsScreeningAgent. Covers US Consolidated Screening List ' +
+        '(SDN, NS-PLC, SSI, FSE, DPL, EL, UVL, MEU, DTC, ISN, CAP), ' +
+        'EU consolidated, and UK OFSI. Multi-tenant: when several vex ' +
+        'tenants screen the same entity, all their verdicts land here ' +
+        'and the rollup surfaces both consensus and disagreement.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • The user asks "is X sanctioned" / "is X clean for KYC" / ' +
+        '"any sanctions issues with X" → call with entitySlug=<that-entity>.\n' +
+        '  • Before set_supplier_approval to approved_* — verifying ' +
+        'the counterparty isn\'t flagged is part of approval discipline.\n' +
+        '  • Before composing a deal naming a counterparty in a ' +
+        'sanctions-sensitive jurisdiction (RU, IR, KP, SY, Crimea, ' +
+        'Donbas, Cuba, Venezuela state entities) — the screen result ' +
+        'should lead the response.\n' +
+        '  • Before push_to_vex on an entity — vex\'s side already ' +
+        'screens, but a stale procur-side row is worth reading first.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • Generic name lookups — use lookup_known_entities.\n' +
+        '  • You already called it earlier in the same turn for the ' +
+        'same slug.\n' +
+        '  • The user asked about sanctions in the abstract (program ' +
+        'rules, list mechanics) without naming an entity.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • noData=true ⇒ NO screens on record. Say "no screens on ' +
+        'record from vex" — do NOT imply silence is exonerating.\n' +
+        '  • overall=\'clear\' ⇒ every tenant\'s latest screen across ' +
+        'every covered source returned clear. Lead with that.\n' +
+        '  • overall=\'potential_match\' or \'confirmed_match\' ⇒ lead ' +
+        'with the matched source_list + sdn_uid + programs. Do NOT ' +
+        'bury it.\n' +
+        '  • overall=\'mixed\' ⇒ tenants disagree (one clear, one ' +
+        'matched). Surface both verdicts with their tenants and dates.\n' +
+        '  • confidence_band=\'fuzzy_review\' is a soft hit; ' +
+        '\'high_confidence\' is a hard hit. Quote which.\n' +
+        '  • Always quote latestScreenedAt — a 6-month-old "clear" is ' +
+        'much weaker evidence than a 24-hour-old "clear", especially ' +
+        'when sanctions programs change weekly.\n' +
+        '  • Sources NOT in bySource were never checked — flag the gap ' +
+        'when the user is asking about a specific list (e.g. user ' +
+        'asks about EU sanctions but bySource only has US codes).',
+      kind: 'read',
+      schema: z.object({
+        entitySlug: z
+          .string()
+          .min(1)
+          .describe(
+            'The entity slug. Pass the profileUrl slug returned by ' +
+              'lookup_known_entities (e.g. "curated-ch-vitol-geneva") or ' +
+              'the external_supplier UUID — same UUID-or-slug shape every ' +
+              'other entity-scoped tool accepts.',
+          ),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_sanctions_screens',
+            args: input,
+            summarize: (out: { overall: string; tenantCount: number }) => ({
+              resultCount: out.tenantCount,
+              resultSummary: {
+                entitySlug: input.entitySlug,
+                overall: out.overall,
+              },
+            }),
+          },
+          async () => {
+            const summary = await lookupSanctionsScreens(input.entitySlug);
+            return {
+              ...summary,
+              tenantCount: summary.byTenant.length,
+              caveat:
+                'Sanctions verdicts are pushed by vex\'s screening agent — ' +
+                'sidecar attribution, not procur\'s primary compliance ' +
+                'record. Use as one input alongside the user\'s own ' +
+                'review. cleared_by_operator overrides from vex are NOT ' +
+                'shared (intentionally — procur reviewers reach their ' +
+                'own conclusion). Empty result + recent vex activity ' +
+                'usually means the entity isn\'t in any vex tenant\'s ' +
+                'screening scope yet.',
             };
           },
         ),
