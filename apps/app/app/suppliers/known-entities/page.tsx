@@ -82,6 +82,7 @@ const APPROVAL_FILTERS = [
   { value: 'approved', label: 'approved' },
   { value: 'pending', label: 'pending' },
   { value: 'expired', label: 'expired' },
+  { value: 'rejected', label: 'rejected' },
   { value: 'none', label: 'not engaged' },
 ] as const;
 type ApprovalFilter = 'approved' | 'pending' | 'rejected' | 'expired' | 'none';
@@ -345,6 +346,9 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
             {country && <input type="hidden" name="country" value={country} />}
             {role && <input type="hidden" name="role" value={role} />}
             {tag && <input type="hidden" name="tag" value={tag} />}
+            {approvalFilter && (
+              <input type="hidden" name="approval" value={approvalFilter} />
+            )}
             {activeView !== 'list' && (
               <input type="hidden" name="view" value={activeView} />
             )}

@@ -51,7 +51,9 @@ export async function GET(req: Request): Promise<Response> {
     })
     .from(pursuits)
     .innerJoin(opportunities, eq(opportunities.id, pursuits.opportunityId))
-    .innerJoin(jurisdictions, eq(jurisdictions.id, opportunities.jurisdictionId))
+    // leftJoin: private uploaded opportunities have no jurisdiction —
+    // inner-joining would silently drop them from the export.
+    .leftJoin(jurisdictions, eq(jurisdictions.id, opportunities.jurisdictionId))
     .leftJoin(agencies, eq(agencies.id, opportunities.agencyId))
     .where(eq(pursuits.companyId, company.id));
 
@@ -104,8 +106,8 @@ export async function GET(req: Request): Promise<Response> {
     r.weightedValue ?? '',
     r.opportunityTitle,
     r.referenceNumber ?? '',
-    r.jurisdiction,
-    r.country,
+    r.jurisdiction ?? '',
+    r.country ?? '',
     r.agency ?? '',
     r.category ?? '',
     r.valueEstimate ?? '',

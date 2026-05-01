@@ -91,17 +91,17 @@ function Donut({
 export function TasksWidget({ data }: { data: DashboardData['tasks'] }) {
   const slices = [
     { value: data.pending, color: '#f59e0b', label: 'Pending' },
-    { value: data.inProgress, color: '#3b82f6', label: 'In Progress' },
+    { value: data.overdue, color: '#ef4444', label: 'Overdue' },
     { value: data.completed, color: '#10b981', label: 'Completed' },
   ];
-  const total = data.pending + data.inProgress + data.completed;
+  const total = data.pending + data.overdue + data.completed;
   return (
     <Widget title="Tasks">
       <div className="flex items-center gap-4">
         <Donut slices={slices} />
         <ul className="flex-1 space-y-1.5 text-xs">
           <LegendRow color="#f59e0b" label="Pending" value={data.pending} total={total} />
-          <LegendRow color="#3b82f6" label="In Progress" value={data.inProgress} total={total} />
+          <LegendRow color="#ef4444" label="Overdue" value={data.overdue} total={total} />
           <LegendRow color="#10b981" label="Completed" value={data.completed} total={total} />
         </ul>
       </div>
