@@ -26,3 +26,12 @@ export {
   type RfqLine,
   type Verdict,
 } from './plausibility';
+export {
+  recommendVesselClass,
+  inferVesselClass,
+  VESSEL_CLASSES,
+  type VesselClass,
+  type VesselClassSlug,
+  type VesselClassFit,
+  type VesselRecommendation,
+} from './vessels';
