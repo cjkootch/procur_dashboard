@@ -50,3 +50,4 @@ export * from './entity-news-events';
 export * from './match-queue';
 export * from './entity-contact-enrichments';
 export * from './supplier-approvals';
+export * from './entity-sanctions-screens';
