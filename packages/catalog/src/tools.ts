@@ -857,7 +857,17 @@ export function buildCatalogTools(): ToolRegistry {
         'Public-tender data only — does NOT cover private refiner-to-refiner or ' +
         'trader-to-trader flows. For crude oil specifically, results skew toward national ' +
         "oil companies and state refiners; private major refiners (ENI, Saras, Reliance) " +
-        "won't appear.",
+        "won't appear.\n\n" +
+        'WHEN NOT TO CALL:\n' +
+        "  • The user is RESPONDING to a known buyer's RFQ — the buyer is " +
+        'the inquirer, not a candidate to discover. Calling this on a ' +
+        'buyer-side inquiry is wasteful and adds noise.\n' +
+        '  • The user already named the buyer in the prompt (e.g. "PetroSA ' +
+        'is asking about diesel") — you have the buyer; finding more is ' +
+        'off-task.\n' +
+        '  • You\'re building a SUPPLY package (the user is the seller). ' +
+        'Use lookup_known_entities + find_suppliers_for_tender for the ' +
+        'sourcing side instead.',
       kind: 'read',
       schema: z.object({
         categoryTag: z
@@ -1816,7 +1826,15 @@ export function buildCatalogTools(): ToolRegistry {
         "get_commodity_price_context only if you need a single series' MA " +
         'or 30-day high/low; use get_commodity_spread for non-Brent–WTI ' +
         'spreads. If a series shows latestPrice=null it has not been ' +
-        'ingested yet — say so; never substitute a training-data price.',
+        'ingested yet — say so; never substitute a training-data price.\n\n' +
+        'The result also carries `sourcingHint` + `sourcingHintNarrative` ' +
+        "derived from Brent-WTI: 'usgc-competitive' / 'usgc-strongly-favored' " +
+        "/ 'med-strongly-favored' / 'neutral'. Use this BEFORE picking " +
+        'originRegion on evaluate_target_price / evaluate_multi_product_rfq / ' +
+        'compose_deal_economics — wide Brent-over-WTI means USGC-origin ' +
+        'product is cheaper for Atlantic-basin destinations even after a ' +
+        "longer voyage. Don't reason about the spread direction yourself; " +
+        'quote the hint verbatim.',
       kind: 'read',
       schema: z.object({}),
       handler: async (ctx, _input) =>
@@ -1850,6 +1868,29 @@ export function buildCatalogTools(): ToolRegistry {
                     asOf: brent.latestDate,
                   }
                 : null;
+            // Sourcing hint derived from the Brent-WTI spread.
+            // Wide Brent-over-WTI ⇒ Med/NWE product (Brent-priced) is
+            // MORE expensive than USGC product (WTI-priced). For
+            // Atlantic-basin destinations (West Africa, Caribbean,
+            // East Coast Latam) USGC origin is competitive against
+            // Med even after longer voyage. Threshold $5/bbl picks
+            // up meaningful arbitrage windows; $10/bbl+ makes USGC
+            // clearly cheaper.
+            //
+            // Codified here (not in the model's reasoning) because a
+            // chat trace surfaced the inverse interpretation —
+            // "wide spread favors Med-origin." Anchoring this as
+            // tool output makes the right call mechanical.
+            const sourcingHint =
+              brentWtiSpread == null
+                ? null
+                : brentWtiSpread.spread >= 10
+                  ? 'usgc-strongly-favored'
+                  : brentWtiSpread.spread >= 5
+                    ? 'usgc-competitive'
+                    : brentWtiSpread.spread <= -5
+                      ? 'med-strongly-favored'
+                      : 'neutral';
             return {
               series: ticker.map((t) => ({
                 seriesSlug: t.seriesSlug,
@@ -1859,6 +1900,15 @@ export function buildCatalogTools(): ToolRegistry {
                 pctChange30d: t.pctChange30d,
               })),
               brentWtiSpread,
+              sourcingHint,
+              sourcingHintNarrative:
+                sourcingHint === 'usgc-strongly-favored'
+                  ? `Brent-WTI at $${brentWtiSpread!.spread.toFixed(2)}/bbl. USGC-origin product is materially cheaper than Med for Atlantic-basin destinations (West Africa, Caribbean, Latam). Quote both origins or USGC alone — do NOT default to Med.`
+                  : sourcingHint === 'usgc-competitive'
+                    ? `Brent-WTI at $${brentWtiSpread!.spread.toFixed(2)}/bbl. USGC origin is competitive vs Med for Atlantic-basin destinations. Run multi-product evaluator with both origins and surface the comparison.`
+                    : sourcingHint === 'med-strongly-favored'
+                      ? `Brent-WTI at $${brentWtiSpread!.spread.toFixed(2)}/bbl (negative — WTI > Brent). Med-origin product is cheaper than USGC; quote Med for Atlantic-basin.`
+                      : 'Brent-WTI spread is narrow; origin choice is freight-dominated. Quote the geographically closer origin to destination.',
               note:
                 'Procur ingests FRED (Brent/WTI, $/bbl) and EIA NY Harbor ' +
                 '(diesel/gasoline/heating-oil, $/gal). Crude grades not in ' +
@@ -2038,9 +2088,19 @@ export function buildCatalogTools(): ToolRegistry {
             ])
             .optional()
             .describe(
-              'Most likely sourcing region. If omitted, the cheapest ' +
-                'matching route across all origins is used (gives the ' +
-                'most generous plausibility check).',
+              'Sourcing region the cargo would lift from. Omitting it ' +
+                'silently picks the cheapest route per line — the most ' +
+                'GENEROUS plausibility check. ' +
+                'DO NOT omit this on real deal-eval calls. ' +
+                'If the user did not specify origin, ASK before calling, ' +
+                'OR call twice with the two most plausible origins (e.g. ' +
+                "med + usgc for Atlantic-basin destinations) and surface " +
+                "the difference. Defaulting silently to one origin can " +
+                "mis-anchor the realistic CIF by $15-25/bbl, which is " +
+                "deal-flipping at MR1 cargo scale. Pick the closest match: " +
+                "Rotterdam/Antwerp -> nwe, Houston/USGC -> usgc, " +
+                "Italy/Greece/Spain -> med, Sikka -> india, " +
+                "Fujairah -> mideast, Dakar/Lagos -> west-africa.",
             ),
           volumeMt: z
             .number()
@@ -2135,8 +2195,14 @@ export function buildCatalogTools(): ToolRegistry {
           ])
           .optional()
           .describe(
-            'Most likely sourcing region for all lines. If omitted, the ' +
-              'cheapest matching route per line is used.',
+            'Sourcing region for ALL lines. Omitting it silently picks ' +
+              'the cheapest route per line — generous, not realistic. ' +
+              'DO NOT omit on real deal-eval calls. If the user did not ' +
+              "specify origin, ASK before calling, OR call this tool TWICE " +
+              "with the two most plausible origins (e.g. med + usgc for " +
+              "West African destinations when Brent-WTI spread is wide) " +
+              "and surface the comparison. A silent default can mis-anchor " +
+              "realistic CIF by $15-25/bbl — deal-flipping at MR1 scale.",
           ),
       }),
       handler: async (ctx, input) =>
