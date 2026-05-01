@@ -635,6 +635,19 @@ const PORTS: PortSeed[] = [
       'Petrojam — Jamaica\'s only refinery (~35 kbd). State-owned; PCJ subsidiary. Active GOJEP tender buyer for crude + refined products.',
   },
   {
+    slug: 'port-au-prince-varreux',
+    name: 'Port-au-Prince (Varreux Terminal)',
+    country: 'HT',
+    lat: 18.5800,
+    lng: -72.3400,
+    radiusNm: 3,
+    portType: 'mixed',
+    notes:
+      'Varreux is Haiti\'s main fuel-import terminal — Total / Dinasa / Sun ' +
+      'Auto operate. Vessel-to-vessel and barge discharge common. No domestic ' +
+      'refining — all products imported, mostly USGC and Caribbean transit.',
+  },
+  {
     slug: 'port-of-spain',
     name: 'Port of Spain',
     country: 'TT',
