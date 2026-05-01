@@ -123,8 +123,11 @@ function parseNotes(
   notes: string | null,
 ): { kind: 'kv'; key: string; value: string }[] | null {
   if (!notes) return null;
+  // Top-level split is `·` only. `|` is sometimes used inside a single
+  // field's value (e.g. Fuel: A | B), so splitting on it would shred
+  // those values into pseudo-rows.
   const segments = notes
-    .split(/\s+·\s+|\s+\|\s+/)
+    .split(/\s+·\s+/)
     .map((s) => s.trim())
     .filter(Boolean);
   const kv: { kind: 'kv'; key: string; value: string }[] = [];
@@ -138,6 +141,98 @@ function parseNotes(
     }
   }
   return kv.length > 0 ? kv : null;
+}
+
+/**
+ * Strip a trailing "(Country Name)" or "(XX)" from a value when it
+ * matches the row's country. The screenshot shows every Afghan power
+ * plant's Owner / Parent fields ending in "(Afghanistan)" — that's
+ * already conveyed by the country section header.
+ */
+function stripCountrySuffix(value: string, country: string): string {
+  const fullName = formatCountry(country);
+  return value
+    .replace(new RegExp(`\\s*\\(${escapeRegex(fullName)}\\)\\s*$`, 'i'), '')
+    .replace(new RegExp(`\\s*\\(${escapeRegex(country)}\\)\\s*$`, 'i'), '')
+    .trim();
+}
+
+/** Strip "[100%]" / "[100.0%]" ownership-percent suffixes — visually
+ *  noisy and almost always 100 for the rolodex's analyst-curated rows. */
+function stripOwnershipPct(value: string): string {
+  return value.replace(/\s*\[\d+(?:\.\d+)?%\]\s*$/, '').trim();
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Normalize a Fuel: value: drop GEM taxonomy prefixes ("fossil gas:",
+ *  "fossil liquids:"), normalize separators, dedupe — so what was
+ *  "fossil gas: natural gas, fossil liquids: fuel oil" becomes
+ *  "natural gas, fuel oil". */
+function normalizeFuel(value: string): string {
+  const parts = value
+    .split(/\s*[|,]\s*/)
+    .map((p) => p.replace(/^(?:fossil\s+(?:gas|liquids))\s*:\s*/i, '').trim())
+    .filter(Boolean);
+  return Array.from(new Set(parts)).join(', ');
+}
+
+/** Pull (capacity, fuel, started, status) out of a note kv list and
+ *  return the compact stats line + the remaining kv pairs (operator,
+ *  owner, parent, contact, free-text — whatever's left). */
+function extractPlantStats(
+  noteKv: { kind: 'kv'; key: string; value: string }[],
+): {
+  stats: string | null;
+  remaining: { kind: 'kv'; key: string; value: string }[];
+} {
+  const STATS_KEYS = new Set(['capacity', 'fuel', 'started', 'status']);
+  const taken = new Map<string, string>();
+  const remaining: { kind: 'kv'; key: string; value: string }[] = [];
+  for (const kv of noteKv) {
+    const k = kv.key.toLowerCase();
+    if (STATS_KEYS.has(k) && !taken.has(k)) {
+      taken.set(k, kv.value);
+    } else {
+      remaining.push(kv);
+    }
+  }
+  const parts: string[] = [];
+  const cap = taken.get('capacity');
+  if (cap) parts.push(cap);
+  const fuel = taken.get('fuel');
+  if (fuel) parts.push(normalizeFuel(fuel));
+  const started = taken.get('started');
+  if (started) parts.push(started);
+  const status = taken.get('status');
+  if (status) parts.push(status);
+  return { stats: parts.length ? parts.join(' · ') : null, remaining };
+}
+
+/** Drop redundant Owner / Parent rows: if Operator == Owner == Parent,
+ *  collapse to just Operator. If Owner == Parent, drop Parent. Values
+ *  are first normalized (country suffix + ownership% stripped). */
+function collapseOwnership(
+  noteKv: { kind: 'kv'; key: string; value: string }[],
+  country: string,
+): { kind: 'kv'; key: string; value: string }[] {
+  const norm = (v: string) => stripOwnershipPct(stripCountrySuffix(v, country));
+  const out: { kind: 'kv'; key: string; value: string }[] = [];
+  let lastOwnerNorm: string | null = null;
+  for (const kv of noteKv) {
+    const k = kv.key.toLowerCase();
+    const normalized = norm(kv.value);
+    if (k === 'operator' || k === 'owner' || k === 'parent') {
+      if (lastOwnerNorm === normalized) continue; // dedupe consecutive identical owners
+      lastOwnerNorm = normalized;
+      out.push({ ...kv, value: normalized });
+    } else {
+      out.push({ ...kv, value: normalized });
+    }
+  }
+  return out;
 }
 
 /** Tags that duplicate info already shown elsewhere in the row.
@@ -382,11 +477,6 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
               clear all
             </Link>
           )}
-          {activeFilters.length === 0 && !nameQuery && (
-            <span className="text-[color:var(--color-muted-foreground)]">
-              No filters applied — showing first {queryLimit} entities.
-            </span>
-          )}
 
           {/* Disclosure trigger lives at the right edge of the same
               row when there's space, drops to next line when it
@@ -466,15 +556,15 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
 
       <div className="mb-4 flex items-center justify-between gap-4">
         <p className="text-sm text-[color:var(--color-muted-foreground)]">
-          {rows.length} entit{rows.length === 1 ? 'y' : 'ies'}
-          {truncated ? '+ (capped)' : ''} matched
-          {nameQuery ? ` matching “${nameQuery}”` : ''}
-          {category && category !== 'all' ? ` in ${category}` : ''}
-          {country ? ` in ${formatCountry(country)}` : ''}
-          {role ? `, ${role}` : ''}
-          {tag ? `, tagged ${tag}` : ''}.
+          <span className="font-medium text-[color:var(--color-foreground)] tabular-nums">
+            {rows.length.toLocaleString()}
+            {truncated ? '+' : ''}
+          </span>{' '}
+          {rows.length === 1 ? 'entity' : 'entities'}
           {truncated && (
-            <span className="ml-1">Narrow with role / country / tag filters to see all.</span>
+            <span className="ml-2 text-xs">
+              (capped — narrow filters to see all)
+            </span>
           )}
         </p>
         <div className="flex gap-1 text-xs">
@@ -508,125 +598,164 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
           No entities match these filters. Try widening the category or clearing tags.
         </div>
       ) : (
-        countries.map((c) => (
-          <section key={c} className="mb-6">
-            <h2 className="mb-2 flex items-baseline gap-2 text-sm font-medium tracking-tight">
-              <span>{formatCountry(c)}</span>
-              <span className="font-mono text-[10px] uppercase text-[color:var(--color-muted-foreground)]">
-                {c}
-              </span>
-              <span className="text-xs font-normal text-[color:var(--color-muted-foreground)]">
-                ({byCountry.get(c)!.length})
-              </span>
-            </h2>
-            <div className="overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)]">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30">
-                  <tr>
-                    <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                      Name
-                    </th>
-                    {showRoleColumn && (
+        countries.map((c) => {
+          const groupRows = byCountry.get(c)!;
+          // Hide the Tags column for this country group when nothing
+          // visible would render in it — the column was wasting space
+          // for power-plant-heavy countries where every tag is
+          // role/size/status (all suppressed by isNoiseTag).
+          const groupHasTags = groupRows.some(
+            (e) => e.tags.filter((t) => !isNoiseTag(t)).length > 0,
+          );
+          // Per-group role breakdown rendered next to the country
+          // header — answers "what kind of entities are in this
+          // country" without having to scan the Role column.
+          const roleCounts = new Map<string, number>();
+          for (const e of groupRows) {
+            roleCounts.set(e.role, (roleCounts.get(e.role) ?? 0) + 1);
+          }
+          const roleBreakdown = [...roleCounts.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([r, n]) => `${n} ${r}${n === 1 ? '' : 's'}`)
+            .join(' · ');
+          return (
+            <section key={c} className="mb-6">
+              <h2 className="mb-2 flex items-baseline gap-2 text-sm font-medium tracking-tight">
+                <span>{formatCountry(c)}</span>
+                <span className="font-mono text-[10px] uppercase text-[color:var(--color-muted-foreground)]">
+                  {c}
+                </span>
+                <span className="text-xs font-normal text-[color:var(--color-muted-foreground)]">
+                  · {roleBreakdown}
+                </span>
+              </h2>
+              <div className="overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)]">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30">
+                    <tr>
                       <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                        Role
+                        Name
                       </th>
-                    )}
-                    <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                      Notes
-                    </th>
-                    <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                      Tags
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {byCountry.get(c)!.map((e) => {
-                    const noteKv = parseNotes(e.notes);
-                    const visibleTags = e.tags.filter((t) => !isNoiseTag(t));
-                    return (
-                      <tr
-                        key={e.id}
-                        className="border-b border-[color:var(--color-border)] last:border-b-0"
-                      >
-                        <td className="px-3 py-2 align-top">
-                          <Link
-                            href={`/entities/${encodeURIComponent(e.slug)}`}
-                            className="font-medium hover:underline"
-                          >
-                            {e.name}
-                          </Link>
-                          {e.approvalStatus && (
-                            <>
-                              {' '}
-                              <KycBadge
-                                status={e.approvalStatus}
-                                expiresAt={e.approvalExpiresAt}
-                              />
-                            </>
-                          )}
-                          {e.aliases.length > 1 && (
-                            <div className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-                              aka {e.aliases.filter((a) => a !== e.name).slice(0, 2).join(', ')}
-                            </div>
-                          )}
-                        </td>
-                        {showRoleColumn && (
-                          <td className="px-3 py-2 align-top text-[color:var(--color-muted-foreground)]">
-                            {e.role}
+                      {showRoleColumn && (
+                        <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                          Role
+                        </th>
+                      )}
+                      <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                        Notes
+                      </th>
+                      {groupHasTags && (
+                        <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                          Tags
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupRows.map((e) => {
+                      const rawNoteKv = parseNotes(e.notes);
+                      const noteKv = rawNoteKv ? collapseOwnership(rawNoteKv, e.country) : null;
+                      // Power plants share a uniform shape (capacity,
+                      // fuel, started, status); render those as a
+                      // single-line stats string and keep the residual
+                      // kv pairs (operator, owner) below.
+                      const isPlant = e.role === 'power-plant';
+                      const { stats, remaining } =
+                        isPlant && noteKv
+                          ? extractPlantStats(noteKv)
+                          : { stats: null, remaining: noteKv ?? [] };
+                      const visibleTags = e.tags.filter((t) => !isNoiseTag(t));
+                      return (
+                        <tr
+                          key={e.id}
+                          className="border-b border-[color:var(--color-border)] last:border-b-0"
+                        >
+                          <td className="px-3 py-2 align-top">
+                            <Link
+                              href={`/entities/${encodeURIComponent(e.slug)}`}
+                              className="font-medium hover:underline"
+                            >
+                              {e.name}
+                            </Link>
+                            {e.approvalStatus && (
+                              <>
+                                {' '}
+                                <KycBadge
+                                  status={e.approvalStatus}
+                                  expiresAt={e.approvalExpiresAt}
+                                />
+                              </>
+                            )}
+                            {e.aliases.length > 1 && (
+                              <div className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
+                                aka {e.aliases.filter((a) => a !== e.name).slice(0, 2).join(', ')}
+                              </div>
+                            )}
                           </td>
-                        )}
-                        <td className="px-3 py-2 align-top">
-                          {noteKv == null ? (
-                            <span className="text-[color:var(--color-muted-foreground)]">—</span>
-                          ) : (
-                            <dl className="space-y-0.5">
-                              {noteKv.slice(0, 6).map((kv, i) => (
-                                <div
-                                  key={i}
-                                  className="flex flex-wrap gap-1 leading-snug"
-                                >
-                                  {kv.key && (
-                                    <dt className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                                      {kv.key}:
-                                    </dt>
-                                  )}
-                                  <dd className="text-sm">{kv.value}</dd>
-                                </div>
-                              ))}
-                              {noteKv.length > 6 && (
-                                <div className="text-[11px] text-[color:var(--color-muted-foreground)]">
-                                  +{noteKv.length - 6} more
-                                </div>
-                              )}
-                            </dl>
+                          {showRoleColumn && (
+                            <td className="px-3 py-2 align-top text-[color:var(--color-muted-foreground)]">
+                              {e.role}
+                            </td>
                           )}
-                          {e.contactEntity && (
-                            <div className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
-                              Contact: {e.contactEntity}
-                            </div>
+                          <td className="px-3 py-2 align-top">
+                            {stats && (
+                              <div className="text-sm tabular-nums">{stats}</div>
+                            )}
+                            {remaining.length === 0 && !stats && (
+                              <span className="text-[color:var(--color-muted-foreground)]">—</span>
+                            )}
+                            {remaining.length > 0 && (
+                              <dl className={`space-y-0.5 ${stats ? 'mt-1' : ''}`}>
+                                {remaining.slice(0, 4).map((kv, i) => (
+                                  <div
+                                    key={i}
+                                    className="flex flex-wrap gap-1 leading-snug"
+                                  >
+                                    {kv.key && (
+                                      <dt className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                                        {kv.key}:
+                                      </dt>
+                                    )}
+                                    <dd className="text-sm">{kv.value}</dd>
+                                  </div>
+                                ))}
+                                {remaining.length > 4 && (
+                                  <div className="text-[11px] text-[color:var(--color-muted-foreground)]">
+                                    +{remaining.length - 4} more
+                                  </div>
+                                )}
+                              </dl>
+                            )}
+                            {e.contactEntity && (
+                              <div className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+                                Contact: {e.contactEntity}
+                              </div>
+                            )}
+                          </td>
+                          {groupHasTags && (
+                            <td className="px-3 py-2 align-top">
+                              <div className="flex flex-wrap gap-1">
+                                {visibleTags.slice(0, 5).map((t) => (
+                                  <Link
+                                    key={t}
+                                    href={baseHref({ tag: t })}
+                                    className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1.5 py-0.5 text-xs hover:border-[color:var(--color-foreground)]"
+                                  >
+                                    {t}
+                                  </Link>
+                                ))}
+                              </div>
+                            </td>
                           )}
-                        </td>
-                        <td className="px-3 py-2 align-top">
-                          <div className="flex flex-wrap gap-1">
-                            {visibleTags.slice(0, 5).map((t) => (
-                              <Link
-                                key={t}
-                                href={baseHref({ tag: t })}
-                                className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1.5 py-0.5 text-xs hover:border-[color:var(--color-foreground)]"
-                              >
-                                {t}
-                              </Link>
-                            ))}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        ))
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          );
+        })
       )}
 
       <footer className="mt-10 border-t border-[color:var(--color-border)] pt-4 text-xs text-[color:var(--color-muted-foreground)]">
