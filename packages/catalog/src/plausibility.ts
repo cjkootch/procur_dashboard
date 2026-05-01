@@ -38,7 +38,7 @@ export type ProductSlug =
  * (Argus / Platts methodology). Approximate; real cargoes vary by
  * temperature.
  */
-const BBL_PER_MT: Record<ProductSlug, number> = {
+export const BBL_PER_MT: Record<ProductSlug, number> = {
   'en590-ulsd': 7.46,
   'gasoline-super': 8.45,
   'jet-a1': 7.94,

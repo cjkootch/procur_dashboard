@@ -49,6 +49,7 @@ import {
   lookupFreightEstimate,
   type FreightOriginRegion,
 } from './freight-routes';
+import { recommendVesselClass } from './vessels';
 import {
   evaluateTargetPrice,
   evaluateMultiProductRfq,
@@ -2009,6 +2010,92 @@ export function buildCatalogTools(): ToolRegistry {
                 'charter quote.',
             };
           },
+        ),
+    }),
+
+    recommend_vessel_class: defineTool({
+      name: 'recommend_vessel_class',
+      description:
+        'Pick the right tanker class (MR1 / MR2 / LR1 / LR2 / Aframax / ' +
+        'Suezmax / VLCC / ULCC) for a given product + cargo volume. ' +
+        'Returns the smallest fitting class plus 2-3 alternatives, each ' +
+        'with cargo-fill % vs typical mid capacity. Also returns a ' +
+        '`comparisonChart` payload — every class with normalized ' +
+        'capacity + cargo overlay — for the chat surface to render as ' +
+        'a side-by-side bar / silhouette comparison.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • The user asks "what size vessel do I need for X MT" / ' +
+        '"what tanker class fits this cargo" / "is this an MR or LR".\n' +
+        '  • Composing a deal where vessel class affects freight or ' +
+        'port viability — pair with get_freight_estimate (which ' +
+        'currently assumes MR1 for Med→WAF; this tool tells you ' +
+        'whether the cargo size actually matches that assumption).\n' +
+        '  • The user pastes a buyer RFQ with a per-shipment volume; ' +
+        'call this once per product/lift to surface the lift profile.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The user is asking about a SPECIFIC named vessel ' +
+        "(IMO / MMSI lookup) — that's a fleet-data query, not a sizing " +
+        'one. (find_tankers_by_owner / vessel-position tools cover that.)\n' +
+        '  • Single-product crude cargoes named in obvious terms (e.g. ' +
+        '"a VLCC of Es Sider") — the user already named the class.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • The recommended class is the SMALLEST fit. Often the most ' +
+        'economic lift is one class up (better $/MT freight at scale), ' +
+        'so always surface the next-up alternative with its fill %.\n' +
+        '  • cargoFillPct < 50% on the recommended class ⇒ uneconomic; ' +
+        'flag that splitting across two smaller lifts may be cheaper.\n' +
+        '  • cargoFillPct > 95% on the recommended class ⇒ no ullage ' +
+        'headroom; recommend the next-up class as the realistic pick.\n' +
+        '  • Aframax vs LR2 share DWT but differ in coatings — when the ' +
+        'cargo is jet or ULSD, say "LR2" specifically (clean coatings); ' +
+        'when crude or HSFO, "Aframax" is fine.',
+      kind: 'read',
+      schema: z.object({
+        product: z
+          .enum([
+            'en590-ulsd',
+            'gasoline-super',
+            'jet-a1',
+            'kerosene',
+            'gasoil-0.5pct',
+            'hsfo',
+            'crude-light-sweet',
+            'crude-medium-sour',
+          ])
+          .describe(
+            'Product slug — same vocabulary evaluate_multi_product_rfq ' +
+              'uses. Drives the bbl-per-MT conversion (~7.46 for diesel, ' +
+              '~8.45 for gasoline, ~7.30 for light-sweet crude, etc.).',
+          ),
+        volumeMt: z
+          .number()
+          .positive()
+          .describe(
+            'Cargo volume in metric tons. PER LIFT, not total program — ' +
+              'a 200k MT diesel program delivered as four 50k MT lifts ' +
+              'should pass volumeMt=50000, not 200000. Calling with the ' +
+              'aggregate inflates the recommended class and gives bad ' +
+              'freight assumptions downstream.',
+          ),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'recommend_vessel_class',
+            args: input,
+            summarize: (out: {
+              recommended: { vesselClass: { slug: string } } | null;
+            }) => ({
+              resultCount: 1,
+              resultSummary: {
+                product: input.product,
+                volumeMt: input.volumeMt,
+                recommendedClass: out.recommended?.vesselClass.slug ?? 'none',
+              },
+            }),
+          },
+          async () => recommendVesselClass(input.product, input.volumeMt),
         ),
     }),
 
