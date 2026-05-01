@@ -293,6 +293,20 @@ export const FREIGHT_ROUTES: FreightRoute[] = [
     usdPerMtHigh: 30,
   },
   {
+    originRegion: 'usgc',
+    destPortSlug: 'port-au-prince-varreux',
+    destCountry: 'HT',
+    productType: 'clean',
+    vesselClassTypical: 'mr1',
+    usdPerMtLow: 20,
+    usdPerMtHigh: 32,
+    notes:
+      'USGC → Port-au-Prince (Varreux Terminal). Slightly longer haul than ' +
+      'Kingston/Haina; small premium for the Windward Passage routing. ' +
+      'Often loaded ex-Houston or ex-Santa Marta (Colombia) — Santa Marta ' +
+      'origin is ~$18-25/MT.',
+  },
+  {
     originRegion: 'med',
     destPortSlug: 'kingston-port',
     destCountry: 'JM',
@@ -300,6 +314,19 @@ export const FREIGHT_ROUTES: FreightRoute[] = [
     vesselClassTypical: 'mr1',
     usdPerMtLow: 35,
     usdPerMtHigh: 50,
+  },
+  {
+    originRegion: 'med',
+    destPortSlug: 'port-au-prince-varreux',
+    destCountry: 'HT',
+    productType: 'clean',
+    vesselClassTypical: 'mr1',
+    usdPerMtLow: 38,
+    usdPerMtHigh: 55,
+    notes:
+      'Med → Haiti via Atlantic. Brent-WTI spread usually makes USGC origin ' +
+      'cheaper for Caribbean destinations — consult get_market_snapshot ' +
+      'sourcingHint before quoting Med-origin Caribbean lifts.',
   },
 
   // ── Crude → Med refineries (existing deal context) ───────────

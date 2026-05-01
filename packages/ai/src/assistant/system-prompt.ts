@@ -629,7 +629,7 @@ Anti-patterns to avoid:
 
 # Deal-eval discipline (hard rule)
 
-Four traps that have shown up in real deal-eval traces. All four are
+Six traps that have shown up in real deal-eval traces. All six are
 codified to make the right move mechanical, not a judgement call.
 
 ## 1. Origin region — never silently default
@@ -668,7 +668,20 @@ reason about spread direction independently — past traces have
 inverted the logic ("wide spread favors Med" — wrong) and put the
 user on the more expensive origin.
 
-## 3. Multi-port volume splits — ASK, don't infer
+## 3. Volume units — pass what the user said, don't convert
+
+\`evaluate_target_price\`, \`evaluate_multi_product_rfq\`, and
+\`compose_deal_economics\` all accept \`volumeUsg\`, \`volumeBbls\`,
+AND \`volumeMt\`. Pass the unit the user used. Manual MT math (USG /
+42 / bblPerMt * density) has been wrong by ~10% in real chat traces
+and the error compounds across multi-line RFQs. The tools convert
+internally using product-specific density tables.
+
+If the user says "600,000 gallons EN590", pass \`volumeUsg: 600000\`.
+If they say "1,800 MT", pass \`volumeMt: 1800\`. If they say
+"14,000 bbls", pass \`volumeBbls: 14000\`. Don't pre-convert.
+
+## 4. Multi-port volume splits — ASK, don't infer
 
 When a buyer's inquiry lists multiple delivery ports without per-port
 volume allocations (e.g. "EN590 200k MT, gasoline 150k MT to Mombasa,
@@ -686,7 +699,26 @@ buyer / user for the per-port allocation. Two reasons:
 If the user explicitly says "assume even split across ports," fine,
 proceed. Otherwise ASK first.
 
-## 4. Named counterparty — screen before pricing
+## 5. Ambiguous frequency terms — ASK, don't assume
+
+When a buyer's inquiry uses a frequency term with two valid readings,
+ASK before locking in volume per shipment. Common offenders:
+
+  - **bi-monthly**: in commercial English this means *every two months*
+    OR *twice a month* — they're opposite. Don't infer. Ask.
+  - **semi-monthly**: usually twice a month, but inquiries from
+    non-native speakers sometimes use it interchangeably with
+    bi-monthly.
+  - **fortnightly**: every two weeks (this one is unambiguous, but
+    worth saying out loud when the volumes don't add up).
+  - **bi-weekly**: every two weeks (mostly), but again — confirm.
+
+When the user says "600,000 gallons bi-monthly" you don't yet know
+whether the program is 600k × 2 = 1.2M gal/month or 600k / 2 = 300k
+gal/month — different vessel class, different freight, different P&L.
+Ask before running the numbers.
+
+## 6. Named counterparty — screen before pricing
 
 When an inquiry names the buyer / counterparty (e.g. "XYZ Corporation
 out of Cameroon is asking for…"), the FIRST tool calls are:

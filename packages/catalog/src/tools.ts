@@ -2193,7 +2193,29 @@ export function buildCatalogTools(): ToolRegistry {
             .number()
             .positive()
             .optional()
-            .describe('Optional volume hint, used only for output context.'),
+            .describe(
+              'Cargo volume in metric tons. Pass exactly ONE of ' +
+                'volumeMt / volumeBbls / volumeUsg — the tool converts ' +
+                'internally. Optional; used only for output context.',
+            ),
+          volumeBbls: z
+            .number()
+            .positive()
+            .optional()
+            .describe(
+              'Cargo volume in barrels. Alternative to volumeMt; ' +
+                'tool converts via product density.',
+            ),
+          volumeUsg: z
+            .number()
+            .positive()
+            .optional()
+            .describe(
+              'Cargo volume in US gallons. Alternative to volumeMt; ' +
+                'when the user says "600,000 gallons" pass that here ' +
+                'directly — DO NOT convert to MT yourself (chat traces ' +
+                "have shown the model gets the conversion ~10% off).",
+            ),
         }),
       handler: async (ctx, input) =>
         withToolTelemetry(
@@ -2219,6 +2241,8 @@ export function buildCatalogTools(): ToolRegistry {
               destPortSlug: input.destPortSlug,
               originRegion: input.originRegion as FreightOriginRegion | undefined,
               volumeMt: input.volumeMt,
+              volumeBbls: input.volumeBbls,
+              volumeUsg: input.volumeUsg,
             }),
         ),
     }),
@@ -2257,6 +2281,8 @@ export function buildCatalogTools(): ToolRegistry {
                 'crude-medium-sour',
               ]),
               volumeMt: z.number().positive().optional(),
+              volumeBbls: z.number().positive().optional(),
+              volumeUsg: z.number().positive().optional(),
               targetCifUsdPerMt: z.number().positive().optional(),
               targetCifUsdPerBbl: z.number().positive().optional(),
               destPortSlug: z.string(),
@@ -2266,7 +2292,11 @@ export function buildCatalogTools(): ToolRegistry {
           .max(20)
           .describe(
             'Array of RFQ lines, 1-20 entries. Each line needs product + ' +
-              'destPortSlug; volume + target prices are optional.',
+              'destPortSlug. Volume is optional; pass exactly ONE of ' +
+              'volumeMt / volumeBbls / volumeUsg per line — when the user ' +
+              'says "600,000 gallons" pass volumeUsg=600000 directly. The ' +
+              'tool converts to MT via product density. Manual MT math ' +
+              "produces wrong totals (chat traces saw ~10% errors).",
           ),
         originRegion: z
           .enum([
@@ -2316,6 +2346,8 @@ export function buildCatalogTools(): ToolRegistry {
               lines: input.lines.map((l) => ({
                 product: l.product as ProductSlug,
                 volumeMt: l.volumeMt,
+                volumeBbls: l.volumeBbls,
+                volumeUsg: l.volumeUsg,
                 targetCifUsdPerMt: l.targetCifUsdPerMt,
                 targetCifUsdPerBbl: l.targetCifUsdPerBbl,
                 destPortSlug: l.destPortSlug,

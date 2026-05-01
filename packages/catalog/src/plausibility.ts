@@ -49,6 +49,37 @@ export const BBL_PER_MT: Record<ProductSlug, number> = {
   'crude-medium-sour': 7.10,
 };
 
+/** US gallons per barrel — fixed constant. */
+const USG_PER_BBL = 42;
+
+/**
+ * Normalize cargo volume to metric tons given any of usg / bbl / mt.
+ * Throws when none is supplied or when more than one is non-null
+ * (callers shouldn't supply conflicting volumes — the model has
+ * gotten this wrong in chat traces, off by ~10%, when forced to do
+ * the conversion itself).
+ */
+export function normalizeVolumeToMt(
+  product: ProductSlug,
+  v: { volumeMt?: number; volumeBbls?: number; volumeUsg?: number },
+): number | undefined {
+  const supplied = [v.volumeMt, v.volumeBbls, v.volumeUsg].filter(
+    (x) => x != null,
+  );
+  if (supplied.length === 0) return undefined;
+  if (supplied.length > 1) {
+    throw new Error(
+      'pass exactly one of volumeMt / volumeBbls / volumeUsg, not multiple',
+    );
+  }
+  const bblPerMt = BBL_PER_MT[product];
+  if (!bblPerMt) throw new Error(`unknown product: ${product}`);
+  if (v.volumeMt != null) return v.volumeMt;
+  if (v.volumeBbls != null) return v.volumeBbls / bblPerMt;
+  if (v.volumeUsg != null) return v.volumeUsg / USG_PER_BBL / bblPerMt;
+  return undefined;
+}
+
 /**
  * Typical crack spread bands in USD/bbl over Brent. Where a direct
  * NYH benchmark exists in `commodity_prices` we'll use that when
@@ -89,8 +120,11 @@ export type EvaluateTargetPriceInput = {
   /** Most likely sourcing region. If omitted, the cheapest matching
       route across all origins is used. */
   originRegion?: FreightOriginRegion;
-  /** Optional volume hint — used only for descriptive output. */
+  /** Optional volume hint — used only for descriptive output. Pass
+   *  exactly one of these; the rest are ignored. */
   volumeMt?: number;
+  volumeBbls?: number;
+  volumeUsg?: number;
 };
 
 export type Verdict =
@@ -310,7 +344,11 @@ function buildNarrative(args: {
 
 export type RfqLine = {
   product: ProductSlug;
+  /** Pass exactly one of volumeMt / volumeBbls / volumeUsg. Internally
+   *  normalized to MT for weighted aggregation. */
   volumeMt?: number;
+  volumeBbls?: number;
+  volumeUsg?: number;
   targetCifUsdPerMt?: number;
   targetCifUsdPerBbl?: number;
   destPortSlug: string;
@@ -349,15 +387,26 @@ const VERDICT_RANK: Record<Verdict | 'no-data' | 'no-target', number> = {
 export async function evaluateMultiProductRfq(
   input: EvaluateMultiProductRfqInput,
 ): Promise<EvaluateMultiProductRfqResult> {
+  // Normalize each line's volume to MT once, then thread the normalized
+  // value through every downstream calc. Lets callers pass volumeUsg or
+  // volumeBbls without the model having to do (often-wrong) MT math.
+  const normalizedVolumes = input.lines.map((line) =>
+    normalizeVolumeToMt(line.product, {
+      volumeMt: line.volumeMt,
+      volumeBbls: line.volumeBbls,
+      volumeUsg: line.volumeUsg,
+    }),
+  );
+
   const lines = await Promise.all(
-    input.lines.map((line) =>
+    input.lines.map((line, i) =>
       evaluateTargetPrice({
         product: line.product,
         targetCifUsdPerMt: line.targetCifUsdPerMt,
         targetCifUsdPerBbl: line.targetCifUsdPerBbl,
         destPortSlug: line.destPortSlug,
         originRegion: input.originRegion,
-        volumeMt: line.volumeMt,
+        volumeMt: normalizedVolumes[i],
       }),
     ),
   );
@@ -371,7 +420,7 @@ export async function evaluateMultiProductRfq(
 
   for (let i = 0; i < lines.length; i += 1) {
     const result = lines[i]!;
-    const reqLine = input.lines[i]!;
+    const volumeMt = normalizedVolumes[i];
     if (VERDICT_RANK[result.verdict] > VERDICT_RANK[worstVerdict]) {
       worstVerdict = result.verdict;
     }
@@ -382,18 +431,18 @@ export async function evaluateMultiProductRfq(
     ) {
       flaggedLineCount += 1;
     }
-    if (reqLine.volumeMt != null) {
+    if (volumeMt != null) {
       if (result.targetCifUsdPerMt != null) {
-        totalTargetUsd = (totalTargetUsd ?? 0) + reqLine.volumeMt * result.targetCifUsdPerMt;
+        totalTargetUsd = (totalTargetUsd ?? 0) + volumeMt * result.targetCifUsdPerMt;
       }
       if (result.realisticCifUsdPerMt != null && totalRealisticUsd != null) {
-        totalRealisticUsd += reqLine.volumeMt * result.realisticCifUsdPerMt.mid;
+        totalRealisticUsd += volumeMt * result.realisticCifUsdPerMt.mid;
       } else {
         totalRealisticUsd = null;
       }
       if (result.pctGapVsMid != null) {
-        weightedGapNumerator += reqLine.volumeMt * result.pctGapVsMid;
-        weightedGapDenominator += reqLine.volumeMt;
+        weightedGapNumerator += volumeMt * result.pctGapVsMid;
+        weightedGapDenominator += volumeMt;
       }
     }
   }
