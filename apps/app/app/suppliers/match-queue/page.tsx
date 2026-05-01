@@ -64,51 +64,74 @@ export default async function MatchQueuePage({ searchParams }: Props) {
       </section>
 
       <section className="mb-4 flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
-          Signal:
-        </span>
-        <Chip href={buildHref(params, { signal: undefined })} label="All" active={!params.signal} />
-        <Chip
-          href={buildHref(params, { signal: 'distress_event' })}
-          label="Distress"
-          active={params.signal === 'distress_event'}
-        />
-        <Chip
-          href={buildHref(params, { signal: 'velocity_drop' })}
-          label="Velocity drops"
-          active={params.signal === 'velocity_drop'}
-        />
-        <Chip
-          href={buildHref(params, { signal: 'new_award' })}
-          label="New awards"
-          active={params.signal === 'new_award'}
-        />
-        <span className="ml-3 text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
-          Window:
-        </span>
-        {[1, 7, 30].map((d) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+            Signal
+          </span>
           <Chip
-            key={d}
-            href={buildHref(params, { days: String(d) })}
-            label={`${d}d`}
-            active={days === d}
+            href={buildHref(params, { signal: undefined })}
+            label="All"
+            active={!params.signal}
           />
-        ))}
+          <Chip
+            href={buildHref(params, { signal: 'distress_event' })}
+            label="Distress"
+            active={params.signal === 'distress_event'}
+          />
+          <Chip
+            href={buildHref(params, { signal: 'velocity_drop' })}
+            label="Velocity drops"
+            active={params.signal === 'velocity_drop'}
+          />
+          <Chip
+            href={buildHref(params, { signal: 'new_award' })}
+            label="New awards"
+            active={params.signal === 'new_award'}
+          />
+        </div>
+        <span aria-hidden="true" className="mx-1 h-4 w-px bg-[color:var(--color-border)]" />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+            Window
+          </span>
+          {[1, 7, 30].map((d) => (
+            <Chip
+              key={d}
+              href={buildHref(params, { days: String(d) })}
+              label={`${d}d`}
+              active={days === d}
+            />
+          ))}
+        </div>
       </section>
 
-      <section className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-3 shadow-sm">
+      <section className="overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] shadow-sm">
         {items.length === 0 ? (
-          <p className="py-8 text-center text-xs text-[color:var(--color-muted-foreground)]">
+          <p className="py-10 text-center text-xs text-[color:var(--color-muted-foreground)]">
             No open matches in the last {days} days. The scoring job runs daily at 15:30 UTC; ensure
             entity_news_events / supplier_capability_summary / awards have been refreshed since the
             last cron pass.
           </p>
         ) : (
-          <ul>
-            {items.map((it) => (
-              <MatchRow key={it.id} {...it} />
-            ))}
-          </ul>
+          <>
+            {/* Column header — grid columns must mirror MatchRow's
+                grid exactly so the labels line up over their cells.
+                Column 1 (3px) is the row's left signal-strip gutter;
+                we leave it empty here. */}
+            <div className="grid grid-cols-[3px_56px_88px_minmax(0,1fr)_72px_auto] items-center gap-3 border-b border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30 py-2 pr-2 text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+              <span aria-hidden="true" />
+              <span>Score</span>
+              <span>Signal</span>
+              <span>Source</span>
+              <span className="text-right">When</span>
+              <span aria-hidden="true" />
+            </div>
+            <ul>
+              {items.map((it) => (
+                <MatchRow key={it.id} {...it} />
+              ))}
+            </ul>
+          </>
         )}
       </section>
 
@@ -142,11 +165,15 @@ function buildHref(
 function Kpi({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
     <div className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-3 shadow-sm">
-      <div className="text-[10px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+      <div className="text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
         {label}
       </div>
-      <div className="text-lg font-semibold tabular-nums">{value}</div>
-      <div className="text-[10px] text-[color:var(--color-muted-foreground)]">{sub}</div>
+      <div className="mt-0.5 text-2xl font-semibold leading-none tabular-nums">
+        {value}
+      </div>
+      <div className="mt-1 text-[10px] text-[color:var(--color-muted-foreground)]">
+        {sub}
+      </div>
     </div>
   );
 }

@@ -64,6 +64,19 @@ import {
 export const DISCOVER_BASE = 'https://discover.procur.app';
 
 /**
+ * Shared ISO-3166-1 alpha-2 country-code schema. Bare `.length(2)`
+ * produces a useless Zod error and the assistant retries with random
+ * country names ("United States", "Italy"); the regex catches that
+ * upfront with a readable error that includes examples.
+ */
+const isoAlpha2Country = z
+  .string()
+  .regex(
+    /^[A-Z]{2}$/,
+    'Must be an ISO-3166-1 alpha-2 country code (uppercase, 2 letters — e.g. CO for Colombia, IT for Italy, NG for Nigeria). Full country names will fail.',
+  );
+
+/**
  * Build a Discover catalog URL with the given filters pre-applied.
  * Mirrors the URL params accepted by /opportunities/page.tsx so a
  * user clicking the link lands on the same view they'd build by
@@ -872,7 +885,7 @@ export function buildCatalogTools(): ToolRegistry {
               'Empty array = match all within the category.',
           ),
         buyerCountries: z
-          .array(z.string().length(2))
+          .array(isoAlpha2Country)
           .optional()
           .describe(
             "Optional ISO-3166-1 alpha-2 country codes (e.g. ['IT','ES','GR','TR']). " +
@@ -975,17 +988,13 @@ export function buildCatalogTools(): ToolRegistry {
               'Same vocabulary as find_buyers_for_offer.',
           ),
         descriptionKeywords: z.array(z.string()).optional(),
-        buyerCountry: z
-          .string()
-          .length(2)
+        buyerCountry: isoAlpha2Country
           .optional()
           .describe(
             "ISO-2 country code of the buyer. When set, suppliers who've previously won in " +
               'this country rank higher.',
           ),
-        beneficiaryCountry: z
-          .string()
-          .length(2)
+        beneficiaryCountry: isoAlpha2Country
           .optional()
           .describe(
             'ISO-2 of the beneficiary country (where the work is delivered). For UN/' +
@@ -1069,7 +1078,7 @@ export function buildCatalogTools(): ToolRegistry {
           ])
           .describe('Same vocabulary as find_buyers_for_offer.'),
         buyerCountries: z
-          .array(z.string().length(2))
+          .array(isoAlpha2Country)
           .optional()
           .describe(
             "ISO-2 codes filtering award geography. e.g. ['DO','JM','TT'] for the Caribbean. " +
@@ -1379,9 +1388,7 @@ export function buildCatalogTools(): ToolRegistry {
             'Internal commodity tag — same vocabulary as find_buyers_for_offer. e.g. crude-oil, ' +
               'diesel, jet-fuel.',
           ),
-        country: z
-          .string()
-          .length(2)
+        country: isoAlpha2Country
           .optional()
           .describe('ISO-2 country code.'),
         role: z
@@ -1490,9 +1497,7 @@ export function buildCatalogTools(): ToolRegistry {
           ])
           .optional()
           .describe('Filter to one production region.'),
-        originCountry: z
-          .string()
-          .length(2)
+        originCountry: isoAlpha2Country
           .optional()
           .describe('ISO-2 country of production. e.g. LY for Libyan grades.'),
       }),
@@ -1538,9 +1543,7 @@ export function buildCatalogTools(): ToolRegistry {
           .describe(
             'crude_grades.slug — must match an existing grade. Use list_crude_grades to discover.',
           ),
-        country: z
-          .string()
-          .length(2)
+        country: isoAlpha2Country
           .optional()
           .describe('Restrict to refineries in this ISO-2 country.'),
         limit: z.number().min(1).max(200).optional(),
@@ -2327,7 +2330,7 @@ export function buildCatalogTools(): ToolRegistry {
               'award in this category.',
           ),
         countries: z
-          .array(z.string().length(2))
+          .array(isoAlpha2Country)
           .optional()
           .describe('ISO-2 country list. Empty = all.'),
         minPrevAwards: z
@@ -2383,9 +2386,7 @@ export function buildCatalogTools(): ToolRegistry {
         'contract_value_usd. Order is recency-then-value.',
       kind: 'read',
       schema: z.object({
-        buyerCountry: z
-          .string()
-          .length(2)
+        buyerCountry: isoAlpha2Country
           .optional()
           .describe('ISO-2 country code. Omit to scan globally.'),
         categoryTag: z
@@ -2439,9 +2440,7 @@ export function buildCatalogTools(): ToolRegistry {
           .describe(
             "ports.slug — e.g. 'es-sider', 'sannazzaro-refinery', 'paradip-port'.",
           ),
-        country: z
-          .string()
-          .length(2)
+        country: isoAlpha2Country
           .optional()
           .describe('ISO-2 country code — restricts to ports in that country.'),
         portType: z
@@ -2542,7 +2541,7 @@ export function buildCatalogTools(): ToolRegistry {
         'what historical pricing looks like.',
       kind: 'read',
       schema: z.object({
-        buyerCountry: z.string().length(2).describe('ISO-2 country code.'),
+        buyerCountry: isoAlpha2Country.describe('ISO-2 country code.'),
         categoryTag: z.string().describe(
           "Internal category tag — 'diesel', 'gasoline', 'jet-fuel', 'heating-oil', 'crude-oil', etc.",
         ),
@@ -2583,7 +2582,7 @@ export function buildCatalogTools(): ToolRegistry {
         'Always quote the verdict + the dollar amounts, not just z-score.',
       kind: 'read',
       schema: z.object({
-        buyerCountry: z.string().length(2),
+        buyerCountry: isoAlpha2Country,
         categoryTag: z.string(),
         offerPriceUsdPerBbl: z.number().positive().describe(
           'Offer price in USD per barrel. Convert from $/gal × 42 or $/MT ÷ category-SG before passing.',

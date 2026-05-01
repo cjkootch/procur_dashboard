@@ -31,6 +31,14 @@ export async function setSupplierApprovalAction(
   if (!isSupplierApprovalStatus(input.status)) {
     throw new Error(`Invalid supplier approval status: ${input.status}`);
   }
+  let expiresAt: Date | null = null;
+  if (input.expiresAt) {
+    const parsed = new Date(input.expiresAt);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new Error(`Invalid expiresAt date: ${input.expiresAt}`);
+    }
+    expiresAt = parsed;
+  }
   try {
     await upsertSupplierApproval({
       companyId: company.id,
@@ -38,7 +46,7 @@ export async function setSupplierApprovalAction(
       entitySlug: input.entitySlug,
       entityName: input.entityName ?? null,
       status: input.status,
-      expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+      expiresAt,
       notes: input.notes ?? null,
     });
   } catch (err) {

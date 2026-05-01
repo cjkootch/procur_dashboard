@@ -84,9 +84,12 @@ export async function createPursuitAction(formData: FormData): Promise<void> {
 
   const opp = await db.query.opportunities.findFirst({
     where: eq(opportunities.id, opportunityId),
-    columns: { id: true, valueEstimateUsd: true },
+    columns: { id: true, valueEstimateUsd: true, companyId: true },
   });
   if (!opp) throw new Error('opportunity not found');
+  if (opp.companyId && opp.companyId !== company.id) {
+    throw new Error('cannot pursue another tenant\'s private uploaded opportunity');
+  }
 
   const existing = await db.query.pursuits.findFirst({
     where: and(

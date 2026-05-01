@@ -276,16 +276,21 @@ export async function upsertSupplierApproval(
   });
 
   if (existing) {
+    // undefined = caller didn't pass the field, so preserve existing value.
+    // Explicit null = caller is clearing it.
+    const patch: Partial<typeof supplierApprovals.$inferInsert> = {
+      status: input.status,
+      approvedAt,
+      updatedAt: new Date(),
+    };
+    if (input.expiresAt !== undefined) patch.expiresAt = input.expiresAt;
+    if (input.notes !== undefined) patch.notes = input.notes;
+    if (input.entityName !== undefined && input.entityName !== null) {
+      patch.entityName = input.entityName;
+    }
     await db
       .update(supplierApprovals)
-      .set({
-        status: input.status,
-        approvedAt,
-        expiresAt: input.expiresAt ?? null,
-        notes: input.notes ?? null,
-        entityName: input.entityName ?? undefined,
-        updatedAt: new Date(),
-      })
+      .set(patch)
       .where(eq(supplierApprovals.id, existing.id));
     return { id: existing.id, created: false };
   }

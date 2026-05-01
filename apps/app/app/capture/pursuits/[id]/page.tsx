@@ -127,7 +127,13 @@ export default async function PursuitDetailPage({
           })
           .from(auditLog)
           .leftJoin(users, eq(users.id, auditLog.userId))
-          .where(and(eq(auditLog.entityType, 'pursuit'), eq(auditLog.entityId, id)))
+          .where(
+            and(
+              eq(auditLog.companyId, company.id),
+              eq(auditLog.entityType, 'pursuit'),
+              eq(auditLog.entityId, id),
+            ),
+          )
           .orderBy(desc(auditLog.createdAt))
           .limit(200)
       : [];

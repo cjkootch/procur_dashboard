@@ -267,7 +267,7 @@ export type StageCountsMap = Awaited<ReturnType<typeof getCompanyStageCounts>>;
 export type DashboardData = {
   tasks: {
     pending: number;
-    inProgress: number;
+    overdue: number;
     completed: number;
     dueSoon: Array<{
       id: string;
@@ -382,16 +382,17 @@ export async function getCaptureDashboardData(
       .where(inArray(pursuitTasks.pursuitId, pursuitIds));
   }
 
-  // Tasks: classify each
+  // Tasks: classify each. "Overdue" = open + due date in the past.
+  // Everything else open (no due date, or due today/future) is pending.
   let pending = 0;
-  let inProgress = 0;
+  let overdue = 0;
   let completed = 0;
   const titleByPursuit = new Map<string, string>();
   for (const p of pursuitRows) titleByPursuit.set(p.id, p.oppTitle);
 
   for (const t of taskRows) {
     if (t.completedAt) completed += 1;
-    else if (t.dueDate && t.dueDate < todayIso) inProgress += 1;
+    else if (t.dueDate && t.dueDate < todayIso) overdue += 1;
     else pending += 1;
   }
 
@@ -461,7 +462,7 @@ export async function getCaptureDashboardData(
   ).length;
 
   return {
-    tasks: { pending, inProgress, completed, dueSoon },
+    tasks: { pending, overdue, completed, dueSoon },
     captureQuestions: {
       pursuitsWithAnyAnswer,
       activePursuits: active.length,

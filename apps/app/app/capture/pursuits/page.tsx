@@ -70,6 +70,13 @@ export default async function PursuitsListPage({
     return qs ? `/capture/pursuits?${qs}` : '/capture/pursuits';
   };
 
+  const csvParams = new URLSearchParams();
+  if (activeStage) csvParams.set('stage', activeStage);
+  if (q) csvParams.set('q', q);
+  const csvHref = csvParams.toString()
+    ? `/api/pipeline/export.csv?${csvParams.toString()}`
+    : '/api/pipeline/export.csv';
+
   return (
     <div className="mx-auto max-w-6xl px-8 py-10">
       <header className="mb-6 flex items-start justify-between gap-4">
@@ -85,7 +92,7 @@ export default async function PursuitsListPage({
           </p>
         </div>
         <a
-          href="/api/pipeline/export.csv"
+          href={csvHref}
           className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[color:var(--color-muted)]/40"
         >
           Download .csv
