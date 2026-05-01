@@ -294,7 +294,7 @@ export async function composeDealEconomics(
 
   // Wash-sale guard. If the caller didn't supply productCost AND the
   // calculator auto-defaulted it to the spot benchmark (or Brent +
-  // crack), AND the supplied sellPrice is within 1¢/USG of that
+  // crack), AND the supplied sellPrice is within 0.01¢/USG of that
   // auto-defaulted cost, refuse the call. Reason: every chat trace
   // that hit this combo produced a "do_not_proceed scorecard 12/100"
   // for what was actually a wash sale — the model anchored sellPrice
@@ -304,20 +304,27 @@ export async function composeDealEconomics(
   // the model exactly which input is missing (sell anchor or supplier
   // FOB).
   //
+  // Tolerance is intentionally tight (0.0001 = 0.01¢/USG) so that
+  // sellPrice values that COINCIDENTALLY land near the spot benchmark
+  // — e.g. the realistic CIF mid for gasoline-super at Caribbean
+  // delivery, where Brent + typical crack + freight resolves to
+  // ~NYH spot for that product — don't trigger a false positive.
+  // Only literal-equal-to-spot calls trip this guard.
+  //
   // Bypass via allowWashSale: true when the caller explicitly wants
   // to model the freight/insurance drag on a zero-margin hypothetical.
   if (
     !productCostUserSupplied &&
     !input.allowWashSale &&
     productCostPerUsg != null &&
-    Math.abs(sellPricePerUsg - productCostPerUsg) < 0.01
+    Math.abs(sellPricePerUsg - productCostPerUsg) < 0.0001
   ) {
     const benchmarkSlug = benchmark?.slug ?? 'spot';
     const sellBbl = sellPricePerUsg * USG_PER_BBL;
     throw new Error(
       `Wash sale: sellPricePerUsg ($${sellPricePerUsg.toFixed(4)}/USG, ` +
         `$${sellBbl.toFixed(2)}/bbl) equals the auto-defaulted product cost ` +
-        `from ${benchmarkSlug} within 1¢/USG. That's not a deal — after ` +
+        `from ${benchmarkSlug} within 0.01¢/USG. That's not a deal — after ` +
         `freight + insurance it goes negative by construction. ` +
         `To model a real deal: pass productCostPerUsg (or productCostPerBbl) ` +
         `with a real supplier FOB, OR pass sellPrice as the realistic CIF ` +

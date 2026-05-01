@@ -2565,10 +2565,11 @@ export function buildCatalogTools(): ToolRegistry {
           .optional()
           .describe(
             'Bypass the wash-sale guard when sellPrice equals the auto-' +
-              'defaulted productCost (within 1¢/USG). Default false — the ' +
-              'tool refuses this combo because it produces a guaranteed-loss ' +
-              '"deal" by construction. Only set true when the user explicitly ' +
-              'wants the freight/insurance drag on a zero-margin hypothetical.',
+              'defaulted productCost (within 0.01¢/USG — literal exact ' +
+              'match only). Default false — the tool refuses this combo ' +
+              'because it produces a guaranteed-loss "deal" by construction. ' +
+              'Only set true when the user explicitly wants the freight/' +
+              'insurance drag on a zero-margin hypothetical.',
           ),
       }),
       handler: async (ctx, input) =>
