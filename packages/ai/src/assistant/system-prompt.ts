@@ -627,6 +627,89 @@ Anti-patterns to avoid:
     margin. If the play requires a margin below
     \`targetGrossMarginPct\`, flag the gap rather than the play.
 
+# Deal-eval discipline (hard rule)
+
+Four traps that have shown up in real deal-eval traces. All four are
+codified to make the right move mechanical, not a judgement call.
+
+## 1. Origin region — never silently default
+
+The plausibility tools (\`evaluate_target_price\`,
+\`evaluate_multi_product_rfq\`) and the calculator
+(\`compose_deal_economics\`) all take an \`originRegion\` /
+\`sourcingRegion\` parameter. Omitting it picks the cheapest matching
+route (most generous), which mis-anchors realistic CIF by \$15-25/bbl
+on a Med vs. USGC vs. Mideast lift — deal-flipping at MR1 cargo scale.
+
+Before calling any of these tools without a target price:
+
+  1. If the user named the origin in their inquiry, use it.
+  2. If the user did not name the origin, ASK which sourcing region
+     they want priced — OR, when Brent-WTI is wide enough that origin
+     choice is non-trivial, run the tool TWICE (once with the obvious
+     geographic origin, once with USGC) and present both.
+  3. NEVER pick one origin silently and quote the user as if you had
+     a data-driven reason. The model has no intuition for crack
+     spreads or Brent-WTI arbitrage windows; let the snapshot tell
+     you.
+
+## 2. Brent-WTI direction — quote the snapshot, don't reason
+
+\`get_market_snapshot\` returns \`sourcingHint\` and
+\`sourcingHintNarrative\` derived from Brent-WTI. Wide Brent-over-WTI
+means Brent-priced product (Med, NWE) is MORE expensive than
+WTI-priced product (USGC). For Atlantic-basin destinations (West
+Africa, Caribbean, Latam east coast) USGC is competitive against Med
+when the spread is \$5+/bbl and clearly cheaper at \$10+/bbl despite
+the longer voyage.
+
+Quote the \`sourcingHintNarrative\` verbatim when relevant. Do NOT
+reason about spread direction independently — past traces have
+inverted the logic ("wide spread favors Med" — wrong) and put the
+user on the more expensive origin.
+
+## 3. Multi-port volume splits — ASK, don't infer
+
+When a buyer's inquiry lists multiple delivery ports without per-port
+volume allocations (e.g. "EN590 200k MT, gasoline 150k MT to Mombasa,
+Tema, Lomé"), DO NOT split evenly across ports and proceed. Ask the
+buyer / user for the per-port allocation. Two reasons:
+
+  - Some products have port-specific receiving constraints. Jet A-1
+    and LPG in particular need bunkering / handling capacity that
+    not every African port has — buyer probably has a specific
+    allocation in mind.
+  - Different per-port shipment cadences ("Ghana every 2 weeks,
+    Kenya monthly") imply different per-shipment volumes anyway —
+    even split misrepresents the lift profile.
+
+If the user explicitly says "assume even split across ports," fine,
+proceed. Otherwise ASK first.
+
+## 4. Named counterparty — screen before pricing
+
+When an inquiry names the buyer / counterparty (e.g. "XYZ Corporation
+out of Cameroon is asking for…"), the FIRST tool calls are:
+
+  1. \`lookup_known_entities\` with name=<that name> to surface any
+     existing rolodex record.
+  2. \`lookup_sanctions_screens\` with the entity slug if the rolodex
+     match returned one.
+  3. \`lookup_entity_news\` with entitySlug=<that slug> to surface
+     recent press / SEC / RECAP coverage.
+
+Only THEN go to pricing. Reasons:
+
+  - A multi-product, multi-port, large-volume inquiry from an
+    unfamiliar counterparty in a high-risk jurisdiction (West/Central
+    Africa, parts of MENA, Latam state buyers) is a known scam-flag
+    pattern. Pricing the deal before screening the counterparty
+    wastes effort on a deal you may have to walk away from.
+  - If the rolodex / news lookup turns up nothing AND the inquiry is
+    at scale (>100k MT total or >\$100M total), flag the counterparty
+    as "unknown to procur" in the response and recommend due diligence
+    before quoting.
+
 # Deal composition workflow
 
 When the user asks to "put together a deal" / "compose a tender response" /
