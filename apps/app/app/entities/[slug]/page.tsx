@@ -10,6 +10,7 @@ import {
   getSupplierApproval,
 } from '@procur/catalog';
 import { KycBadge } from '../../../components/KycBadge';
+import { parseEntityNotes } from '../../../lib/entity-notes';
 import { PushToVexButton } from './_components/PushToVexButton';
 import { QuoteAnchorsPanel } from './_components/QuoteAnchorsPanel';
 import { SupplierApprovalForm } from './_components/SupplierApprovalForm';
@@ -318,16 +319,174 @@ export default async function EntityProfilePage({ params }: Props) {
         </section>
       )}
 
-      {profile.notes && (
-        <section className="mb-6">
-          <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-            Capability notes
-          </h2>
-          <p className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-4 text-sm leading-relaxed">
-            {profile.notes}
-          </p>
-        </section>
-      )}
+      {profile.notes && (() => {
+        const parsed = parseEntityNotes(profile.notes);
+        // Fall back to the original blob render only when the parser
+        // found nothing structured — i.e. notes is a plain one-liner
+        // with no section markers. Most entities fall here; only the
+        // analyst-curated assay-rich entries (NOC, refinery seed
+        // entries) hit the sectioned path.
+        const hasStructure =
+          parsed.offer != null ||
+          parsed.contact != null ||
+          parsed.assaySections.length > 0 ||
+          parsed.source != null;
+        if (!hasStructure) {
+          return (
+            <section className="mb-6">
+              <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                Capability notes
+              </h2>
+              <p className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-4 text-sm leading-relaxed">
+                {profile.notes}
+              </p>
+            </section>
+          );
+        }
+        return (
+          <>
+            {parsed.description && (
+              <section className="mb-6">
+                <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                  About
+                </h2>
+                <p className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-4 text-sm leading-relaxed">
+                  {parsed.description}
+                </p>
+              </section>
+            )}
+
+            {parsed.offer && (
+              <section className="mb-6">
+                <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                  Active offer
+                </h2>
+                <p className="rounded-[var(--radius-lg)] border-l-4 border-[color:var(--color-foreground)] bg-amber-50/60 p-4 text-sm leading-relaxed">
+                  {parsed.offer}
+                </p>
+              </section>
+            )}
+
+            {parsed.contact && (
+              <section className="mb-6">
+                <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                  Contact
+                </h2>
+                <dl className="grid gap-2 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-4 text-sm sm:grid-cols-2">
+                  {parsed.contact.address && (
+                    <div className="sm:col-span-2">
+                      <dt className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                        Address
+                      </dt>
+                      <dd>{parsed.contact.address}</dd>
+                    </div>
+                  )}
+                  {parsed.contact.tels.length > 0 && (
+                    <div>
+                      <dt className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                        Tel
+                      </dt>
+                      <dd className="space-y-0.5 tabular-nums">
+                        {parsed.contact.tels.map((t) => (
+                          <div key={t}>{t}</div>
+                        ))}
+                      </dd>
+                    </div>
+                  )}
+                  {parsed.contact.faxes.length > 0 && (
+                    <div>
+                      <dt className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                        Fax
+                      </dt>
+                      <dd className="space-y-0.5 tabular-nums">
+                        {parsed.contact.faxes.map((f) => (
+                          <div key={f}>{f}</div>
+                        ))}
+                      </dd>
+                    </div>
+                  )}
+                  {parsed.contact.emails.length > 0 && (
+                    <div className="sm:col-span-2">
+                      <dt className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                        Email
+                      </dt>
+                      <dd className="space-y-0.5">
+                        {parsed.contact.emails.map((e) => (
+                          <a
+                            key={e}
+                            href={`mailto:${e}`}
+                            className="block hover:underline"
+                          >
+                            {e}
+                          </a>
+                        ))}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+              </section>
+            )}
+
+            {parsed.quickSpecs.length > 0 && (
+              <section className="mb-6">
+                <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                  Key specs
+                </h2>
+                <dl className="grid grid-cols-2 gap-3 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-4 text-sm sm:grid-cols-3 md:grid-cols-4">
+                  {parsed.quickSpecs.map((spec) => (
+                    <div key={spec.label}>
+                      <dt className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                        {spec.label}
+                      </dt>
+                      <dd className="tabular-nums">{spec.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            )}
+
+            {parsed.assaySections.length > 0 && (
+              <section className="mb-6">
+                <details className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20">
+                  <summary className="cursor-pointer list-none px-4 py-3 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]">
+                    Full assay ({parsed.assaySections.length}{' '}
+                    {parsed.assaySections.length === 1 ? 'section' : 'sections'})
+                    <span className="ml-2 text-[10px] normal-case">click to expand</span>
+                  </summary>
+                  <div className="border-t border-[color:var(--color-border)] p-4 text-sm">
+                    {parsed.assaySections.map((sec, i) => (
+                      <div key={sec.title} className={i > 0 ? 'mt-4' : ''}>
+                        <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                          {sec.title}
+                        </h3>
+                        <dl className="space-y-1">
+                          {sec.rows.map((row, idx) => (
+                            <div
+                              key={`${row.label}-${idx}`}
+                              className="grid grid-cols-[minmax(0,200px)_1fr] gap-3 leading-snug"
+                            >
+                              <dt className="text-[color:var(--color-muted-foreground)]">
+                                {row.label || '—'}
+                              </dt>
+                              <dd className="tabular-nums">{row.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              </section>
+            )}
+
+            {parsed.source && (
+              <p className="mb-6 text-[11px] text-[color:var(--color-muted-foreground)]">
+                Source: {parsed.source}
+              </p>
+            )}
+          </>
+        );
+      })()}
 
       {(directOwners.length > 0 || ownershipChain.length > 1) && (
         <section className="mb-6">
