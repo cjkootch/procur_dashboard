@@ -8720,22 +8720,49 @@ export async function getCrudeGradeDetail(
   const assayList = assayRows.rows as Array<Record<string, unknown>>;
 
   // Pull all cuts for these assays in one shot.
+  // Uses drizzle's `inArray` (vs raw `ANY(${arr}::uuid[])`) because
+  // the Neon HTTP driver mis-serializes single-element JS arrays as
+  // a bare uuid string — Postgres then errors with
+  // `malformed array literal: "<uuid>"`. The query-builder path
+  // composes a parameterized `IN (...)` clause that handles any
+  // array length cleanly. (Sentry: NeonDbError, May 2026.)
   const assayIds = assayList.map((r) => String(r.id));
   const cutsByAssay = new Map<string, Array<Record<string, unknown>>>();
   if (assayIds.length > 0) {
-    const cutRows = await db.execute(sql`
-      SELECT
-        assay_id, cut_label, cut_order, start_temp_c, end_temp_c,
-        yield_wt_pct, yield_vol_pct, cumulative_yield_wt_pct,
-        density_kg_l, sulphur_wt_pct
-      FROM crude_assay_cuts
-      WHERE assay_id = ANY(${assayIds}::uuid[])
-      ORDER BY assay_id, cut_order ASC;
-    `);
-    for (const c of cutRows.rows as Array<Record<string, unknown>>) {
-      const aid = String(c.assay_id);
+    const cutDrizzleRows = await db
+      .select({
+        assayId: crudeAssayCuts.assayId,
+        cutLabel: crudeAssayCuts.cutLabel,
+        cutOrder: crudeAssayCuts.cutOrder,
+        startTempC: crudeAssayCuts.startTempC,
+        endTempC: crudeAssayCuts.endTempC,
+        yieldWtPct: crudeAssayCuts.yieldWtPct,
+        yieldVolPct: crudeAssayCuts.yieldVolPct,
+        cumulativeYieldWtPct: crudeAssayCuts.cumulativeYieldWtPct,
+        densityKgL: crudeAssayCuts.densityKgL,
+        sulphurWtPct: crudeAssayCuts.sulphurWtPct,
+      })
+      .from(crudeAssayCuts)
+      .where(inArray(crudeAssayCuts.assayId, assayIds))
+      .orderBy(asc(crudeAssayCuts.assayId), asc(crudeAssayCuts.cutOrder));
+    for (const c of cutDrizzleRows) {
+      const aid = String(c.assayId);
+      // Re-shape into the snake_case map shape the rest of this
+      // function already expects so the call-site below stays
+      // unchanged.
       const list = cutsByAssay.get(aid) ?? [];
-      list.push(c);
+      list.push({
+        assay_id: c.assayId,
+        cut_label: c.cutLabel,
+        cut_order: c.cutOrder,
+        start_temp_c: c.startTempC,
+        end_temp_c: c.endTempC,
+        yield_wt_pct: c.yieldWtPct,
+        yield_vol_pct: c.yieldVolPct,
+        cumulative_yield_wt_pct: c.cumulativeYieldWtPct,
+        density_kg_l: c.densityKgL,
+        sulphur_wt_pct: c.sulphurWtPct,
+      });
       cutsByAssay.set(aid, list);
     }
   }
