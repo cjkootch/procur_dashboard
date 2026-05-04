@@ -136,10 +136,14 @@ Every chat-tool change has come from a real trace where the model
 failed in a specific predictable way. Patterns we've codified into
 `tools.ts` and `system-prompt.ts`:
 
-- **ISO-2 country codes** — country params use
-  `.regex(/^[A-Z]{2}$/, '...readable error with examples...')`.
-  Bare `.length(2)` produces a useless Zod error and the model
-  retries with random country names.
+- **Country codes** — country params use the shared
+  `isoAlpha2Country` schema in `tools.ts`, which normalizes free-form
+  input ("Poland", "USA", "Côte d'Ivoire", "DRC") to canonical ISO-2
+  via `country-codes.ts`. Earlier versions used a bare
+  `/^[A-Z]{2}$/` regex; the model emitted full names anyway and burned
+  a tool call per retry. Downstream consumers (SQL, freight, trade
+  regions) still see uppercase 2-letter codes — the transform is
+  invisible past the schema boundary.
 - **Combined upfront validation** — `compose_deal_economics`
   collects every missing-required field in one error rather than
   failing one field at a time (model used to retry 3+ times).

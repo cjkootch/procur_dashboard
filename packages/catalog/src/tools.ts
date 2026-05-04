@@ -44,6 +44,7 @@ import {
 } from './mutations';
 import { SUPPLIER_APPROVAL_STATUSES } from '@procur/db';
 import { composeDealEconomics, type CompanyDealDefaults } from './deal-economics';
+import { COUNTRY_NAME_EXAMPLES, normalizeCountryCode } from './country-codes';
 import {
   isFreightOriginRegion,
   lookupFreightEstimate,
@@ -66,17 +67,44 @@ import {
 export const DISCOVER_BASE = 'https://discover.procur.app';
 
 /**
- * Shared ISO-3166-1 alpha-2 country-code schema. Bare `.length(2)`
- * produces a useless Zod error and the assistant retries with random
- * country names ("United States", "Italy"); the regex catches that
- * upfront with a readable error that includes examples.
+ * Shared ISO-3166-1 alpha-2 country-code schema. Accepts either an
+ * ISO-2 code (case-insensitive) OR a country name / common alias and
+ * normalizes both to the canonical ISO-2 (uppercase). Examples that
+ * all resolve to the same value:
+ *   "PL", "pl", "Pl"               → "PL"
+ *   "Poland"                       → "PL"
+ *   "United States" / "USA" / "US" → "US"
+ *   "United Kingdom" / "UK" / "GB" → "GB"
+ *   "Côte d'Ivoire" / "Ivory Coast"→ "CI"
+ *   "DRC" / "DR Congo"             → "CD"
+ *
+ * Earlier versions used a bare `/^[A-Z]{2}$/` regex that rejected
+ * full country names. The model emitted "Poland" or "United States"
+ * frequently and burned a tool call per retry; this transform fixes
+ * that without requiring the model to remember every two-letter code.
+ *
+ * Output is always the uppercase 2-letter ISO code, so downstream
+ * consumers (SQL filters, freight-route lookups, trade-region buckets)
+ * see the same shape they did before.
  */
 const isoAlpha2Country = z
   .string()
-  .regex(
-    /^[A-Z]{2}$/,
-    'Must be an ISO-3166-1 alpha-2 country code (uppercase, 2 letters — e.g. CO for Colombia, IT for Italy, NG for Nigeria). Full country names will fail.',
-  );
+  .min(1, 'Country is required.')
+  .transform((raw, ctx) => {
+    const normalized = normalizeCountryCode(raw);
+    if (!normalized) {
+      const examples = COUNTRY_NAME_EXAMPLES.map((e) => `${e.name} (${e.code})`).join(', ');
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `Could not resolve "${raw}" to an ISO-3166-1 alpha-2 country code. ` +
+          `Pass either the 2-letter code (case-insensitive) or the country name. ` +
+          `Examples: ${examples}.`,
+      });
+      return z.NEVER;
+    }
+    return normalized;
+  });
 
 /**
  * Build a Discover catalog URL with the given filters pre-applied.
