@@ -48,6 +48,7 @@ export * from './country-default-currencies';
 export * from './fx-rates';
 export * from './entity-news-events';
 export * from './match-queue';
+export * from './match-outcome-events';
 export * from './entity-contact-enrichments';
 export * from './supplier-approvals';
 export * from './entity-sanctions-screens';
