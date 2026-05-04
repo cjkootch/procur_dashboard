@@ -9,6 +9,7 @@ import {
   findCompetingSellers,
   findSuppliersForTender,
   getMonthlyImportFlow,
+  getMatchSignalPerformance,
   getTopImportersByPartner,
   getTopSourcesForReporter,
   findGradesForRefinery,
@@ -3528,6 +3529,64 @@ export function buildCatalogTools(): ToolRegistry {
               minConfidence: input.minConfidence,
               daysBack: input.daysBack,
             }),
+        ),
+    }),
+
+    analyze_match_signal_performance: defineTool({
+      name: 'analyze_match_signal_performance',
+      description:
+        'Trailing-90-day conversion rates for the match-queue scoring ' +
+        'engine, broken out by signal_kind (velocity_drop, ' +
+        'bankruptcy_filing, press_distress_signal, sec_filing_*, ' +
+        'leadership_change, etc.). Backed by the match_signal_performance ' +
+        'view (migration 0059) which aggregates match_queue rows over ' +
+        'their post-push outcomes.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • The user asks "which match signals are converting" / ' +
+        '"what\'s our hit rate on distress events" / "should we keep ' +
+        'surfacing leadership changes" — this is the empirical answer.\n' +
+        '  • Periodic operating-discipline reviews — does the matching ' +
+        'engine actually drive deals, or is it noise?\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The user asked about a specific entity — that\'s ' +
+        'analyze_supplier.\n' +
+        '  • There aren\'t enough closed_won outcomes yet (less than ' +
+        '~30 days of feedback data) — the rates are statistically ' +
+        'noisy. The view returns rows regardless; you should flag low ' +
+        'sample sizes when totalRow.total90d < 10.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • action_rate = "did the operator push it" (procur-side ' +
+        'filter quality). close_rate = "did it convert end-to-end" ' +
+        '(procur + vex combined). conversion_rate = close among ' +
+        'pushed (vex-side conversion only). Cite whichever metric the ' +
+        'user is actually asking about — "are we wasting time on these" ' +
+        'is action_rate; "do these become deals" is close_rate.\n' +
+        '  • Low conversion_rate with high action_rate means the ' +
+        'matching engine is selecting things the operator likes pushing ' +
+        'but vex can\'t close — signal selection issue.\n' +
+        '  • High close_rate but low total volume means the signal is ' +
+        'good but rare — keep but don\'t over-weight.',
+      kind: 'read',
+      schema: z.object({}),
+      handler: async (ctx) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'analyze_match_signal_performance',
+            args: {},
+            summarize: (out: { signalCount: number }) => ({
+              resultCount: out.signalCount,
+              resultSummary: { signalCount: out.signalCount },
+            }),
+          },
+          async () => {
+            const rows = await getMatchSignalPerformance();
+            return {
+              signalCount: rows.length,
+              windowDays: 90,
+              signals: rows,
+            };
+          },
         ),
     }),
 
