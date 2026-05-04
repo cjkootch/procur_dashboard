@@ -2391,13 +2391,18 @@ export function buildCatalogTools(): ToolRegistry {
         'missing the tool returns ALL missing fields in one error — do not ' +
         'retry one field at a time.\n\n' +
         'productCost is auto-pulled when omitted. The cost model depends on ' +
-        '`sourcingRegion`: USGC (or omitted) uses NYH spot — appropriate for ' +
-        'Houston-origin cargoes. Any other origin (med, mideast, india, ' +
-        'singapore, …) uses Brent + typical crack spread — appropriate for ' +
-        'cargoes lifted from those refineries, since NYH spot can overstate ' +
-        'cost by $15-25/bbl and produce false do_not_proceed verdicts. For ' +
-        'products without a Brent+crack mapping (lng, lpg, biodiesel) or a ' +
-        'spot feed (avgas), supply productCostPerUsg or productCostPerBbl ' +
+        '`sourcingRegion`:\n' +
+        '  • usgc → NYH spot MINUS the typical USGC-vs-NYH basis (~5-8¢/USG ' +
+        'depending on product; the EIA `nyh-*` series are literally NY Harbor ' +
+        'and USGC trades at a known discount). Always pass `usgc` for Houston ' +
+        '/ NOLA-origin cargoes — omitting biases cost high.\n' +
+        '  • omitted → NYH spot, no adjustment (use only when origin is ' +
+        'genuinely NY Harbor or unknown).\n' +
+        '  • any other origin (med, mideast, india, singapore, …) → Brent + ' +
+        'typical crack spread, since NYH spot can overstate cost by $15-25/bbl ' +
+        'for Med/Mideast cargoes.\n' +
+        'For products without a Brent+crack mapping (lng, lpg, biodiesel) or ' +
+        'a spot feed (avgas), supply productCostPerUsg or productCostPerBbl ' +
         'explicitly — otherwise the tool errors.\n\n' +
         'CRITICAL: if your sell price is below the auto-pulled cost the ' +
         'result will include a top-level `topLevelWarning` and the scorecard ' +
@@ -2487,8 +2492,8 @@ export function buildCatalogTools(): ToolRegistry {
           .optional()
           .describe(
             'Acquisition cost in USD/USG. Omit to auto-pull from the cost ' +
-              'model selected by sourcingRegion (NYH spot for usgc, Brent+crack ' +
-              'for any other origin).',
+              'model selected by sourcingRegion (NYH spot minus USGC basis ' +
+              'for usgc; NYH spot for omitted; Brent+crack for any other origin).',
           ),
         productCostPerBbl: z
           .number()
@@ -2511,11 +2516,14 @@ export function buildCatalogTools(): ToolRegistry {
           .describe(
             'Where the cargo is being lifted from. Drives the productCost ' +
               'fallback when productCostPer* is omitted: usgc → NYH spot ' +
-              'benchmark; any other region → Brent + typical crack spread (the ' +
-              'cost model used by evaluate_target_price). Omit only when the ' +
-              'cargo is genuinely USGC-origin or when you are providing an ' +
-              'explicit productCost. Defaulting to omitted for non-USGC sourcing ' +
-              'biases cost high and can flag viable deals as do_not_proceed.',
+              'minus typical USGC basis (~5-8¢/USG, since EIA nyh-* are ' +
+              'literally NY Harbor and USGC trades at a discount); omitted → ' +
+              'NYH spot unadjusted; any other region → Brent + typical crack ' +
+              'spread (the cost model used by evaluate_target_price). For ' +
+              'Houston/NOLA cargoes always pass `usgc` — omitting biases cost ' +
+              'high by 5-15¢/USG. Defaulting to omitted for any non-USGC ' +
+              'sourcing biases cost high and can flag viable deals as ' +
+              'do_not_proceed.',
           ),
         freightPerUsg: z
           .number()
