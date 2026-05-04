@@ -8348,3 +8348,244 @@ export async function getEntityCustomsContext(
     context,
   };
 }
+// ─── Cargo-trip aggregations (work item 4) ───────────────────────
+
+export type EntityCargoActivitySummary = {
+  entitySlug: string;
+  entityName: string;
+  windowDays: number;
+  /** Side this entity sits on: 'discharge' (receiver — refinery /
+   *  fuel depot) or 'load' (sender — producer terminal / marketing
+   *  arm). Determined by whether the entity's nearest port is in
+   *  cargo_trips.discharge_port_slug vs load_port_slug more often. */
+  primarySide: 'discharge' | 'load' | 'mixed' | 'unknown';
+  totals: {
+    tripCount: number;
+    totalVolumeBbl: number | null;
+    avgVolumeBbl: number | null;
+    avgConfidence: number | null;
+  };
+  topPorts: Array<{
+    portSlug: string;
+    /** 'discharge' or 'load' relative to THIS entity's port. */
+    side: 'discharge' | 'load';
+    tripCount: number;
+    totalVolumeBbl: number | null;
+  }>;
+  topGrades: Array<{
+    gradeSlug: string;
+    tripCount: number;
+    sharePct: number;
+  }>;
+  recentTrips: Array<{
+    mmsi: string;
+    loadPortSlug: string;
+    dischargePortSlug: string;
+    loadStartedAt: string;
+    dischargeStartedAt: string;
+    inferredGradeSlug: string | null;
+    inferredVolumeBbl: number | null;
+    confidence: number;
+  }>;
+  /** True when the entity has no nearby port OR no cargo_trips
+   *  rows in the window. Don't treat as "no activity"; treat as
+   *  "no observed activity in our AIS coverage." */
+  noData: boolean;
+};
+
+/**
+ * Per-entity cargo-trip activity summary. Resolves the entity's
+ * nearest port via known_entities.lat/lng (50 nm radius), then
+ * aggregates cargo_trips with that port on either side.
+ *
+ * Outputs:
+ *   - primarySide: refinery (mostly discharges) vs producer
+ *     marketing arm (mostly loads). 'mixed' when within 30%.
+ *   - totals: trip count + volume (sum / mean), avg confidence.
+ *   - topPorts: counterparty ports — for refineries this is the
+ *     load origins; for producers it's the discharge destinations.
+ *   - topGrades: % of trips per inferred_grade_slug (NULL grades
+ *     excluded from the share calculation).
+ *   - recentTrips: most recent 10 trips, full row.
+ *
+ * Brief: docs/data-graph-connections-brief.md §5 (work item 4).
+ */
+export async function analyzeEntityCargoActivity(args: {
+  entitySlug: string;
+  windowDays?: number;
+  recentLimit?: number;
+}): Promise<EntityCargoActivitySummary | null> {
+  const windowDays = args.windowDays ?? 90;
+  const recentLimit = Math.min(args.recentLimit ?? 10, 50);
+
+  const entityRow = await db.execute(sql`
+    SELECT slug, name, latitude::numeric AS lat, longitude::numeric AS lng
+    FROM known_entities
+    WHERE slug = ${args.entitySlug}
+    LIMIT 1;
+  `);
+  const entity = (entityRow.rows as Array<Record<string, unknown>>)[0];
+  if (!entity) return null;
+  const lat = entity.lat == null ? null : Number(entity.lat);
+  const lng = entity.lng == null ? null : Number(entity.lng);
+
+  const empty: EntityCargoActivitySummary = {
+    entitySlug: String(entity.slug),
+    entityName: String(entity.name),
+    windowDays,
+    primarySide: 'unknown',
+    totals: {
+      tripCount: 0,
+      totalVolumeBbl: null,
+      avgVolumeBbl: null,
+      avgConfidence: null,
+    },
+    topPorts: [],
+    topGrades: [],
+    recentTrips: [],
+    noData: true,
+  };
+
+  if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return empty;
+  }
+
+  // Find ports within 50 nm of the entity.
+  const portsRow = await db.execute(sql`
+    SELECT slug
+    FROM ports
+    WHERE SQRT(
+      POW((lat::numeric - ${lat}) * 60, 2) +
+      POW((lng::numeric - ${lng}) * 60 * COS(RADIANS(${lat})), 2)
+    ) <= 50;
+  `);
+  const portSlugs = (portsRow.rows as Array<{ slug: string }>).map((r) => r.slug);
+  if (portSlugs.length === 0) return empty;
+
+  // Pull all trips touching any nearby port within the window.
+  const tripsRow = await db.execute(sql`
+    SELECT
+      ct.mmsi,
+      ct.load_port_slug,
+      ct.load_started_at,
+      ct.discharge_port_slug,
+      ct.discharge_started_at,
+      ct.inferred_grade_slug,
+      ct.inferred_volume_bbl,
+      ct.confidence,
+      CASE
+        WHEN ct.discharge_port_slug = ANY(${portSlugs}) THEN 'discharge'
+        ELSE 'load'
+      END AS entity_side
+    FROM cargo_trips ct
+    WHERE (
+      ct.load_port_slug = ANY(${portSlugs})
+      OR ct.discharge_port_slug = ANY(${portSlugs})
+    )
+      AND ct.load_started_at >= NOW() - (${windowDays}::int * INTERVAL '1 day')
+    ORDER BY ct.load_started_at DESC;
+  `);
+  const trips = tripsRow.rows as Array<Record<string, unknown>>;
+  if (trips.length === 0) return empty;
+
+  let dischargeCount = 0;
+  let loadCount = 0;
+  let totalVol = 0;
+  let volSamples = 0;
+  let totalConf = 0;
+  const portCounts = new Map<string, { side: 'load' | 'discharge'; count: number; vol: number }>();
+  const gradeCounts = new Map<string, number>();
+
+  for (const t of trips) {
+    const side = String(t.entity_side) as 'load' | 'discharge';
+    if (side === 'discharge') dischargeCount += 1;
+    else loadCount += 1;
+    const vol = numericOrNull(t.inferred_volume_bbl as never);
+    if (vol != null) {
+      totalVol += vol;
+      volSamples += 1;
+    }
+    const conf = numericOrNull(t.confidence as never) ?? 0;
+    totalConf += conf;
+
+    // The "counterparty port" is the OTHER side from the entity.
+    const counterpartySlug =
+      side === 'discharge'
+        ? String(t.load_port_slug)
+        : String(t.discharge_port_slug);
+    const counterpartySide = side === 'discharge' ? 'load' : 'discharge';
+    const cur = portCounts.get(counterpartySlug);
+    if (cur) {
+      cur.count += 1;
+      if (vol != null) cur.vol += vol;
+    } else {
+      portCounts.set(counterpartySlug, {
+        side: counterpartySide as 'load' | 'discharge',
+        count: 1,
+        vol: vol ?? 0,
+      });
+    }
+    const grade = t.inferred_grade_slug == null ? null : String(t.inferred_grade_slug);
+    if (grade) gradeCounts.set(grade, (gradeCounts.get(grade) ?? 0) + 1);
+  }
+
+  const total = trips.length;
+  const dischargeRatio = dischargeCount / total;
+  const primarySide: EntityCargoActivitySummary['primarySide'] =
+    dischargeRatio >= 0.7
+      ? 'discharge'
+      : dischargeRatio <= 0.3
+        ? 'load'
+        : 'mixed';
+
+  const knownGradeTotal = [...gradeCounts.values()].reduce((a, b) => a + b, 0);
+  const topGrades = [...gradeCounts.entries()]
+    .map(([gradeSlug, tripCount]) => ({
+      gradeSlug,
+      tripCount,
+      sharePct:
+        knownGradeTotal > 0
+          ? Math.round((tripCount / knownGradeTotal) * 1000) / 10
+          : 0,
+    }))
+    .sort((a, b) => b.tripCount - a.tripCount)
+    .slice(0, 10);
+
+  const topPorts = [...portCounts.entries()]
+    .map(([portSlug, v]) => ({
+      portSlug,
+      side: v.side,
+      tripCount: v.count,
+      totalVolumeBbl: v.vol > 0 ? Math.round(v.vol * 100) / 100 : null,
+    }))
+    .sort((a, b) => b.tripCount - a.tripCount)
+    .slice(0, 10);
+
+  const recentTrips = trips.slice(0, recentLimit).map((t) => ({
+    mmsi: String(t.mmsi),
+    loadPortSlug: String(t.load_port_slug),
+    dischargePortSlug: String(t.discharge_port_slug),
+    loadStartedAt: String(t.load_started_at),
+    dischargeStartedAt: String(t.discharge_started_at),
+    inferredGradeSlug: t.inferred_grade_slug == null ? null : String(t.inferred_grade_slug),
+    inferredVolumeBbl: numericOrNull(t.inferred_volume_bbl as never),
+    confidence: Number(numericOrNull(t.confidence as never) ?? 0),
+  }));
+
+  return {
+    entitySlug: String(entity.slug),
+    entityName: String(entity.name),
+    windowDays,
+    primarySide,
+    totals: {
+      tripCount: total,
+      totalVolumeBbl: volSamples > 0 ? Math.round(totalVol * 100) / 100 : null,
+      avgVolumeBbl: volSamples > 0 ? Math.round((totalVol / volSamples) * 100) / 100 : null,
+      avgConfidence: total > 0 ? Math.round((totalConf / total) * 100) / 100 : null,
+    },
+    topPorts,
+    topGrades,
+    recentTrips,
+    noData: false,
+  };
+}

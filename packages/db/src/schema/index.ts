@@ -52,3 +52,4 @@ export * from './entity-contact-enrichments';
 export * from './supplier-approvals';
 export * from './entity-sanctions-screens';
 export * from './crude-assays';
+export * from './cargo-trips';
