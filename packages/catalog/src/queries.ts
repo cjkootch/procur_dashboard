@@ -30,6 +30,7 @@ import {
   entityNewsEvents,
   entitySanctionsScreens,
   knownEntities,
+  matchQueue,
   opportunities,
   pastPerformance,
   supplierAliases,
@@ -5221,8 +5222,12 @@ const ENTITY_PROFILE_BASE =
 export function buildEntityProfileUrl(
   options:
     | { kind: 'known_entity'; slug: string }
-    | { kind: 'supplier'; id: string },
+    | { kind: 'supplier'; id: string }
+    | { kind: 'crude_grade'; slug: string },
 ): string {
+  if (options.kind === 'crude_grade') {
+    return `${ENTITY_PROFILE_BASE}/crudes/${options.slug}`;
+  }
   const slugOrId = options.kind === 'known_entity' ? options.slug : options.id;
   return `${ENTITY_PROFILE_BASE}/entities/${slugOrId}`;
 }
@@ -9036,4 +9041,247 @@ export async function listTopKnownEntityTagsByPrefix(
     tag: String(r.tag),
     count: Number(r.count),
   }));
+}
+
+// ─── Macro-signal exposure walker ─────────────────────────────────
+
+/**
+ * Geo / chokepoint → ISO-2 country expansion. Used by
+ * `getMacroSignalExposure` when the signal is a passthrough
+ * disruption that affects supply from multiple countries (Strait of
+ * Hormuz routes for Saudi / Emirati / Iraqi / Iranian / Kuwaiti /
+ * Qatari / Omani / Bahraini exports). The match each free-text
+ * `source_entity_name` against this lookup before falling back to
+ * `source_entity_country`.
+ *
+ * Keys are case-insensitive substring matches on the signal name.
+ * Add as real chat traces surface new chokepoints.
+ */
+const CHOKEPOINT_COUNTRIES: Array<{ pattern: RegExp; countries: string[] }> = [
+  {
+    // Strait of Hormuz — exits the Persian Gulf. Captures
+    // Saudi / UAE / Qatar / Iran / Iraq / Kuwait / Oman / Bahrain.
+    pattern: /strait of hormuz|hormuz|persian gulf/i,
+    countries: ['SA', 'AE', 'QA', 'IR', 'IQ', 'KW', 'OM', 'BH'],
+  },
+  {
+    // Bab-el-Mandeb — Red Sea ↔ Gulf of Aden. Captures
+    // Saudi / Sudanese / Yemeni / Eritrean exports.
+    pattern: /bab[- ]el[- ]mandeb|red sea/i,
+    countries: ['SA', 'SD', 'YE', 'ER', 'DJ', 'EG'],
+  },
+  {
+    // Suez Canal — captures any cargo flowing from Med ↔ Red Sea.
+    // Treated as a passthrough; affected origins are Mideast +
+    // Russian Black Sea (which routes through Suez to reach Asia).
+    pattern: /suez canal|suez/i,
+    countries: ['SA', 'AE', 'QA', 'IR', 'IQ', 'KW', 'RU', 'EG'],
+  },
+  {
+    // Turkish Straits (Bosphorus) — Russian Black Sea exports
+    // out to the Med.
+    pattern: /bosphorus|turkish strait|dardanelles/i,
+    countries: ['RU', 'KZ', 'AZ', 'TR'],
+  },
+];
+
+export type MacroSignalExposure = {
+  /** match_queue.id of the source signal. */
+  signalId: string;
+  /** Which countries' supply is implicated by this signal. */
+  affectedCountries: string[];
+  /** Crude grades originating from those countries. */
+  affectedGrades: Array<{
+    slug: string;
+    name: string;
+    originCountry: string | null;
+    apiGravity: number | null;
+    sulfurPct: number | null;
+  }>;
+  /** Refineries whose slate runs at least one affected grade.
+   *  Sorted by `affectedGradeCount` DESC — refineries with the
+   *  broadest exposure first. */
+  exposedRefineries: Array<{
+    slug: string;
+    name: string;
+    country: string;
+    /** How many of the affected grades fit the refinery's slate. */
+    affectedGradeCount: number;
+    /** Top 3 grades the refinery would lose (by API gravity DESC). */
+    primaryGradeNames: string[];
+  }>;
+};
+
+/**
+ * Resolve which rolodex entities are exposed by a macro/geo signal.
+ *
+ * Strategy:
+ *   1. Determine the affected country set:
+ *      - chokepoint signals (Strait of Hormuz, Bab-el-Mandeb, Suez,
+ *        Bosphorus) expand to multiple countries via
+ *        CHOKEPOINT_COUNTRIES.
+ *      - direct-country signals (Iran, Tuapse RU, …) use
+ *        `match_queue.source_entity_country`.
+ *   2. Pull `crude_grades` whose `origin_country` ∈ affected set.
+ *   3. Pull refineries from `refinery_grade_compatibility` where
+ *      `slate_compatible = TRUE` and `grade_slug` ∈ affected grades.
+ *   4. Aggregate per refinery: count of affected grades, top 3
+ *      grade names by API gravity.
+ *
+ * Returns null when the signal isn't a macro row (has known_entity
+ * or external_supplier — caller should use the entity profile
+ * instead) or when no affected countries can be inferred.
+ */
+export async function getMacroSignalExposure(
+  signalId: string,
+): Promise<MacroSignalExposure | null> {
+  const [row] = await db
+    .select({
+      id: matchQueue.id,
+      sourceEntityName: matchQueue.sourceEntityName,
+      sourceEntityCountry: matchQueue.sourceEntityCountry,
+      knownEntityId: matchQueue.knownEntityId,
+      externalSupplierId: matchQueue.externalSupplierId,
+    })
+    .from(matchQueue)
+    .where(eq(matchQueue.id, signalId))
+    .limit(1);
+  if (!row) return null;
+  // Only macro rows — counterparty rows have their own entity profile.
+  if (row.knownEntityId != null || row.externalSupplierId != null) return null;
+
+  const affectedCountries = resolveAffectedCountries(
+    row.sourceEntityName,
+    row.sourceEntityCountry,
+  );
+  const exposure = await getExposureForCountries(affectedCountries);
+  return { signalId, ...exposure };
+}
+
+/**
+ * Free-text variant: takes a geo phrase ("Strait of Hormuz",
+ * "Iran sanctions") or an ISO-2 country code and returns the same
+ * grades + refineries shape as `getMacroSignalExposure` (without a
+ * signalId). Powers the `analyze_macro_signal_exposure` chat tool
+ * when the model is asked "what's exposed by Hormuz?" outside the
+ * context of a specific match-queue row.
+ *
+ * Resolution order:
+ *   1. Chokepoint pattern match against the phrase (case-insensitive)
+ *   2. Two-letter ISO country code (uppercased)
+ *   3. ISO-3 / country name fallback via `normalizeCountryCode`
+ *      (lazy import to keep this file tree-shakable for surfaces
+ *      that don't need country normalization).
+ */
+export async function getExposureForGeoPhrase(
+  phrase: string,
+): Promise<{
+  resolvedFrom: 'chokepoint' | 'iso2' | 'country-name' | 'unresolved';
+  matchedPattern: string | null;
+  affectedCountries: string[];
+  affectedGrades: MacroSignalExposure['affectedGrades'];
+  exposedRefineries: MacroSignalExposure['exposedRefineries'];
+}> {
+  const trimmed = phrase.trim();
+  // Try chokepoint first.
+  for (const cp of CHOKEPOINT_COUNTRIES) {
+    if (cp.pattern.test(trimmed)) {
+      const exposure = await getExposureForCountries(cp.countries);
+      return {
+        resolvedFrom: 'chokepoint',
+        matchedPattern: cp.pattern.source,
+        ...exposure,
+      };
+    }
+  }
+  // ISO-2 short-circuit.
+  if (/^[A-Za-z]{2}$/.test(trimmed)) {
+    const code = trimmed.toUpperCase();
+    const exposure = await getExposureForCountries([code]);
+    return { resolvedFrom: 'iso2', matchedPattern: null, ...exposure };
+  }
+  // Country-name normalization (e.g. "Russia", "Côte d'Ivoire").
+  const { normalizeCountryCode } = await import('./country-codes');
+  const normalized = normalizeCountryCode(trimmed);
+  if (normalized) {
+    const exposure = await getExposureForCountries([normalized]);
+    return { resolvedFrom: 'country-name', matchedPattern: null, ...exposure };
+  }
+  return {
+    resolvedFrom: 'unresolved',
+    matchedPattern: null,
+    affectedCountries: [],
+    affectedGrades: [],
+    exposedRefineries: [],
+  };
+}
+
+/** Inner walker: countries → affected grades → exposed refineries.
+ *  Shared by both signal-id and free-text entry points. */
+async function getExposureForCountries(countries: string[]): Promise<{
+  affectedCountries: string[];
+  affectedGrades: MacroSignalExposure['affectedGrades'];
+  exposedRefineries: MacroSignalExposure['exposedRefineries'];
+}> {
+  if (countries.length === 0) {
+    return { affectedCountries: [], affectedGrades: [], exposedRefineries: [] };
+  }
+  const gradesRow = await db.execute(sql`
+    SELECT slug, name, origin_country, api_gravity, sulfur_pct
+    FROM crude_grades
+    WHERE origin_country = ANY(${countries})
+    ORDER BY api_gravity DESC NULLS LAST;
+  `);
+  const affectedGrades = (gradesRow.rows as Array<Record<string, unknown>>).map((g) => ({
+    slug: String(g.slug),
+    name: String(g.name),
+    originCountry: g.origin_country == null ? null : String(g.origin_country),
+    apiGravity: g.api_gravity == null ? null : Number.parseFloat(String(g.api_gravity)),
+    sulfurPct: g.sulfur_pct == null ? null : Number.parseFloat(String(g.sulfur_pct)),
+  }));
+  if (affectedGrades.length === 0) {
+    return { affectedCountries: countries, affectedGrades: [], exposedRefineries: [] };
+  }
+  const affectedSlugs = affectedGrades.map((g) => g.slug);
+  const exposedRow = await db.execute(sql`
+    SELECT
+      refinery_slug,
+      refinery_name,
+      refinery_country,
+      COUNT(*)::int AS affected_count,
+      (
+        ARRAY_AGG(grade_name ORDER BY grade_api_gravity DESC NULLS LAST)
+      )[1:3] AS primary_grades
+    FROM refinery_grade_compatibility
+    WHERE slate_compatible = TRUE
+      AND grade_slug = ANY(${affectedSlugs})
+    GROUP BY refinery_slug, refinery_name, refinery_country
+    ORDER BY affected_count DESC, refinery_name ASC
+    LIMIT 25;
+  `);
+  const exposedRefineries = (exposedRow.rows as Array<Record<string, unknown>>).map(
+    (r) => ({
+      slug: String(r.refinery_slug),
+      name: String(r.refinery_name),
+      country: String(r.refinery_country),
+      affectedGradeCount: Number(r.affected_count),
+      primaryGradeNames: Array.isArray(r.primary_grades)
+        ? (r.primary_grades as string[])
+        : [],
+    }),
+  );
+  return { affectedCountries: countries, affectedGrades, exposedRefineries };
+}
+
+function resolveAffectedCountries(
+  sourceEntityName: string,
+  sourceEntityCountry: string | null,
+): string[] {
+  // Chokepoint match takes precedence — "Strait of Hormuz" entries
+  // typically have NULL country (they're passthroughs, not origins).
+  for (const cp of CHOKEPOINT_COUNTRIES) {
+    if (cp.pattern.test(sourceEntityName)) return cp.countries;
+  }
+  if (sourceEntityCountry) return [sourceEntityCountry];
+  return [];
 }
