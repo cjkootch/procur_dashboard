@@ -201,6 +201,12 @@ const USGC_VS_NYH_BASIS_USG: Record<ProductType, number | null> = {
   lng: null,
   lpg: null,
   biodiesel_b20: null,
+  // Crude doesn't price off NYH refined-product spot — the model
+  // anchors via Brent + crude differential (call get_crude_basis
+  // upstream and pass productCostPerBbl explicitly).
+  crude_light_sweet: null,
+  crude_medium_sour: null,
+  crude_heavy: null,
   rice: null,
   beans: null,
   pork: null,
@@ -235,6 +241,13 @@ const CRACK_SPREAD_MID_USD_BBL: Record<ProductType, number | null> = {
   lng: null,
   lpg: null,
   biodiesel_b20: null,
+  // Crude IS the Brent+crack input for refined products — there's
+  // no crack spread on crude itself. productCost for crude trades
+  // anchors on get_crude_basis (Brent + structural differential)
+  // and the calculator requires it to be supplied explicitly.
+  crude_light_sweet: null,
+  crude_medium_sour: null,
+  crude_heavy: null,
   rice: null,
   beans: null,
   pork: null,
@@ -613,6 +626,19 @@ function defaultDensityFor(product: ProductType): number {
       return 0.55;
     case 'biodiesel_b20':
       return 0.85;
+    // Crude bands — typical mid-band density for each API class.
+    // Light sweet (Es Sider, Brent, Bonny Light): 32-42° API → ~0.835
+    // Medium sour (Arab Light, Mars, Urals): 28-32° API → ~0.870
+    // Heavy (WCS, Maya, Cold Lake): < 22° API → ~0.920
+    // Per-deal density override remains the right move when the user
+    // has a specific assay; these are sane defaults for back-of-
+    // envelope crude P&Ls.
+    case 'crude_light_sweet':
+      return 0.835;
+    case 'crude_medium_sour':
+      return 0.87;
+    case 'crude_heavy':
+      return 0.92;
     default:
       return 0.85;
   }

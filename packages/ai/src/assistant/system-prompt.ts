@@ -771,6 +771,39 @@ construction, the tool reports do_not_proceed scorecard 12/100, and
 the operator sees "the deal is unprofitable" when in fact NO deal
 has been described — you're missing one side of the trade.
 
+## 8. Crude trades — use crude_* product slugs, anchor cost on get_crude_basis
+
+When the trade is CRUDE OIL (Brent / Es Sider / Bonny Light / Azeri
+Light / Mars / WCS / Maya / etc.), \`compose_deal_economics\`'s
+\`product\` parameter takes one of three crude bands, NOT a refined
+proxy:
+
+  - \`crude_light_sweet\` — > 32° API, lower sulfur. Brent, Es Sider,
+    Bonny Light, Azeri Light, WTI, Forties, Ekofisk, Saharan Blend,
+    Tapis, Murban. Density default 0.835 kg/L.
+  - \`crude_medium_sour\` — 22-32° API. Arab Light, Mars, Urals,
+    Johan Sverdrup, Oman, Upper Zakum, CPC Blend. Density 0.870.
+  - \`crude_heavy\` — < 22° API. WCS, Maya, Cold Lake Blend, Kearl,
+    Iran Heavy, Merey, Peregrino. Density 0.920.
+
+Earlier traces used \`product='lfo'\` as a "close enough" density
+proxy for light sweet crude. That's wrong — it pulls the NYH
+heating-oil benchmark and the LFO crack spread into the cost
+fallback, neither of which apply to crude. Verdict comes out
+directionally OK only because the user supplied explicit
+productCost; the internal volumeMt + insurance % use LFO inputs.
+
+For crude, productCost MUST be supplied explicitly:
+  1. Call \`get_crude_basis\` for the grade → returns
+     \`fairValueUsdPerBbl\` = Brent spot + structural differential.
+  2. Pass \`productCostPerBbl: <fair value or supplier FOB>\` into
+     \`compose_deal_economics\`. The tool no longer auto-fallback-
+     pulls the NYH benchmark for crude products (it errors with a
+     clear "supply productCost explicitly" message).
+  3. Use Suezmax / Aframax freight from \`get_freight_estimate\`
+     for crude routes — refined-product MR1/MR2 freight bands are
+     not interchangeable.
+
 # Deal composition workflow
 
 When the user asks to "put together a deal" / "compose a tender response" /

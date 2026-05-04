@@ -23,6 +23,15 @@ export const ProductType = {
   Lng: 'lng',
   Lpg: 'lpg',
   BiodieselB20: 'biodiesel_b20',
+  // Crude oil — added so compose_deal_economics can model crude
+  // trades end-to-end. Light/medium/heavy bands map to the
+  // crude-grade classification taxonomy in @procur/catalog
+  // (api > 32 = light, 22-32 = medium, < 22 = heavy). Sweet vs
+  // sour split lives at the cost-anchor side via get_crude_basis,
+  // not in the calculator's product dimension.
+  CrudeLightSweet: 'crude_light_sweet',
+  CrudeMediumSour: 'crude_medium_sour',
+  CrudeHeavy: 'crude_heavy',
   Rice: 'rice',
   Beans: 'beans',
   Pork: 'pork',

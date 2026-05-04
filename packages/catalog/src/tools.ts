@@ -3409,13 +3409,30 @@ export function buildCatalogTools(): ToolRegistry {
             'lng',
             'lpg',
             'biodiesel_b20',
+            // Crude bands — use these for actual crude trades. They
+            // skip the refined-product benchmark fallback (no NYH/
+            // Brent+crack spot for crude itself); productCost MUST be
+            // supplied explicitly via productCostPerBbl, sourced from
+            // get_crude_basis upstream.
+            'crude_light_sweet',
+            'crude_medium_sour',
+            'crude_heavy',
           ])
           .describe(
-            "Product code. Use 'kerosene' for kerosene specifically (NOT 'lfo' " +
-              "which is light fuel oil — different product). For crude grades " +
-              "(Azeri Light, Brent, etc.) use 'lfo' for light-sweet (~0.85 kg/L) " +
-              "or 'hfo' for heavier sour. The choice drives density default + " +
-              "benchmark lookup; cost-stack semantics are the same.",
+            "Product code. PICK CAREFULLY:\n" +
+              "  • Refined products: 'ulsd', 'gasoline_87/91', 'jet_a/a1', " +
+              "'kerosene', 'lfo' (light fuel oil / gasoil-0.5%), 'hfo' " +
+              "(residual), 'avgas', 'lng', 'lpg', 'biodiesel_b20'.\n" +
+              "  • CRUDE OIL trades: use 'crude_light_sweet' (Brent / Es " +
+              "Sider / Bonny Light / WTI / 32+° API), 'crude_medium_sour' " +
+              "(Arab Light / Mars / Urals / 22-32° API), or 'crude_heavy' " +
+              "(WCS / Maya / Cold Lake / <22° API). Densities ~0.835 / " +
+              "0.870 / 0.920 kg/L respectively. DO NOT use 'lfo' or 'hfo' " +
+              "as a crude proxy — that's the legacy fudge that pulled the " +
+              "wrong NYH heating-oil benchmark. For crude, ALWAYS supply " +
+              "productCostPerBbl explicitly (call get_crude_basis first).\n" +
+              "Choice drives density default + benchmark lookup; cost-stack " +
+              "semantics are the same.",
           ),
         volumeUsg: z
           .number()
