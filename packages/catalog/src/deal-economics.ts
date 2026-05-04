@@ -59,14 +59,19 @@ export type ComposeDealInput = {
    * Sourcing region for the cargo. Drives which cost model we use as
    * the productCost fallback when neither productCostPerUsg nor
    * productCostPerBbl is supplied:
-   *   - 'usgc' or omitted → NYH/USGC spot benchmark (NY-Harbor proxy
-   *     for Houston-origin cargoes; what `getBenchmarkPrice` returns).
-   *   - any other origin   → Brent + typical crack spread (matches the
+   *   - 'usgc' → NYH spot benchmark MINUS the typical USGC-vs-NYH
+   *     basis differential (~5-8¢/USG depending on product). The
+   *     EIA `nyh-*` series are literally NY Harbor; USGC trades at
+   *     a known discount, and not adjusting for it overstates the
+   *     productCost by 5-15¢/USG (false do_not_proceed verdicts in
+   *     prior chat traces). See USGC_VS_NYH_BASIS_USG.
+   *   - omitted → NYH spot, no adjustment (the conservative default
+   *     when origin is unknown or genuinely NY Harbor).
+   *   - any other origin → Brent + typical crack spread (matches the
    *     ex-refinery cost model in plausibility.ts; closer to reality
    *     for Med/Mideast/India/Singapore-origin cargoes where NYH spot
-   *     overstates cost by $15-25/bbl and produces false do_not_proceed
-   *     verdicts).
-   * Pass an explicit productCostPer* to override either model.
+   *     overstates cost by $15-25/bbl).
+   * Pass an explicit productCostPer* to override any of these models.
    */
   sourcingRegion?: FreightOriginRegion;
   /**
@@ -128,6 +133,54 @@ export type CompanyDealDefaults = {
   targetNetMarginPerUsg?: number | null;
   /** Falls into FuelDealInputs.monthlyFixedOverheadUsd. */
   monthlyFixedOverheadUsdDefault?: number | null;
+};
+
+/**
+ * Mid-point USGC-vs-NYH basis ($/USG, signed). Subtract this from
+ * the NYH spot when the cargo is being lifted from USGC, since the
+ * `nyh-diesel` / `nyh-gasoline` / `nyh-heating-oil` series are
+ * literally NY Harbor (per `ingest-eia-prices.ts` — Y35NY duoarea)
+ * and USGC trades at a known discount to NYH for refined product
+ * (Gulf Coast has surplus refining capacity that ships into NYH).
+ *
+ * Typical published EIA spot deltas (5y avg, mid-band):
+ *   - ULSD: USGC trades ~$0.05-$0.15/gal below NYH → -$0.08/USG
+ *   - RBOB gasoline: ~$0.03-$0.08/gal below → -$0.05/USG
+ *     (NYH carries a modest CAA RFG premium)
+ *   - Heating oil / kerosene: ~$0.05-$0.10 → -$0.06/USG
+ *
+ * `null` for products not on the NYH refined-product feed
+ * (jet, hfo, lng, lpg, biodiesel, food) — those either route through
+ * the Brent+crack path or require an explicit productCost.
+ *
+ * Refresh cadence: review quarterly against EIA's PADD3-vs-PADD1B
+ * spot diffs; widen if PADD3 storage tightness inverts the basis.
+ *
+ * The "5–15¢/USG overstatement" this fixes was tracked in the chat
+ * traces where USGC-origin diesel deals showed do_not_proceed
+ * verdicts because the auto-defaulted productCost (NYH) was 8-10¢
+ * higher than the actual USGC supplier FOB.
+ */
+const USGC_VS_NYH_BASIS_USG: Record<ProductType, number | null> = {
+  ulsd: -0.08,
+  gasoline_87: -0.05,
+  gasoline_91: -0.05,
+  kerosene: -0.06,
+  lfo: -0.06,
+  // No NYH benchmark for these — adjustment N/A.
+  jet_a: null,
+  jet_a1: null,
+  avgas: null,
+  hfo: null,
+  lng: null,
+  lpg: null,
+  biodiesel_b20: null,
+  rice: null,
+  beans: null,
+  pork: null,
+  chicken: null,
+  cooking_oil: null,
+  powdered_milk: null,
 };
 
 /**
@@ -262,14 +315,21 @@ export async function composeDealEconomics(
   if (productCostPerUsg == null) {
     const bm = await getBenchmarkPrice(db, input.product, asOf);
     if (bm) {
+      // The `nyh-*` series are literally NY Harbor; for USGC-origin
+      // cargoes we shift to the typical USGC basis to avoid a
+      // 5-15¢/USG cost overstatement. See USGC_VS_NYH_BASIS_USG.
+      const usgcAdj =
+        input.sourcingRegion === 'usgc' ? USGC_VS_NYH_BASIS_USG[input.product] : null;
+      const adjustedPerUsg = usgcAdj != null ? bm.pricePerUsg + usgcAdj : bm.pricePerUsg;
+      const adjustedPerBbl = adjustedPerUsg * USG_PER_BBL;
       benchmark = {
-        slug: bm.benchmark.slug,
+        slug: usgcAdj != null ? `${bm.benchmark.slug}+usgc-basis` : bm.benchmark.slug,
         asOf: bm.asOf,
-        pricePerUsg: bm.pricePerUsg,
-        pricePerBbl: bm.pricePerBbl,
+        pricePerUsg: adjustedPerUsg,
+        pricePerBbl: adjustedPerBbl,
         usedAsProductCost: true,
       };
-      productCostPerUsg = bm.pricePerUsg;
+      productCostPerUsg = adjustedPerUsg;
     } else {
       throw new Error(
         `No benchmark price available for product='${input.product}' on or before ${asOf}; ` +
