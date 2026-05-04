@@ -8589,3 +8589,348 @@ export async function analyzeEntityCargoActivity(args: {
     noData: false,
   };
 }
+
+// ─── Crude grade detail (UI + chat card) ──────────────────────────
+
+export type CrudeGradeDetailResult = {
+  kind: 'crude_grade_detail';
+  /** The curated reference row from crude_grades. */
+  grade: {
+    slug: string;
+    name: string;
+    originCountry: string | null;
+    region: string | null;
+    apiGravity: number | null;
+    sulfurPct: number | null;
+    tan: number | null;
+    characterization: string | null;
+    isMarker: boolean;
+    markerSlug: string | null;
+    differentialUsdPerBbl: number | null;
+    notes: string | null;
+  };
+  /** Producer-published assays for this grade — typically 1-4 (one
+   *  per source: ExxonMobil-unbranded, BP, Equinor, TotalEnergies).
+   *  Sorted by assay date DESC so the freshest vintage is first. */
+  assays: Array<{
+    source: string;
+    reference: string;
+    name: string;
+    sourceFile: string | null;
+    originLabel: string | null;
+    assayDate: string | null;
+    sampleDate: string | null;
+    densityKgL: number | null;
+    apiGravity: number | null;
+    bblPerMt: number | null;
+    sulphurWtPct: number | null;
+    pourPointC: number | null;
+    acidityMgKohG: number | null;
+    vanadiumMgKg: number | null;
+    nickelMgKg: number | null;
+    nitrogenMgKg: number | null;
+    rvpKpa: number | null;
+    viscosityCst20c: number | null;
+    viscosityCst50c: number | null;
+    mercaptanSulphurMgKg: number | null;
+    h2sMgKg: number | null;
+    waxAppearanceTempC: number | null;
+    /** TBP cut yields — light → heavy, ordered by cut_order. */
+    cuts: Array<{
+      cutLabel: string;
+      cutOrder: number;
+      startTempC: number | null;
+      endTempC: number | null;
+      yieldWtPct: number | null;
+      yieldVolPct: number | null;
+      cumulativeYieldWtPct: number | null;
+      densityKgL: number | null;
+      sulphurWtPct: number | null;
+    }>;
+  }>;
+  /** Refineries whose slate envelope accepts this grade. Sourced
+   *  from the refinery_grade_compatibility view, sorted by Nelson
+   *  complexity DESC. Empty when no slated refineries match. */
+  compatibleRefineries: Array<{
+    slug: string;
+    name: string;
+    country: string;
+    complexityIndex: number | null;
+    capacityBpd: number | null;
+    apiCompatible: boolean;
+    sulfurCompatible: boolean;
+    tanCompatible: boolean;
+  }>;
+};
+
+/**
+ * Aggregate detail for a single crude grade — drives both the
+ * `/crudes/[slug]` page and the in-chat `view_crude_grade_detail`
+ * card. Returns null when slug doesn't exist.
+ *
+ * One round-trip but three sequential queries (grade row, assays
+ * + cuts in a single SELECT, compatibility view). Acceptable for
+ * a detail-page workload; not hot-pathed.
+ */
+export async function getCrudeGradeDetail(
+  slug: string,
+): Promise<CrudeGradeDetailResult | null> {
+  const gradeRow = await db.execute(sql`
+    SELECT slug, name, origin_country, region, api_gravity, sulfur_pct,
+           tan, characterization, is_marker, marker_slug,
+           differential_usd_per_bbl, notes
+    FROM crude_grades
+    WHERE slug = ${slug}
+    LIMIT 1;
+  `);
+  const g = (gradeRow.rows as Array<Record<string, unknown>>)[0];
+  if (!g) return null;
+
+  // Assays + cuts in one go — left-join cuts onto assays so a grade
+  // with no assays still returns the (empty) assays array.
+  const assayRows = await db.execute(sql`
+    SELECT
+      ca.id,
+      ca.source,
+      ca.reference,
+      ca.name,
+      ca.source_file,
+      ca.origin_label,
+      ca.assay_date,
+      ca.sample_date,
+      ca.density_kg_l,
+      ca.api_gravity,
+      ca.bbl_per_mt,
+      ca.sulphur_wt_pct,
+      ca.pour_point_c,
+      ca.acidity_mg_koh_g,
+      ca.vanadium_mg_kg,
+      ca.nickel_mg_kg,
+      ca.nitrogen_mg_kg,
+      ca.rvp_kpa,
+      ca.viscosity_cst_20c,
+      ca.viscosity_cst_50c,
+      ca.mercaptan_sulphur_mg_kg,
+      ca.h2s_mg_kg,
+      ca.wax_appearance_temp_c
+    FROM crude_assays ca
+    WHERE ca.grade_slug = ${slug}
+    ORDER BY ca.assay_date DESC NULLS LAST, ca.updated_at DESC;
+  `);
+  const assayList = assayRows.rows as Array<Record<string, unknown>>;
+
+  // Pull all cuts for these assays in one shot.
+  const assayIds = assayList.map((r) => String(r.id));
+  const cutsByAssay = new Map<string, Array<Record<string, unknown>>>();
+  if (assayIds.length > 0) {
+    const cutRows = await db.execute(sql`
+      SELECT
+        assay_id, cut_label, cut_order, start_temp_c, end_temp_c,
+        yield_wt_pct, yield_vol_pct, cumulative_yield_wt_pct,
+        density_kg_l, sulphur_wt_pct
+      FROM crude_assay_cuts
+      WHERE assay_id = ANY(${assayIds}::uuid[])
+      ORDER BY assay_id, cut_order ASC;
+    `);
+    for (const c of cutRows.rows as Array<Record<string, unknown>>) {
+      const aid = String(c.assay_id);
+      const list = cutsByAssay.get(aid) ?? [];
+      list.push(c);
+      cutsByAssay.set(aid, list);
+    }
+  }
+
+  const compatRows = await db.execute(sql`
+    SELECT
+      refinery_slug, refinery_name, refinery_country,
+      slate_complexity_index, slate_capacity_bpd,
+      api_compatible, sulfur_compatible, tan_compatible
+    FROM refinery_grade_compatibility
+    WHERE grade_slug = ${slug}
+      AND slate_compatible = TRUE
+    ORDER BY slate_complexity_index DESC NULLS LAST,
+             slate_capacity_bpd DESC NULLS LAST
+    LIMIT 50;
+  `);
+
+  return {
+    kind: 'crude_grade_detail',
+    grade: {
+      slug: String(g.slug),
+      name: String(g.name),
+      originCountry: g.origin_country == null ? null : String(g.origin_country),
+      region: g.region == null ? null : String(g.region),
+      apiGravity: numericOrNull(g.api_gravity as never),
+      sulfurPct: numericOrNull(g.sulfur_pct as never),
+      tan: numericOrNull(g.tan as never),
+      characterization: g.characterization == null ? null : String(g.characterization),
+      isMarker: g.is_marker === true,
+      markerSlug: g.marker_slug == null ? null : String(g.marker_slug),
+      differentialUsdPerBbl: numericOrNull(g.differential_usd_per_bbl as never),
+      notes: g.notes == null ? null : String(g.notes),
+    },
+    assays: assayList.map((a) => ({
+      source: String(a.source),
+      reference: String(a.reference),
+      name: String(a.name),
+      sourceFile: a.source_file == null ? null : String(a.source_file),
+      originLabel: a.origin_label == null ? null : String(a.origin_label),
+      assayDate: a.assay_date == null ? null : String(a.assay_date),
+      sampleDate: a.sample_date == null ? null : String(a.sample_date),
+      densityKgL: numericOrNull(a.density_kg_l as never),
+      apiGravity: numericOrNull(a.api_gravity as never),
+      bblPerMt: numericOrNull(a.bbl_per_mt as never),
+      sulphurWtPct: numericOrNull(a.sulphur_wt_pct as never),
+      pourPointC: numericOrNull(a.pour_point_c as never),
+      acidityMgKohG: numericOrNull(a.acidity_mg_koh_g as never),
+      vanadiumMgKg: numericOrNull(a.vanadium_mg_kg as never),
+      nickelMgKg: numericOrNull(a.nickel_mg_kg as never),
+      nitrogenMgKg: numericOrNull(a.nitrogen_mg_kg as never),
+      rvpKpa: numericOrNull(a.rvp_kpa as never),
+      viscosityCst20c: numericOrNull(a.viscosity_cst_20c as never),
+      viscosityCst50c: numericOrNull(a.viscosity_cst_50c as never),
+      mercaptanSulphurMgKg: numericOrNull(a.mercaptan_sulphur_mg_kg as never),
+      h2sMgKg: numericOrNull(a.h2s_mg_kg as never),
+      waxAppearanceTempC: numericOrNull(a.wax_appearance_temp_c as never),
+      cuts: (cutsByAssay.get(String(a.id)) ?? []).map((c) => ({
+        cutLabel: String(c.cut_label),
+        cutOrder: Number(c.cut_order),
+        startTempC: numericOrNull(c.start_temp_c as never),
+        endTempC: numericOrNull(c.end_temp_c as never),
+        yieldWtPct: numericOrNull(c.yield_wt_pct as never),
+        yieldVolPct: numericOrNull(c.yield_vol_pct as never),
+        cumulativeYieldWtPct: numericOrNull(c.cumulative_yield_wt_pct as never),
+        densityKgL: numericOrNull(c.density_kg_l as never),
+        sulphurWtPct: numericOrNull(c.sulphur_wt_pct as never),
+      })),
+    })),
+    compatibleRefineries: (compatRows.rows as Array<Record<string, unknown>>).map((r) => ({
+      slug: String(r.refinery_slug),
+      name: String(r.refinery_name),
+      country: String(r.refinery_country),
+      complexityIndex: numericOrNull(r.slate_complexity_index as never),
+      capacityBpd: numericOrNull(r.slate_capacity_bpd as never),
+      apiCompatible: r.api_compatible === true,
+      sulfurCompatible: r.sulfur_compatible === true,
+      tanCompatible: r.tan_compatible === true,
+    })),
+  };
+}
+
+// ─── Crude grade index (UI catalog page) ─────────────────────────
+
+export type CrudeGradeIndexRow = {
+  slug: string;
+  name: string;
+  originCountry: string | null;
+  region: string | null;
+  apiGravity: number | null;
+  sulfurPct: number | null;
+  tan: number | null;
+  characterization: string | null;
+  isMarker: boolean;
+  /** Marker this grade prices against (NULL on markers themselves). */
+  markerSlug: string | null;
+  /** $/bbl premium (+) or discount (-) vs marker. NULL on markers. */
+  differentialUsdPerBbl: number | null;
+  /** How many producer assays are linked to this grade. 0 means
+   *  curated reference data only — chart/cut data not available
+   *  on the detail page yet. */
+  assayCount: number;
+};
+
+export type CrudeGradeIndexFilters = {
+  /** Free-text substring match against `name` (ILIKE). */
+  search?: string;
+  region?: string;
+  originCountry?: string;
+  /** When true, return only sweet crudes (sulfur < 0.5% or NULL). */
+  sweetOnly?: boolean;
+  /** When true, return only light crudes (api >= 35 or NULL). */
+  lightOnly?: boolean;
+  /** When 'marker', only marker grades; 'non-marker', only non-markers. */
+  markerFilter?: 'marker' | 'non-marker';
+};
+
+/**
+ * Index-page query — every grade with the headline stats plus
+ * assay-availability flag + marker pricing context. Single SQL pass
+ * with a LEFT JOIN onto `crude_assays` for the count.
+ *
+ * Sorted: markers first, then by region, then by name. Stable order
+ * across pageloads so the URL-driven filter UI feels deterministic.
+ */
+export async function listCrudeGradesForIndex(
+  filters?: CrudeGradeIndexFilters,
+): Promise<CrudeGradeIndexRow[]> {
+  const result = await db.execute(sql`
+    SELECT
+      cg.slug, cg.name, cg.origin_country, cg.region,
+      cg.api_gravity, cg.sulfur_pct, cg.tan, cg.characterization,
+      cg.is_marker, cg.marker_slug, cg.differential_usd_per_bbl,
+      COALESCE(a.assay_count, 0)::int AS assay_count
+    FROM crude_grades cg
+    LEFT JOIN (
+      SELECT grade_slug, COUNT(*)::int AS assay_count
+      FROM crude_assays
+      WHERE grade_slug IS NOT NULL
+      GROUP BY grade_slug
+    ) a ON a.grade_slug = cg.slug
+    WHERE 1=1
+      ${
+        filters?.search && filters.search.trim().length > 0
+          ? sql`AND cg.name ILIKE ${`%${filters.search.trim()}%`}`
+          : sql``
+      }
+      ${filters?.region ? sql`AND cg.region = ${filters.region}` : sql``}
+      ${
+        filters?.originCountry
+          ? sql`AND cg.origin_country = ${filters.originCountry}`
+          : sql``
+      }
+      ${
+        filters?.sweetOnly
+          ? sql`AND (cg.sulfur_pct IS NULL OR cg.sulfur_pct < 0.5)`
+          : sql``
+      }
+      ${
+        filters?.lightOnly
+          ? sql`AND (cg.api_gravity IS NULL OR cg.api_gravity >= 35)`
+          : sql``
+      }
+      ${
+        filters?.markerFilter === 'marker'
+          ? sql`AND cg.is_marker = TRUE`
+          : filters?.markerFilter === 'non-marker'
+            ? sql`AND cg.is_marker = FALSE`
+            : sql``
+      }
+    ORDER BY cg.is_marker DESC, cg.region, cg.name;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    slug: String(r.slug),
+    name: String(r.name),
+    originCountry: r.origin_country == null ? null : String(r.origin_country),
+    region: r.region == null ? null : String(r.region),
+    apiGravity: numericOrNull(r.api_gravity as never),
+    sulfurPct: numericOrNull(r.sulfur_pct as never),
+    tan: numericOrNull(r.tan as never),
+    characterization: r.characterization == null ? null : String(r.characterization),
+    isMarker: r.is_marker === true,
+    markerSlug: r.marker_slug == null ? null : String(r.marker_slug),
+    differentialUsdPerBbl: numericOrNull(r.differential_usd_per_bbl as never),
+    assayCount: Number(r.assay_count ?? 0),
+  }));
+}
+
+/** Distinct regions present in `crude_grades` — drives the filter
+ *  dropdown without hard-coding the taxonomy. */
+export async function listCrudeGradeRegions(): Promise<string[]> {
+  const result = await db.execute(sql`
+    SELECT DISTINCT region
+    FROM crude_grades
+    WHERE region IS NOT NULL
+    ORDER BY region;
+  `);
+  return (result.rows as Array<{ region: string }>).map((r) => r.region);
+}

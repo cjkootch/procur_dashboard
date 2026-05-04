@@ -20,6 +20,7 @@ import {
   walkOwnershipChainUp,
   walkSubsidiaries,
   lookupSanctionsScreens,
+  getCrudeGradeDetail,
   listCrudeGrades,
   lookupCrudeAssay,
   lookupRefineriesByGrade,
@@ -2133,6 +2134,77 @@ export function buildCatalogTools(): ToolRegistry {
               sulphurMaxPct: input.sulphurMaxPct,
               limit: input.limit,
             }),
+        ),
+    }),
+
+    view_crude_grade_detail: defineTool({
+      name: 'view_crude_grade_detail',
+      description:
+        'Render a rich VISUAL detail card for a single crude grade — ' +
+        'whole-crude properties, TBP-cut yield bar chart, side-by-side ' +
+        'producer assay comparison (BP / Equinor / ExxonMobil / ' +
+        'TotalEnergies vintages), and the refineries whose slate ' +
+        'envelope accepts the grade. The chat surface renders the ' +
+        'response as an inline card; the same payload powers the ' +
+        '/crudes/[slug] page in the app.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • The user wants to SEE a grade ("show me Brent", "pull up ' +
+        'Es Sider") — text-only summaries undersell the cut yield + ' +
+        'producer comparison.\n' +
+        '  • Comparing two grades — call once per grade, the cards ' +
+        'render side by side in chat.\n' +
+        '  • Closing out a "which crudes meet my spec" thread by ' +
+        'showing the chosen grade in detail.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • Filtered list / search ("crudes under 0.5% sulphur") — ' +
+        'use lookup_crude_assay for the multi-row table.\n' +
+        '  • Slate-fit lookup ("which refineries can run X") — use ' +
+        'find_refineries_for_grade. (This tool returns compatible ' +
+        'refineries as a small list inline; for the full ranked list, ' +
+        'use the dedicated tool.)\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • The text portion of your reply should LEAD with the ' +
+        'punchline (API + sulphur + commercial implication) — the ' +
+        'visual card carries the rest. Don\'t restate every number ' +
+        'the card already shows.\n' +
+        '  • When `assays.length > 1`, mention the producer span ("4 ' +
+        'producer vintages, latest from Equinor 2026-02") so the ' +
+        'reader knows the comparison is in the card.\n' +
+        '  • If `compatibleRefineries.length === 0`, that\'s either ' +
+        '"no slated refinery in our rolodex fits" OR "we haven\'t ' +
+        'curated slate envelopes for the relevant refineries yet" — ' +
+        'flag the limitation rather than implying nothing fits.',
+      kind: 'read',
+      schema: z.object({
+        gradeSlug: z
+          .string()
+          .min(1)
+          .describe(
+            'crude_grades.slug. Use list_crude_grades to discover the ' +
+              'right slug if the user references the grade by name.',
+          ),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'view_crude_grade_detail',
+            args: input,
+            summarize: (out: { kind: string; grade?: { slug: string } } | null) => ({
+              resultCount: out ? 1 : 0,
+              resultSummary: { gradeSlug: input.gradeSlug, found: out != null },
+            }),
+          },
+          async () => {
+            const detail = await getCrudeGradeDetail(input.gradeSlug);
+            if (!detail) {
+              throw new Error(
+                `Crude grade "${input.gradeSlug}" not found. Use ` +
+                  `list_crude_grades to discover available slugs.`,
+              );
+            }
+            return detail;
+          },
         ),
     }),
 

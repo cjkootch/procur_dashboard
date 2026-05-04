@@ -32,6 +32,7 @@ export type NavIconName =
   | 'map'             // Strategy
   | 'shield-check'    // Admin
   | 'arrow-down-tray' // Import
+  | 'droplet'         // Crude grades
   | 'sparkles';       // Brief, daily driver
 
 const PATHS: Record<NavIconName, string> = {
@@ -60,6 +61,7 @@ const PATHS: Record<NavIconName, string> = {
   map:            'M9 6l-6 3v12l6-3 6 3 6-3V6l-6 3-6-3zM9 6v12M15 9v12',
   'shield-check': 'M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4zM9 12l2 2 4-4',
   'arrow-down-tray': 'M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4',
+  droplet:        'M12 3l5.5 8a6.5 6.5 0 11-11 0L12 3z',
   sparkles:       'M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5z',
 };
 
