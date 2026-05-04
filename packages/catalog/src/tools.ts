@@ -14,6 +14,7 @@ import {
   lookupKnownEntities,
   lookupSanctionsScreens,
   listCrudeGrades,
+  lookupCrudeAssay,
   lookupRefineriesByGrade,
   getCommodityPriceContext,
   getCommoditySpread,
@@ -1669,6 +1670,126 @@ export function buildCatalogTools(): ToolRegistry {
         ),
     }),
 
+    lookup_crude_assay: defineTool({
+      name: 'lookup_crude_assay',
+      description:
+        'Look up producer-published crude oil assay data (API gravity, ' +
+        'sulphur %, density, pour point, TAN, vanadium/nickel) from the ' +
+        '~180 assay reports we ingest from BP, Equinor, ExxonMobil, and ' +
+        'TotalEnergies. Use whenever the user asks about a specific named ' +
+        'crude\'s quality / specs, OR when they ask "which crudes meet my ' +
+        'spec" (e.g. < 0.5% sulphur, > 35° API). Multiple producers often ' +
+        'publish the same grade — results are sorted newest-first so the ' +
+        'reader sees the freshest vintage at the top.\n\n' +
+        'Linked-grade context: every assay that matched a curated ' +
+        '`crude_grades` row carries that grade\'s region + ' +
+        '`differentialUsdPerBbl` vs marker. Useful for "what\'s Brent + ' +
+        'X for Es Sider" questions where the assay confirms quality and ' +
+        'the differential answers price.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • "What\'s the API of Bonny Light?" / "what\'s the sulphur on ' +
+        'Forties?" — name lookup.\n' +
+        '  • "Show me crudes under 0.5% sulphur and over 35° API" — ' +
+        'spec-driven filter.\n' +
+        '  • "Compare Brent and WTI" — call twice, present side by side.\n' +
+        '  • Before composing a deal where the user named a specific crude ' +
+        'and you need its density to pass to compose_deal_economics. ' +
+        '(Note: compose_deal_economics also accepts `cargoCrudeName` and ' +
+        'auto-fills density itself, so you don\'t have to pre-call this ' +
+        'tool just for density.)\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The user asked about refined-product specs (gasoline, ULSD ' +
+        'CFPP, etc.) — assays are CRUDE oil only; refined product specs ' +
+        'live in commodity_prices and the calculator\'s product table.\n' +
+        '  • The user only needs marker pricing (Brent/WTI/Dubai spot) — ' +
+        'use get_commodity_ticker / get_commodity_spread, faster path.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Multiple producers often publish the same grade — surface the ' +
+        'newest-vintage values as "the spec" but mention that older ' +
+        'producer vintages exist if the user is verifying.\n' +
+        '  • API + sulphur are the headline qualifiers for refinery ' +
+        'compatibility; pour point + TAN drive logistics + corrosion. ' +
+        'Lead with API + S, follow with the others when relevant.\n' +
+        '  • When `grade.differentialUsdPerBbl` is non-null, the user can ' +
+        'price the cargo as marker + differential. Surface that with the ' +
+        'marker name (e.g. "Brent + $1.50/bbl").',
+      kind: 'read',
+      schema: z.object({
+        name: z
+          .string()
+          .optional()
+          .describe(
+            'Crude name to search for (case-insensitive substring match ' +
+              'against assay name AND linked grade name). Examples: ' +
+              '"Brent", "Bonny Light", "Ekofisk", "Forties". Pass the ' +
+              'shortest unambiguous form — "Brent" matches BP\'s + ' +
+              'Equinor\'s + Total\'s + ExxonMobil\'s versions.',
+          ),
+        originCountry: isoAlpha2Country
+          .optional()
+          .describe(
+            'ISO-2 country of production. e.g. NG for Nigerian crudes. ' +
+              'Country names like "Nigeria" are auto-normalized.',
+          ),
+        gradeSlug: z
+          .string()
+          .optional()
+          .describe(
+            'Filter by linked crude_grades.slug for an exact-grade view. ' +
+              'Use list_crude_grades to discover slugs.',
+          ),
+        apiMin: z
+          .number()
+          .optional()
+          .describe('Minimum API gravity (inclusive). Excludes heavier crudes.'),
+        apiMax: z
+          .number()
+          .optional()
+          .describe('Maximum API gravity (inclusive). Excludes lighter crudes.'),
+        sulphurMaxPct: z
+          .number()
+          .optional()
+          .describe(
+            'Maximum sulphur (% wt). Excludes sourer crudes. e.g. 0.5 for ' +
+              '"sweet crudes only", 0.1 for "ultra-sweet only".',
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .describe('Default 12. Cap 50.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_crude_assay',
+            args: input,
+            summarize: (out: { totalMatches: number; results: unknown[] }) => ({
+              resultCount: out.results.length,
+              resultSummary: {
+                totalMatches: out.totalMatches,
+                name: input.name,
+                originCountry: input.originCountry,
+                gradeSlug: input.gradeSlug,
+              },
+            }),
+          },
+          async () =>
+            lookupCrudeAssay({
+              name: input.name,
+              originCountry: input.originCountry,
+              gradeSlug: input.gradeSlug,
+              apiMin: input.apiMin,
+              apiMax: input.apiMax,
+              sulphurMaxPct: input.sulphurMaxPct,
+              limit: input.limit,
+            }),
+        ),
+    }),
+
     lookup_refineries_compatible_with_grade: defineTool({
       name: 'lookup_refineries_compatible_with_grade',
       description:
@@ -2651,6 +2772,20 @@ export function buildCatalogTools(): ToolRegistry {
               'because it produces a guaranteed-loss "deal" by construction. ' +
               'Only set true when the user explicitly wants the freight/' +
               'insurance drag on a zero-margin hypothetical.',
+          ),
+        cargoCrudeName: z
+          .string()
+          .optional()
+          .describe(
+            'Named crude grade (e.g. "Brent", "Bonny Light", "Ekofisk") to ' +
+              'auto-fill density from the most recent producer-published ' +
+              'assay. Use whenever the user names a specific crude AND ' +
+              'passes volumeMt without a densityKgL — the assay value is ' +
+              'more accurate than the per-product default (especially for ' +
+              'light condensates ~0.74 vs heavy crudes ~0.92+). When ' +
+              'densityKgL is also passed, the explicit value wins. The ' +
+              'response includes `densitySource` showing which producer + ' +
+              'reference supplied the density.',
           ),
       }),
       handler: async (ctx, input) =>

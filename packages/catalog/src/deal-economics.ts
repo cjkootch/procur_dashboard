@@ -11,7 +11,7 @@ import {
 } from '@procur/pricing';
 
 import type { FreightOriginRegion } from './freight-routes';
-import { getCommodityPriceContext } from './queries';
+import { getCommodityPriceContext, getDensityForCrudeName } from './queries';
 
 /**
  * LLM-friendly input shape for `compose_deal_economics`. A small subset of
@@ -89,6 +89,22 @@ export type ComposeDealInput = {
    * not auto-defaults.
    */
   allowWashSale?: boolean;
+  /**
+   * Named crude (e.g. "Brent", "Bonny Light", "Ekofisk") for which to
+   * auto-fill `densityKgL` from the most recent producer-published
+   * assay. Used when the user passes `volumeMt` for a crude cargo and
+   * doesn't know the density off-hand — pulling from the assay table
+   * is more accurate than the per-product hard-coded default
+   * (~0.85 kg/L generic), especially for light condensates (~0.74)
+   * and heavy crudes (~0.92+).
+   *
+   * `densityKgL` always wins when both are supplied. The lookup is
+   * substring-match against assay name AND linked crude_grades.name,
+   * so "brent", "Brent Blend", and "BRENT" all hit the same row.
+   * Falls through silently to the per-product default when no
+   * matching assay exists.
+   */
+  cargoCrudeName?: string;
 };
 
 export type ComposeDealResult = {
@@ -114,6 +130,16 @@ export type ComposeDealResult = {
    * plan." Null when the deal economics are coherent.
    */
   topLevelWarning: string | null;
+  /** When `cargoCrudeName` resolved to a producer assay, the
+   *  density used + its provenance. Null when the per-product
+   *  default was used. Useful for chat surfaces that want to show
+   *  "density 0.832 kg/L (Equinor EKOFISK 2015 06)". */
+  densitySource: {
+    densityKgL: number;
+    source: string;
+    reference: string;
+    assayName: string;
+  } | null;
   /** Tells the client renderer this is a deal-economics output. */
   kind: 'deal_economics';
 };
@@ -250,7 +276,21 @@ export async function composeDealEconomics(
       undefined,
   };
   input = merged;
-  const density = input.densityKgL ?? defaultDensityFor(input.product);
+
+  // Density resolution: explicit input wins; otherwise look up the
+  // most recent producer assay matching `cargoCrudeName`; otherwise
+  // fall through to the per-product default. The lookup is a single
+  // SQL query — no-op when cargoCrudeName is unset.
+  let densitySource: ComposeDealResult['densitySource'] = null;
+  let density = input.densityKgL;
+  if (density == null && input.cargoCrudeName) {
+    const hit = await getDensityForCrudeName(input.cargoCrudeName);
+    if (hit) {
+      density = hit.densityKgL;
+      densitySource = hit;
+    }
+  }
+  if (density == null) density = defaultDensityFor(input.product);
 
   // Single upfront validation pass — gather every missing-required
   // problem and surface them in one error rather than failing one
@@ -441,7 +481,7 @@ export async function composeDealEconomics(
       `or get a lower supplier cost before treating this line as viable.`;
   }
 
-  return { inputs, results, benchmark, topLevelWarning, kind: 'deal_economics' };
+  return { inputs, results, benchmark, topLevelWarning, densitySource, kind: 'deal_economics' };
 }
 
 function resolveVolumeUsg(input: ComposeDealInput, densityKgL: number): number {

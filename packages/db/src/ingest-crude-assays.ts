@@ -33,6 +33,7 @@ import { parseHaverlyAssay } from './lib/assay-parsers/haverly';
 import { parseBpAssay } from './lib/assay-parsers/bp';
 import { parseTotalEnergiesAssay } from './lib/assay-parsers/totalenergies';
 import type { ParsedAssay } from './lib/assay-parsers/types';
+import { matchCrudeGrade } from './lib/match-crude-grade';
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -199,7 +200,18 @@ export async function ingestCrudeAssays(opts: {
   const sqlClient = neon(dbUrl);
   const db = drizzle(sqlClient, { schema });
 
+  // Pre-load the curated crude_grades index so the grade-linkage
+  // matcher can resolve assay name → slug at write time. Cheap (~25
+  // rows today) and avoids per-assay round trips.
+  const grades = await db
+    .select({
+      slug: schema.crudeGrades.slug,
+      name: schema.crudeGrades.name,
+    })
+    .from(schema.crudeGrades);
+
   for (const { source, assay } of allParsed) {
+    const gradeSlug = matchCrudeGrade(assay.name, grades);
     const inserted = await db
       .insert(schema.crudeAssays)
       .values({
@@ -207,7 +219,7 @@ export async function ingestCrudeAssays(opts: {
         reference: assay.reference,
         sourceFile: assay.sourceFile,
         name: assay.name,
-        gradeSlug: null,
+        gradeSlug,
         originCountry: assay.originCountry ?? null,
         originLabel: assay.originLabel ?? null,
         sampleDate: assay.sampleDate ?? null,
@@ -237,6 +249,7 @@ export async function ingestCrudeAssays(opts: {
         set: {
           sourceFile: sql`excluded.source_file`,
           name: sql`excluded.name`,
+          gradeSlug: sql`excluded.grade_slug`,
           originCountry: sql`excluded.origin_country`,
           originLabel: sql`excluded.origin_label`,
           sampleDate: sql`excluded.sample_date`,
