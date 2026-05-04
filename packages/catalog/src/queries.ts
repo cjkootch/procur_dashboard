@@ -5196,16 +5196,35 @@ function dateOrNull(v: unknown): string | null {
 }
 
 /**
+ * Canonical host for entity profile pages — the authenticated main
+ * app. Entity profiles only live there; Discover doesn't have an
+ * `/entities/[slug]` route, so links built from the Discover widget
+ * MUST be absolute URLs pointing at the main app or the user gets
+ * a 404 on `discover.procur.app/entities/...` (real chat trace,
+ * 2026-Q2).
+ *
+ * Override via `NEXT_PUBLIC_APP_URL` for staging / local-dev.
+ */
+const ENTITY_PROFILE_BASE =
+  process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.procur.app';
+
+/**
  * Build the canonical profile URL for an entity. Uses slug for
  * known_entities (stable, human-readable) and UUID for external_suppliers
  * (no slug; UUID is the canonical id).
+ *
+ * Returns an ABSOLUTE URL anchored on the main app's host so links
+ * surfaced through chat work regardless of whether the chat lives
+ * on app.procur.app or discover.procur.app — Discover doesn't render
+ * entity pages, only the main app does.
  */
 export function buildEntityProfileUrl(
   options:
     | { kind: 'known_entity'; slug: string }
     | { kind: 'supplier'; id: string },
 ): string {
-  return `/entities/${options.kind === 'known_entity' ? options.slug : options.id}`;
+  const slugOrId = options.kind === 'known_entity' ? options.slug : options.id;
+  return `${ENTITY_PROFILE_BASE}/entities/${slugOrId}`;
 }
 
 // ─── Drill-down queries (for the supplier profile + buyer pages) ──
