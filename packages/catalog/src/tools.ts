@@ -14,6 +14,8 @@ import {
   findGradesForRefinery,
   findRefineriesForGrade,
   lookupKnownEntities,
+  walkOwnershipChainUp,
+  walkSubsidiaries,
   lookupSanctionsScreens,
   listCrudeGrades,
   lookupCrudeAssay,
@@ -1528,6 +1530,177 @@ export function buildCatalogTools(): ToolRegistry {
                 'starting point, not ground truth. approvalStatus reflects the calling company\'s ' +
                 'KYC/approval state with this entity (null = not engaged yet); lead with approved ' +
                 'counterparties when ranking for a deal.',
+            };
+          },
+        ),
+    }),
+
+    lookup_ownership_chain: defineTool({
+      name: 'lookup_ownership_chain',
+      description:
+        'Walk the ownership graph upward — every parent of an entity, ' +
+        'and every parent OF those parents, ultimately resolving to the ' +
+        'highest-level owner (typically a government, public free-float, ' +
+        'private holding, or NOC). Returns the full multi-edge chain so ' +
+        'a single 30%/70% split or a 4-level holding tree both surface ' +
+        'completely in one call.\n\n' +
+        'Backed by GEM\'s Global Energy Ownership Tracker (~26K rows, ' +
+        'energy-industry focused). Includes structural sovereign exposure ' +
+        '(e.g. Eni → 30% Italian Government), public float, and corporate ' +
+        'consolidation patterns.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • Assessing sovereign exposure on a counterparty — the brief\'s ' +
+        'core use case. e.g. "is this refinery state-owned?"\n' +
+        '  • Sanctions-cascade reasoning: when a parent is sanctioned at ' +
+        '>= 50% control, every subsidiary inherits exposure (OFAC 50% ' +
+        'Rule). Combine with lookup_sanctions_screens.\n' +
+        '  • Composing outreach that references corporate structure — ' +
+        '"As Sonatrach is wholly owned by the Algerian state, procurement ' +
+        'goes through formal channels..."\n' +
+        '  • Assessing consolidation: a region\'s "different" awardees may ' +
+        'be subsidiaries of the same parent (Coral + Next = Grupo Propagas).\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • Subsidiary discovery — that\'s lookup_subsidiaries (walks the ' +
+        'graph DOWN instead).\n' +
+        '  • Live-current ownership — GEM updates periodically; for a ' +
+        'recent IPO / divestiture / acquisition, supplement with current ' +
+        'corporate filings or news.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • depth=1 means "direct parent"; depth=2 means "parent of ' +
+        'parent"; etc. Surface the highest-share path as the headline; ' +
+        'mention secondary edges when material (a 25% sovereign stake ' +
+        'matters even if a 75% public float dominates).\n' +
+        '  • shareImputed=true means GEM inferred the share rather than ' +
+        'finding a published number — flag this when citing % values to ' +
+        'a counterparty.\n' +
+        '  • Empty result = "entity not in the GEM graph." Don\'t infer ' +
+        'absence of ownership from absence of data.',
+      kind: 'read',
+      schema: z.object({
+        entityName: z
+          .string()
+          .min(1)
+          .describe(
+            'Free-form entity name. Trigram fuzzy-matched against GEM\'s ' +
+              'subject_name column — "Eni" / "Eni S.p.A." / "Eni SpA" all ' +
+              'hit. Pass the most distinctive form you have.',
+          ),
+        maxDepth: z
+          .number()
+          .int()
+          .min(1)
+          .max(10)
+          .optional()
+          .describe('Default 10. Typical chains are 2-4 deep.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_ownership_chain',
+            args: input,
+            summarize: (out: { edgeCount: number }) => ({
+              resultCount: out.edgeCount,
+              resultSummary: { entityName: input.entityName },
+            }),
+          },
+          async () => {
+            const edges = await walkOwnershipChainUp({
+              entityName: input.entityName,
+              maxDepth: input.maxDepth,
+            });
+            return {
+              edgeCount: edges.length,
+              entityName: input.entityName,
+              edges: edges.map((e) => ({
+                depth: e.depth,
+                subject: e.subjectName,
+                parent: e.parentName,
+                sharePct: e.sharePct,
+                shareImputed: e.shareImputed,
+                sourceUrls: e.sourceUrls,
+              })),
+            };
+          },
+        ),
+    }),
+
+    lookup_subsidiaries: defineTool({
+      name: 'lookup_subsidiaries',
+      description:
+        'Walk the ownership graph downward — every subsidiary (and sub-' +
+        'subsidiary, recursive) owned by the named parent. Useful for ' +
+        'measuring the FULL footprint of a producer, trading house, or ' +
+        'state holding company.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • Footprint analysis — "what does Glencore own?" / "what are ' +
+        'all the Sonatrach subsidiaries?"\n' +
+        '  • Consolidation in a market: when reviewing supplier rankings ' +
+        'for a region, this surfaces the affiliates that should be ' +
+        'aggregated under one logical counterparty.\n' +
+        '  • Sanctions cascades downstream: when a parent is sanctioned, ' +
+        'this enumerates the subsidiaries that inherit exposure under ' +
+        'the OFAC 50% Rule (set minSharePct=50 for that view).\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Default minSharePct=0 returns every reported relationship, ' +
+        'including informational ones. For "controlling-interest" views, ' +
+        'pass 50.\n' +
+        '  • depth=1 is direct subsidiaries; deeper levels are sub-' +
+        'subsidiaries. Aggregate at depth=1 unless the user specifically ' +
+        'wants a multi-level tree.\n' +
+        '  • Empty result = "no subsidiaries found in GEM" — does NOT ' +
+        'mean the entity has none, just that GEM\'s coverage of THIS ' +
+        'parent\'s downstream graph is incomplete.',
+      kind: 'read',
+      schema: z.object({
+        entityName: z
+          .string()
+          .min(1)
+          .describe('Free-form parent name (trigram fuzzy-matched).'),
+        minSharePct: z
+          .number()
+          .min(0)
+          .max(100)
+          .optional()
+          .describe(
+            'Minimum share % the parent owns of each subsidiary. Default ' +
+              '0 (include all reported relationships). Pass 50 for the ' +
+              '"controlling interest" / OFAC 50% Rule view.',
+          ),
+        maxDepth: z.number().int().min(1).max(10).optional().describe('Default 10.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_subsidiaries',
+            args: input,
+            summarize: (out: { edgeCount: number }) => ({
+              resultCount: out.edgeCount,
+              resultSummary: {
+                entityName: input.entityName,
+                minSharePct: input.minSharePct,
+              },
+            }),
+          },
+          async () => {
+            const edges = await walkSubsidiaries({
+              entityName: input.entityName,
+              minSharePct: input.minSharePct,
+              maxDepth: input.maxDepth,
+            });
+            return {
+              edgeCount: edges.length,
+              entityName: input.entityName,
+              minSharePct: input.minSharePct ?? 0,
+              edges: edges.map((e) => ({
+                depth: e.depth,
+                parent: e.parentName,
+                subsidiary: e.subjectName,
+                sharePct: e.sharePct,
+                shareImputed: e.shareImputed,
+                sourceUrls: e.sourceUrls,
+              })),
             };
           },
         ),
