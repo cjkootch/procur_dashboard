@@ -110,6 +110,80 @@ export type VexMarketContext = {
 /** Procur company's trading-economics defaults — same fields the
  *  /settings page exposes. Lets vex segment leads by the buyer's
  *  desk profile (e.g., "Med-default desks targeting >5% gross"). */
+/**
+ * Free-text "why we're pushing this lead now" paragraph. Vex's chat
+ * agent leads with this when answering "what's the angle on Acme?",
+ * and the outreach drafter weaves it into the email/SMS hook.
+ *
+ * Either templated (e.g. "Match queue surfaced velocity drop +
+ * recent SEC filing — see signals[]") or LLM-generated; this module
+ * stays agnostic. Caller assembles the string.
+ */
+export type VexPushReason = string;
+
+/**
+ * One element of the signals stream that motivated the push. Vex
+ * persists these verbatim, surfaces them in evidence packs, and
+ * uses the most recent as an outreach hook.
+ *
+ * `weight` (0-1) is optional — when null, vex treats the signal as
+ * informational.
+ */
+export type VexPushSignal = {
+  kind: 'rfq' | 'tender_award' | 'vessel_clearance' | 'customs_event' | 'news' | 'other';
+  /** When the underlying event happened (ISO-8601). */
+  occurredAt: string;
+  /** URL or system id pointing back to the source row. */
+  source: string;
+  /** Human-readable narrative — the operator-facing description. */
+  narrative: string;
+  /** 0-1 relevance score. Optional — null when not characterized. */
+  weight?: number | null;
+};
+
+/**
+ * Match-queue origination context. Set when the lead came from the
+ * proactive match queue rather than a manual operator push. Vex's
+ * scoring calibration loop (PR #309) reads this back into its own
+ * model.
+ */
+export type VexMatchQueueContext = {
+  /** Score the queue assigned, 0-1. Distinct from `match_queue.score`
+   *  in the procur DB (0-9.99) — normalize at the boundary. */
+  score: number;
+  /** Human-readable rationale bullets. */
+  reasons: string[];
+  /** Sibling opportunities surfaced in the same cluster. Empty
+   *  when this lead is a standalone match. */
+  relatedOpportunities?: string[];
+};
+
+/**
+ * Ownership graph snippet — the upstream chain (parents) and any
+ * downstream subsidiaries we've resolved. Sourced from the
+ * `entity_ownership` table via lookup_ownership_chain_up +
+ * lookup_subsidiaries (work item 2; migration 0058).
+ *
+ * `distance` is hop count from the seed entity (1 = direct parent
+ * or direct subsidiary). Vex caps at 20 — we cap at 10 by default
+ * to mirror our walker's safety bound.
+ */
+export type VexOwnershipContext = {
+  parents?: Array<{
+    /** Vex's stable org key when known; falls back to GEM ID otherwise. */
+    orgKey: string;
+    legalName?: string;
+    role?: string;
+    distance: number;
+  }>;
+  subsidiaries?: Array<{
+    orgKey: string;
+    legalName?: string;
+    role?: string;
+    distance: number;
+  }>;
+};
+
 export type VexProcurTradingDefaults = {
   defaultSourcingRegion: string | null;
   targetGrossMarginPct: number | null;
@@ -191,6 +265,30 @@ export type VexContactPayload = {
    *  /settings → "Trading economics". Lets vex understand the
    *  desk profile pushing the lead. */
   procurTradingDefaults: VexProcurTradingDefaults | null;
+
+  /** Free-text "why we're pushing this lead now" paragraph (vex
+   *  PR #310). Vex's chat agent leads with this in evidence packs;
+   *  the outreach drafter uses it as an email hook. NULL when the
+   *  caller can't synthesise a meaningful reason — backward-compat
+   *  with vex deploys that haven't shipped #310 yet. */
+  pushReason?: VexPushReason | null;
+
+  /** Stream of signals that motivated the push (vex PR #310).
+   *  Empty array when the push isn't grounded in trackable events
+   *  (e.g. an ad-hoc operator push from the rolodex). Vex weaves
+   *  the most recent into outreach hooks. */
+  signals?: VexPushSignal[];
+
+  /** Match-queue origination context (vex PR #310). Set when the
+   *  lead came from the proactive matching engine; null on
+   *  operator-initiated pushes from the rolodex / chat. */
+  matchQueue?: VexMatchQueueContext | null;
+
+  /** Ownership graph snippet (vex PR #310). Populated once the
+   *  caller has resolved the entity via lookup_ownership_chain_up +
+   *  lookup_subsidiaries. NULL when ownership data wasn't fetched
+   *  (callers can opt in incrementally). */
+  ownership?: VexOwnershipContext | null;
 };
 
 export type VexContactResponse = {
@@ -374,6 +472,15 @@ function mapToVexLeadBody(payload: VexContactPayload): Record<string, unknown> {
       ...(payload.procurTradingDefaults
         ? { procurTradingDefaults: payload.procurTradingDefaults }
         : {}),
+      // ── Push-time WHY context (vex PR #310) ──────────────────
+      // Vex deploys without #310 ignore unknown metadata keys, so
+      // these are safe to emit unconditionally.
+      ...(payload.pushReason ? { pushReason: payload.pushReason } : {}),
+      ...(payload.signals && payload.signals.length > 0
+        ? { signals: payload.signals }
+        : {}),
+      ...(payload.matchQueue ? { matchQueue: payload.matchQueue } : {}),
+      ...(payload.ownership ? { ownership: payload.ownership } : {}),
     },
   };
 }

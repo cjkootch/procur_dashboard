@@ -4,7 +4,7 @@ import { db, matchQueue, knownEntities, externalSuppliers } from '@procur/db';
 import { eq } from 'drizzle-orm';
 import { getEntityProfile, updateMatchQueueStatus } from '@procur/catalog';
 import { getCurrentUser } from '@procur/auth';
-import { pushVexContact } from '@/lib/vex-client';
+import { pushVexContact, type VexPushSignal } from '@/lib/vex-client';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -132,6 +132,41 @@ export async function POST(
     `Surfaced via procur match queue (${row.signalType}/${row.signalKind}, ` +
     `score ${Number(row.score).toFixed(1)}). ${row.rationale}`;
 
+  // Push-time WHY context (vex PR #310). The match queue is the
+  // canonical source — every row already carries score, rationale,
+  // signal kind/type, and a dated observation. Translate to vex's
+  // shape verbatim. The signals stream surfaces as a single entry
+  // here; future enrichment (multi-event clustering) extends the
+  // array.
+  const pushReason =
+    `Match queue ${row.signalKind} signal at score ${Number(row.score).toFixed(2)}. ` +
+    row.rationale;
+  const signalKindToVex: Record<string, VexPushSignal['kind']> = {
+    distress_event: 'news',
+    velocity_drop: 'tender_award',
+    new_award: 'tender_award',
+    sec_filing_force_majeure: 'news',
+    bankruptcy_filing: 'news',
+    press_distress_signal: 'news',
+    leadership_change: 'news',
+  };
+  const signalKind = signalKindToVex[row.signalKind] ?? 'other';
+  const signals: VexPushSignal[] = [
+    {
+      kind: signalKind,
+      occurredAt: new Date(row.observedAt).toISOString(),
+      source: row.sourceTable + ':' + row.sourceId,
+      narrative: row.rationale,
+      // match_queue.score is 0-9.99; normalize to 0-1 for vex.
+      weight: Math.min(Number(row.score) / 10, 1),
+    },
+  ];
+  const matchQueueCtx = {
+    score: Math.min(Number(row.score) / 10, 1),
+    reasons: [row.rationale],
+    relatedOpportunities: [] as string[],
+  };
+
   const result = await pushVexContact({
     source: 'procur',
     sourceRef,
@@ -167,6 +202,15 @@ export async function POST(
     sourceDocuments: [],
     marketContext: null,
     procurTradingDefaults: null,
+    // Push-time WHY context (vex PR #310). Match queue is the
+    // strongest source-side context — score + rationale + signal
+    // kind translate cleanly to vex's shape.
+    pushReason,
+    signals,
+    matchQueue: matchQueueCtx,
+    // Ownership snapshot is queued for a follow-up — needs the
+    // walker to be called from this route's resolution path.
+    ownership: null,
   });
 
   if (!result.ok) {
