@@ -6853,20 +6853,41 @@ export interface MatchQueueItem {
 /**
  * Pull the match queue, default to open rows ranked by score
  * (DESC) + observed_at (DESC). Powers /match-queue.
+ *
+ * `target` filter (added 2026-Q2):
+ *   'counterparty' — rows linked to a known_entity OR external_supplier.
+ *                    Actionable for push-to-vex; this is the home
+ *                    dashboard's Match queue panel.
+ *   'macro'        — rows where both FK columns are NULL (geo / region
+ *                    / market signals — e.g. "Tuapse press_distress",
+ *                    "Iran tensions", "Strait of Hormuz disruption").
+ *                    Surfaced separately as Market signals; not
+ *                    pushable to vex but useful as macro context.
+ *   'all'          — both. Default for back-compat with the existing
+ *                    /suppliers/match-queue page that doesn't yet
+ *                    distinguish.
  */
 export async function getMatchQueue(filters: {
   status?: 'open' | 'dismissed' | 'pushed-to-vex' | 'actioned';
   signalType?: 'distress_event' | 'velocity_drop' | 'new_award';
   daysBack?: number;
   limit?: number;
+  target?: 'counterparty' | 'macro' | 'all';
 } = {}): Promise<MatchQueueItem[]> {
   const status = filters.status ?? 'open';
   const daysBack = filters.daysBack ?? 30;
   const limit = Math.min(filters.limit ?? 100, 500);
+  const target = filters.target ?? 'all';
 
   const signalFilter = filters.signalType
     ? sql`AND mq.signal_type = ${filters.signalType}`
     : sql``;
+  const targetFilter =
+    target === 'counterparty'
+      ? sql`AND (mq.known_entity_id IS NOT NULL OR mq.external_supplier_id IS NOT NULL)`
+      : target === 'macro'
+        ? sql`AND mq.known_entity_id IS NULL AND mq.external_supplier_id IS NULL`
+        : sql``;
 
   const result = await db.execute(sql`
     SELECT
@@ -6891,6 +6912,7 @@ export async function getMatchQueue(filters: {
     WHERE mq.status = ${status}
       AND mq.observed_at >= CURRENT_DATE - (${daysBack}::int * INTERVAL '1 day')
       ${signalFilter}
+      ${targetFilter}
     ORDER BY mq.score DESC, mq.observed_at DESC, mq.matched_at DESC
     LIMIT ${limit}
   `);
