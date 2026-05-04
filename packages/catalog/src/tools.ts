@@ -7,7 +7,9 @@ import {
   buildEntityProfileUrl,
   findBuyersForCommodityOffer,
   findCompetingSellers,
+  analyzeCountryTradePattern,
   findSuppliersForTender,
+  getEntityCustomsContext,
   getMonthlyImportFlow,
   getMatchSignalPerformance,
   getTopImportersByPartner,
@@ -1410,6 +1412,173 @@ export function buildCatalogTools(): ToolRegistry {
           },
         );
       },
+    }),
+
+    analyze_country_trade_pattern: defineTool({
+      name: 'analyze_country_trade_pattern',
+      description:
+        'Country-level trade-flow report — total volume + value over a ' +
+        'sliding window, month-over-month series, year-over-year ' +
+        'comparison, and top trading partners — for a given country + ' +
+        'HS code rollup. Backed by `customs_imports` (Eurostat Comext + ' +
+        'UN Comtrade).\n\n' +
+        'TWO INPUT MODES:\n' +
+        '  1. Entity-driven (preferred when the entity has analyst-' +
+        'curated `metadata.customsContext`): pass `entitySlug`. The ' +
+        'tool resolves the country + product codes from the curated ' +
+        'mapping. ~60-80 Tier-1/2 entities have this populated.\n' +
+        '  2. Explicit args: pass `country` (ISO-2) + `productCodeRanges` ' +
+        '(HS code prefixes). e.g. country="IT", ranges=["2710"] for ' +
+        'Italian refined-product imports.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • "What\'s the macro trade pattern for [refinery / country]?" — ' +
+        'anchor a counterparty conversation in their actual market ' +
+        'environment.\n' +
+        '  • "How has [product] flow into [country] shifted over the last ' +
+        '12 months?" — surface volume / partner-mix shifts visible in ' +
+        'aggregate before they hit news.\n' +
+        '  • Cross-validating cargo-trip inferences (work item 4) against ' +
+        'the macro signal.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • Caribbean-internal / intra-Latam / intra-Africa flows — ' +
+        'Eurostat covers EU reporters only, UN Comtrade has gaps. ' +
+        '`noData=true` in the response is the explicit "no coverage" ' +
+        'flag for these regions.\n' +
+        '  • Per-cargo / vessel-level granularity — that\'s ' +
+        'find_recent_port_calls + the future cargo-trip tools.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • HS code aggregation hides product detail (2710 covers ' +
+        'diesel / gasoline / jet / fuel oil at 4-digit). Cite the code ' +
+        'range explicitly so the user knows the granularity.\n' +
+        '  • Customs reporting lags 2-3 months. The most recent ~3 ' +
+        'monthly buckets may be incomplete or zero — don\'t over-' +
+        'interpret near-term dips.\n' +
+        '  • Year-over-year shifts > 15% are usually meaningful; smaller ' +
+        'shifts within range may be noise (HS reclassification, ' +
+        'reporter coverage gaps).',
+      kind: 'read',
+      schema: z
+        .object({
+          entitySlug: z
+            .string()
+            .optional()
+            .describe(
+              'known_entities.slug. When set, resolves country + product ' +
+                'codes from metadata.customsContext.',
+            ),
+          country: isoAlpha2Country
+            .optional()
+            .describe(
+              'ISO-2 country (auto-normalized). Required when entitySlug ' +
+                'is omitted.',
+            ),
+          productCodeRanges: z
+            .array(z.string().min(2))
+            .optional()
+            .describe(
+              'HS code prefixes (2/4/6 digit). e.g. ["2710"] for refined ' +
+                'petroleum, ["2709", "2710"] for crude + refined. Required ' +
+                'when entitySlug is omitted.',
+            ),
+          flowDirection: z
+            .enum(['import', 'export'])
+            .optional()
+            .describe(
+              'Default "import" (flows INTO `country`). Use "export" for ' +
+                'producer marketing arms — flows OUT OF `country`.',
+            ),
+          windowMonths: z
+            .number()
+            .int()
+            .min(1)
+            .max(60)
+            .optional()
+            .describe('Default 24. Cap 60.'),
+          topPartnerLimit: z
+            .number()
+            .int()
+            .min(1)
+            .max(20)
+            .optional()
+            .describe('Top-N partner countries returned. Default 5.'),
+        })
+        .refine(
+          (b) => b.entitySlug || (b.country && b.productCodeRanges),
+          {
+            message:
+              'Provide entitySlug, OR country + productCodeRanges',
+            path: ['country'],
+          },
+        ),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'analyze_country_trade_pattern',
+            args: input,
+            summarize: (out: { result: { reporterCountry: string; noData: boolean } }) => ({
+              resultCount: out.result.noData ? 0 : 1,
+              resultSummary: {
+                country: out.result.reporterCountry,
+                entitySlug: input.entitySlug,
+                noData: out.result.noData,
+              },
+            }),
+          },
+          async () => {
+            let country = input.country;
+            let productCodeRanges = input.productCodeRanges;
+            let flowDirection = input.flowDirection;
+            let entityName: string | null = null;
+            let relevanceLabel: string | null = null;
+
+            if (input.entitySlug) {
+              const resolved = await getEntityCustomsContext(input.entitySlug);
+              if (!resolved) {
+                throw new Error(
+                  `Entity "${input.entitySlug}" has no metadata.customsContext ` +
+                    `curated. Pass country + productCodeRanges explicitly, or ` +
+                    `populate the metadata for this entity first.`,
+                );
+              }
+              entityName = resolved.entityName;
+              if (resolved.context.importContext) {
+                country = country ?? resolved.context.importContext.reporterCountry;
+                productCodeRanges =
+                  productCodeRanges ?? resolved.context.importContext.productCodeRanges;
+                flowDirection = flowDirection ?? 'import';
+                relevanceLabel = resolved.context.importContext.relevanceLabel;
+              } else if (resolved.context.exportContext) {
+                country = country ?? resolved.context.exportContext.partnerCountry;
+                productCodeRanges =
+                  productCodeRanges ?? resolved.context.exportContext.productCodeRanges;
+                flowDirection = flowDirection ?? 'export';
+                relevanceLabel = resolved.context.exportContext.relevanceLabel;
+              }
+            }
+
+            if (!country || !productCodeRanges) {
+              throw new Error(
+                'country + productCodeRanges are required when entitySlug ' +
+                  'is unset (or has no customsContext).',
+              );
+            }
+
+            const result = await analyzeCountryTradePattern({
+              country,
+              productCodeRanges,
+              flowDirection,
+              windowMonths: input.windowMonths,
+              topPartnerLimit: input.topPartnerLimit,
+            });
+            return {
+              entitySlug: input.entitySlug ?? null,
+              entityName,
+              relevanceLabel,
+              result,
+            };
+          },
+        ),
     }),
 
     lookup_known_entities: defineTool({
