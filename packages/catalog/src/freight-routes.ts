@@ -329,6 +329,51 @@ export const FREIGHT_ROUTES: FreightRoute[] = [
       'sourcingHint before quoting Med-origin Caribbean lifts.',
   },
 
+  // ── Clean products → Baltic (Poland strategic-reserve corridor) ──
+  // Standard EU-sourcing routes. ARA → Gdańsk on a coastal MR1 is
+  // the workhorse; longer hauls (USGC, Med) are competitive when
+  // Brent-WTI / E-W arbs open up.
+  {
+    originRegion: 'nwe',
+    destPortSlug: 'gdansk-port',
+    destCountry: 'PL',
+    productType: 'clean',
+    vesselClassTypical: 'mr1',
+    usdPerMtLow: 12,
+    usdPerMtHigh: 22,
+    notes:
+      'ARA (Rotterdam/Amsterdam/Antwerp) → Gdańsk on a coastal MR1. ' +
+      'Short-sea route through the Skagerrak / Kattegat — Baltic-friendly ' +
+      'vessel availability is good. Heide and Kalundborg refiners (Klesch) ' +
+      'are alternative North-Sea load points at similar rates.',
+  },
+  {
+    originRegion: 'usgc',
+    destPortSlug: 'gdansk-port',
+    destCountry: 'PL',
+    productType: 'clean',
+    vesselClassTypical: 'mr2',
+    usdPerMtLow: 35,
+    usdPerMtHigh: 55,
+    notes:
+      'Trans-Atlantic USGC → Baltic. Competitive when Brent-WTI is wide ' +
+      "(>=$5/bbl) — quote alongside the NWE route and let the snapshot's " +
+      'sourcingHint decide.',
+  },
+  {
+    originRegion: 'med',
+    destPortSlug: 'gdansk-port',
+    destCountry: 'PL',
+    productType: 'clean',
+    vesselClassTypical: 'mr1',
+    usdPerMtLow: 28,
+    usdPerMtHigh: 42,
+    notes:
+      'Med → Baltic via Gibraltar. Less common than ARA-origin lifts; ' +
+      'usually only economic when Med refining margins are weak relative ' +
+      'to NWE.',
+  },
+
   // ── Crude → Med refineries (existing deal context) ───────────
   {
     originRegion: 'west-africa', // Bonny Light / Qua Iboe origin
