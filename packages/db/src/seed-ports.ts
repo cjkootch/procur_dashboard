@@ -635,6 +635,20 @@ const PORTS: PortSeed[] = [
       'Petrojam — Jamaica\'s only refinery (~35 kbd). State-owned; PCJ subsidiary. Active GOJEP tender buyer for crude + refined products.',
   },
   {
+    slug: 'gdansk-port',
+    name: 'Port of Gdańsk (Naftoport)',
+    country: 'PL',
+    lat: 54.4031,
+    lng: 18.6776,
+    radiusNm: 4,
+    portType: 'mixed',
+    notes:
+      'Gdańsk Naftoport — Poland\'s primary crude + refined products import ' +
+      'terminal. Co-located with the Lotos / Orlen Gdańsk refinery (~120 kbd). ' +
+      'Primary discharge point for Polish strategic reserve diesel imports ' +
+      'sourced from ARA / NWE.',
+  },
+  {
     slug: 'port-au-prince-varreux',
     name: 'Port-au-Prince (Varreux Terminal)',
     country: 'HT',
