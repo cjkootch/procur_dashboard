@@ -17,12 +17,19 @@ import {
  * - Pre-handshake state: "Connect" CTA that bounces through
  *   app.procur.app's auth flow and returns with a token
  * - Connected state: standard chat with streaming via the SSE-backed
- *   /api/assistant/stream route
+ *   /api/assistant/stream route, plus a Threads dropdown in the
+ *   header for finding + continuing past conversations
  * - 401 from the API → token cleared, widget falls back to "Connect"
  *
- * No thread persistence on Discover — the conversation lives only in
- * component state. Refresh = new chat. Future enhancement when we
- * want history.
+ * Threads:
+ * - First send creates a server-side thread; the SSE stream emits a
+ *   `{type: 'thread', threadId}` up-front event so we can stash the
+ *   id and surface it in the dropdown.
+ * - Switching threads loads persisted messages from
+ *   /api/assistant/threads/<id>. Tool-use / tool-result blocks are
+ *   dropped on hydrate — the widget only renders text.
+ * - "+ New" clears the active thread + message list; the next send
+ *   creates a fresh thread.
  */
 
 type ChatMessage = {
@@ -31,6 +38,13 @@ type ChatMessage = {
 };
 
 type WidgetState = 'closed' | 'open';
+
+type ThreadListRow = {
+  id: string;
+  title: string | null;
+  lastMessageAt: string | null;
+  createdAt: string;
+};
 
 const PANEL_WIDTH = 'w-96';
 const PANEL_HEIGHT = 'h-[600px]';
@@ -42,6 +56,10 @@ export function AssistantWidget() {
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
+  const [threadList, setThreadList] = useState<ThreadListRow[]>([]);
+  const [threadsOpen, setThreadsOpen] = useState(false);
+  const [loadingThread, setLoadingThread] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Sync token presence on mount + when bootstrap fires its event.
@@ -59,6 +77,35 @@ export function AssistantWidget() {
     }
   }, [messages, streaming]);
 
+  // Load thread list when the panel opens (and the user has a token).
+  // Refreshed after every send so a brand-new thread shows up in the
+  // dropdown without a manual refresh.
+  const refreshThreads = useCallback(async () => {
+    const token = getStoredToken();
+    if (!token) return;
+    try {
+      const res = await fetch('/api/assistant/threads', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 401) {
+        clearStoredToken();
+        setHasToken(false);
+        return;
+      }
+      if (!res.ok) return;
+      const body = (await res.json()) as { threads: ThreadListRow[] };
+      setThreadList(body.threads ?? []);
+    } catch {
+      // Non-blocking — dropdown just stays empty.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (widget === 'open' && hasToken) {
+      void refreshThreads();
+    }
+  }, [widget, hasToken, refreshThreads]);
+
   const handleConnect = useCallback(() => {
     // Round-trip through the App's handshake endpoint. Returning to the
     // current Discover URL preserves the user's place on the catalog.
@@ -71,7 +118,57 @@ export function AssistantWidget() {
     setHasToken(false);
     setMessages([]);
     setError(null);
+    setCurrentThreadId(null);
+    setThreadList([]);
+    setThreadsOpen(false);
   }, []);
+
+  const handleNewThread = useCallback(() => {
+    setMessages([]);
+    setCurrentThreadId(null);
+    setError(null);
+    setThreadsOpen(false);
+  }, []);
+
+  const handleLoadThread = useCallback(
+    async (threadId: string) => {
+      const token = getStoredToken();
+      if (!token) {
+        setError('Reconnect required.');
+        setHasToken(false);
+        return;
+      }
+      setThreadsOpen(false);
+      if (threadId === currentThreadId) return;
+      setLoadingThread(true);
+      setError(null);
+      try {
+        const res = await fetch(`/api/assistant/threads/${threadId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.status === 401) {
+          clearStoredToken();
+          setHasToken(false);
+          setError('Session expired. Reconnect to continue.');
+          return;
+        }
+        if (!res.ok) {
+          setError(`Could not load thread (${res.status})`);
+          return;
+        }
+        const body = (await res.json()) as {
+          messages: Array<{ role: 'user' | 'assistant'; text: string }>;
+        };
+        setMessages(body.messages ?? []);
+        setCurrentThreadId(threadId);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoadingThread(false);
+      }
+    },
+    [currentThreadId],
+  );
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
@@ -89,12 +186,6 @@ export function AssistantWidget() {
     setMessages((prev) => [...prev, { role: 'assistant', text: '' }]);
     setStreaming(true);
 
-    // Build history in Anthropic's format: user/assistant alternation.
-    const history = messages.map((m) => ({
-      role: m.role,
-      content: m.text,
-    }));
-
     try {
       const res = await fetch('/api/assistant/stream', {
         method: 'POST',
@@ -102,7 +193,10 @@ export function AssistantWidget() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ history, userText: text }),
+        body: JSON.stringify({
+          userText: text,
+          ...(currentThreadId ? { threadId: currentThreadId } : {}),
+        }),
       });
       if (res.status === 401) {
         clearStoredToken();
@@ -139,6 +233,13 @@ export function AssistantWidget() {
           if (!json) continue;
           try {
             const event = JSON.parse(json);
+            // Capture the threadId the server emits up-front so we
+            // can pass it on subsequent sends + show it in the
+            // dropdown.
+            if (event && event.type === 'thread' && typeof event.threadId === 'string') {
+              setCurrentThreadId(event.threadId);
+              continue;
+            }
             applyStreamEvent(event, setMessages);
           } catch {
             // Ignore malformed events.
@@ -149,8 +250,11 @@ export function AssistantWidget() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setStreaming(false);
+      // Refresh the thread list — the just-sent message either
+      // created a new thread or bumped one to the top.
+      void refreshThreads();
     }
-  }, [input, messages, streaming]);
+  }, [input, streaming, currentThreadId, refreshThreads]);
 
   return (
     <>
@@ -183,7 +287,7 @@ export function AssistantWidget() {
           role="dialog"
           aria-label="Procur Assistant"
         >
-          <header className="flex items-center justify-between border-b border-[color:var(--color-border)] px-4 py-3">
+          <header className="flex items-center justify-between gap-2 border-b border-[color:var(--color-border)] px-4 py-3">
             <div className="flex items-center gap-2">
               <Image
                 src="/brand/procur-icon-dark.svg"
@@ -194,13 +298,84 @@ export function AssistantWidget() {
               <span className="text-sm font-semibold">Procur Assistant</span>
             </div>
             {hasToken && (
-              <button
-                type="button"
-                onClick={handleDisconnect}
-                className="text-xs text-[color:var(--color-muted-foreground)] hover:underline"
-              >
-                Disconnect
-              </button>
+              <div className="flex items-center gap-2">
+                {/* Threads dropdown — opens a small menu of past
+                    conversations. Disabled while a turn is streaming
+                    so the model can't write into a half-loaded thread. */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setThreadsOpen((s) => !s)}
+                    disabled={streaming || loadingThread}
+                    className="flex items-center gap-1 text-xs text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] disabled:opacity-50"
+                  >
+                    Threads
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 12 12"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    >
+                      <path d="M3 4.5L6 7.5L9 4.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                  {threadsOpen && (
+                    <div
+                      className="absolute right-0 top-full z-10 mt-1 max-h-72 w-72 overflow-y-auto rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] py-1 shadow-lg"
+                      role="menu"
+                    >
+                      <button
+                        type="button"
+                        onClick={handleNewThread}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[color:var(--color-muted)]/60"
+                      >
+                        <span className="text-[color:var(--color-muted-foreground)]">+</span>
+                        <span>New thread</span>
+                      </button>
+                      {threadList.length > 0 && (
+                        <div className="my-1 border-t border-[color:var(--color-border)]" />
+                      )}
+                      {threadList.length === 0 ? (
+                        <p className="px-3 py-2 text-xs text-[color:var(--color-muted-foreground)]">
+                          No past conversations yet.
+                        </p>
+                      ) : (
+                        threadList.map((t) => {
+                          const active = t.id === currentThreadId;
+                          const title = t.title?.trim() || 'Untitled conversation';
+                          const stamp = formatThreadStamp(t.lastMessageAt ?? t.createdAt);
+                          return (
+                            <button
+                              type="button"
+                              key={t.id}
+                              onClick={() => handleLoadThread(t.id)}
+                              className={`flex w-full flex-col items-start gap-0.5 px-3 py-1.5 text-left text-xs hover:bg-[color:var(--color-muted)]/60 ${
+                                active ? 'bg-[color:var(--color-muted)]/40' : ''
+                              }`}
+                            >
+                              <span className="line-clamp-1 w-full font-medium">
+                                {title}
+                              </span>
+                              <span className="text-[10px] text-[color:var(--color-muted-foreground)]">
+                                {stamp}
+                              </span>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  className="text-xs text-[color:var(--color-muted-foreground)] hover:underline"
+                >
+                  Disconnect
+                </button>
+              </div>
             )}
           </header>
 
@@ -228,7 +403,12 @@ export function AssistantWidget() {
           ) : (
             <>
               <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
-                {messages.length === 0 && !streaming && (
+                {loadingThread && (
+                  <p className="py-6 text-center text-xs text-[color:var(--color-muted-foreground)]">
+                    Loading conversation…
+                  </p>
+                )}
+                {!loadingThread && messages.length === 0 && !streaming && (
                   <p className="py-6 text-center text-sm text-[color:var(--color-muted-foreground)]">
                     Ask me to find food, fuel, vehicle, or mineral
                     opportunities. Try:{' '}
@@ -395,4 +575,20 @@ function applyStreamEvent(
     default:
       break;
   }
+}
+
+/** Compact "5m ago" / "2h ago" / "Apr 30" stamp for the dropdown. */
+function formatThreadStamp(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const diffMs = Date.now() - d.getTime();
+  const min = Math.floor(diffMs / 60_000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }

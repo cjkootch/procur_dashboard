@@ -2,7 +2,18 @@ import { NextResponse } from 'next/server';
 import { eq } from 'drizzle-orm';
 import { db, companies, users } from '@procur/db';
 import { verifyDiscoverToken } from '@procur/utils';
-import { streamAgentTurn, type StreamEvent, type AnthropicMessageParam } from '@procur/ai';
+import {
+  appendAssistantMessage,
+  appendToolResults,
+  appendUserMessage,
+  createThread,
+  getThread,
+  listMessages,
+  messagesToHistory,
+  streamAgentTurn,
+  type AnthropicContentBlock,
+  type StreamEvent,
+} from '@procur/ai';
 import { buildDiscoverTools } from '../../../../lib/assistant-tools';
 
 export const runtime = 'nodejs';
@@ -17,11 +28,16 @@ export const dynamic = 'force-dynamic';
  * session required, since Discover sits on a different subdomain than
  * the App and dev-key Clerk sessions don't share cross-origin.
  *
- * Statelessness: no thread persistence on Discover. The client sends
- * the full conversation history per request and we replay it. Keeps
- * the surface light and avoids a second DB schema for chats. Once the
- * UX matures we can add server-side thread storage similar to the
- * main app.
+ * Thread persistence (added with the Threads dropdown UX):
+ *   - First turn with no threadId → create a thread, title = first 60
+ *     chars of the user's message.
+ *   - Subsequent turns include the threadId → server pulls history
+ *     from `assistant_messages` and replays it into streamAgentTurn.
+ *   - Server emits a `{type: 'thread', threadId}` SSE event up-front
+ *     so the client can stash the id and surface it in the dropdown.
+ *   - Mirrors the App's stream route (apps/app/app/api/assistant/stream)
+ *     end-to-end; threads helpers live in @procur/ai/threads so both
+ *     surfaces share the same persistence path.
  *
  * Budget: scoped to the user's company via Clerk orgId baked into the
  * handshake token. The same per-company AI budget the main app
@@ -31,7 +47,9 @@ export const dynamic = 'force-dynamic';
  */
 
 type RequestBody = {
-  history?: AnthropicMessageParam[];
+  /** Optional — when set, server replays the thread's persisted
+   *  history. When unset, server creates a new thread. */
+  threadId?: string;
   userText: string;
 };
 
@@ -90,9 +108,36 @@ export async function POST(req: Request): Promise<Response> {
   if (!body.userText || typeof body.userText !== 'string') {
     return NextResponse.json({ error: 'missing_user_text' }, { status: 400 });
   }
-  const history: AnthropicMessageParam[] = Array.isArray(body.history) ? body.history : [];
 
-  // 4. Stream agent turn — surfaceContext tells the model it's
+  // 4. Resolve or create the thread up-front. The first 60 chars of
+  // the opening user message become the thread title — good enough
+  // for the dropdown ("Show me fuel tenders for the…"). Future
+  // enhancement: have Haiku auto-summarize the title after the first
+  // assistant turn lands.
+  let threadId = body.threadId;
+  if (threadId) {
+    const t = await getThread(companyRow.id, userRow.id, threadId);
+    if (!t) {
+      return NextResponse.json({ error: 'thread_not_found' }, { status: 404 });
+    }
+  } else {
+    const t = await createThread({
+      companyId: companyRow.id,
+      userId: userRow.id,
+      title: body.userText.slice(0, 60),
+    });
+    threadId = t.id;
+  }
+
+  await appendUserMessage(threadId, body.userText);
+  const prior = await listMessages(threadId);
+  // Drop the last message (the user text we just appended) — the
+  // streamer takes it as a separate argument.
+  const history = messagesToHistory(prior.slice(0, -1));
+
+  const resolvedThreadId = threadId;
+
+  // 5. Stream agent turn — surfaceContext tells the model it's
   // rendering inside a 384px-wide floating chat panel and should keep
   // output ultra-compact: short markdown links not URLs, bullets not
   // tables, no separator dashes or pipe-delimited rows.
@@ -168,10 +213,22 @@ Track the user's narrowing intent across turns. When they say "just" / "now narr
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = (event: StreamEvent) => {
+      const send = (
+        event: StreamEvent | { type: 'thread'; threadId: string },
+      ) => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       };
+      // Up-front thread event so the client can stash the id and
+      // surface it in the dropdown without waiting for the turn to
+      // complete.
+      send({ type: 'thread', threadId: resolvedThreadId });
       try {
+        const pendingToolResults: Array<{
+          tool_use_id: string;
+          content: string;
+          is_error?: boolean;
+        }> = [];
+
         for await (const event of streamAgentTurn({
           ctx: { companyId: companyRow.id, userId: userRow.id },
           tools,
@@ -183,6 +240,38 @@ Track the user's narrowing intent across turns. When they say "just" / "now narr
           surfaceContext,
         })) {
           send(event);
+
+          if (event.type === 'assistant_message_complete') {
+            // Persist any pending tool results from the prior assistant
+            // turn BEFORE the current assistant message — Anthropic
+            // requires tool_result blocks to sit on a user turn between
+            // the tool_use assistant turn and the next assistant turn.
+            // See the App-side stream route for the full rationale.
+            if (pendingToolResults.length > 0) {
+              await appendToolResults(resolvedThreadId, pendingToolResults);
+              pendingToolResults.length = 0;
+            }
+            await appendAssistantMessage({
+              threadId: resolvedThreadId,
+              content: event.content as AnthropicContentBlock[],
+              stopReason: event.stopReason,
+              inputTokens: event.usage.inputTokens,
+              outputTokens: event.usage.outputTokens,
+              cacheCreationTokens: event.usage.cacheCreationTokens,
+              cacheReadTokens: event.usage.cacheReadTokens,
+              costCents: event.usage.costCents,
+            });
+          } else if (event.type === 'tool_result') {
+            pendingToolResults.push({
+              tool_use_id: event.id,
+              content: JSON.stringify(event.output).slice(0, 20000),
+              is_error: event.isError,
+            });
+          }
+        }
+
+        if (pendingToolResults.length > 0) {
+          await appendToolResults(resolvedThreadId, pendingToolResults);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
