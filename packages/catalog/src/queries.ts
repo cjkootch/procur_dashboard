@@ -37,6 +37,11 @@ import {
   type SupplierApproval,
   type SupplierApprovalStatus,
 } from '@procur/db';
+import {
+  countriesInRegion,
+  tradeRegionForCountry,
+  type TradeRegion,
+} from './trade-regions';
 
 /**
  * Build a properly-cast Postgres array literal from a JS array.
@@ -1463,6 +1468,13 @@ export interface CandidateSupplier {
   /** Set when originBias was applied. The proximity component of the
    *  re-ranked score, in [0, weightFactor]. */
   proximityBoost?: number;
+  /** True when the supplier's country sits in the same trade region
+   *  as the buyer (per `tradeRegionForCountry`). False when supplier
+   *  is in a different region. Null when buyer region or supplier
+   *  country is unknown. Surfaced so the chat tool can flag
+   *  cross-region candidates ("only out-of-region suppliers in the
+   *  data — coverage gap"). */
+  regionMatch?: boolean | null;
 }
 
 export interface FindSuppliersForTenderResult {
@@ -1470,6 +1482,10 @@ export interface FindSuppliersForTenderResult {
   derivedFrom: 'opportunity' | 'explicit_args';
   categoryTag: string | null;
   suppliers: CandidateSupplier[];
+  /** Surfaced when the buyer's trade region is known and NONE of the
+   *  returned suppliers sit in that region. Tells the chat tool /
+   *  caller to frame this as a coverage gap, not a recommendation. */
+  coverageNote?: string;
 }
 
 /**
@@ -1523,6 +1539,17 @@ export async function findSuppliersForTender(
   const yearsLookback = args.yearsLookback ?? 5;
   const limit = args.limit ?? 15;
 
+  // Resolve the buyer's trade region (e.g. PL → europe-west). When
+  // resolved, suppliers in the same region get a boost in the SQL
+  // ORDER BY — preventing the "Honduran gas station for a Polish
+  // tender" pattern that the prior version produced when no supplier
+  // had a buyer-country match. The fallback ranking (most recent +
+  // value) still kicks in among same-tier candidates.
+  const buyerRegion: TradeRegion | null = tradeRegionForCountry(buyerCountry);
+  const buyerRegionCountries: string[] = buyerRegion
+    ? countriesInRegion(buyerRegion)
+    : [];
+
   const result = await db.execute(sql`
     WITH matching_awards AS (
       SELECT
@@ -1563,16 +1590,26 @@ export async function findSuppliersForTender(
         MAX(award_date) AS most_recent_award_date,
         (ARRAY_AGG(DISTINCT buyer_name))[1:5] AS recent_buyers,
         BOOL_OR(buyer_country = ${buyerCountry ?? ''}) AS buyer_country_match,
-        BOOL_OR(beneficiary_country = ${beneficiaryCountry ?? ''}) AS beneficiary_country_match
+        BOOL_OR(beneficiary_country = ${beneficiaryCountry ?? ''}) AS beneficiary_country_match,
+        ${
+          buyerRegionCountries.length > 0
+            ? sql`(supplier_country = ANY(${pgArray(buyerRegionCountries)}))`
+            : sql`FALSE`
+        } AS supplier_region_match
       FROM matching_awards
       GROUP BY supplier_id, organisation_name, supplier_country
     )
     SELECT *
     FROM ranked
     ORDER BY
-      -- Geography overlap first (boolean to int via CASE), then volume.
-      (CASE WHEN buyer_country_match THEN 1 ELSE 0 END
-        + CASE WHEN beneficiary_country_match THEN 1 ELSE 0 END) DESC,
+      -- Geography overlap first (weighted): buyer-country (4) >
+      -- beneficiary-country (2) > same-trade-region (1). Score blend
+      -- means a same-region supplier beats out an out-of-region
+      -- supplier even when neither has a country match — preventing
+      -- the Honduran-supplier-for-Polish-tender false positive.
+      (CASE WHEN buyer_country_match THEN 4 ELSE 0 END
+        + CASE WHEN beneficiary_country_match THEN 2 ELSE 0 END
+        + CASE WHEN supplier_region_match THEN 1 ELSE 0 END) DESC,
       most_recent_award_date DESC,
       total_value_usd DESC NULLS LAST
     LIMIT ${limit};
@@ -1589,10 +1626,20 @@ export async function findSuppliersForTender(
       if (r.beneficiary_country_match) {
         matchReasons.push(`delivered to ${beneficiaryCountry}`);
       }
+      const supplierCountry = r.supplier_country == null ? null : String(r.supplier_country);
+      // regionMatch is null when buyer region or supplier country is
+      // unknown — chat tool reads null as "can't tell," not as "no."
+      const regionMatch: boolean | null =
+        buyerRegion == null || supplierCountry == null
+          ? null
+          : Boolean(r.supplier_region_match);
+      if (regionMatch === true && !r.buyer_country_match) {
+        matchReasons.push(`same trade region as ${buyerCountry} (${buyerRegion})`);
+      }
       return {
         supplierId: String(r.supplier_id),
         supplierName: String(r.organisation_name),
-        country: r.supplier_country == null ? null : String(r.supplier_country),
+        country: supplierCountry,
         matchingAwardsCount: count,
         totalValueUsd:
           r.total_value_usd != null ? Number.parseFloat(String(r.total_value_usd)) : null,
@@ -1602,15 +1649,39 @@ export async function findSuppliersForTender(
             : String(r.most_recent_award_date),
         recentBuyers: (r.recent_buyers as string[] | null) ?? [],
         matchReasons,
+        regionMatch,
       };
     },
   );
 
+  // Coverage note: when buyer region is known and not a single
+  // returned supplier sits in that region, surface the gap. Chat tool
+  // is instructed to lead with this rather than presenting the
+  // out-of-region candidates as a real shortlist.
+  let coverageNote: string | undefined;
+  if (
+    buyerRegion != null &&
+    suppliers.length > 0 &&
+    suppliers.every((s) => s.regionMatch !== true)
+  ) {
+    coverageNote =
+      `No suppliers in ${buyerRegion} have public-tender history for this category. ` +
+      `Showing closest-matching out-of-region candidates by recency + volume — ` +
+      `treat this as a coverage gap, not a recommendation.`;
+  }
+
+  const baseResult: FindSuppliersForTenderResult = {
+    derivedFrom,
+    categoryTag,
+    suppliers,
+    ...(coverageNote ? { coverageNote } : {}),
+  };
+
   if (args.originBias) {
     const ranked = await applyOriginBias(suppliers, args.originBias);
-    return { derivedFrom, categoryTag, suppliers: ranked };
+    return { ...baseResult, suppliers: ranked };
   }
-  return { derivedFrom, categoryTag, suppliers };
+  return baseResult;
 }
 
 /**

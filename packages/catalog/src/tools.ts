@@ -975,12 +975,25 @@ export function buildCatalogTools(): ToolRegistry {
       description:
         'Given a public tender (either by opportunity ID or by explicit category/country ' +
         'fields), return suppliers who have won similar awards in recent history and are ' +
-        'plausible bidders. Results are ranked by relevance signals: how many similar ' +
-        'awards they have won, recency, geographic overlap with the buyer or beneficiary ' +
-        "country, and total contract value. Use this when the user says 'who could bid on " +
-        "this' / 'who has won similar tenders' / 'should I partner with anyone for this'. " +
-        'Returns supplier name, country, awards count for matching category, recent ' +
-        'buyers, and a brief match-reason summary.',
+        'plausible bidders. Results are ranked by relevance signals: buyer-country match ' +
+        '(strongest), beneficiary-country match, then trade-region match (supplier sits ' +
+        "in the same broad region as the buyer — e.g. NWE supplier for a Polish tender), " +
+        'then recency + total contract value as tiebreakers. Use this when the user says ' +
+        "'who could bid on this' / 'who has won similar tenders' / 'should I partner with " +
+        "anyone for this'. Returns supplier name, country, awards count for matching " +
+        'category, recent buyers, regionMatch flag, and a brief match-reason summary.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • If `coverageNote` is set on the result, LEAD with it. It means no in-region ' +
+        'supplier has public-tender history for the category and the candidates returned ' +
+        'are out-of-region fallbacks — the situation is a coverage gap, not a recommendation.\n' +
+        '  • A supplier with `regionMatch: false` AND no buyer-country / beneficiary match ' +
+        'is a weak candidate. Surface it as "out-of-region" and explain the implausibility ' +
+        '(e.g. a Honduran gas station for a Polish strategic-reserve diesel tender is not ' +
+        'a real bidder, even if they have the most-recent diesel award in the dataset).\n' +
+        '  • Public-tender data alone misses the universe of private trader / refiner flows. ' +
+        'When `coverageNote` fires, suggest pairing with `lookup_known_entities` filtered ' +
+        "by buyer's region + role='refiner' or 'trader' to surface analyst-curated " +
+        'candidates the awards graph cannot see.',
       kind: 'read',
       schema: z.object({
         opportunityId: z
@@ -1043,6 +1056,7 @@ export function buildCatalogTools(): ToolRegistry {
               count: result.suppliers.length,
               derivedFrom: result.derivedFrom,
               categoryTag: result.categoryTag,
+              coverageNote: result.coverageNote ?? null,
               suppliers: result.suppliers.map((s) => ({
                 supplierId: s.supplierId,
                 supplierName: s.supplierName,
@@ -1053,6 +1067,7 @@ export function buildCatalogTools(): ToolRegistry {
                 mostRecentAwardDate: s.mostRecentAwardDate,
                 recentBuyers: s.recentBuyers?.slice(0, 5) ?? [],
                 matchReasons: s.matchReasons,
+                regionMatch: s.regionMatch ?? null,
               })),
             };
           },
