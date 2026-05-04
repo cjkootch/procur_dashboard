@@ -48,7 +48,9 @@ import {
 } from './queries';
 import {
   addOpportunityToPursuit,
+  attachEntityDocument,
   createAlertProfile,
+  EntityDocumentEntityMissingError,
   SupplierApprovalEntityMissingError,
   upsertSupplierApproval,
 } from './mutations';
@@ -640,6 +642,151 @@ export function buildCatalogTools(): ToolRegistry {
                 'proposal first — the entity row needs to exist before its ' +
                 'approval state can be tracked. Re-run set_supplier_approval ' +
                 'after the create lands.',
+            };
+          }
+          throw err;
+        }
+      },
+    }),
+
+    attach_document_to_entity: defineTool({
+      name: 'attach_document_to_entity',
+      description:
+        "Attach a file the user uploaded in chat to a rolodex entity's " +
+        'profile. Files become per-tenant documents (KYC pack / MSA / ' +
+        'contract / datasheet / price-sheet / compliance / correspondence) ' +
+        "visible only to the user's company on the entity profile page. " +
+        'Same shape as the manual upload from /entities/{slug} → Documents ' +
+        'panel; this tool is the chat-side equivalent.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • The user uploaded a file in chat AND said something like ' +
+        '"attach this to Acme", "save this against CEPSA Gibraltar", ' +
+        '"file this on Vitol\'s profile as their KYC pack".\n' +
+        '  • As part of an enrichment flow ("here\'s their MSA — add it ' +
+        'to their record").\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The user wants the file processed (extracted, summarized) ' +
+        'but NOT stored on an entity — that\'s the existing chat-doc ' +
+        'flow, no tool call needed.\n' +
+        '  • There is no entity in the conversation. Resolve the entity ' +
+        'first via lookup_known_entities; do NOT propose attaching to a ' +
+        'guessed slug.\n' +
+        '  • The user did not upload a file in this turn — the URL must ' +
+        'come from the [Attached files] manifest at the bottom of the ' +
+        'most recent user turn. Do NOT invent URLs.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Pick the category that matches what the user said. Default ' +
+        '"other" only when the user gave no hint. Common mappings: ' +
+        '"KYC" → kyc; "contract" / "SPA" / "proforma" → contract; ' +
+        '"MSA" → msa; "spec sheet" / "datasheet" → datasheet; ' +
+        '"quote" / "price list" → price-sheet; "sanctions screen" / ' +
+        '"export licence" → compliance; "email" / "meeting notes" → ' +
+        'correspondence.\n' +
+        "  • Echo back what landed: '''Attached <filename> as a <category> " +
+        'on <entity name>\'s profile.\'\'\'',
+      kind: 'write',
+      schema: z.object({
+        entitySlug: z
+          .string()
+          .min(1)
+          .describe(
+            'The slug returned in profileUrl by lookup_known_entities ' +
+              '(e.g. "ft-es-cepsa-gibraltar-refinery") OR an ' +
+              'external_suppliers.id (UUID). Pull this from a prior ' +
+              'tool result; do NOT invent.',
+          ),
+        attachmentUrl: z
+          .string()
+          .url()
+          .describe(
+            "Vercel Blob URL of the user's attached file. Lifted " +
+              'verbatim from the [Attached files in this turn] manifest ' +
+              'at the bottom of the most recent user turn. Must be a ' +
+              'blob URL the user uploaded this session — do NOT pass ' +
+              'arbitrary URLs.',
+          ),
+        filename: z
+          .string()
+          .min(1)
+          .max(512)
+          .describe(
+            "Original filename. Lifted from the same manifest entry " +
+              "as attachmentUrl.",
+          ),
+        category: z
+          .enum([
+            'kyc',
+            'msa',
+            'contract',
+            'datasheet',
+            'price-sheet',
+            'compliance',
+            'correspondence',
+            'other',
+          ])
+          .optional()
+          .describe(
+            'Document category. Default "other" when the user did not ' +
+              'name one explicitly. See INTERPRETATION DISCIPLINE for ' +
+              'common keyword mappings.',
+          ),
+        description: z
+          .string()
+          .max(2000)
+          .optional()
+          .describe(
+            "Free-text note about the document. Useful when the user " +
+              'said "this is the post-vintage 2025 KYC pack" or similar ' +
+              'context that wouldn\'t fit in the category alone.',
+          ),
+        mimeType: z
+          .string()
+          .max(255)
+          .optional()
+          .describe(
+            "Content type from the manifest entry (e.g. 'application/pdf'). " +
+              'Stored verbatim for the panel\'s display + filtering.',
+          ),
+        sizeBytes: z
+          .number()
+          .int()
+          .nonnegative()
+          .optional()
+          .describe('File size in bytes when known.'),
+      }),
+      handler: async (ctx, input) => {
+        try {
+          const result = await attachEntityDocument({
+            companyId: ctx.companyId,
+            userId: ctx.userId,
+            entitySlug: input.entitySlug,
+            filename: input.filename,
+            blobUrl: input.attachmentUrl,
+            sizeBytes: input.sizeBytes ?? null,
+            mimeType: input.mimeType ?? null,
+            category: input.category ?? null,
+            description: input.description ?? null,
+          });
+          return {
+            id: result.id,
+            uploadedAt: result.uploadedAt.toISOString(),
+            entitySlug: input.entitySlug,
+            filename: input.filename,
+            category: input.category ?? 'other',
+            profileUrl: buildEntityProfileUrl({
+              kind: 'known_entity',
+              slug: input.entitySlug,
+            }),
+          };
+        } catch (err) {
+          if (err instanceof EntityDocumentEntityMissingError) {
+            return {
+              error: 'entity_not_found',
+              entitySlug: err.entitySlug,
+              message:
+                `No entity matches '${err.entitySlug}'. Resolve the entity first ` +
+                `via lookup_known_entities, OR apply propose_create_known_entity ` +
+                `to register a new one. Then re-run attach_document_to_entity.`,
             };
           }
           throw err;

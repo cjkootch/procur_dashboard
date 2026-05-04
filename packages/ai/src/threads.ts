@@ -134,6 +134,7 @@ export async function appendUserMessage(
   const blocks: Array<
     AnthropicTextBlockParam | AnthropicImageBlockParam | AnthropicDocumentBlockParam
   > = [{ type: 'text', text }];
+  const manifest: string[] = [];
   for (const a of attachments ?? []) {
     if (a.contentType === 'application/pdf') {
       blocks.push({
@@ -147,6 +148,22 @@ export async function appendUserMessage(
         source: { type: 'url', url: a.url },
       });
     }
+    // Also collect a manifest line so the model has access to the
+    // verbatim blob URL — image/document blocks don't always surface
+    // their source URLs as model-readable text. Tools that need to
+    // reference an attachment by URL (e.g. attach_document_to_entity)
+    // pull the URL from this manifest.
+    manifest.push(`- ${a.filename} (${a.contentType}) — ${a.url}`);
+  }
+  // Append a system-style text note listing every attachment's URL
+  // + filename + content type. Model-visible; stored in the
+  // persisted content blocks so a thread reload keeps the URLs
+  // available to subsequent turns.
+  if (manifest.length > 0) {
+    blocks.push({
+      type: 'text',
+      text: `[Attached files in this turn:\n${manifest.join('\n')}]`,
+    });
   }
   const [row] = await db
     .insert(assistantMessages)
