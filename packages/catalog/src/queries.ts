@@ -20,6 +20,9 @@ import {
   awards,
   companies,
   companyCapabilities,
+  crudeAssayCuts,
+  crudeAssays,
+  crudeGrades,
   db,
   documents,
   externalSuppliers,
@@ -7560,4 +7563,216 @@ export async function lookupSanctionsScreens(
       matches: r.matches,
     })),
   };
+}
+
+/**
+ * Look up crude assays by name / origin / property filter, joining
+ * to `crude_grades` for marker-differential context. Powers the
+ * `lookup_crude_assay` chat tool + the `compose_deal_economics`
+ * density auto-fill.
+ *
+ * Filter semantics:
+ *   - `name` runs a case-insensitive prefix + substring match
+ *     against assay name AND linked grade name. Use the longer
+ *     producer name verbatim ("BRENT BLEND", "EKOFISK 2015 06") or
+ *     the canonical short form ("Brent", "Bonny Light"); both work.
+ *   - `originCountry` is ISO-2 (already normalized at the chat-tool
+ *     boundary).
+ *   - `gradeSlug` filters by linked crude_grades slug (exact match).
+ *   - `apiMin` / `apiMax` filter on assay api_gravity range.
+ *   - `sulphurMaxPct` filters assays at or below the threshold.
+ *
+ * Sort: most recent assayDate first, with NULL dates last (older
+ * vintages typically don't carry a parsed date). When multiple
+ * producers publish the same grade (e.g. Brent has 4 vintages
+ * across BP/Equinor/Total/ExxonMobil), the user sees the freshest
+ * first but all vintages are returned up to the limit.
+ */
+export type CrudeAssayLookupFilter = {
+  name?: string;
+  originCountry?: string;
+  gradeSlug?: string;
+  apiMin?: number;
+  apiMax?: number;
+  sulphurMaxPct?: number;
+  /** Default 12. Capped at 50 to keep chat-surface payloads reasonable. */
+  limit?: number;
+};
+
+export type CrudeAssayLookupRow = {
+  source: string;
+  reference: string;
+  name: string;
+  originCountry: string | null;
+  originLabel: string | null;
+  assayDate: string | null;
+  apiGravity: number | null;
+  densityKgL: number | null;
+  bblPerMt: number | null;
+  sulphurWtPct: number | null;
+  pourPointC: number | null;
+  acidityMgKohG: number | null;
+  vanadiumMgKg: number | null;
+  nickelMgKg: number | null;
+  /** Linked grade context. Null when the assay didn't match any
+   *  curated grade row. */
+  grade: {
+    slug: string;
+    name: string;
+    region: string | null;
+    isMarker: boolean;
+    markerSlug: string | null;
+    differentialUsdPerBbl: number | null;
+  } | null;
+};
+
+export async function lookupCrudeAssay(
+  filter: CrudeAssayLookupFilter,
+): Promise<{ totalMatches: number; results: CrudeAssayLookupRow[] }> {
+  const limit = Math.min(filter.limit ?? 12, 50);
+  const conditions = [];
+
+  if (filter.name && filter.name.trim().length > 0) {
+    const pattern = `%${filter.name.trim()}%`;
+    conditions.push(
+      or(
+        ilike(crudeAssays.name, pattern),
+        ilike(crudeGrades.name, pattern),
+      ),
+    );
+  }
+  if (filter.originCountry) {
+    conditions.push(eq(crudeAssays.originCountry, filter.originCountry));
+  }
+  if (filter.gradeSlug) {
+    conditions.push(eq(crudeAssays.gradeSlug, filter.gradeSlug));
+  }
+  if (filter.apiMin != null) {
+    conditions.push(gte(crudeAssays.apiGravity, String(filter.apiMin)));
+  }
+  if (filter.apiMax != null) {
+    conditions.push(lte(crudeAssays.apiGravity, String(filter.apiMax)));
+  }
+  if (filter.sulphurMaxPct != null) {
+    conditions.push(lte(crudeAssays.sulphurWtPct, String(filter.sulphurMaxPct)));
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  // Total count for "X more matches" hints in chat.
+  const totalMatchesRow = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(crudeAssays)
+    .leftJoin(crudeGrades, eq(crudeAssays.gradeSlug, crudeGrades.slug))
+    .where(whereClause as never);
+  const totalMatches = totalMatchesRow[0]?.count ?? 0;
+
+  const rows = await db
+    .select({
+      source: crudeAssays.source,
+      reference: crudeAssays.reference,
+      name: crudeAssays.name,
+      originCountry: crudeAssays.originCountry,
+      originLabel: crudeAssays.originLabel,
+      assayDate: crudeAssays.assayDate,
+      apiGravity: crudeAssays.apiGravity,
+      densityKgL: crudeAssays.densityKgL,
+      bblPerMt: crudeAssays.bblPerMt,
+      sulphurWtPct: crudeAssays.sulphurWtPct,
+      pourPointC: crudeAssays.pourPointC,
+      acidityMgKohG: crudeAssays.acidityMgKohG,
+      vanadiumMgKg: crudeAssays.vanadiumMgKg,
+      nickelMgKg: crudeAssays.nickelMgKg,
+      gradeSlug: crudeGrades.slug,
+      gradeName: crudeGrades.name,
+      gradeRegion: crudeGrades.region,
+      gradeIsMarker: crudeGrades.isMarker,
+      gradeMarkerSlug: crudeGrades.markerSlug,
+      gradeDifferential: crudeGrades.differentialUsdPerBbl,
+    })
+    .from(crudeAssays)
+    .leftJoin(crudeGrades, eq(crudeAssays.gradeSlug, crudeGrades.slug))
+    .where(whereClause as never)
+    .orderBy(sql`${crudeAssays.assayDate} desc nulls last`, desc(crudeAssays.updatedAt))
+    .limit(limit);
+
+  const results: CrudeAssayLookupRow[] = rows.map((r) => ({
+    source: r.source,
+    reference: r.reference,
+    name: r.name,
+    originCountry: r.originCountry,
+    originLabel: r.originLabel,
+    assayDate: r.assayDate,
+    apiGravity: numericOrNull(r.apiGravity),
+    densityKgL: numericOrNull(r.densityKgL),
+    bblPerMt: numericOrNull(r.bblPerMt),
+    sulphurWtPct: numericOrNull(r.sulphurWtPct),
+    pourPointC: numericOrNull(r.pourPointC),
+    acidityMgKohG: numericOrNull(r.acidityMgKohG),
+    vanadiumMgKg: numericOrNull(r.vanadiumMgKg),
+    nickelMgKg: numericOrNull(r.nickelMgKg),
+    grade: r.gradeSlug
+      ? {
+          slug: r.gradeSlug,
+          name: r.gradeName!,
+          region: r.gradeRegion,
+          isMarker: r.gradeIsMarker!,
+          markerSlug: r.gradeMarkerSlug,
+          differentialUsdPerBbl: numericOrNull(r.gradeDifferential),
+        }
+      : null,
+  }));
+
+  return { totalMatches, results };
+}
+
+/**
+ * Look up the most recent assay-derived density for a named crude.
+ * Used by `compose_deal_economics` to auto-fill `densityKgL` when
+ * the user provides `cargoCrudeName` instead of an explicit density.
+ *
+ * Returns null when no matching assay found OR when none of the
+ * matching assays carry a density value. The calculator's per-product
+ * density default is the fallback in that case.
+ */
+export async function getDensityForCrudeName(
+  name: string,
+): Promise<{ densityKgL: number; source: string; reference: string; assayName: string } | null> {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) return null;
+  const pattern = `%${trimmed}%`;
+
+  const [row] = await db
+    .select({
+      source: crudeAssays.source,
+      reference: crudeAssays.reference,
+      name: crudeAssays.name,
+      densityKgL: crudeAssays.densityKgL,
+    })
+    .from(crudeAssays)
+    .leftJoin(crudeGrades, eq(crudeAssays.gradeSlug, crudeGrades.slug))
+    .where(
+      and(
+        isNotNull(crudeAssays.densityKgL),
+        or(ilike(crudeAssays.name, pattern), ilike(crudeGrades.name, pattern)),
+      ),
+    )
+    .orderBy(sql`${crudeAssays.assayDate} desc nulls last`, desc(crudeAssays.updatedAt))
+    .limit(1);
+
+  if (!row || row.densityKgL == null) return null;
+  const density = Number(row.densityKgL);
+  if (!Number.isFinite(density) || density <= 0) return null;
+  return {
+    densityKgL: density,
+    source: row.source,
+    reference: row.reference,
+    assayName: row.name,
+  };
+}
+
+function numericOrNull(v: string | number | null | undefined): number | null {
+  if (v == null) return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
 }

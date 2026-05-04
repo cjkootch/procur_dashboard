@@ -47,6 +47,7 @@
     "seed-country-currencies": "tsx src/seed-country-currencies.ts",
     "seed-commodity-benchmarks": "tsx src/seed-commodity-benchmarks.ts",
     "ingest-crude-assays": "tsx src/ingest-crude-assays.ts",
+    "backfill-crude-grade-properties": "tsx src/backfill-crude-grade-properties.ts",
     "backfill-award-quantities": "tsx src/backfill-award-quantities.ts",
     "backfill-entity-coords": "tsx src/backfill-entity-coords.ts",
     "dedup-refineries": "tsx src/dedup-refineries.ts",
