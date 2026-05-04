@@ -1,6 +1,11 @@
 import Link from 'next/link';
 import { requireCompany } from '@procur/auth';
-import { lookupKnownEntities } from '@procur/catalog';
+import {
+  listCrudeGrades,
+  listTopKnownEntityTagsByPrefix,
+  lookupKnownEntities,
+  type CrudeGradeRow,
+} from '@procur/catalog';
 import { KycBadge } from '../../../components/KycBadge';
 import { MapViewClient } from './_components/MapViewClient';
 import type { MapEntity } from './_components/MapView';
@@ -40,30 +45,57 @@ const ROLE_OPTIONS = [
   { value: 'power-plant', label: 'power plants' },
 ];
 
+/**
+ * Free-text tag chips that don't slot into a structured filter
+ * (region:, compatible:, source:, status:, etc.). These are the
+ * historical analyst-curated capability flags — kept hardcoded
+ * because they're a deliberate analyst vocabulary, not a discovered
+ * one. Add as new analyst-meaningful flags emerge.
+ */
 const TAG_QUICK_FILTERS = [
-  'region:mediterranean',
-  'region:asia-state',
   'public-tender-visible',
   'libya-historic',
   'sweet-crude-runner',
   'top-tier',
 ];
 
-/**
- * Crude-grade compatibility quick filters. The analyst slate-seed
- * tags refineries with `compatible:<grade-slug>` based on their
- * configured diet — surface the most-pitched grades here.
- */
-const COMPATIBILITY_QUICK_FILTERS = [
-  { tag: 'compatible:es-sider', label: 'Es Sider (LY)' },
-  { tag: 'compatible:sirtica', label: 'Sirtica (LY)' },
-  { tag: 'compatible:brega', label: 'Brega (LY)' },
-  { tag: 'compatible:sharara', label: 'Sharara (LY)' },
-  { tag: 'compatible:bonny-light', label: 'Bonny Light (NG)' },
-  { tag: 'compatible:azeri-light', label: 'Azeri Light' },
-  { tag: 'compatible:arab-light', label: 'Arab Light' },
-  { tag: 'compatible:urals', label: 'Urals' },
-];
+/** Pretty-label a `region:` tag — strip the prefix and humanize. */
+function labelRegionTag(tag: string): string {
+  return tag.replace(/^region:/, '').replace(/-/g, ' ');
+}
+
+/** Pretty-label a crude grade for the chip (Name + ISO origin). */
+function labelGradeChip(grade: CrudeGradeRow): string {
+  return grade.originCountry
+    ? `${grade.name} (${grade.originCountry})`
+    : grade.name;
+}
+
+/** Group crude grades by region for the chip wall. Grades without
+ *  a region land in "Other". Region order is the natural taxonomy
+ *  order from `crude_grades.region` (alphabetical at write time). */
+function groupGradesByRegion(grades: CrudeGradeRow[]): Array<{
+  region: string;
+  grades: CrudeGradeRow[];
+}> {
+  const buckets = new Map<string, CrudeGradeRow[]>();
+  for (const g of grades) {
+    const key = g.region ?? 'Other';
+    const list = buckets.get(key) ?? [];
+    list.push(g);
+    buckets.set(key, list);
+  }
+  return [...buckets.entries()]
+    .sort(([a], [b]) => {
+      if (a === 'Other') return 1;
+      if (b === 'Other') return -1;
+      return a.localeCompare(b);
+    })
+    .map(([region, grades]) => ({
+      region,
+      grades: grades.sort((x, y) => x.name.localeCompare(y.name)),
+    }));
+}
 
 interface Props {
   searchParams: Promise<{
@@ -269,16 +301,25 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
   // slower path. Map gets the bigger budget so the user sees the full
   // geographic footprint after large ingests like GOGPT (~1.7k power plants).
   const queryLimit = activeView === 'map' ? 5000 : 2000;
-  const rows = await lookupKnownEntities({
-    categoryTag,
-    country: country?.trim() || undefined,
-    role: role?.trim() || undefined,
-    tag: tag?.trim() || undefined,
-    name: nameQuery,
-    companyId: company.id,
-    approvalStatus: approvalFilter,
-    limit: queryLimit,
-  });
+  const [rows, allCrudeGrades, regionTags] = await Promise.all([
+    lookupKnownEntities({
+      categoryTag,
+      country: country?.trim() || undefined,
+      role: role?.trim() || undefined,
+      tag: tag?.trim() || undefined,
+      name: nameQuery,
+      companyId: company.id,
+      approvalStatus: approvalFilter,
+      limit: queryLimit,
+    }),
+    // All crude grades, used to render the Crude grade chip wall
+    // grouped by origin region. Cheap (<50 rows in v1).
+    listCrudeGrades(),
+    // Top region:* tags actually present in the rolodex — drives the
+    // Region filter row data-first instead of a hardcoded list.
+    listTopKnownEntityTagsByPrefix('region:', 12),
+  ]);
+  const gradesByRegion = groupGradesByRegion(allCrudeGrades);
   const truncated = rows.length === queryLimit;
 
   // Group by country for at-a-glance scanning.
@@ -358,11 +399,19 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
     });
   }
   if (tag) {
-    const tagLabel =
-      COMPATIBILITY_QUICK_FILTERS.find((c) => c.tag === tag)?.label ?? tag;
+    let tagLabel = tag;
+    if (tag.startsWith('compatible:')) {
+      const slug = tag.slice('compatible:'.length);
+      const grade = allCrudeGrades.find((g) => g.slug === slug);
+      tagLabel = grade ? `Compatible: ${labelGradeChip(grade)}` : tag;
+    } else if (tag.startsWith('region:')) {
+      tagLabel = `Region: ${labelRegionTag(tag)}`;
+    }
     activeFilters.push({
       key: 'tag',
-      label: `Tag: ${tagLabel}`,
+      label: tag.startsWith('compatible:') || tag.startsWith('region:')
+        ? tagLabel
+        : `Tag: ${tagLabel}`,
       clearHref: baseHref({ tag: '' }),
     });
   }
@@ -518,17 +567,46 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
                   />
                 ))}
               </FilterRow>
-              <FilterRow label="Crude grade">
-                {COMPATIBILITY_QUICK_FILTERS.map((c) => (
-                  <FilterChip
-                    key={c.tag}
-                    href={baseHref({ tag: c.tag })}
-                    active={tag === c.tag}
-                    label={c.label}
-                    title={c.tag}
-                  />
-                ))}
+              <FilterRow label="Region">
+                {regionTags.length === 0 ? (
+                  <span className="text-[color:var(--color-muted-foreground)]">
+                    no region:* tags in rolodex yet
+                  </span>
+                ) : (
+                  regionTags.map((rt) => (
+                    <FilterChip
+                      key={rt.tag}
+                      href={baseHref({ tag: rt.tag })}
+                      active={tag === rt.tag}
+                      label={`${labelRegionTag(rt.tag)} · ${rt.count}`}
+                      title={rt.tag}
+                    />
+                  ))
+                )}
               </FilterRow>
+              {gradesByRegion.map(({ region, grades }) => (
+                <FilterRow
+                  key={`grade-${region}`}
+                  label={
+                    region === gradesByRegion[0]?.region
+                      ? `Crude grade · ${region}`
+                      : region
+                  }
+                >
+                  {grades.map((g) => {
+                    const compat = `compatible:${g.slug}`;
+                    return (
+                      <FilterChip
+                        key={g.slug}
+                        href={baseHref({ tag: compat })}
+                        active={tag === compat}
+                        label={labelGradeChip(g)}
+                        title={compat}
+                      />
+                    );
+                  })}
+                </FilterRow>
+              ))}
               <FilterRow label="Tags">
                 {TAG_QUICK_FILTERS.map((t) => (
                   <FilterChip

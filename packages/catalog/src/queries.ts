@@ -9002,3 +9002,38 @@ export async function listCrudeGradeRegions(): Promise<string[]> {
   `);
   return (result.rows as Array<{ region: string }>).map((r) => r.region);
 }
+
+/**
+ * Top `known_entities.tags` values whose tag matches a prefix
+ * (e.g. `region:`, `compatible:`), counted by how many rows carry
+ * the tag. Used to drive data-driven filter chips on the rolodex
+ * — replaces hardcoded chip lists that go stale as new analyst
+ * tags are added.
+ *
+ * Results are sorted by count DESC then tag ASC. The leading-prefix
+ * filter is required (don't enumerate the full tag space — `tags`
+ * is a freeform GIN-indexed array, the result set could be large).
+ */
+export async function listTopKnownEntityTagsByPrefix(
+  prefix: string,
+  limit = 20,
+): Promise<Array<{ tag: string; count: number }>> {
+  if (!prefix || prefix.length < 2) return [];
+  const like = `${prefix}%`;
+  const result = await db.execute(sql`
+    SELECT tag, COUNT(*)::int AS count
+    FROM (
+      SELECT UNNEST(tags) AS tag
+      FROM known_entities
+      WHERE tags IS NOT NULL
+    ) t
+    WHERE tag LIKE ${like}
+    GROUP BY tag
+    ORDER BY count DESC, tag ASC
+    LIMIT ${limit};
+  `);
+  return (result.rows as Array<{ tag: string; count: number }>).map((r) => ({
+    tag: String(r.tag),
+    count: Number(r.count),
+  }));
+}
