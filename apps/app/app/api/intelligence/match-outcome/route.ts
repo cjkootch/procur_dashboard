@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { and, eq } from 'drizzle-orm';
-import { db, matchQueue, MATCH_DEAL_OUTCOMES } from '@procur/db';
+import { eq } from 'drizzle-orm';
+import {
+  db,
+  matchOutcomeEvents,
+  matchQueue,
+  MATCH_DEAL_OUTCOMES,
+} from '@procur/db';
 import { verifyIntelligenceToken } from '../../../../lib/intelligence-auth';
 
 export const runtime = 'nodejs';
@@ -10,58 +15,54 @@ export const dynamic = 'force-dynamic';
 /**
  * POST /api/intelligence/match-outcome
  *
- * Vex's match-feedback hook. Two distinct event types ride this same
- * endpoint, distinguished by which fields are set:
+ * Vex's match-outcome feedback hook (vex PR #309). Vex POSTs every
+ * time a fuel_deal lifecycle event would be useful for our
+ * match-queue feedback model:
  *
- *   1. "deal created from match" — vex creates a fuel_deal from a
- *      match procur pushed earlier. Sets `vexDealId` on the row,
- *      records `pushedToVexAt` if not already set. No `outcome`.
+ *   created       — vex created a fuel_deal from a procur lead
+ *   closed_won    — deal settled
+ *   closed_lost   — deal cancelled / failed
+ *   no_engagement — 90d procur lead with no related fuel_deal
  *
- *   2. "deal terminal" — the linked fuel_deal transitions to a
- *      closed state. Sets `dealOutcome` + `outcomeRecordedAt`, plus
- *      `realizedMarginUsd` when outcome='closed_won'.
+ * Append-only semantics: the same `procur_opportunity_id` will
+ * legitimately produce multiple events (created, then later
+ * closed_won). Each event lands as a row in `match_outcome_events`,
+ * keyed on (procur_opportunity_id, outcome). Duplicates noop via
+ * `ON CONFLICT DO NOTHING`.
  *
- * Match the procur match_queue row by either:
- *   - (sourceTable, sourceId) — the canonical procur key
- *   - vexDealId — when vex doesn't have the procur source IDs handy
- *     and is just updating a previously-linked row
- *
- * Idempotent. Re-posting the same outcome is a no-op.
+ * Best-effort denormalization: when the procur_opportunity_id
+ * encodes a `match-queue:<uuid>` pattern (set by our push code in
+ * `apps/app/app/api/match-queue/[id]/push-to-vex`), we also update
+ * the source `match_queue` row's vexDealId / dealOutcome / etc. for
+ * the operator UI's "current state" read path. The event log is
+ * still canonical.
  *
  * Auth: Authorization: Bearer ${PROCUR_API_TOKEN}.
  *
- * Brief: docs/data-graph-connections-brief.md §4 (work item 3).
+ * Schema is vex's snake_case wire shape verbatim; we re-shape
+ * internally to camelCase for the Drizzle layer. Backward compat
+ * with the old camelCase wire shape (sourceTable + sourceId +
+ * outcome + marginUsd) is dropped — that endpoint had never
+ * received a real call from vex (their integration shipped with
+ * the snake_case shape from day 1).
  */
 
 const BodySchema = z
   .object({
-    sourceTable: z.string().min(1).optional(),
-    sourceId: z.string().min(1).optional(),
-    vexDealId: z.string().min(1).optional(),
-    outcome: z.enum(MATCH_DEAL_OUTCOMES).optional(),
-    /** Realized margin USD. Required when outcome='closed_won';
-     *  otherwise null. */
-    marginUsd: z.number().finite().optional(),
-    /** When the deal terminated (ISO datetime). Defaults to now()
-     *  when outcome is set without a timestamp. */
-    occurredAt: z.string().datetime().optional(),
+    procur_opportunity_id: z.string().min(1),
+    outcome: z.enum(MATCH_DEAL_OUTCOMES),
+    vex_deal_id: z.string().min(1).nullish(),
+    vex_deal_ref: z.string().min(1).nullish(),
+    outcome_note: z.string().max(4000).nullish(),
+    reported_at: z.string().datetime(),
+    source: z.literal('vex'),
   })
   .refine(
-    (b) => (b.sourceTable && b.sourceId) || b.vexDealId,
+    // 'created' implies the deal exists in vex — require the deal id.
+    (b) => (b.outcome === 'created' ? b.vex_deal_id != null : true),
     {
-      message: 'Provide either (sourceTable + sourceId) OR vexDealId to identify the match',
-      path: ['sourceId'],
-    },
-  )
-  .refine((b) => b.vexDealId != null || b.outcome != null, {
-    message: 'Body must set vexDealId (link), outcome (terminal state), or both',
-    path: ['outcome'],
-  })
-  .refine(
-    (b) => b.outcome !== 'closed_won' || (b.marginUsd != null && b.marginUsd >= 0),
-    {
-      message: "marginUsd is required (and non-negative) when outcome='closed_won'",
-      path: ['marginUsd'],
+      message: "vex_deal_id is required when outcome='created'",
+      path: ['vex_deal_id'],
     },
   );
 
@@ -83,79 +84,83 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
   const body = parsed.data;
-  const occurredAt = body.occurredAt ? new Date(body.occurredAt) : new Date();
+  const reportedAt = new Date(body.reported_at);
 
-  // Resolve the match_queue row. Prefer the canonical procur key
-  // (sourceTable, sourceId) when present; fall back to vexDealId
-  // for re-posting outcomes against an already-linked row.
-  let where;
-  if (body.sourceTable && body.sourceId) {
-    where = and(
-      eq(matchQueue.sourceTable, body.sourceTable),
-      eq(matchQueue.sourceId, body.sourceId),
-    );
-  } else if (body.vexDealId) {
-    where = eq(matchQueue.vexDealId, body.vexDealId);
-  } else {
-    // Schema refine should have caught this.
-    return NextResponse.json({ error: 'unprocessable' }, { status: 422 });
-  }
-
-  const [target] = await db
-    .select({
-      id: matchQueue.id,
-      status: matchQueue.status,
-      pushedToVexAt: matchQueue.pushedToVexAt,
-      vexDealId: matchQueue.vexDealId,
-      dealOutcome: matchQueue.dealOutcome,
+  // Insert into the canonical event log first. Idempotent — duplicate
+  // (procurOpportunityId, outcome) returns the existing row's id.
+  const eventInsert = await db
+    .insert(matchOutcomeEvents)
+    .values({
+      procurOpportunityId: body.procur_opportunity_id,
+      outcome: body.outcome,
+      vexDealId: body.vex_deal_id ?? null,
+      vexDealRef: body.vex_deal_ref ?? null,
+      outcomeNote: body.outcome_note ?? null,
+      reportedAt,
+      source: 'vex',
     })
-    .from(matchQueue)
-    .where(where)
-    .limit(1);
+    .onConflictDoNothing({
+      target: [matchOutcomeEvents.procurOpportunityId, matchOutcomeEvents.outcome],
+    })
+    .returning({ id: matchOutcomeEvents.id });
+  const recorded = eventInsert.length > 0;
 
-  if (!target) {
-    return NextResponse.json({ error: 'match_not_found' }, { status: 404 });
-  }
-
-  // Build the update set incrementally. Each event type carries
-  // partial state; we never null-out something already set unless
-  // the caller explicitly overrides (and the schema doesn't allow
-  // that today — outcome flips are append-style).
-  const updates: Partial<typeof matchQueue.$inferInsert> = {
-    statusUpdatedAt: occurredAt,
-  };
-
-  if (body.vexDealId) {
-    updates.vexDealId = body.vexDealId;
-    if (target.pushedToVexAt == null) updates.pushedToVexAt = occurredAt;
-    if (target.status === 'open') updates.status = 'pushed-to-vex';
-  }
-
-  if (body.outcome) {
-    updates.dealOutcome = body.outcome;
-    updates.outcomeRecordedAt = occurredAt;
-    if (body.outcome === 'closed_won' && body.marginUsd != null) {
-      updates.realizedMarginUsd = String(body.marginUsd);
-    } else if (body.outcome !== 'closed_won') {
-      // Defensive: clear any stale margin when outcome flips away
-      // from closed_won (rare; outcome is typically terminal but
-      // re-classification is allowed).
-      updates.realizedMarginUsd = null;
+  // Best-effort: when procur_opportunity_id encodes a match_queue
+  // UUID, denormalize the latest state onto the row so the operator
+  // UI's "current state" read path stays accurate. Pattern sent by
+  // apps/app/app/api/match-queue/[id]/push-to-vex:
+  //   match-queue:<uuid>            (no entity profile)
+  //   match-queue:<uuid>:<slug>     (entity profile resolved)
+  const matchUuid = parseMatchQueueUuid(body.procur_opportunity_id);
+  let matchSynced = false;
+  if (matchUuid) {
+    const updates: Partial<typeof matchQueue.$inferInsert> = {
+      statusUpdatedAt: reportedAt,
+    };
+    if (body.vex_deal_id) updates.vexDealId = body.vex_deal_id;
+    if (body.outcome === 'created') {
+      // Vex set vex_deal_id and `pushedToVexAt` (which our push code
+      // set when status flipped to 'pushed-to-vex'). The 'created'
+      // event is informational here — the row was already at
+      // 'pushed-to-vex' from the push side.
+    } else {
+      // Terminal outcomes: stamp the dealOutcome column + flip
+      // status to 'actioned' for closed_won/closed_lost so the
+      // queue de-duplicates.
+      updates.dealOutcome = body.outcome;
+      updates.outcomeRecordedAt = reportedAt;
+      if (body.outcome === 'closed_won' || body.outcome === 'closed_lost') {
+        updates.status = 'actioned';
+      }
     }
-    // 'closed_won' / 'closed_lost' both imply the operator
-    // actioned the match.
-    if (body.outcome === 'closed_won' || body.outcome === 'closed_lost') {
-      updates.status = 'actioned';
-    }
-  }
 
-  await db.update(matchQueue).set(updates).where(eq(matchQueue.id, target.id));
+    const [updated] = await db
+      .update(matchQueue)
+      .set(updates)
+      .where(eq(matchQueue.id, matchUuid))
+      .returning({ id: matchQueue.id });
+    matchSynced = updated != null;
+  }
 
   return NextResponse.json({
-    matchId: target.id,
-    applied: {
-      vexDealId: updates.vexDealId ?? target.vexDealId,
-      dealOutcome: updates.dealOutcome ?? target.dealOutcome,
-    },
+    recorded,
+    matchSynced,
+    procurOpportunityId: body.procur_opportunity_id,
+    outcome: body.outcome,
   });
 }
+
+/**
+ * Extract the match_queue UUID from a procur_opportunity_id when it
+ * has the `match-queue:<uuid>...` prefix. Returns null when the
+ * sourceRef wasn't generated by our push-to-vex path (other origins
+ * may follow once we expand the push surface — they'll need their
+ * own parsers added here).
+ */
+function parseMatchQueueUuid(procurOpportunityId: string): string | null {
+  const match = /^match-queue:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(
+    procurOpportunityId,
+  );
+  return match?.[1] ?? null;
+}
+

@@ -106,12 +106,14 @@ export const matchQueue = pgTable(
 
 /** Valid `dealOutcome` values — single source of truth. The webhook
  *  validates against this list; the match_signal_performance view
- *  aggregates by it. */
+ *  aggregates by it. Aligned with vex's contract (PR #309): vex
+ *  emits 'created' on fuel_deal creation, 'closed_won' on settle,
+ *  'closed_lost' on cancel/fail, 'no_engagement' on 90d-stale leads. */
 export const MATCH_DEAL_OUTCOMES = [
+  'created',
   'closed_won',
   'closed_lost',
   'no_engagement',
-  'still_active',
 ] as const;
 export type MatchDealOutcome = (typeof MATCH_DEAL_OUTCOMES)[number];
 
