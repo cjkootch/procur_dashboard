@@ -8816,3 +8816,121 @@ export async function getCrudeGradeDetail(
     })),
   };
 }
+
+// ─── Crude grade index (UI catalog page) ─────────────────────────
+
+export type CrudeGradeIndexRow = {
+  slug: string;
+  name: string;
+  originCountry: string | null;
+  region: string | null;
+  apiGravity: number | null;
+  sulfurPct: number | null;
+  tan: number | null;
+  characterization: string | null;
+  isMarker: boolean;
+  /** Marker this grade prices against (NULL on markers themselves). */
+  markerSlug: string | null;
+  /** $/bbl premium (+) or discount (-) vs marker. NULL on markers. */
+  differentialUsdPerBbl: number | null;
+  /** How many producer assays are linked to this grade. 0 means
+   *  curated reference data only — chart/cut data not available
+   *  on the detail page yet. */
+  assayCount: number;
+};
+
+export type CrudeGradeIndexFilters = {
+  /** Free-text substring match against `name` (ILIKE). */
+  search?: string;
+  region?: string;
+  originCountry?: string;
+  /** When true, return only sweet crudes (sulfur < 0.5% or NULL). */
+  sweetOnly?: boolean;
+  /** When true, return only light crudes (api >= 35 or NULL). */
+  lightOnly?: boolean;
+  /** When 'marker', only marker grades; 'non-marker', only non-markers. */
+  markerFilter?: 'marker' | 'non-marker';
+};
+
+/**
+ * Index-page query — every grade with the headline stats plus
+ * assay-availability flag + marker pricing context. Single SQL pass
+ * with a LEFT JOIN onto `crude_assays` for the count.
+ *
+ * Sorted: markers first, then by region, then by name. Stable order
+ * across pageloads so the URL-driven filter UI feels deterministic.
+ */
+export async function listCrudeGradesForIndex(
+  filters?: CrudeGradeIndexFilters,
+): Promise<CrudeGradeIndexRow[]> {
+  const result = await db.execute(sql`
+    SELECT
+      cg.slug, cg.name, cg.origin_country, cg.region,
+      cg.api_gravity, cg.sulfur_pct, cg.tan, cg.characterization,
+      cg.is_marker, cg.marker_slug, cg.differential_usd_per_bbl,
+      COALESCE(a.assay_count, 0)::int AS assay_count
+    FROM crude_grades cg
+    LEFT JOIN (
+      SELECT grade_slug, COUNT(*)::int AS assay_count
+      FROM crude_assays
+      WHERE grade_slug IS NOT NULL
+      GROUP BY grade_slug
+    ) a ON a.grade_slug = cg.slug
+    WHERE 1=1
+      ${
+        filters?.search && filters.search.trim().length > 0
+          ? sql`AND cg.name ILIKE ${`%${filters.search.trim()}%`}`
+          : sql``
+      }
+      ${filters?.region ? sql`AND cg.region = ${filters.region}` : sql``}
+      ${
+        filters?.originCountry
+          ? sql`AND cg.origin_country = ${filters.originCountry}`
+          : sql``
+      }
+      ${
+        filters?.sweetOnly
+          ? sql`AND (cg.sulfur_pct IS NULL OR cg.sulfur_pct < 0.5)`
+          : sql``
+      }
+      ${
+        filters?.lightOnly
+          ? sql`AND (cg.api_gravity IS NULL OR cg.api_gravity >= 35)`
+          : sql``
+      }
+      ${
+        filters?.markerFilter === 'marker'
+          ? sql`AND cg.is_marker = TRUE`
+          : filters?.markerFilter === 'non-marker'
+            ? sql`AND cg.is_marker = FALSE`
+            : sql``
+      }
+    ORDER BY cg.is_marker DESC, cg.region, cg.name;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    slug: String(r.slug),
+    name: String(r.name),
+    originCountry: r.origin_country == null ? null : String(r.origin_country),
+    region: r.region == null ? null : String(r.region),
+    apiGravity: numericOrNull(r.api_gravity as never),
+    sulfurPct: numericOrNull(r.sulfur_pct as never),
+    tan: numericOrNull(r.tan as never),
+    characterization: r.characterization == null ? null : String(r.characterization),
+    isMarker: r.is_marker === true,
+    markerSlug: r.marker_slug == null ? null : String(r.marker_slug),
+    differentialUsdPerBbl: numericOrNull(r.differential_usd_per_bbl as never),
+    assayCount: Number(r.assay_count ?? 0),
+  }));
+}
+
+/** Distinct regions present in `crude_grades` — drives the filter
+ *  dropdown without hard-coding the taxonomy. */
+export async function listCrudeGradeRegions(): Promise<string[]> {
+  const result = await db.execute(sql`
+    SELECT DISTINCT region
+    FROM crude_grades
+    WHERE region IS NOT NULL
+    ORDER BY region;
+  `);
+  return (result.rows as Array<{ region: string }>).map((r) => r.region);
+}

@@ -68,6 +68,7 @@ const NAV: SidebarNavGroup[] = [
     heading: 'Intelligence',
     items: [
       { href: '/suppliers/intelligence', label: 'Market intelligence', iconName: 'globe' },
+      { href: '/crudes', label: 'Crudes', iconName: 'droplet' },
       { href: '/suppliers/vessels', label: 'Vessels', iconName: 'anchor' },
     ],
   },
