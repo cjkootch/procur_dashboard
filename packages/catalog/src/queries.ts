@@ -4644,15 +4644,20 @@ export async function lookupRefineriesByGrade(
       WHERE role = 'refiner'
         AND metadata ? 'slate'
         AND NOT (${tag} = ANY(COALESCE(tags, ARRAY[]::text[])))
+        -- Slate keys are camelCase per the RefinerySlateCapability
+        -- schema (@procur/catalog/slate-capability.ts). Older rows
+        -- with snake_case keys are migrated by re-running
+        -- seed-refinery-slate after this PR lands; queries assume
+        -- camelCase.
         ${
           apiNum != null
-            ? sql`AND (metadata->'slate'->>'min_api')::numeric <= ${apiNum}
-                  AND (metadata->'slate'->>'max_api')::numeric >= ${apiNum}`
+            ? sql`AND (metadata->'slate'->>'apiMin')::numeric <= ${apiNum}
+                  AND (metadata->'slate'->>'apiMax')::numeric >= ${apiNum}`
             : sql``
         }
         ${
           sulfurNum != null
-            ? sql`AND (metadata->'slate'->>'max_sulfur_pct')::numeric >= ${sulfurNum}`
+            ? sql`AND (metadata->'slate'->>'sulfurMaxPct')::numeric >= ${sulfurNum}`
             : sql``
         }
         ${filters?.country ? sql`AND country = ${filters.country}` : sql``}
@@ -4680,7 +4685,11 @@ export async function lookupRefineriesByGrade(
       notes: r.notes == null ? null : String(r.notes),
       matchSource: r.match_source === 'tag' ? 'tag' : 'slate-window',
       slateNotes:
-        typeof slate.source_notes === 'string' ? (slate.source_notes as string) : null,
+        typeof slate.notes === 'string'
+          ? (slate.notes as string)
+          : typeof slate.source_notes === 'string'
+            ? (slate.source_notes as string)
+            : null,
     };
   });
 }
@@ -7772,6 +7781,160 @@ export async function getDensityForCrudeName(
 }
 
 function numericOrNull(v: string | number | null | undefined): number | null {
+  if (v == null) return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// ─── Refinery × grade compatibility (work item 1) ────────────────
+
+export type RefineryGradeFitRow = {
+  refinerySlug: string;
+  refineryName: string;
+  refineryCountry: string;
+  gradeSlug: string;
+  gradeName: string;
+  gradeOriginCountry: string | null;
+  gradeRegion: string | null;
+  gradeApiGravity: number | null;
+  gradeSulfurPct: number | null;
+  gradeTan: number | null;
+  slateApiMin: number | null;
+  slateApiMax: number | null;
+  slateSulfurMaxPct: number | null;
+  slateTanMax: number | null;
+  slateComplexityIndex: number | null;
+  slateCapacityBpd: number | null;
+  apiCompatible: boolean;
+  sulfurCompatible: boolean;
+  tanCompatible: boolean;
+  slateCompatible: boolean;
+};
+
+/**
+ * Refineries whose slate envelope accepts a given crude grade.
+ *
+ * Backed by the `refinery_grade_compatibility` view (migration 0057),
+ * which CROSS JOINs `known_entities` (slate envelopes) with
+ * `crude_grades` (property scalars) and produces per-pair
+ * compatibility booleans deterministically.
+ *
+ * Sort:
+ *   1. slate_compatible DESC (matches first)
+ *   2. complexity_index DESC NULLS LAST (more sophisticated
+ *      refineries first — they extract more value from the grade)
+ *   3. capacity_bpd DESC NULLS LAST (larger units absorb cargoes
+ *      more easily)
+ */
+export async function findRefineriesForGrade(args: {
+  gradeSlug: string;
+  /** Restrict to refineries in these ISO-2 countries. */
+  inCountries?: string[];
+  /** Default 25, cap 100. */
+  limit?: number;
+  /** When true (default), return only `slate_compatible = TRUE`
+   *  rows. Set false to also surface near-misses with their
+   *  per-dimension reasons. */
+  compatibleOnly?: boolean;
+}): Promise<RefineryGradeFitRow[]> {
+  const limit = Math.min(args.limit ?? 25, 100);
+  const compatibleOnly = args.compatibleOnly ?? true;
+  const result = await db.execute(sql`
+    SELECT * FROM refinery_grade_compatibility
+    WHERE grade_slug = ${args.gradeSlug}
+      ${compatibleOnly ? sql`AND slate_compatible = TRUE` : sql``}
+      ${
+        args.inCountries && args.inCountries.length > 0
+          ? sql`AND refinery_country = ANY(${args.inCountries})`
+          : sql``
+      }
+    ORDER BY slate_compatible DESC,
+             slate_complexity_index DESC NULLS LAST,
+             slate_capacity_bpd DESC NULLS LAST
+    LIMIT ${limit};
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map(rowToRefineryGradeFit);
+}
+
+/**
+ * Crude grades whose properties fit a given refinery's slate envelope.
+ *
+ * Symmetric to `findRefineriesForGrade`. Uses the same view; sorts by
+ * `differentialUsdPerBbl ASC NULLS LAST` so the cheapest grades
+ * (largest discount to marker) appear first — typically the highest
+ * margin if the refiner has flexibility.
+ */
+export async function findGradesForRefinery(args: {
+  refinerySlug: string;
+  /** Restrict to grades originating in these ISO-2 countries. */
+  fromOriginCountries?: string[];
+  /** Restrict to specific regions (matches crude_grades.region). */
+  fromRegions?: string[];
+  /** Default 25, cap 100. */
+  limit?: number;
+  /** When true (default), only `slate_compatible = TRUE`. */
+  compatibleOnly?: boolean;
+}): Promise<
+  Array<RefineryGradeFitRow & { differentialUsdPerBbl: number | null; markerSlug: string | null }>
+> {
+  const limit = Math.min(args.limit ?? 25, 100);
+  const compatibleOnly = args.compatibleOnly ?? true;
+  const result = await db.execute(sql`
+    SELECT rgc.*,
+           cg.differential_usd_per_bbl AS differential_usd_per_bbl,
+           cg.marker_slug AS marker_slug
+    FROM refinery_grade_compatibility rgc
+    LEFT JOIN crude_grades cg ON cg.slug = rgc.grade_slug
+    WHERE rgc.refinery_slug = ${args.refinerySlug}
+      ${compatibleOnly ? sql`AND rgc.slate_compatible = TRUE` : sql``}
+      ${
+        args.fromOriginCountries && args.fromOriginCountries.length > 0
+          ? sql`AND rgc.grade_origin_country = ANY(${args.fromOriginCountries})`
+          : sql``
+      }
+      ${
+        args.fromRegions && args.fromRegions.length > 0
+          ? sql`AND rgc.grade_region = ANY(${args.fromRegions})`
+          : sql``
+      }
+    ORDER BY rgc.slate_compatible DESC,
+             cg.differential_usd_per_bbl ASC NULLS LAST,
+             rgc.grade_api_gravity DESC NULLS LAST
+    LIMIT ${limit};
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    ...rowToRefineryGradeFit(r),
+    differentialUsdPerBbl: numericOrNullCG(r.differential_usd_per_bbl),
+    markerSlug: r.marker_slug == null ? null : String(r.marker_slug),
+  }));
+}
+
+function rowToRefineryGradeFit(r: Record<string, unknown>): RefineryGradeFitRow {
+  return {
+    refinerySlug: String(r.refinery_slug),
+    refineryName: String(r.refinery_name),
+    refineryCountry: String(r.refinery_country),
+    gradeSlug: String(r.grade_slug),
+    gradeName: String(r.grade_name),
+    gradeOriginCountry: r.grade_origin_country == null ? null : String(r.grade_origin_country),
+    gradeRegion: r.grade_region == null ? null : String(r.grade_region),
+    gradeApiGravity: numericOrNullCG(r.grade_api_gravity),
+    gradeSulfurPct: numericOrNullCG(r.grade_sulfur_pct),
+    gradeTan: numericOrNullCG(r.grade_tan),
+    slateApiMin: numericOrNullCG(r.slate_api_min),
+    slateApiMax: numericOrNullCG(r.slate_api_max),
+    slateSulfurMaxPct: numericOrNullCG(r.slate_sulfur_max_pct),
+    slateTanMax: numericOrNullCG(r.slate_tan_max),
+    slateComplexityIndex: numericOrNullCG(r.slate_complexity_index),
+    slateCapacityBpd: numericOrNullCG(r.slate_capacity_bpd),
+    apiCompatible: r.api_compatible === true,
+    sulfurCompatible: r.sulfur_compatible === true,
+    tanCompatible: r.tan_compatible === true,
+    slateCompatible: r.slate_compatible === true,
+  };
+}
+
+function numericOrNullCG(v: unknown): number | null {
   if (v == null) return null;
   const n = typeof v === 'number' ? v : Number(v);
   return Number.isFinite(n) ? n : null;
