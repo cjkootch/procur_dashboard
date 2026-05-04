@@ -36,3 +36,8 @@ export {
   type VesselRecommendation,
   type VoyageRouteType,
 } from './vessels';
+export {
+  refinerySlateCapabilitySchema,
+  readSlateCapability,
+  type RefinerySlateCapability,
+} from './slate-capability';

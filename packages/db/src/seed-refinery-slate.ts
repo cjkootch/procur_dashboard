@@ -3,8 +3,12 @@
  *
  * Two outputs per matched refinery:
  *   - tags: 'compatible:<grade-slug>' for each grade the refinery can run
- *   - metadata.slate: { min_api, max_api, max_sulfur_pct, source_notes }
- *     describing the diet window the analyst has researched
+ *   - metadata.slate: structured RefinerySlateCapability envelope
+ *     (camelCase keys — apiMin/apiMax/sulfurMaxPct/tanMax/
+ *     vanadiumMaxPpm/nickelMaxPpm/acidicTolerance/
+ *     crudeUnitCapacityBpd/complexityIndex/notes). Schema lives in
+ *     `@procur/catalog/slate-capability.ts` and is consumed by the
+ *     `refinery_grade_compatibility` view (migration 0057).
  *
  * Match strategy: case-insensitive substring match on known_entities.name
  * OR aliases. We keep the curated list small + targeted (the Libyan
@@ -12,6 +16,8 @@
  * exhaustive — this is meant to seed the most-actionable subset.
  *
  * Re-run safe (idempotent — tags + metadata get unioned/replaced).
+ * Re-running after the camelCase migration replaces any legacy
+ * snake_case slate keys (min_api, max_api, …) with the new shape.
  *
  * Run: pnpm --filter @procur/db seed-refinery-slate
  */
@@ -34,20 +40,35 @@ type RefinerySlate = {
   country: string;
   /** Grade slugs (from crude_grades) the refinery is configured to run. */
   compatibleGrades: string[];
-  /** Diet window — drives derived compatibility for grades not explicitly
-      enumerated above. */
+  /** Slate capability envelope. camelCase keys; consumed by
+   *  refinery_grade_compatibility view + the
+   *  RefinerySlateCapability schema in @procur/catalog. Optional
+   *  numeric fields are omitted (not zero) when not characterized. */
   slate: {
-    minApi: number;
-    maxApi: number;
-    maxSulfurPct: number;
-    sourceNotes: string;
+    apiMin: number;
+    apiMax: number;
+    sulfurMaxPct: number;
+    /** Total acid number ceiling (mg KOH/g). Default 0.5 unless
+     *  the refinery is specifically high-TAN tolerant. */
+    tanMax?: number;
+    vanadiumMaxPpm?: number;
+    nickelMaxPpm?: number;
+    acidicTolerance?: boolean;
+    /** Crude unit nameplate, bpd. From IEA / company disclosure. */
+    crudeUnitCapacityBpd?: number;
+    /** Nelson Complexity Index. Public datapoint from the operator's
+     *  annual report or IEA Energy Atlas. */
+    complexityIndex?: number;
+    /** Was `sourceNotes` in the legacy schema. Free-form. */
+    notes: string;
   };
 };
 
 /**
  * Curated from libyan-crude-buyer-brief.md Tiers 1 + 2 plus a handful
  * of commonly-cited adjacent buyers. Slate windows reflect what each
- * site is publicly known to run — not a guess.
+ * site is publicly known to run — not a guess. Capacity + NCI from
+ * IEA Energy Atlas / operator annual reports / company press releases.
  */
 const SLATES: RefinerySlate[] = [
   // ── Tier 1: Italy (Eni-operated) ────────────────────────────
@@ -56,10 +77,13 @@ const SLATES: RefinerySlate[] = [
     country: 'IT',
     compatibleGrades: ['es-sider', 'sirtica', 'brega', 'sharara', 'azeri-light', 'bonny-light', 'qua-iboe', 'saharan-blend', 'cpc-blend'],
     slate: {
-      minApi: 28,
-      maxApi: 50,
-      maxSulfurPct: 1.0,
-      sourceNotes: 'Eni Sannazzaro — sweet-diet complex, hydrocracker + FCC. Configured for Mediterranean + WAF light sweets. Mellitah JV preferential access to Es Sider.',
+      apiMin: 28,
+      apiMax: 50,
+      sulfurMaxPct: 1.0,
+      tanMax: 0.5,
+      crudeUnitCapacityBpd: 190_000,
+      complexityIndex: 9.0,
+      notes: 'Eni Sannazzaro — sweet-diet complex, hydrocracker + FCC. Configured for Mediterranean + WAF light sweets. Mellitah JV preferential access to Es Sider.',
     },
   },
   {
@@ -67,10 +91,13 @@ const SLATES: RefinerySlate[] = [
     country: 'IT',
     compatibleGrades: ['es-sider', 'sirtica', 'brega', 'azeri-light', 'bonny-light', 'qua-iboe'],
     slate: {
-      minApi: 28,
-      maxApi: 45,
-      maxSulfurPct: 1.0,
-      sourceNotes: 'Eni Taranto — light-sweet runner; same buyer pool / commercial channel as Sannazzaro.',
+      apiMin: 28,
+      apiMax: 45,
+      sulfurMaxPct: 1.0,
+      tanMax: 0.3,
+      crudeUnitCapacityBpd: 120_000,
+      complexityIndex: 6.5,
+      notes: 'Eni Taranto — hydroskimming, light-sweet runner; same buyer pool / commercial channel as Sannazzaro.',
     },
   },
   {
@@ -78,10 +105,16 @@ const SLATES: RefinerySlate[] = [
     country: 'IT',
     compatibleGrades: ['es-sider', 'sirtica', 'brega', 'sharara', 'azeri-light', 'bonny-light', 'qua-iboe', 'kirkuk', 'arab-light', 'arab-medium', 'urals'],
     slate: {
-      minApi: 22,
-      maxApi: 50,
-      maxSulfurPct: 3.0,
-      sourceNotes: 'Saras Sarroch — highest-complexity Med refinery (NCI ~14). Coker + hydrocracker. Will run almost anything; commercial preference now via Vitol JV.',
+      apiMin: 22,
+      apiMax: 50,
+      sulfurMaxPct: 3.0,
+      tanMax: 0.8,
+      vanadiumMaxPpm: 250,
+      nickelMaxPpm: 80,
+      crudeUnitCapacityBpd: 300_000,
+      complexityIndex: 14.0,
+      acidicTolerance: true,
+      notes: 'Saras Sarroch — highest-complexity Med refinery (NCI ~14). Coker + hydrocracker. Will run almost anything; commercial preference now via Vitol JV.',
     },
   },
 
@@ -91,10 +124,15 @@ const SLATES: RefinerySlate[] = [
     country: 'ES',
     compatibleGrades: ['es-sider', 'sirtica', 'brega', 'sharara', 'bonny-light', 'qua-iboe', 'azeri-light', 'cpc-blend', 'arab-light', 'urals'],
     slate: {
-      minApi: 22,
-      maxApi: 50,
-      maxSulfurPct: 3.0,
-      sourceNotes: 'Repsol Cartagena — full-conversion complex (coker + hydrocracker). Diverse diet incl. Russian + Latin heavies pre-sanctions; Sahara/Libya sweets baseline.',
+      apiMin: 22,
+      apiMax: 50,
+      sulfurMaxPct: 3.0,
+      tanMax: 0.7,
+      vanadiumMaxPpm: 200,
+      nickelMaxPpm: 60,
+      crudeUnitCapacityBpd: 220_000,
+      complexityIndex: 12.0,
+      notes: 'Repsol Cartagena — full-conversion complex (coker + hydrocracker). Diverse diet incl. Russian + Latin heavies pre-sanctions; Sahara/Libya sweets baseline.',
     },
   },
   {
@@ -102,10 +140,13 @@ const SLATES: RefinerySlate[] = [
     country: 'ES',
     compatibleGrades: ['es-sider', 'sirtica', 'brega', 'bonny-light', 'qua-iboe', 'azeri-light', 'arab-light', 'urals'],
     slate: {
-      minApi: 25,
-      maxApi: 50,
-      maxSulfurPct: 2.5,
-      sourceNotes: 'Repsol Petronor (Bilbao/Muskiz) — complex coastal refinery; consistent Libyan and WAF buyer.',
+      apiMin: 25,
+      apiMax: 50,
+      sulfurMaxPct: 2.5,
+      tanMax: 0.5,
+      crudeUnitCapacityBpd: 220_000,
+      complexityIndex: 9.0,
+      notes: 'Repsol Petronor (Bilbao/Muskiz) — mid-complexity coastal refinery; consistent Libyan and WAF buyer.',
     },
   },
 
@@ -115,10 +156,16 @@ const SLATES: RefinerySlate[] = [
     country: 'IN',
     compatibleGrades: ['es-sider', 'bonny-light', 'qua-iboe', 'arab-light', 'arab-medium', 'arab-heavy', 'basrah-light', 'urals', 'cpc-blend'],
     slate: {
-      minApi: 21,
-      maxApi: 50,
-      maxSulfurPct: 4.0,
-      sourceNotes: 'IOCL Paradip — 300 kbd full-conversion coastal complex. Most flexible diet of Indian state refineries.',
+      apiMin: 21,
+      apiMax: 50,
+      sulfurMaxPct: 4.0,
+      tanMax: 1.0,
+      vanadiumMaxPpm: 350,
+      nickelMaxPpm: 100,
+      crudeUnitCapacityBpd: 300_000,
+      complexityIndex: 12.2,
+      acidicTolerance: true,
+      notes: 'IOCL Paradip — 300 kbd full-conversion coastal complex. Most flexible diet of Indian state refineries.',
     },
   },
   {
@@ -126,10 +173,13 @@ const SLATES: RefinerySlate[] = [
     country: 'IN',
     compatibleGrades: ['es-sider', 'bonny-light', 'arab-light', 'arab-medium', 'basrah-light', 'urals'],
     slate: {
-      minApi: 25,
-      maxApi: 45,
-      maxSulfurPct: 2.5,
-      sourceNotes: 'BPCL Kochi — complex coastal refinery, active spot tender buyer.',
+      apiMin: 25,
+      apiMax: 45,
+      sulfurMaxPct: 2.5,
+      tanMax: 0.5,
+      crudeUnitCapacityBpd: 310_000,
+      complexityIndex: 9.0,
+      notes: 'BPCL Kochi — complex coastal refinery, active spot tender buyer.',
     },
   },
   {
@@ -137,10 +187,13 @@ const SLATES: RefinerySlate[] = [
     country: 'IN',
     compatibleGrades: ['es-sider', 'bonny-light', 'arab-light', 'arab-medium', 'basrah-light', 'urals'],
     slate: {
-      minApi: 25,
-      maxApi: 45,
-      maxSulfurPct: 2.5,
-      sourceNotes: 'MRPL Mangalore — complex coastal refinery, active spot tender buyer.',
+      apiMin: 25,
+      apiMax: 45,
+      sulfurMaxPct: 2.5,
+      tanMax: 0.5,
+      crudeUnitCapacityBpd: 300_000,
+      complexityIndex: 9.0,
+      notes: 'MRPL Mangalore — complex coastal refinery, active spot tender buyer.',
     },
   },
 
@@ -150,10 +203,13 @@ const SLATES: RefinerySlate[] = [
     country: 'GR',
     compatibleGrades: ['es-sider', 'sirtica', 'brega', 'azeri-light', 'bonny-light', 'qua-iboe', 'arab-light', 'urals'],
     slate: {
-      minApi: 25,
-      maxApi: 50,
-      maxSulfurPct: 2.0,
-      sourceNotes: 'HelleniQ Aspropyrgos — historical Libyan crude buyer. Geographic adjacency.',
+      apiMin: 25,
+      apiMax: 50,
+      sulfurMaxPct: 2.0,
+      tanMax: 0.4,
+      crudeUnitCapacityBpd: 150_000,
+      complexityIndex: 7.0,
+      notes: 'HelleniQ Aspropyrgos — historical Libyan crude buyer. Geographic adjacency.',
     },
   },
   {
@@ -161,10 +217,13 @@ const SLATES: RefinerySlate[] = [
     country: 'GR',
     compatibleGrades: ['es-sider', 'sirtica', 'brega', 'azeri-light', 'bonny-light', 'qua-iboe', 'arab-light', 'arab-medium', 'urals'],
     slate: {
-      minApi: 22,
-      maxApi: 50,
-      maxSulfurPct: 3.0,
-      sourceNotes: 'HelleniQ Elefsina — full-conversion complex with coker. Took the heaviest slate of HelleniQ assets.',
+      apiMin: 22,
+      apiMax: 50,
+      sulfurMaxPct: 3.0,
+      tanMax: 0.6,
+      crudeUnitCapacityBpd: 100_000,
+      complexityIndex: 9.0,
+      notes: 'HelleniQ Elefsina — full-conversion complex with coker. Took the heaviest slate of HelleniQ assets.',
     },
   },
 
@@ -174,10 +233,13 @@ const SLATES: RefinerySlate[] = [
     country: 'HU',
     compatibleGrades: ['es-sider', 'sirtica', 'brega', 'azeri-light', 'bonny-light', 'urals', 'cpc-blend'],
     slate: {
-      minApi: 28,
-      maxApi: 45,
-      maxSulfurPct: 2.0,
-      sourceNotes: 'MOL Százhalombatta (Danube) — pivoting away from Russian Urals post-sanctions; Adria pipeline brings Med crude inland.',
+      apiMin: 28,
+      apiMax: 45,
+      sulfurMaxPct: 2.0,
+      tanMax: 0.4,
+      crudeUnitCapacityBpd: 165_000,
+      complexityIndex: 10.5,
+      notes: 'MOL Százhalombatta (Danube) — pivoting away from Russian Urals post-sanctions; Adria pipeline brings Med crude inland.',
     },
   },
   {
@@ -185,10 +247,13 @@ const SLATES: RefinerySlate[] = [
     country: 'HR',
     compatibleGrades: ['es-sider', 'sirtica', 'brega', 'azeri-light', 'bonny-light', 'arab-light', 'urals'],
     slate: {
-      minApi: 25,
-      maxApi: 45,
-      maxSulfurPct: 2.0,
-      sourceNotes: 'INA Rijeka (MOL group) — Adriatic coastal refinery. Med crude pool buyer.',
+      apiMin: 25,
+      apiMax: 45,
+      sulfurMaxPct: 2.0,
+      tanMax: 0.4,
+      crudeUnitCapacityBpd: 90_000,
+      complexityIndex: 7.0,
+      notes: 'INA Rijeka (MOL group) — Adriatic coastal refinery. Med crude pool buyer.',
     },
   },
 
@@ -198,10 +263,13 @@ const SLATES: RefinerySlate[] = [
     country: 'TR',
     compatibleGrades: ['es-sider', 'sirtica', 'brega', 'azeri-light', 'kirkuk', 'arab-light', 'arab-medium', 'urals'],
     slate: {
-      minApi: 22,
-      maxApi: 50,
-      maxSulfurPct: 3.0,
-      sourceNotes: 'TÜPRAŞ İzmit — flagship Turkish refinery, full-conversion complex. Heavy historical Russian-crude diet; sweet-crude flexibility exists.',
+      apiMin: 22,
+      apiMax: 50,
+      sulfurMaxPct: 3.0,
+      tanMax: 0.5,
+      crudeUnitCapacityBpd: 226_000,
+      complexityIndex: 9.5,
+      notes: 'TÜPRAŞ İzmit — flagship Turkish refinery, full-conversion complex. Heavy historical Russian-crude diet; sweet-crude flexibility exists.',
     },
   },
   {
@@ -209,10 +277,13 @@ const SLATES: RefinerySlate[] = [
     country: 'TR',
     compatibleGrades: ['es-sider', 'sirtica', 'brega', 'azeri-light', 'kirkuk', 'arab-light', 'urals'],
     slate: {
-      minApi: 25,
-      maxApi: 45,
-      maxSulfurPct: 2.5,
-      sourceNotes: 'TÜPRAŞ İzmir (Aliağa) — coastal refinery, Mediterranean crude pool.',
+      apiMin: 25,
+      apiMax: 45,
+      sulfurMaxPct: 2.5,
+      tanMax: 0.4,
+      crudeUnitCapacityBpd: 226_000,
+      complexityIndex: 7.0,
+      notes: 'TÜPRAŞ İzmir (Aliağa) — coastal refinery, Mediterranean crude pool.',
     },
   },
   {
@@ -220,10 +291,13 @@ const SLATES: RefinerySlate[] = [
     country: 'TR',
     compatibleGrades: ['azeri-light', 'kirkuk', 'arab-light', 'urals'],
     slate: {
-      minApi: 28,
-      maxApi: 42,
-      maxSulfurPct: 2.0,
-      sourceNotes: 'TÜPRAŞ Kırıkkale — inland refinery, BTC pipeline-served (Azeri Light).',
+      apiMin: 28,
+      apiMax: 42,
+      sulfurMaxPct: 2.0,
+      tanMax: 0.3,
+      crudeUnitCapacityBpd: 113_000,
+      complexityIndex: 6.0,
+      notes: 'TÜPRAŞ Kırıkkale — inland refinery, BTC pipeline-served (Azeri Light).',
     },
   },
 
@@ -233,10 +307,13 @@ const SLATES: RefinerySlate[] = [
     country: 'IL',
     compatibleGrades: ['es-sider', 'azeri-light', 'bonny-light', 'qua-iboe', 'cpc-blend'],
     slate: {
-      minApi: 30,
-      maxApi: 45,
-      maxSulfurPct: 1.0,
-      sourceNotes: 'Paz Ashdod — light-sweet diet refinery.',
+      apiMin: 30,
+      apiMax: 45,
+      sulfurMaxPct: 1.0,
+      tanMax: 0.3,
+      crudeUnitCapacityBpd: 100_000,
+      complexityIndex: 9.0,
+      notes: 'Paz Ashdod — light-sweet diet refinery.',
     },
   },
   {
@@ -244,10 +321,13 @@ const SLATES: RefinerySlate[] = [
     country: 'FR',
     compatibleGrades: ['es-sider', 'sirtica', 'azeri-light', 'bonny-light'],
     slate: {
-      minApi: 30,
-      maxApi: 45,
-      maxSulfurPct: 1.0,
-      sourceNotes: 'TotalEnergies La Mède — light-sweet only post-conversion to biofuels. Limited remaining crude capacity.',
+      apiMin: 30,
+      apiMax: 45,
+      sulfurMaxPct: 1.0,
+      tanMax: 0.3,
+      crudeUnitCapacityBpd: 100_000,
+      complexityIndex: 6.0,
+      notes: 'TotalEnergies La Mède — light-sweet only post-conversion to biofuels. Limited remaining crude capacity.',
     },
   },
 ];
@@ -307,14 +387,28 @@ async function main() {
         if (!t.startsWith('compatible:')) return true;
         return compatibilityTags.includes(t);
       });
+      // Build the slate envelope, omitting undefined fields so the
+      // jsonb stays clean (consumers treat absent keys as
+      // "unconstrained" — see refinery_grade_compatibility view).
+      const slate: Record<string, unknown> = {
+        apiMin: seed.slate.apiMin,
+        apiMax: seed.slate.apiMax,
+        sulfurMaxPct: seed.slate.sulfurMaxPct,
+        notes: seed.slate.notes,
+      };
+      if (seed.slate.tanMax != null) slate.tanMax = seed.slate.tanMax;
+      if (seed.slate.vanadiumMaxPpm != null) slate.vanadiumMaxPpm = seed.slate.vanadiumMaxPpm;
+      if (seed.slate.nickelMaxPpm != null) slate.nickelMaxPpm = seed.slate.nickelMaxPpm;
+      if (seed.slate.acidicTolerance != null) slate.acidicTolerance = seed.slate.acidicTolerance;
+      if (seed.slate.crudeUnitCapacityBpd != null) {
+        slate.crudeUnitCapacityBpd = seed.slate.crudeUnitCapacityBpd;
+      }
+      if (seed.slate.complexityIndex != null) {
+        slate.complexityIndex = seed.slate.complexityIndex;
+      }
       const newMetadata = {
         ...(row.metadata ?? {}),
-        slate: {
-          min_api: seed.slate.minApi,
-          max_api: seed.slate.maxApi,
-          max_sulfur_pct: seed.slate.maxSulfurPct,
-          source_notes: seed.slate.sourceNotes,
-        },
+        slate,
       };
       await db
         .update(schema.knownEntities)

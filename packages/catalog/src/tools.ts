@@ -11,6 +11,8 @@ import {
   getMonthlyImportFlow,
   getTopImportersByPartner,
   getTopSourcesForReporter,
+  findGradesForRefinery,
+  findRefineriesForGrade,
   lookupKnownEntities,
   lookupSanctionsScreens,
   listCrudeGrades,
@@ -1841,6 +1843,224 @@ export function buildCatalogTools(): ToolRegistry {
                 notes: r.notes,
                 matchSource: r.matchSource,
                 slateNotes: r.slateNotes,
+              })),
+            };
+          },
+        ),
+    }),
+
+    find_refineries_for_grade: defineTool({
+      name: 'find_refineries_for_grade',
+      description:
+        'DETERMINISTIC slate-fit lookup: given a crude grade, return ' +
+        'the refineries whose structured slate envelope (apiMin/apiMax/' +
+        'sulfurMaxPct/tanMax) accepts the grade\'s actual properties.\n\n' +
+        'Different from lookup_refineries_compatible_with_grade: that ' +
+        'tool unions analyst-curated `compatible:` tags AND the slate ' +
+        'window. THIS tool is purely the slate-window match, sourced ' +
+        'from the refinery_grade_compatibility view — every result is ' +
+        'a defensible structural match (no analyst tagging required).\n\n' +
+        'Sort: complexity index DESC, capacity DESC. Higher-complexity ' +
+        'refineries extract more value from any given grade, so they ' +
+        'pay more — surface them first.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • "Which refineries can run [grade]?" — primary use case.\n' +
+        '  • Composing outreach to find buyers for a specialty cargo. ' +
+        'The deterministic slate-fit reasoning lets you cite the ' +
+        '*reason* (API/sulfur/TAN envelope) in the message body.\n' +
+        '  • Pair with find_grades_for_refinery for the inverse: given ' +
+        'a refinery, what fits.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The user wants the broadest possible match list — use ' +
+        'lookup_refineries_compatible_with_grade instead (unions tag + ' +
+        'window for highest recall).\n' +
+        '  • The grade is not in crude_grades — use list_crude_grades ' +
+        'to discover the right slug first.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Each result includes apiCompatible / sulfurCompatible / ' +
+        'tanCompatible flags with the per-dimension envelope echoed. ' +
+        'Surface the limiting dimension when a refinery is *almost* a ' +
+        'fit (compatibleOnly=false to see near-misses).\n' +
+        '  • slateComplexityIndex > 12 means the refinery extracts more ' +
+        'value via FCC + coker + hydrocracker; surface that as a ' +
+        'commercial hint ("high-complexity buyer; will price more ' +
+        'aggressively for the right grade").\n' +
+        '  • Every match is sourced from a curated structured envelope. ' +
+        'Refineries without slate metadata (the long tail) don\'t ' +
+        'appear; mention this when results look thin so the user knows ' +
+        'to use the broader tool.',
+      kind: 'read',
+      schema: z.object({
+        gradeSlug: z
+          .string()
+          .describe(
+            'crude_grades.slug — must match an existing grade. Use ' +
+              'list_crude_grades to discover.',
+          ),
+        inCountries: z
+          .array(isoAlpha2Country)
+          .optional()
+          .describe(
+            'Restrict to refineries in these ISO-2 countries. e.g. ' +
+              '["IT","ES","GR","TR"] for Mediterranean buyers.',
+          ),
+        limit: z.number().min(1).max(100).optional().describe('Default 25.'),
+        compatibleOnly: z
+          .boolean()
+          .optional()
+          .describe(
+            'Default true. Set false to surface near-misses with their ' +
+              'per-dimension reasons — useful when the user wants to ' +
+              'understand which refineries are *one envelope tweak* ' +
+              'away from being able to run the grade.',
+          ),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_refineries_for_grade',
+            args: input,
+            summarize: (out: { matchCount: number }) => ({
+              resultCount: out.matchCount,
+              resultSummary: { gradeSlug: input.gradeSlug },
+            }),
+          },
+          async () => {
+            const rows = await findRefineriesForGrade({
+              gradeSlug: input.gradeSlug,
+              inCountries: input.inCountries,
+              limit: input.limit,
+              compatibleOnly: input.compatibleOnly,
+            });
+            return {
+              matchCount: rows.length,
+              gradeSlug: input.gradeSlug,
+              refineries: rows.map((r) => ({
+                slug: r.refinerySlug,
+                name: r.refineryName,
+                country: r.refineryCountry,
+                profileUrl: buildEntityProfileUrl({ kind: 'known_entity', slug: r.refinerySlug }),
+                gradeProperties: {
+                  apiGravity: r.gradeApiGravity,
+                  sulfurPct: r.gradeSulfurPct,
+                  tan: r.gradeTan,
+                },
+                slateEnvelope: {
+                  apiMin: r.slateApiMin,
+                  apiMax: r.slateApiMax,
+                  sulfurMaxPct: r.slateSulfurMaxPct,
+                  tanMax: r.slateTanMax,
+                  complexityIndex: r.slateComplexityIndex,
+                  capacityBpd: r.slateCapacityBpd,
+                },
+                fit: {
+                  api: r.apiCompatible,
+                  sulfur: r.sulfurCompatible,
+                  tan: r.tanCompatible,
+                  overall: r.slateCompatible,
+                },
+              })),
+            };
+          },
+        ),
+    }),
+
+    find_grades_for_refinery: defineTool({
+      name: 'find_grades_for_refinery',
+      description:
+        'INVERSE slate-fit: given a refinery, return crude grades whose ' +
+        'properties fit its structured slate envelope. Sorted by ' +
+        'differential vs marker ASC (most-discounted grades first — ' +
+        'typically the highest-margin pick if the refiner has procurement ' +
+        'flexibility).\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • "What grades can [refinery] run?"\n' +
+        '  • Discussing a refiner\'s procurement options or composing ' +
+        'outreach about feedstock alternatives.\n' +
+        '  • Sourcing-side play: identifying which grades a buyer would ' +
+        'be most economically motivated to take (the cheapest fit).\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Results echo each grade\'s differential + marker. When ' +
+        'differential is null, the grade prices independently — note ' +
+        'that explicitly rather than treating null as zero.\n' +
+        '  • If the refinery has no slate metadata, the response is ' +
+        'empty and the answer is "not yet curated" rather than "no ' +
+        'grades fit." Tell the user; this is a known v1 limitation.',
+      kind: 'read',
+      schema: z.object({
+        refinerySlug: z
+          .string()
+          .describe(
+            'known_entities.slug for the refiner. Use lookup_known_entities ' +
+              'to discover.',
+          ),
+        fromOriginCountries: z
+          .array(isoAlpha2Country)
+          .optional()
+          .describe('Filter grades by origin country (ISO-2).'),
+        fromRegions: z
+          .array(
+            z.enum([
+              'mediterranean',
+              'west-africa',
+              'gulf',
+              'caspian',
+              'asia-pacific',
+              'americas',
+              'north-sea',
+            ]),
+          )
+          .optional()
+          .describe('Filter grades by region.'),
+        limit: z.number().min(1).max(100).optional().describe('Default 25.'),
+        compatibleOnly: z
+          .boolean()
+          .optional()
+          .describe('Default true. Set false to see near-misses.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_grades_for_refinery',
+            args: input,
+            summarize: (out: { matchCount: number }) => ({
+              resultCount: out.matchCount,
+              resultSummary: { refinerySlug: input.refinerySlug },
+            }),
+          },
+          async () => {
+            const rows = await findGradesForRefinery({
+              refinerySlug: input.refinerySlug,
+              fromOriginCountries: input.fromOriginCountries,
+              fromRegions: input.fromRegions,
+              limit: input.limit,
+              compatibleOnly: input.compatibleOnly,
+            });
+            return {
+              matchCount: rows.length,
+              refinerySlug: input.refinerySlug,
+              grades: rows.map((r) => ({
+                slug: r.gradeSlug,
+                name: r.gradeName,
+                originCountry: r.gradeOriginCountry,
+                region: r.gradeRegion,
+                properties: {
+                  apiGravity: r.gradeApiGravity,
+                  sulfurPct: r.gradeSulfurPct,
+                  tan: r.gradeTan,
+                },
+                fit: {
+                  api: r.apiCompatible,
+                  sulfur: r.sulfurCompatible,
+                  tan: r.tanCompatible,
+                  overall: r.slateCompatible,
+                },
+                pricing: {
+                  markerSlug: r.markerSlug,
+                  differentialUsdPerBbl: r.differentialUsdPerBbl,
+                },
               })),
             };
           },
