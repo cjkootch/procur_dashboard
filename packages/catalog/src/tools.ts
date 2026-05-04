@@ -21,6 +21,8 @@ import {
   walkSubsidiaries,
   lookupSanctionsScreens,
   getCrudeGradeDetail,
+  getExposureForGeoPhrase,
+  getMacroSignalExposure,
   listCrudeGrades,
   lookupCrudeAssay,
   lookupRefineriesByGrade,
@@ -4086,6 +4088,166 @@ export function buildCatalogTools(): ToolRegistry {
               signalCount: rows.length,
               windowDays: 90,
               signals: rows,
+            };
+          },
+        ),
+    }),
+
+    analyze_macro_signal_exposure: defineTool({
+      name: 'analyze_macro_signal_exposure',
+      description:
+        'Walk a macro / geo signal (Strait of Hormuz tension, Iranian ' +
+        'sanctions, Tuapse refinery damage) to the rolodex refineries ' +
+        'whose slate would be disrupted if supply from the implicated ' +
+        'countries went offline. Resolves the geo to ISO-2 countries, ' +
+        'pulls crude_grades originating there, then joins to the ' +
+        'refinery_grade_compatibility view (slate envelope: API + sulfur ' +
+        '+ TAN) to surface every refinery whose configured slate runs at ' +
+        'least one affected grade.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • The user names a chokepoint or geo event ("Hormuz closes, ' +
+        'who hurts?", "what does Tuapse mean for our buyers?").\n' +
+        '  • A macro row in the dashboard Market signals panel is ' +
+        'unclear and the user asks for context.\n' +
+        '  • Building a contextual outreach list — refineries exposed to ' +
+        'a sanctions risk are also refineries hunting for replacement ' +
+        'barrels (counterintuitively, the right call list).\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The signal is a counterparty event (named supplier ' +
+        'distress) — use analyze_supplier instead, which works against ' +
+        'the entity\'s own profile and history.\n' +
+        '  • The user just wants the list of recent macro signals — use ' +
+        'lookup_match_queue or direct them to /suppliers/match-queue?' +
+        'target=macro.\n\n' +
+        'INPUT SHAPE:\n' +
+        '  Provide EXACTLY ONE of:\n' +
+        '    • signalId  — match_queue.id (UUID) when the user is ' +
+        'pointing at a specific row in the Market signals panel.\n' +
+        '    • geoPhrase — free-text ("Strait of Hormuz", "Bab-el-' +
+        'Mandeb", "Suez", "Bosphorus", "Iran", "Russia"). Resolved via ' +
+        'chokepoint patterns first, then ISO-2, then country names.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • The result\'s `exposedRefineries` is sorted by ' +
+        '`affectedGradeCount` DESC — refineries with the broadest slate ' +
+        'overlap come first. Lead with the top 3 by name, citing how ' +
+        'many of their slate grades fall under the geo.\n' +
+        '  • An empty list means either (a) no procur-rolodex refinery ' +
+        'has a slate envelope that overlaps the affected grades, or ' +
+        '(b) the geo couldn\'t be resolved (`resolvedFrom = ' +
+        '"unresolved"`). Surface the difference; don\'t fabricate ' +
+        'exposure.\n' +
+        '  • Refineries exposed to a supply disruption are PROSPECTIVE ' +
+        'BUYERS for replacement barrels — flip the framing in outreach.',
+      kind: 'read',
+      schema: z
+        .object({
+          signalId: z
+            .string()
+            .uuid()
+            .optional()
+            .describe(
+              'match_queue.id of a macro signal. Use when the user is ' +
+                'pointing at a specific row in the Market signals panel.',
+            ),
+          geoPhrase: z
+            .string()
+            .min(2)
+            .optional()
+            .describe(
+              'Free-text geo phrase ("Strait of Hormuz", "Iran", "RU"). ' +
+                'Resolved via chokepoint patterns → ISO-2 → country name.',
+            ),
+        })
+        .refine((d) => Boolean(d.signalId) !== Boolean(d.geoPhrase), {
+          message: 'Provide exactly one of signalId or geoPhrase',
+        }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'analyze_macro_signal_exposure',
+            args: input,
+            summarize: (out: { exposedRefineryCount: number }) => ({
+              resultCount: out.exposedRefineryCount,
+              resultSummary: {
+                signalId: input.signalId,
+                geoPhrase: input.geoPhrase,
+                exposedRefineryCount: out.exposedRefineryCount,
+              },
+            }),
+          },
+          async () => {
+            if (input.signalId) {
+              const exposure = await getMacroSignalExposure(input.signalId);
+              if (!exposure) {
+                return {
+                  resolved: false as const,
+                  reason:
+                    'signal-id-not-macro-or-missing — match_queue row either ' +
+                    'has a known_entity / external_supplier (use ' +
+                    'analyze_supplier instead) or no longer exists.',
+                  exposedRefineryCount: 0,
+                };
+              }
+              return {
+                resolved: true as const,
+                source: 'signal' as const,
+                signalId: exposure.signalId,
+                affectedCountries: exposure.affectedCountries,
+                affectedGrades: exposure.affectedGrades.map((g) => ({
+                  slug: g.slug,
+                  name: g.name,
+                  originCountry: g.originCountry,
+                  apiGravity: g.apiGravity,
+                  sulfurPct: g.sulfurPct,
+                  profileUrl: buildEntityProfileUrl({
+                    kind: 'crude_grade',
+                    slug: g.slug,
+                  }),
+                })),
+                exposedRefineries: exposure.exposedRefineries.map((r) => ({
+                  name: r.name,
+                  country: r.country,
+                  affectedGradeCount: r.affectedGradeCount,
+                  primaryGradeNames: r.primaryGradeNames,
+                  profileUrl: buildEntityProfileUrl({
+                    kind: 'known_entity',
+                    slug: r.slug,
+                  }),
+                })),
+                exposedRefineryCount: exposure.exposedRefineries.length,
+              };
+            }
+            const phrase = input.geoPhrase as string;
+            const result = await getExposureForGeoPhrase(phrase);
+            return {
+              resolved: result.resolvedFrom !== 'unresolved',
+              source: 'geo-phrase' as const,
+              geoPhrase: phrase,
+              resolvedFrom: result.resolvedFrom,
+              affectedCountries: result.affectedCountries,
+              affectedGrades: result.affectedGrades.map((g) => ({
+                slug: g.slug,
+                name: g.name,
+                originCountry: g.originCountry,
+                apiGravity: g.apiGravity,
+                sulfurPct: g.sulfurPct,
+                profileUrl: buildEntityProfileUrl({
+                  kind: 'crude_grade',
+                  slug: g.slug,
+                }),
+              })),
+              exposedRefineries: result.exposedRefineries.map((r) => ({
+                name: r.name,
+                country: r.country,
+                affectedGradeCount: r.affectedGradeCount,
+                primaryGradeNames: r.primaryGradeNames,
+                profileUrl: buildEntityProfileUrl({
+                  kind: 'known_entity',
+                  slug: r.slug,
+                }),
+              })),
+              exposedRefineryCount: result.exposedRefineries.length,
             };
           },
         ),

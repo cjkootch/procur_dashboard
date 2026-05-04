@@ -4,10 +4,12 @@ import { and, desc, eq } from 'drizzle-orm';
 import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 import { alertProfiles, db } from '@procur/db';
 import {
+  getMacroSignalExposure,
   getMatchQueue,
   listEntityNews,
   listOpportunities,
   type EntityNewsRow,
+  type MacroSignalExposure,
 } from '@procur/catalog';
 import { AppShell } from '../components/shell/AppShell';
 import { CommodityPriceTicker } from '../components/CommodityPriceTicker';
@@ -68,8 +70,13 @@ export default async function BriefPage() {
   // 24h cutoff for "new tenders" — anything published in the last day.
   const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  const [matchQueueItems, marketSignals, recentOpps, counterpartyNews, fuelMarketNews] =
-    await Promise.all([
+  const [
+    matchQueueItems,
+    marketSignals,
+    recentOpps,
+    counterpartyNews,
+    fuelMarketNews,
+  ] = await Promise.all([
       // Counterparty rows only — actionable, push-to-vex eligible.
       // Macro/geo signals (Tuapse, Iran, Strait of Hormuz) get their
       // own panel since they're context, not leads.
@@ -124,6 +131,21 @@ export default async function BriefPage() {
         limit: 8,
       }).catch(() => [] as EntityNewsRow[]),
     ]);
+
+  // Walk each top-3 macro signal to its exposed rolodex refineries
+  // (geo → affected countries → crude grades → slate-compatible
+  // refineries). Failures collapse to null so a flaky walker call
+  // doesn't blank the panel.
+  const macroExposureById = new Map<string, MacroSignalExposure | null>();
+  await Promise.all(
+    marketSignals.slice(0, 3).map(async (sig) => {
+      try {
+        macroExposureById.set(sig.id, await getMacroSignalExposure(sig.id));
+      } catch {
+        macroExposureById.set(sig.id, null);
+      }
+    }),
+  );
 
   // Client-side narrow on the rest of the alert-profile filters
   // (additional jurisdictions/categories beyond the first, plus
@@ -252,27 +274,50 @@ export default async function BriefPage() {
             ctaLabel="Open all signals"
             empty="No active macro / geo signals in the last 7 days."
           >
-            {marketSignals.slice(0, 3).map((item) => (
-              <div
-                key={item.id}
-                className="block rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-2"
-              >
-                <div className="flex items-baseline justify-between gap-2">
-                  <p className="truncate text-sm font-medium">{item.sourceEntityName}</p>
-                  <span className="shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-900">
-                    macro
-                  </span>
+            {marketSignals.slice(0, 3).map((item) => {
+              const exposure = macroExposureById.get(item.id) ?? null;
+              const refs = exposure?.exposedRefineries ?? [];
+              return (
+                <div
+                  key={item.id}
+                  className="block rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-2"
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="truncate text-sm font-medium">{item.sourceEntityName}</p>
+                    <span className="shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-900">
+                      macro
+                    </span>
+                  </div>
+                  <p className="mt-0.5 line-clamp-2 text-xs text-[color:var(--color-muted-foreground)]">
+                    {item.rationale}
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-[color:var(--color-muted-foreground)]">
+                    {item.signalKind.replace(/_/g, ' ')}
+                    {item.sourceEntityCountry ? ` · ${item.sourceEntityCountry}` : ''} ·{' '}
+                    {item.observedAt}
+                  </p>
+                  {refs.length > 0 && (
+                    <p className="mt-1 text-[10px] text-[color:var(--color-foreground)]">
+                      <span className="font-semibold">Exposed:</span>{' '}
+                      {refs.length} refiner{refs.length === 1 ? 'y' : 'ies'}
+                      {' · '}
+                      {refs.slice(0, 3).map((r, i) => (
+                        <span key={r.slug}>
+                          {i > 0 ? ', ' : ''}
+                          <Link
+                            href={`/entities/${r.slug}`}
+                            className="underline hover:text-[color:var(--color-accent)]"
+                          >
+                            {r.name}
+                          </Link>
+                        </span>
+                      ))}
+                      {refs.length > 3 ? `, +${refs.length - 3} more` : ''}
+                    </p>
+                  )}
                 </div>
-                <p className="mt-0.5 line-clamp-2 text-xs text-[color:var(--color-muted-foreground)]">
-                  {item.rationale}
-                </p>
-                <p className="mt-0.5 text-[10px] text-[color:var(--color-muted-foreground)]">
-                  {item.signalKind.replace(/_/g, ' ')}
-                  {item.sourceEntityCountry ? ` · ${item.sourceEntityCountry}` : ''} ·{' '}
-                  {item.observedAt}
-                </p>
-              </div>
-            ))}
+              );
+            })}
           </BriefCard>
         </div>
 
