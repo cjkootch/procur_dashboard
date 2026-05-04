@@ -8098,3 +8098,253 @@ export async function getMatchSignalPerformance(): Promise<MatchSignalPerformanc
       r.total_margin_won_usd == null ? null : Number(r.total_margin_won_usd),
   }));
 }
+
+// ─── Country-level trade pattern (work item 5) ──────────────────
+
+export type CountryTradePatternResult = {
+  /** Reporter country (ISO-2) — the importer / consumer side. */
+  reporterCountry: string;
+  /** Source-country breakdown for inbound flows, OR null when the
+   *  caller asked for an export-side view (then `partnerBreakdown`
+   *  is the destination breakdown). */
+  productCodeRanges: string[];
+  flowDirection: 'import' | 'export';
+  windowMonths: number;
+  /** Aggregated summary over the window. */
+  totals: {
+    quantityKg: number | null;
+    valueUsd: number | null;
+    monthsWithData: number;
+  };
+  /** Year-over-year comparison: window vs prior window. NULL ratios
+   *  when prior window has no data. */
+  yoy: {
+    quantityKgPrior: number | null;
+    valueUsdPrior: number | null;
+    quantityChangePct: number | null;
+    valueChangePct: number | null;
+  };
+  /** Month-over-month series, oldest → newest. Length = windowMonths. */
+  monthly: Array<{
+    period: string;
+    quantityKg: number | null;
+    valueUsd: number | null;
+  }>;
+  /** Top-N partner countries by total value over the window. For
+   *  imports, these are the source countries. For exports, destinations. */
+  topPartners: Array<{
+    partnerCountry: string;
+    quantityKg: number | null;
+    valueUsd: number | null;
+    sharePct: number | null;
+  }>;
+  /** True when no rows matched the filter (clear "no coverage"
+   *  signal for the chat surface — Caribbean-internal flows aren't
+   *  in Eurostat, etc.). */
+  noData: boolean;
+};
+
+/**
+ * Country-level trade pattern report — total volume + value, MoM
+ * series, YoY comparison, top trading partners — for a given
+ * (country, HS code prefix(es)) over a sliding window.
+ *
+ * Two framings:
+ *   - flowDirection='import': "imports INTO `reporterCountry` for
+ *     these HS codes from anywhere". `topPartners` = source countries.
+ *   - flowDirection='export': "exports FROM `reporterCountry` (which
+ *     is encoded in the data as partner_country) to anywhere".
+ *     `topPartners` = destination countries.
+ *
+ * Coverage caveat: today's data is Eurostat Comext (EU reporters) +
+ * UN Comtrade. Caribbean-internal / intra-Latam / intra-Africa flows
+ * may be missing. `noData=true` when the filter returns zero rows.
+ *
+ * Brief: docs/data-graph-connections-brief.md §6 (work item 5).
+ */
+export async function analyzeCountryTradePattern(args: {
+  country: string;
+  productCodeRanges: string[];
+  flowDirection?: 'import' | 'export';
+  /** Default 24. Capped at 60 (Eurostat depth). */
+  windowMonths?: number;
+  /** Default 5; cap 20. */
+  topPartnerLimit?: number;
+}): Promise<CountryTradePatternResult> {
+  const flowDirection = args.flowDirection ?? 'import';
+  const windowMonths = Math.min(args.windowMonths ?? 24, 60);
+  const topN = Math.min(args.topPartnerLimit ?? 5, 20);
+
+  // For import view we filter by reporter_country = X. For export
+  // view we filter by partner_country = X (since the data encodes
+  // exports as imports reported from the importer's side).
+  const directionExpr =
+    flowDirection === 'import'
+      ? sql`reporter_country = ${args.country} AND flow_direction = 'import'`
+      : sql`partner_country = ${args.country} AND flow_direction = 'import'`;
+  // Match HS codes by prefix — a 4-digit "2710" range matches
+  // "271019", "27101931", etc. via LIKE.
+  const codeFilters = args.productCodeRanges.map(
+    (p) => sql`product_code LIKE ${p + '%'}`,
+  );
+  const productExpr = sql.join(codeFilters, sql` OR `);
+
+  const totalsRow = await db.execute(sql`
+    SELECT
+      SUM(quantity_kg)::numeric AS quantity_kg,
+      SUM(value_usd)::numeric   AS value_usd,
+      COUNT(DISTINCT period)::int AS months_with_data
+    FROM customs_imports
+    WHERE
+      ${directionExpr}
+      AND (${productExpr})
+      AND period >= NOW() - (${windowMonths}::int || ' months')::interval;
+  `);
+  const totals = (totalsRow.rows as Array<Record<string, unknown>>)[0] ?? {};
+
+  const priorRow = await db.execute(sql`
+    SELECT
+      SUM(quantity_kg)::numeric AS quantity_kg,
+      SUM(value_usd)::numeric   AS value_usd
+    FROM customs_imports
+    WHERE
+      ${directionExpr}
+      AND (${productExpr})
+      AND period >= NOW() - (${windowMonths * 2}::int || ' months')::interval
+      AND period <  NOW() - (${windowMonths}::int || ' months')::interval;
+  `);
+  const prior = (priorRow.rows as Array<Record<string, unknown>>)[0] ?? {};
+
+  const monthlyRows = await db.execute(sql`
+    WITH series AS (
+      SELECT generate_series(
+        date_trunc('month', NOW() - (${windowMonths}::int || ' months')::interval),
+        date_trunc('month', NOW()),
+        '1 month'::interval
+      )::date AS period
+    ),
+    buckets AS (
+      SELECT
+        period,
+        SUM(quantity_kg)::numeric AS quantity_kg,
+        SUM(value_usd)::numeric   AS value_usd
+      FROM customs_imports
+      WHERE
+        ${directionExpr}
+        AND (${productExpr})
+      GROUP BY period
+    )
+    SELECT
+      to_char(s.period, 'YYYY-MM') AS period,
+      b.quantity_kg,
+      b.value_usd
+    FROM series s
+    LEFT JOIN buckets b ON b.period = s.period
+    ORDER BY s.period ASC;
+  `);
+
+  const partnerCol = flowDirection === 'import' ? sql`partner_country` : sql`reporter_country`;
+  const topRows = await db.execute(sql`
+    SELECT
+      ${partnerCol} AS partner_country,
+      SUM(quantity_kg)::numeric AS quantity_kg,
+      SUM(value_usd)::numeric   AS value_usd
+    FROM customs_imports
+    WHERE
+      ${directionExpr}
+      AND (${productExpr})
+      AND period >= NOW() - (${windowMonths}::int || ' months')::interval
+    GROUP BY ${partnerCol}
+    ORDER BY SUM(value_usd) DESC NULLS LAST,
+             SUM(quantity_kg) DESC NULLS LAST
+    LIMIT ${topN};
+  `);
+
+  const totalQty = numericOrNull(totals.quantity_kg as never);
+  const totalValue = numericOrNull(totals.value_usd as never);
+  const monthsWithData = Number(totals.months_with_data ?? 0);
+
+  const priorQty = numericOrNull(prior.quantity_kg as never);
+  const priorValue = numericOrNull(prior.value_usd as never);
+  const quantityChangePct =
+    totalQty != null && priorQty != null && priorQty > 0
+      ? ((totalQty - priorQty) / priorQty) * 100
+      : null;
+  const valueChangePct =
+    totalValue != null && priorValue != null && priorValue > 0
+      ? ((totalValue - priorValue) / priorValue) * 100
+      : null;
+
+  const totalForShare = totalValue ?? 0;
+  const topPartners = (topRows.rows as Array<Record<string, unknown>>).map((r) => {
+    const valueUsd = numericOrNull(r.value_usd as never);
+    return {
+      partnerCountry: String(r.partner_country),
+      quantityKg: numericOrNull(r.quantity_kg as never),
+      valueUsd,
+      sharePct:
+        valueUsd != null && totalForShare > 0
+          ? Math.round((valueUsd / totalForShare) * 1000) / 10
+          : null,
+    };
+  });
+
+  return {
+    reporterCountry: args.country,
+    productCodeRanges: args.productCodeRanges,
+    flowDirection,
+    windowMonths,
+    totals: {
+      quantityKg: totalQty,
+      valueUsd: totalValue,
+      monthsWithData,
+    },
+    yoy: {
+      quantityKgPrior: priorQty,
+      valueUsdPrior: priorValue,
+      quantityChangePct: quantityChangePct == null ? null : Math.round(quantityChangePct * 10) / 10,
+      valueChangePct: valueChangePct == null ? null : Math.round(valueChangePct * 10) / 10,
+    },
+    monthly: (monthlyRows.rows as Array<Record<string, unknown>>).map((r) => ({
+      period: String(r.period),
+      quantityKg: numericOrNull(r.quantity_kg as never),
+      valueUsd: numericOrNull(r.value_usd as never),
+    })),
+    topPartners,
+    noData: monthsWithData === 0 && topPartners.length === 0,
+  };
+}
+
+/**
+ * Resolve a known_entities slug to its `customsContext` mapping, if
+ * the analyst has populated `metadata.customsContext`. Returns null
+ * when the slug doesn't exist OR when no context is curated.
+ *
+ * Helper for the `analyze_country_trade_pattern` chat tool's
+ * entity-driven path — the model can pass entitySlug and we resolve
+ * the country + product codes automatically.
+ */
+export async function getEntityCustomsContext(
+  slug: string,
+): Promise<{
+  entitySlug: string;
+  entityName: string;
+  context: import('./customs-context').CustomsContextMapping;
+} | null> {
+  const result = await db.execute(sql`
+    SELECT slug, name, metadata
+    FROM known_entities
+    WHERE slug = ${slug}
+    LIMIT 1;
+  `);
+  const row = (result.rows as Array<Record<string, unknown>>)[0];
+  if (!row) return null;
+  const { readCustomsContext } = await import('./customs-context');
+  const context = readCustomsContext(row.metadata);
+  if (!context) return null;
+  return {
+    entitySlug: String(row.slug),
+    entityName: String(row.name),
+    context,
+  };
+}

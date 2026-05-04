@@ -41,3 +41,8 @@ export {
   readSlateCapability,
   type RefinerySlateCapability,
 } from './slate-capability';
+export {
+  customsContextSchema,
+  readCustomsContext,
+  type CustomsContextMapping,
+} from './customs-context';
