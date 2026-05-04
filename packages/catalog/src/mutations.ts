@@ -3,11 +3,14 @@ import { and, eq } from 'drizzle-orm';
 import {
   db,
   alertProfiles,
+  entityDocuments,
+  ENTITY_DOCUMENT_CATEGORIES,
   externalSuppliers,
   knownEntities,
   opportunities,
   pursuits,
   supplierApprovals,
+  type EntityDocumentCategory,
   type SupplierApprovalStatus,
 } from '@procur/db';
 
@@ -309,4 +312,75 @@ export async function upsertSupplierApproval(
     })
     .returning({ id: supplierApprovals.id });
   return { id: inserted[0]!.id, created: true };
+}
+
+// ─── Entity document attachment (chat-side flow) ─────────────────
+
+export type AttachEntityDocumentInput = {
+  companyId: string;
+  userId: string;
+  entitySlug: string;
+  filename: string;
+  blobUrl: string;
+  sizeBytes?: number | null;
+  mimeType?: string | null;
+  category?: EntityDocumentCategory | null;
+  description?: string | null;
+};
+
+/**
+ * Record a document attachment against a rolodex entity. Mirrors
+ * what the EntityDocumentsPanel UI flow does, but called from the
+ * chat tool (`attach_document_to_entity`) when the user has uploaded
+ * a file in the chat composer and wants to associate it with an
+ * entity profile.
+ *
+ * The Vercel Blob upload happens client-side (assistant-uploads/
+ * <companyId>/<uuid> path); this mutation just writes the DB row.
+ *
+ * Throws `EntityNotFoundError` when entitySlug doesn't exist in
+ * either known_entities OR external_suppliers — same contract as
+ * upsertSupplierApproval, so chat traces show "create the entity
+ * first" guidance instead of an orphan attachment.
+ */
+export class EntityDocumentEntityMissingError extends Error {
+  readonly entitySlug: string;
+  constructor(entitySlug: string) {
+    super(`Entity '${entitySlug}' not found.`);
+    this.name = 'EntityDocumentEntityMissingError';
+    this.entitySlug = entitySlug;
+  }
+}
+
+export async function attachEntityDocument(
+  input: AttachEntityDocumentInput,
+): Promise<{ id: string; uploadedAt: Date }> {
+  if (!(await entitySlugExists(input.entitySlug))) {
+    throw new EntityDocumentEntityMissingError(input.entitySlug);
+  }
+  // Validate category against the runtime enum even though TS already
+  // narrows — defense in depth in case a non-typesafe caller wires up.
+  if (
+    input.category != null &&
+    !ENTITY_DOCUMENT_CATEGORIES.includes(input.category)
+  ) {
+    throw new Error(
+      `Invalid category '${input.category}'. Valid: ${ENTITY_DOCUMENT_CATEGORIES.join(', ')}.`,
+    );
+  }
+  const [inserted] = await db
+    .insert(entityDocuments)
+    .values({
+      companyId: input.companyId,
+      entitySlug: input.entitySlug,
+      filename: input.filename,
+      blobUrl: input.blobUrl,
+      sizeBytes: input.sizeBytes ?? null,
+      mimeType: input.mimeType ?? null,
+      category: input.category ?? null,
+      description: input.description ?? null,
+      uploadedBy: input.userId,
+    })
+    .returning({ id: entityDocuments.id, uploadedAt: entityDocuments.uploadedAt });
+  return { id: inserted!.id, uploadedAt: inserted!.uploadedAt };
 }
