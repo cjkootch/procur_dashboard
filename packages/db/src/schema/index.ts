@@ -51,3 +51,4 @@ export * from './match-queue';
 export * from './entity-contact-enrichments';
 export * from './supplier-approvals';
 export * from './entity-sanctions-screens';
+export * from './crude-assays';
