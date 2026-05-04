@@ -12,6 +12,7 @@ import {
 import { KycBadge } from '../../../components/KycBadge';
 import { parseEntityNotes } from '../../../lib/entity-notes';
 import { PushToVexButton } from './_components/PushToVexButton';
+import { EntityDocumentsPanel } from './_components/EntityDocumentsPanel';
 import { QuoteAnchorsPanel } from './_components/QuoteAnchorsPanel';
 import { SupplierApprovalForm } from './_components/SupplierApprovalForm';
 
@@ -161,6 +162,17 @@ export default async function EntityProfilePage({ params }: Props) {
       {profile.role === 'refiner' && (
         <QuoteAnchorsPanel entityCountry={profile.country ?? null} />
       )}
+
+      {/* Per-tenant document attachments — KYC packs, MSAs, contracts,
+          datasheets, price sheets, compliance screens, correspondence.
+          Per-tenant scoped (one tenant's docs never surface to another). */}
+      <div className="mb-6">
+        <EntityDocumentsPanel
+          entitySlug={profile.canonicalKey}
+          entityName={profile.name}
+        />
+      </div>
+
 
       {vesselActivity && (
         <section className="mb-6">
