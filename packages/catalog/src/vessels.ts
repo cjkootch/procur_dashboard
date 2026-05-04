@@ -34,6 +34,30 @@ export type VesselClassSlug =
   | 'vlcc'
   | 'ulcc';
 
+/**
+ * Voyage type — determines whether the Coastal/GP class is a viable
+ * pick. Coastal tankers (1-25k DWT) are limited-range hulls built for
+ * sheltered-water bunker barging and intra-coast distribution; using
+ * one for an open-ocean lift (e.g. NWE → Baltic across the North Sea
+ * in winter) is unsafe and uneconomic regardless of cargo size.
+ *
+ *   - 'coastal'      — same-country, port-hopping, sheltered
+ *                      (e.g. Southampton → Liverpool bunker run).
+ *   - 'short-sea'    — adjacent-region, sheltered/semi-sheltered
+ *                      (e.g. intra-Baltic, intra-Med-coastal,
+ *                      USGC → Cuba). Coastal/GP class still viable.
+ *   - 'open-ocean'   — open-water single-basin lift (trans-North-Sea,
+ *                      trans-Med, USGC ↔ Caribbean/WAF). Coastal class
+ *                      excluded; MR1 is the practical minimum.
+ *   - 'trans-ocean'  — multi-basin (trans-Atlantic, trans-Pacific,
+ *                      Cape of Good Hope routings). Coastal excluded.
+ *
+ * Default when omitted: 'open-ocean' — the conservative pick for
+ * international trading, where Coastal/GP would be wrong far more
+ * often than it would be right.
+ */
+export type VoyageRouteType = 'coastal' | 'short-sea' | 'open-ocean' | 'trans-ocean';
+
 export interface VesselClass {
   slug: VesselClassSlug;
   /** Display name used in chat surfaces. */
@@ -176,6 +200,12 @@ export interface VesselClassFit {
   fillPctOfMid: number;
   /** True when the cargo fits within the class's max capacity. */
   fits: boolean;
+  /** True when the class is excluded from "recommended" by the
+   *  voyage route type — today only Coastal/GP gets excluded, on
+   *  open-ocean / trans-ocean voyages. The class still appears in
+   *  the comparison chart (with this flag) so the user sees why
+   *  it wasn't picked. */
+  excludedByRoute: boolean;
   /** Cargo volume in MT this class can typically carry (mid). */
   classCapacityMt: number;
 }
@@ -185,8 +215,13 @@ export interface VesselRecommendation {
   volumeMt: number;
   cargoBbl: number;
   bblPerMt: number;
-  /** The smallest class that fits the cargo. Null when cargo
-   *  exceeds even ULCC capacity (truly unusual). */
+  /** The voyage route type the recommendation was made for. Echoed
+   *  back so the renderer + chat can show which assumption drove the
+   *  pick. Defaults to 'open-ocean' when not supplied. */
+  routeType: VoyageRouteType;
+  /** The smallest class that fits the cargo AND is allowed by the
+   *  voyage route type. Null when cargo exceeds even ULCC capacity
+   *  (truly unusual). */
   recommended: VesselClassFit | null;
   /** Up-to-three alternative classes (next-down, next-up, and one
    *  more) so the user can see the sizing band. */
@@ -203,6 +238,9 @@ export interface VesselRecommendation {
     cargoFillPct: number;
     /** When false, cargo doesn't fit this class. Visual cue only. */
     fits: boolean;
+    /** When true, the class is unfit for the voyage route type
+     *  (e.g. Coastal on an open-ocean lift). Visual cue only. */
+    excludedByRoute: boolean;
     /** Highlight cue for the recommended class. */
     isRecommended: boolean;
   }>;
@@ -210,14 +248,30 @@ export interface VesselRecommendation {
   narrative: string;
 }
 
+/** Voyages where Coastal/GP is a viable pick. */
+const COASTAL_OK_ROUTES: ReadonlySet<VoyageRouteType> = new Set([
+  'coastal',
+  'short-sea',
+]);
+
+function isExcludedByRoute(slug: VesselClassSlug, routeType: VoyageRouteType): boolean {
+  return slug === 'coastal' && !COASTAL_OK_ROUTES.has(routeType);
+}
+
 /**
- * Pick the smallest vessel class that fits a cargo, plus contextual
- * alternatives. Returns `recommended=null` only when cargo exceeds
- * ULCC max — extremely rare in commercial trading.
+ * Pick the smallest vessel class that fits a cargo AND is allowed by
+ * the voyage route type, plus contextual alternatives. Defaults
+ * `routeType` to 'open-ocean' — the conservative pick for international
+ * trading, where Coastal/GP would be wrong far more often than right
+ * (NWE → Baltic across the North Sea, USGC → Caribbean, etc.).
+ *
+ * Returns `recommended=null` only when cargo exceeds ULCC max OR no
+ * non-excluded class fits — both extremely rare in commercial trading.
  */
 export function recommendVesselClass(
   product: ProductSlug,
   volumeMt: number,
+  routeType: VoyageRouteType = 'open-ocean',
 ): VesselRecommendation {
   if (volumeMt <= 0) {
     throw new Error(`recommendVesselClass: volumeMt must be positive (got ${volumeMt})`);
@@ -235,12 +289,13 @@ export function recommendVesselClass(
       vesselClass: vc,
       fillPctOfMid: (cargoBbl / midBbl) * 100,
       fits: cargoBbl <= vc.cargoBblMax,
+      excludedByRoute: isExcludedByRoute(vc.slug, routeType),
       classCapacityMt,
     };
   });
 
-  // Smallest class whose max accommodates the cargo.
-  const recommended = fits.find((f) => f.fits) ?? null;
+  // Smallest class that fits the cargo AND is route-permitted.
+  const recommended = fits.find((f) => f.fits && !f.excludedByRoute) ?? null;
 
   // Alternatives: previous (under-sized, reference for "won't fit"),
   // next (one-up, headroom), and the one after that — bounded.
@@ -258,16 +313,18 @@ export function recommendVesselClass(
     capacityBblMid: (f.vesselClass.cargoBblMin + f.vesselClass.cargoBblMax) / 2,
     cargoFillPct: Math.min(f.fillPctOfMid, 100),
     fits: f.fits,
+    excludedByRoute: f.excludedByRoute,
     isRecommended: recommended?.vesselClass.slug === f.vesselClass.slug,
   }));
 
-  const narrative = buildNarrative(product, volumeMt, cargoBbl, recommended);
+  const narrative = buildNarrative(product, volumeMt, cargoBbl, recommended, routeType);
 
   return {
     product,
     volumeMt,
     cargoBbl,
     bblPerMt,
+    routeType,
     recommended,
     alternatives,
     comparisonChart,
@@ -280,6 +337,7 @@ function buildNarrative(
   volumeMt: number,
   cargoBbl: number,
   recommended: VesselClassFit | null,
+  routeType: VoyageRouteType,
 ): string {
   const volStr = `${Math.round(volumeMt).toLocaleString()} MT`;
   const bblStr = `${Math.round(cargoBbl).toLocaleString()} bbl`;
@@ -287,11 +345,18 @@ function buildNarrative(
     return `${volStr} of ${product} (~${bblStr}) exceeds ULCC capacity. Either split the cargo across multiple lifts or use FSO storage transfer.`;
   }
   const fillRoundedToFive = Math.round(recommended.fillPctOfMid / 5) * 5;
+  // Surface the route-driven Coastal exclusion so the operator
+  // doesn't wonder why a 30k MT cargo wasn't slotted into Coastal/GP.
+  const coastalNote =
+    !COASTAL_OK_ROUTES.has(routeType) && cargoBbl <= 200_000
+      ? ` Coastal/GP excluded for ${routeType} voyage (limited open-water range); ` +
+        `pass routeType='short-sea' or 'coastal' if the lift is genuinely sheltered.`
+      : '';
   return (
     `${volStr} of ${product} (~${bblStr}) sits in the ${recommended.vesselClass.label} ` +
     `bracket (${recommended.vesselClass.dwtMin.toLocaleString()}-${recommended.vesselClass.dwtMax.toLocaleString()} DWT, ` +
     `~${recommended.vesselClass.cargoBblMin.toLocaleString()}-${recommended.vesselClass.cargoBblMax.toLocaleString()} bbl). ` +
-    `Cargo fills ~${fillRoundedToFive}% of typical mid capacity.`
+    `Cargo fills ~${fillRoundedToFive}% of typical mid capacity.${coastalNote}`
   );
 }
 

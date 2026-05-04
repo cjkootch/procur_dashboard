@@ -34,4 +34,5 @@ export {
   type VesselClassSlug,
   type VesselClassFit,
   type VesselRecommendation,
+  type VoyageRouteType,
 } from './vessels';

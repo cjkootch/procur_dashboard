@@ -2032,12 +2032,13 @@ export function buildCatalogTools(): ToolRegistry {
       name: 'recommend_vessel_class',
       description:
         'Pick the right tanker class (MR1 / MR2 / LR1 / LR2 / Aframax / ' +
-        'Suezmax / VLCC / ULCC) for a given product + cargo volume. ' +
-        'Returns the smallest fitting class plus 2-3 alternatives, each ' +
-        'with cargo-fill % vs typical mid capacity. Also returns a ' +
-        '`comparisonChart` payload — every class with normalized ' +
-        'capacity + cargo overlay — for the chat surface to render as ' +
-        'a side-by-side bar / silhouette comparison.\n\n' +
+        'Suezmax / VLCC / ULCC) for a given product + cargo volume + ' +
+        'voyage type. Returns the smallest fitting class (gated by ' +
+        'voyage geography) plus 2-3 alternatives, each with cargo-fill % ' +
+        'vs typical mid capacity. Also returns a `comparisonChart` ' +
+        'payload — every class with normalized capacity + cargo overlay ' +
+        '— for the chat surface to render as a side-by-side bar / ' +
+        'silhouette comparison.\n\n' +
         'WHEN TO CALL:\n' +
         '  • The user asks "what size vessel do I need for X MT" / ' +
         '"what tanker class fits this cargo" / "is this an MR or LR".\n' +
@@ -2054,9 +2055,16 @@ export function buildCatalogTools(): ToolRegistry {
         '  • Single-product crude cargoes named in obvious terms (e.g. ' +
         '"a VLCC of Es Sider") — the user already named the class.\n\n' +
         'INTERPRETATION DISCIPLINE:\n' +
-        '  • The recommended class is the SMALLEST fit. Often the most ' +
-        'economic lift is one class up (better $/MT freight at scale), ' +
-        'so always surface the next-up alternative with its fill %.\n' +
+        '  • The recommended class is the SMALLEST fit ALLOWED BY THE ' +
+        'VOYAGE TYPE. For open-ocean / trans-ocean voyages the Coastal/' +
+        'GP class is excluded (limited open-water range, unsafe for ' +
+        'trans-North-Sea / Caribbean / Atlantic lifts) — even when the ' +
+        'cargo would technically fit. Pass routeType=`short-sea` or ' +
+        '`coastal` only when the lift is genuinely sheltered (e.g. ' +
+        'intra-Baltic, intra-Med-coastal, port-hopping).\n' +
+        '  • Often the most economic lift is one class up from the ' +
+        'recommended (better $/MT freight at scale), so always surface ' +
+        'the next-up alternative with its fill %.\n' +
         '  • cargoFillPct < 50% on the recommended class ⇒ uneconomic; ' +
         'flag that splitting across two smaller lifts may be cheaper.\n' +
         '  • cargoFillPct > 95% on the recommended class ⇒ no ullage ' +
@@ -2092,6 +2100,26 @@ export function buildCatalogTools(): ToolRegistry {
               'aggregate inflates the recommended class and gives bad ' +
               'freight assumptions downstream.',
           ),
+        routeType: z
+          .enum(['coastal', 'short-sea', 'open-ocean', 'trans-ocean'])
+          .optional()
+          .describe(
+            'Voyage type. Drives whether the Coastal/GP class is a ' +
+              'viable pick:\n' +
+              '  • coastal — same-country, port-hopping, sheltered ' +
+              '(e.g. Southampton → Liverpool bunker run). Coastal/GP OK.\n' +
+              '  • short-sea — adjacent-region, sheltered/semi-sheltered ' +
+              '(intra-Baltic, intra-Med-coastal, USGC → Cuba). ' +
+              'Coastal/GP OK.\n' +
+              '  • open-ocean — open-water single-basin (trans-North-Sea, ' +
+              'trans-Med, USGC ↔ Caribbean/WAF, NWE ↔ Iberia). MR1 minimum.\n' +
+              '  • trans-ocean — multi-basin (trans-Atlantic, ' +
+              'trans-Pacific, Cape of Good Hope routings). MR1 minimum.\n' +
+              "Defaults to 'open-ocean' when omitted — the conservative " +
+              'pick for international trading. Pass coastal/short-sea ' +
+              'only when the lift is genuinely sheltered, otherwise ' +
+              'leave omitted (or pass open-ocean / trans-ocean explicitly).',
+          ),
       }),
       handler: async (ctx, input) =>
         withToolTelemetry(
@@ -2101,16 +2129,18 @@ export function buildCatalogTools(): ToolRegistry {
             args: input,
             summarize: (out: {
               recommended: { vesselClass: { slug: string } } | null;
+              routeType: string;
             }) => ({
               resultCount: 1,
               resultSummary: {
                 product: input.product,
                 volumeMt: input.volumeMt,
+                routeType: out.routeType,
                 recommendedClass: out.recommended?.vesselClass.slug ?? 'none',
               },
             }),
           },
-          async () => recommendVesselClass(input.product, input.volumeMt),
+          async () => recommendVesselClass(input.product, input.volumeMt, input.routeType),
         ),
     }),
 
