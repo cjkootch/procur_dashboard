@@ -7939,3 +7939,99 @@ function numericOrNullCG(v: unknown): number | null {
   const n = typeof v === 'number' ? v : Number(v);
   return Number.isFinite(n) ? n : null;
 }
+// ─── Recursive ownership walks (work item 2) ──────────────────────
+
+export type OwnershipEdge = {
+  /** Distance from the seed entity (1 = direct parent / direct subsidiary). */
+  depth: number;
+  /** GEM IDs of the chain from the seed to this node, inclusive. */
+  path: string[];
+  subjectGemId: string;
+  subjectName: string;
+  parentGemId: string;
+  parentName: string;
+  sharePct: number | null;
+  shareImputed: boolean;
+  sourceUrls: string | null;
+};
+
+/**
+ * Walk the ownership graph upward from `entityName` — every parent
+ * relationship at every level, capped at `maxDepth`. Backed by the
+ * `lookup_ownership_chain_up` SQL function (migration 0058).
+ *
+ * Different from `getOwnershipChain` (which returns ONE highest-share
+ * parent per level): this returns ALL parents. Eni S.p.A. surfaces
+ * with both its 30% Italian govt edge AND its 70% public-float edge,
+ * not just the dominant one.
+ *
+ * Returns empty when the entity isn't found in `entity_ownership` at
+ * all (the trigram fuzzy-match seed found nothing above the
+ * similarity threshold).
+ */
+export async function walkOwnershipChainUp(args: {
+  entityName: string;
+  maxDepth?: number;
+  minSimilarity?: number;
+}): Promise<OwnershipEdge[]> {
+  const result = await runOwnershipQuery(() =>
+    db.execute(sql`
+      SELECT
+        depth, subject_gem_id, subject_name, parent_gem_id, parent_name,
+        share_pct, share_imputed, source_urls, path
+      FROM lookup_ownership_chain_up(
+        ${args.entityName},
+        ${args.maxDepth ?? 10}::int,
+        ${args.minSimilarity ?? 0.55}::numeric
+      );
+    `),
+  );
+  if (!result) return [];
+  return (result.rows as Array<Record<string, unknown>>).map(rowToOwnershipEdge);
+}
+
+/**
+ * Walk the ownership graph downward — every subsidiary at every level
+ * owned (>= `minSharePct`) by `entityName`. Backed by the
+ * `lookup_subsidiaries` SQL function.
+ *
+ * `minSharePct=50` gives "controlling-interest" subsidiaries (the OFAC
+ * 50% Rule view of the holding's footprint); `0` (default) returns
+ * every relationship reported.
+ */
+export async function walkSubsidiaries(args: {
+  entityName: string;
+  minSharePct?: number;
+  maxDepth?: number;
+  minSimilarity?: number;
+}): Promise<OwnershipEdge[]> {
+  const result = await runOwnershipQuery(() =>
+    db.execute(sql`
+      SELECT
+        depth, parent_gem_id, parent_name, subject_gem_id, subject_name,
+        share_pct, share_imputed, source_urls, path
+      FROM lookup_subsidiaries(
+        ${args.entityName},
+        ${args.maxDepth ?? 10}::int,
+        ${args.minSharePct ?? 0}::numeric,
+        ${args.minSimilarity ?? 0.55}::numeric
+      );
+    `),
+  );
+  if (!result) return [];
+  return (result.rows as Array<Record<string, unknown>>).map(rowToOwnershipEdge);
+}
+
+function rowToOwnershipEdge(r: Record<string, unknown>): OwnershipEdge {
+  return {
+    depth: Number(r.depth),
+    path: Array.isArray(r.path) ? (r.path as string[]) : [],
+    subjectGemId: String(r.subject_gem_id),
+    subjectName: String(r.subject_name),
+    parentGemId: String(r.parent_gem_id),
+    parentName: String(r.parent_name),
+    sharePct: r.share_pct == null ? null : Number.parseFloat(String(r.share_pct)),
+    shareImputed: Boolean(r.share_imputed),
+    sourceUrls: r.source_urls == null ? null : String(r.source_urls),
+  };
+}
