@@ -11,6 +11,7 @@ import type {
   RenderedToolUse,
 } from './types';
 import { DealEconomicsCard, isDealEconomicsOutput } from './DealEconomicsCard';
+import { CrudeGradeCard, isCrudeGradeDetailOutput } from './CrudeGradeCard';
 
 /**
  * Allowed for chat upload: PDF + the four image MIME types Anthropic's
@@ -559,6 +560,9 @@ function MessageView({
             if (t.result && !t.result.isError) {
               if (isDealEconomicsOutput(t.result.output)) {
                 return <DealEconomicsCard key={t.id} output={t.result.output} />;
+              }
+              if (isCrudeGradeDetailOutput(t.result.output)) {
+                return <CrudeGradeCard key={t.id} output={t.result.output} />;
               }
               if (isProposalOutput(t.result.output)) {
                 return (
