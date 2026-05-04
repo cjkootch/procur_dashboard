@@ -68,9 +68,25 @@ export default async function BriefPage() {
   // 24h cutoff for "new tenders" — anything published in the last day.
   const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  const [matchQueueItems, recentOpps, counterpartyNews, fuelMarketNews] =
+  const [matchQueueItems, marketSignals, recentOpps, counterpartyNews, fuelMarketNews] =
     await Promise.all([
-      getMatchQueue({ status: 'open', daysBack: 7, limit: 100 }),
+      // Counterparty rows only — actionable, push-to-vex eligible.
+      // Macro/geo signals (Tuapse, Iran, Strait of Hormuz) get their
+      // own panel since they're context, not leads.
+      getMatchQueue({
+        status: 'open',
+        daysBack: 7,
+        limit: 100,
+        target: 'counterparty',
+      }),
+      // Macro signals — geo/region/market disruption rows. Surfaced
+      // for situational awareness; not pushable.
+      getMatchQueue({
+        status: 'open',
+        daysBack: 7,
+        limit: 25,
+        target: 'macro',
+      }),
       alertProfile
         ? listOpportunities({
             // OpportunityFilters takes single values, so pick the first
@@ -229,12 +245,35 @@ export default async function BriefPage() {
           </BriefCard>
 
           <BriefCard
-            title="Entity proposals"
-            count={null}
-            href="/assistant"
-            ctaLabel="Open assistant"
-            empty="Proposals from chat (propose_create / propose_update) appear here once the approval queue lands. Today they live inline in chat — click Apply on the card to commit."
-          />
+            title="Market signals"
+            count={marketSignals.length}
+            countLabel={marketSignals.length === 1 ? 'signal' : 'signals'}
+            href="/suppliers/match-queue?target=macro"
+            ctaLabel="Open all signals"
+            empty="No active macro / geo signals in the last 7 days."
+          >
+            {marketSignals.slice(0, 3).map((item) => (
+              <div
+                key={item.id}
+                className="block rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-2"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="truncate text-sm font-medium">{item.sourceEntityName}</p>
+                  <span className="shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-900">
+                    macro
+                  </span>
+                </div>
+                <p className="mt-0.5 line-clamp-2 text-xs text-[color:var(--color-muted-foreground)]">
+                  {item.rationale}
+                </p>
+                <p className="mt-0.5 text-[10px] text-[color:var(--color-muted-foreground)]">
+                  {item.signalKind.replace(/_/g, ' ')}
+                  {item.sourceEntityCountry ? ` · ${item.sourceEntityCountry}` : ''} ·{' '}
+                  {item.observedAt}
+                </p>
+              </div>
+            ))}
+          </BriefCard>
         </div>
 
         {counterpartyNews.length > 0 && (

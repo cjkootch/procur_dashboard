@@ -27,16 +27,22 @@ interface Props {
   searchParams: Promise<{
     signal?: 'distress_event' | 'velocity_drop' | 'new_award';
     days?: string;
+    /** 'counterparty' (default; push-to-vex eligible rows) | 'macro'
+     *  (geo / region / market signals — Tuapse, Iran, Strait of Hormuz)
+     *  | 'all' (legacy mixed view). */
+    target?: 'counterparty' | 'macro' | 'all';
   }>;
 }
 
 export default async function MatchQueuePage({ searchParams }: Props) {
   const params = await searchParams;
   const days = clampDays(params.days);
+  const target = params.target ?? 'counterparty';
   const items = await getMatchQueue({
     status: 'open',
     signalType: params.signal,
     daysBack: days,
+    target,
     limit: 200,
   });
 
@@ -64,6 +70,27 @@ export default async function MatchQueuePage({ searchParams }: Props) {
       </section>
 
       <section className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+            Target
+          </span>
+          <Chip
+            href={buildHref(params, { target: 'counterparty' })}
+            label="Counterparties"
+            active={target === 'counterparty'}
+          />
+          <Chip
+            href={buildHref(params, { target: 'macro' })}
+            label="Macro"
+            active={target === 'macro'}
+          />
+          <Chip
+            href={buildHref(params, { target: 'all' })}
+            label="All"
+            active={target === 'all'}
+          />
+        </div>
+        <span aria-hidden="true" className="mx-1 h-4 w-px bg-[color:var(--color-border)]" />
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="mr-1 text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
             Signal
@@ -151,13 +178,14 @@ function clampDays(raw: string | undefined): number {
 }
 
 function buildHref(
-  current: { signal?: string; days?: string },
-  override: { signal?: string; days?: string },
+  current: { signal?: string; days?: string; target?: string },
+  override: { signal?: string; days?: string; target?: string },
 ): string {
   const next = { ...current, ...override };
   const sp = new URLSearchParams();
   if (next.signal) sp.set('signal', next.signal);
   if (next.days) sp.set('days', next.days);
+  if (next.target) sp.set('target', next.target);
   const qs = sp.toString();
   return `/suppliers/match-queue${qs ? `?${qs}` : ''}`;
 }
