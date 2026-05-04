@@ -8035,3 +8035,66 @@ function rowToOwnershipEdge(r: Record<string, unknown>): OwnershipEdge {
     sourceUrls: r.source_urls == null ? null : String(r.source_urls),
   };
 }
+
+// ─── Match-queue signal performance (work item 3) ────────────────
+
+export type MatchSignalPerformanceRow = {
+  signalKind: string;
+  total90d: number;
+  actioned90d: number;
+  closedWon90d: number;
+  closedLost90d: number;
+  /** % of matches the operator chose to push (vs dismissed). */
+  actionRatePct: number | null;
+  /** % of matches that converted to closed_won. */
+  closeRatePct: number | null;
+  /** Of pushed matches, % that converted (excludes the dismissed
+   *  filter from the denominator). */
+  conversionRatePct: number | null;
+  avgMarginWonUsd: number | null;
+  totalMarginWonUsd: number | null;
+};
+
+/**
+ * Trailing-90d match-queue conversion rates per signal_kind, sourced
+ * from the `match_signal_performance` view (migration 0059).
+ *
+ * Powers two surfaces:
+ *   1. The `analyze_match_signal_performance` chat tool — operator
+ *      asks "which signals are converting" / "should we keep
+ *      surfacing distress events?" and gets empirical conversion
+ *      data.
+ *   2. The future scoring-calibration job — replaces the static
+ *      heuristic weights with rolling close-rate per signal_kind.
+ */
+export async function getMatchSignalPerformance(): Promise<MatchSignalPerformanceRow[]> {
+  const result = await db.execute(sql`
+    SELECT
+      signal_kind,
+      total_90d,
+      actioned_90d,
+      closed_won_90d,
+      closed_lost_90d,
+      action_rate_pct,
+      close_rate_pct,
+      conversion_rate_pct,
+      avg_margin_won_usd,
+      total_margin_won_usd
+    FROM match_signal_performance;
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    signalKind: String(r.signal_kind),
+    total90d: Number(r.total_90d ?? 0),
+    actioned90d: Number(r.actioned_90d ?? 0),
+    closedWon90d: Number(r.closed_won_90d ?? 0),
+    closedLost90d: Number(r.closed_lost_90d ?? 0),
+    actionRatePct: r.action_rate_pct == null ? null : Number(r.action_rate_pct),
+    closeRatePct: r.close_rate_pct == null ? null : Number(r.close_rate_pct),
+    conversionRatePct:
+      r.conversion_rate_pct == null ? null : Number(r.conversion_rate_pct),
+    avgMarginWonUsd:
+      r.avg_margin_won_usd == null ? null : Number(r.avg_margin_won_usd),
+    totalMarginWonUsd:
+      r.total_margin_won_usd == null ? null : Number(r.total_margin_won_usd),
+  }));
+}

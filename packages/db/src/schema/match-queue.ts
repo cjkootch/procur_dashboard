@@ -62,6 +62,27 @@ export const matchQueue = pgTable(
       .defaultNow()
       .notNull(),
 
+    /** When the match was pushed to vex. Null until status flips to
+     *  'pushed-to-vex'. Migration 0059. */
+    pushedToVexAt: timestamp('pushed_to_vex_at', { withTimezone: true }),
+    /** Vex's deal ID once a fuel_deal materializes from this match.
+     *  Set by the match-outcome webhook when the deal is created.
+     *  Migration 0059. */
+    vexDealId: text('vex_deal_id'),
+    /** Terminal outcome reported by vex:
+     *    'closed_won' — deal closed, VTC realized margin
+     *    'closed_lost' — pursued but didn't close
+     *    'no_engagement' — pushed but no real conversation occurred
+     *    'still_active' — pushed long ago, deal still open at 90+ days
+     *  Validated at the route layer; left as text here for additive
+     *  evolution. Migration 0059. */
+    dealOutcome: text('deal_outcome'),
+    /** When dealOutcome was set. Migration 0059. */
+    outcomeRecordedAt: timestamp('outcome_recorded_at', { withTimezone: true }),
+    /** Realized margin (USD) when dealOutcome='closed_won'; NULL
+     *  otherwise. Captured from vex's deal close metrics. Mig 0059. */
+    realizedMarginUsd: numeric('realized_margin_usd', { precision: 14, scale: 2 }),
+
     matchedAt: timestamp('matched_at', { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -82,6 +103,17 @@ export const matchQueue = pgTable(
     ),
   }),
 );
+
+/** Valid `dealOutcome` values — single source of truth. The webhook
+ *  validates against this list; the match_signal_performance view
+ *  aggregates by it. */
+export const MATCH_DEAL_OUTCOMES = [
+  'closed_won',
+  'closed_lost',
+  'no_engagement',
+  'still_active',
+] as const;
+export type MatchDealOutcome = (typeof MATCH_DEAL_OUTCOMES)[number];
 
 export type MatchQueueRow = typeof matchQueue.$inferSelect;
 export type NewMatchQueueRow = typeof matchQueue.$inferInsert;
