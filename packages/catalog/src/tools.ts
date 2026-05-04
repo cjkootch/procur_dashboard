@@ -27,6 +27,7 @@ import {
   getCommoditySpread,
   getCommodityTicker,
   getCrudeBasis,
+  analyzeEntityCargoActivity,
   findDistressedSuppliers,
   findRecentPortCalls,
   findRecentSimilarAwards,
@@ -3572,6 +3573,101 @@ export function buildCatalogTools(): ToolRegistry {
           },
         ),
     }),
+    analyze_entity_cargo_activity: defineTool({
+      name: 'analyze_entity_cargo_activity',
+      description:
+        'Per-entity cargo-trip activity summary — what loaded / ' +
+        'discharged at the entity\'s port over a sliding window. ' +
+        'Backed by the `cargo_trips` table (migration 0060), which ' +
+        'pairs consecutive AIS port calls per tanker into ' +
+        '(load → discharge) trip records.\n\n' +
+        'Resolves the entity\'s nearest port via known_entities.lat/lng ' +
+        '(50 nm radius), then aggregates trips touching that port on ' +
+        'either side. Auto-detects whether the entity is primarily a ' +
+        'discharge side (refinery / fuel depot) or a load side ' +
+        '(producer terminal / marketing arm) based on the trip mix.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • "What\'s the cargo pattern at [refinery]?" / "where does ' +
+        '[producer] ship to?" — entity-level macro activity.\n' +
+        '  • Composing outreach that references actual observed ' +
+        'procurement: "I see your facility has received approximately ' +
+        '14 tankers in the last 90 days, averaging 105K DWT, with ' +
+        'origin distribution heavily weighted toward [X]..."\n' +
+        '  • Cross-validating customs trade-flow data from ' +
+        'analyze_country_trade_pattern. The two should agree on ' +
+        'macro pattern; divergence is information.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The entity has no lat/lng (returns noData=true; surface ' +
+        'that to the user rather than presenting empty stats).\n' +
+        '  • The entity is outside the AIS bounding boxes procur ' +
+        'subscribes to (Med / Caribbean / US Gulf / WAF). Same noData ' +
+        'response — coverage gap is the answer.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • inferredVolumeBbl is DWT-derived (±15% typical error). ' +
+        'Useful directionally, not absolutely. When citing aggregate ' +
+        'volume, round to the nearest 100k bbl.\n' +
+        '  • inferredGradeSlug is non-null only when the loading port ' +
+        'reports a single known grade. Multi-grade ports leave it ' +
+        'NULL — surface "grade not inferred" rather than guessing.\n' +
+        '  • avgConfidence < 0.7 means the trip pairings have ' +
+        'meaningful ambiguity (multiple grades / off-pace voyages). ' +
+        'Surface the figure but caveat the precision.\n' +
+        '  • noData=true is a valid response — "we have no observed ' +
+        'AIS activity for this entity" is information, not failure.',
+      kind: 'read',
+      schema: z.object({
+        entitySlug: z
+          .string()
+          .min(1)
+          .describe('known_entities.slug. Use lookup_known_entities to discover.'),
+        windowDays: z
+          .number()
+          .int()
+          .min(7)
+          .max(365)
+          .optional()
+          .describe('Default 90. Cap 365.'),
+        recentLimit: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .describe('Top-N most-recent trips returned. Default 10.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'analyze_entity_cargo_activity',
+            args: input,
+            summarize: (out: {
+              summary: { totals: { tripCount: number }; noData: boolean } | null;
+            }) => ({
+              resultCount: out.summary?.totals.tripCount ?? 0,
+              resultSummary: {
+                entitySlug: input.entitySlug,
+                noData: out.summary?.noData ?? true,
+                tripCount: out.summary?.totals.tripCount ?? 0,
+              },
+            }),
+          },
+          async () => {
+            const summary = await analyzeEntityCargoActivity({
+              entitySlug: input.entitySlug,
+              windowDays: input.windowDays,
+              recentLimit: input.recentLimit,
+            });
+            if (!summary) {
+              throw new Error(
+                `Entity "${input.entitySlug}" not found in known_entities.`,
+              );
+            }
+            return { summary };
+          },
+        ),
+    }),
+
 
     analyze_supplier_pricing: defineTool({
       name: 'analyze_supplier_pricing',
