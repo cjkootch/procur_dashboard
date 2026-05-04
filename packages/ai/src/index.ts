@@ -131,3 +131,18 @@ export {
   type ShredRfpOutputT,
   type SuggestRequirementsOutputT,
 } from './types';
+export {
+  listThreads,
+  getThread,
+  listMessages,
+  createThread,
+  renameThread,
+  deleteThread,
+  appendUserMessage,
+  appendAssistantMessage,
+  appendToolResults,
+  messagesToHistory,
+  type ThreadListRow,
+  type UserAttachment,
+  type AppendAssistantMessageInput,
+} from './threads';
