@@ -18,12 +18,14 @@ import {
   agencies,
   awardAwardees,
   awards,
+  commissionStructures,
   companies,
   companyCapabilities,
   crudeAssayCuts,
   crudeAssays,
   crudeGrades,
   db,
+  dealStructureTemplates,
   documents,
   externalSuppliers,
   jurisdictions,
@@ -38,6 +40,8 @@ import {
   supplierSignals,
   taxonomyCategories,
   users,
+  type CommissionStructure,
+  type DealStructureTemplate,
   type SupplierApproval,
   type SupplierApprovalStatus,
 } from '@procur/db';
@@ -10699,4 +10703,233 @@ function resolveAffectedCountries(
   }
   if (sourceEntityCountry) return [sourceEntityCountry];
   return [];
+}
+
+// ─── Deal structure template + commission structure catalog ──────
+
+/**
+ * Look up VTC's deal-structure templates from the catalog. Spec:
+ * docs/deal-structures-catalog-brief.md §3 + §8.
+ *
+ * Templates are the canonical *shape* of a proposal — Incoterm ×
+ * payment instrument × region × VTC entity bundles VTC actually
+ * offers. Sorted by:
+ *   1. exact category match first
+ *   2. exact region match next
+ *   3. status='active' before 'draft'
+ *   4. validatedByCounsel=true preferred
+ *   5. updatedAt DESC
+ *
+ * `status` defaults to 'active'. Pass 'all' to include drafts +
+ * deprecated entries (useful for catalog browse pages).
+ */
+export type DealStructureTemplateFilter = {
+  category?: string;
+  region?: string;
+  vtcEntity?: string;
+  preferredIncoterm?: string;
+  preferredPaymentInstrument?: string;
+  /** ISO-2 country code — when supplied, templates whose
+   *  `excludedJurisdictions` contains this code are filtered out. */
+  destinationCountry?: string;
+  status?: 'active' | 'draft' | 'all';
+  limit?: number;
+};
+
+export async function lookupDealStructureTemplates(
+  args: DealStructureTemplateFilter,
+): Promise<DealStructureTemplate[]> {
+  const limit = Math.min(args.limit ?? 25, 100);
+  const status = args.status ?? 'active';
+
+  // Pull a wider set than strictly matches and rank in JS — small
+  // catalog (~25-40 entries) so the post-load ranking is cheap and
+  // gives us flexibility on the rank weights without SQL contortion.
+  const result = await db.execute(sql`
+    SELECT *
+    FROM deal_structure_templates
+    WHERE 1 = 1
+      ${
+        status === 'active'
+          ? sql`AND status = 'active'`
+          : status === 'draft'
+            ? sql`AND status IN ('active', 'draft')`
+            : sql``
+      }
+      ${args.vtcEntity ? sql`AND vtc_entity = ${args.vtcEntity}` : sql``}
+    ORDER BY updated_at DESC
+    LIMIT 500;
+  `);
+
+  type Row = Record<string, unknown>;
+  const rows = result.rows as Row[];
+
+  // Filter destination country exclusions client-side.
+  const filtered = rows.filter((r) => {
+    if (!args.destinationCountry) return true;
+    const excluded = (r.excluded_jurisdictions as string[] | null) ?? [];
+    return !excluded.includes(args.destinationCountry);
+  });
+
+  // Score each row.
+  const scored = filtered.map((r) => {
+    let score = 0;
+    if (args.category && r.category === args.category) score += 100;
+    const regions = (r.applicable_regions as string[] | null) ?? [];
+    if (args.region && regions.includes(args.region)) score += 50;
+    if (args.region && regions.includes('global')) score += 25;
+    if (args.preferredIncoterm && r.incoterm === args.preferredIncoterm) score += 30;
+    if (
+      args.preferredPaymentInstrument &&
+      r.payment_instrument === args.preferredPaymentInstrument
+    ) {
+      score += 30;
+    }
+    if (r.status === 'active') score += 20;
+    if (r.validated_by_counsel === true) score += 10;
+    return { row: r, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  return scored.slice(0, limit).map(({ row: r }) => ({
+    id: String(r.id),
+    slug: String(r.slug),
+    name: String(r.name),
+    category: String(r.category),
+    vtcEntity: String(r.vtc_entity),
+    applicableRegions: (r.applicable_regions as string[] | null) ?? [],
+    incoterm: String(r.incoterm),
+    riskTransferPoint: String(r.risk_transfer_point),
+    paymentInstrument: String(r.payment_instrument),
+    paymentCurrency: String(r.payment_currency),
+    lcConfirmationRequired: r.lc_confirmation_required === true,
+    cargoInsurance: r.cargo_insurance == null ? null : String(r.cargo_insurance),
+    insuranceCoveragePct:
+      r.insurance_coverage_pct == null ? null : String(r.insurance_coverage_pct),
+    inspectionRequirement:
+      r.inspection_requirement == null ? null : String(r.inspection_requirement),
+    qualityStandard: r.quality_standard == null ? null : String(r.quality_standard),
+    standardDocuments: (r.standard_documents as string[] | null) ?? [],
+    typicalCycleTimeDaysMin:
+      r.typical_cycle_time_days_min == null ? null : Number(r.typical_cycle_time_days_min),
+    typicalCycleTimeDaysMax:
+      r.typical_cycle_time_days_max == null ? null : Number(r.typical_cycle_time_days_max),
+    laycanWindow: r.laycan_window == null ? null : String(r.laycan_window),
+    marginStructure: r.margin_structure == null ? null : String(r.margin_structure),
+    typicalMarginMin: r.typical_margin_min == null ? null : String(r.typical_margin_min),
+    typicalMarginMax: r.typical_margin_max == null ? null : String(r.typical_margin_max),
+    marginUnit: r.margin_unit == null ? null : String(r.margin_unit),
+    ofacScreeningRequired: r.ofac_screening_required === true,
+    excludedJurisdictions: (r.excluded_jurisdictions as string[] | null) ?? [],
+    excludedCounterpartyTypes:
+      (r.excluded_counterparty_types as string[] | null) ?? [],
+    generalLicenseEligible: (r.general_license_eligible as string[] | null) ?? null,
+    validatedByCounsel: r.validated_by_counsel === true,
+    validatedAt: r.validated_at == null ? null : new Date(String(r.validated_at)),
+    validatedByFirm: r.validated_by_firm == null ? null : String(r.validated_by_firm),
+    validationNotes: r.validation_notes == null ? null : String(r.validation_notes),
+    status: String(r.status),
+    notes: r.notes == null ? null : String(r.notes),
+    createdAt: new Date(String(r.created_at)),
+    updatedAt: new Date(String(r.updated_at)),
+  })) as DealStructureTemplate[];
+}
+
+/**
+ * Look up commission structures applicable to a deal context. Spec:
+ * docs/deal-structures-catalog-brief.md §4 + §8.
+ *
+ * Returns commissions that would be triggered by a deal of the given
+ * shape (category + template slug + entity). Empty
+ * `appliesToCategories` / `appliesToTemplateSlugs` mean "applies to
+ * everything in scope," so the filter logic is permissive — return
+ * any structure whose coverage *includes* the requested category /
+ * template slug, OR has an empty (= universal) coverage list.
+ *
+ * Used for fee-burden analysis: "given a Caribbean diesel deal under
+ * vtc-llc, which commissions trigger and what's the total fee?"
+ */
+export type CommissionStructureFilter = {
+  dealCategory?: string;
+  dealTemplateSlug?: string;
+  vtcEntity?: string;
+  partyRelationship?: string;
+  status?: 'active' | 'draft' | 'all';
+  limit?: number;
+};
+
+export async function lookupCommissionStructures(
+  args: CommissionStructureFilter,
+): Promise<CommissionStructure[]> {
+  const limit = Math.min(args.limit ?? 25, 100);
+  const status = args.status ?? 'active';
+  const result = await db.execute(sql`
+    SELECT *
+    FROM commission_structures
+    WHERE 1 = 1
+      ${
+        status === 'active'
+          ? sql`AND status = 'active'`
+          : status === 'draft'
+            ? sql`AND status IN ('active', 'draft')`
+            : sql``
+      }
+      ${args.vtcEntity ? sql`AND vtc_entity = ${args.vtcEntity}` : sql``}
+      ${
+        args.partyRelationship
+          ? sql`AND party_relationship = ${args.partyRelationship}`
+          : sql``
+      }
+    ORDER BY exclusive_per_deal DESC, updated_at DESC
+    LIMIT 500;
+  `);
+
+  type Row = Record<string, unknown>;
+  const rows = result.rows as Row[];
+
+  // Filter by coverage: empty array = universal, otherwise must include.
+  const filtered = rows.filter((r) => {
+    const cats = (r.applies_to_categories as string[] | null) ?? [];
+    const tmpls = (r.applies_to_template_slugs as string[] | null) ?? [];
+    if (args.dealCategory && cats.length > 0 && !cats.includes(args.dealCategory)) {
+      return false;
+    }
+    if (
+      args.dealTemplateSlug &&
+      tmpls.length > 0 &&
+      !tmpls.includes(args.dealTemplateSlug)
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  return filtered.slice(0, limit).map((r) => ({
+    id: String(r.id),
+    slug: String(r.slug),
+    name: String(r.name),
+    category: String(r.category),
+    partyRelationship: String(r.party_relationship),
+    vtcEntity: String(r.vtc_entity),
+    basisType: String(r.basis_type),
+    feeStructure: r.fee_structure as Record<string, unknown>,
+    triggerEvent: String(r.trigger_event),
+    paymentTiming: String(r.payment_timing),
+    appliesToCategories: (r.applies_to_categories as string[] | null) ?? [],
+    appliesToTemplateSlugs: (r.applies_to_template_slugs as string[] | null) ?? [],
+    exclusivePerDeal: r.exclusive_per_deal === true,
+    soleAndExclusive: r.sole_and_exclusive === true,
+    termMonths: r.term_months == null ? null : Number(r.term_months),
+    autoRenewal: r.auto_renewal === true,
+    terminationNoticeDays:
+      r.termination_notice_days == null ? null : Number(r.termination_notice_days),
+    standardAgreementClause:
+      r.standard_agreement_clause == null ? null : String(r.standard_agreement_clause),
+    taxTreatmentNotes: r.tax_treatment_notes == null ? null : String(r.tax_treatment_notes),
+    notes: r.notes == null ? null : String(r.notes),
+    status: String(r.status),
+    createdAt: new Date(String(r.created_at)),
+    updatedAt: new Date(String(r.updated_at)),
+  })) as CommissionStructure[];
 }

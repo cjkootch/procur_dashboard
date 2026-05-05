@@ -19,6 +19,8 @@ import {
   findEnvironmentalOperatorsByCountry,
   findEnvironmentalOperatorsByWasteType,
   findGradesForRefinery,
+  lookupCommissionStructures,
+  lookupDealStructureTemplates,
   matchCargoToFuelBuyers,
   findRefineriesForGrade,
   lookupKnownEntities,
@@ -4952,6 +4954,262 @@ export function buildCatalogTools(): ToolRegistry {
             }),
           },
           async () => analyzeCaribbeanFuelDemand(input),
+        ),
+    }),
+
+    lookup_deal_structure_template: defineTool({
+      name: 'lookup_deal_structure_template',
+      description:
+        "Look up VTC's deal-structure templates from the catalog — " +
+        'Incoterm × payment instrument × region × VTC entity bundles ' +
+        'VTC actually offers. Backed by `deal_structure_templates`. ' +
+        'See `docs/deal-structures-catalog-brief.md` §3 for the full ' +
+        'schema.\n\n' +
+        'Returns templates ranked by best fit: exact category match ' +
+        '(+100), region overlap (+50), preferred Incoterm (+30), ' +
+        'preferred payment instrument (+30), active status (+20), ' +
+        'counsel-validated (+10).\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • Composing a proposal — pull the matching template before ' +
+        'drafting so the proposal references real VTC standards, not ' +
+        'pattern-matched plausibles.\n' +
+        '  • Drafting outreach that references structure ("we typically ' +
+        "transact CIF/LC sight on Caribbean refined cargoes — would " +
+        'that work for you?").\n' +
+        '  • Computing deal economics — template carries margin range ' +
+        'and unit so calculator inputs land in the right neighborhood.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • You want generic Incoterms reference data — that\'s the ' +
+        'system prompt vocabulary section, not this tool.\n' +
+        "  • You want commission terms — that's lookup_commission_structures.\n" +
+        '  • You want to compose without referencing VTC\'s actual ' +
+        'standards — never. Always reference the catalog when composing.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        "  • Templates with `validatedByCounsel: true` are the safest " +
+        'choices for new deals; lead with these when the user is ' +
+        'unsure which structure applies.\n' +
+        '  • `excludedJurisdictions` is hard exclusions — if the deal ' +
+        'destination matches, the template is filtered out before you ' +
+        "see it. Don't second-guess these.\n" +
+        '  • Empty result means VTC doesn\'t have a template for that ' +
+        'shape yet — flag the gap to the user, don\'t invent a template.\n' +
+        '  • Each result is a SCHEMA the proposal instantiates. Free-' +
+        'text overrides on individual fields are expected per deal.',
+      kind: 'read',
+      schema: z.object({
+        category: z
+          .enum([
+            'refined-product',
+            'specialty-crude',
+            'crude-conventional',
+            'food-commodity',
+            'vehicle',
+            'lng',
+            'lpg',
+          ])
+          .optional()
+          .describe('Top-level deal categorization.'),
+        region: z
+          .string()
+          .optional()
+          .describe(
+            'Region from REGIONS taxonomy: caribbean / latam-mainland / ' +
+              'mediterranean / west-africa / east-africa / middle-east-gulf / ' +
+              'south-asia / southeast-asia / east-asia / us-gulf-coast / ' +
+              'us-domestic / canada / eu-ports / baltic / global.',
+          ),
+        vtcEntity: z
+          .enum([
+            'vtc-llc',
+            'vector-antilles',
+            'vector-auto-exports',
+            'vector-food-fund',
+            'stabroek-advisory',
+          ])
+          .optional()
+          .describe('Which VTC entity executes the structure.'),
+        preferredIncoterm: z
+          .string()
+          .optional()
+          .describe(
+            'Incoterms 2020 designation: EXW / FCA / FAS / FOB / CFR / ' +
+              'CIF / CIP / DAP / DPU / DDP / DES.',
+          ),
+        preferredPaymentInstrument: z
+          .string()
+          .optional()
+          .describe(
+            'lc-sight / lc-deferred-30/60/90/180 / cad / tt-prepayment / ' +
+              'tt-against-docs / sblc-backed / open-account / escrow / ' +
+              'documentary-collection.',
+          ),
+        destinationCountry: z
+          .string()
+          .optional()
+          .describe(
+            'ISO-2 country code. Templates whose `excludedJurisdictions` ' +
+              'contains this code are filtered out.',
+          ),
+        status: z.enum(['active', 'draft', 'all']).optional(),
+        limit: z.number().min(1).max(100).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_deal_structure_template',
+            args: input,
+            summarize: (out: { matchCount: number }) => ({
+              resultCount: out.matchCount,
+              resultSummary: { matchCount: out.matchCount },
+            }),
+          },
+          async () => {
+            const matches = await lookupDealStructureTemplates(input);
+            return {
+              matchCount: matches.length,
+              templates: matches.map((t) => ({
+                slug: t.slug,
+                name: t.name,
+                category: t.category,
+                vtcEntity: t.vtcEntity,
+                applicableRegions: t.applicableRegions,
+                incoterm: t.incoterm,
+                riskTransferPoint: t.riskTransferPoint,
+                paymentInstrument: t.paymentInstrument,
+                paymentCurrency: t.paymentCurrency,
+                lcConfirmationRequired: t.lcConfirmationRequired,
+                cargoInsurance: t.cargoInsurance,
+                insuranceCoveragePct: t.insuranceCoveragePct,
+                inspectionRequirement: t.inspectionRequirement,
+                qualityStandard: t.qualityStandard,
+                standardDocuments: t.standardDocuments,
+                typicalCycleTimeDaysMin: t.typicalCycleTimeDaysMin,
+                typicalCycleTimeDaysMax: t.typicalCycleTimeDaysMax,
+                laycanWindow: t.laycanWindow,
+                marginStructure: t.marginStructure,
+                typicalMarginMin: t.typicalMarginMin,
+                typicalMarginMax: t.typicalMarginMax,
+                marginUnit: t.marginUnit,
+                excludedJurisdictions: t.excludedJurisdictions,
+                generalLicenseEligible: t.generalLicenseEligible,
+                validatedByCounsel: t.validatedByCounsel,
+                validatedByFirm: t.validatedByFirm,
+                status: t.status,
+                notes: t.notes,
+              })),
+            };
+          },
+        ),
+    }),
+
+    lookup_commission_structures: defineTool({
+      name: 'lookup_commission_structures',
+      description:
+        'Look up commission structures applicable to a deal context — ' +
+        "VTC's standard broker / origination partner / sub-broker fee " +
+        'arrangements. Backed by `commission_structures`. See ' +
+        '`docs/deal-structures-catalog-brief.md` §4.\n\n' +
+        'Returns commissions whose coverage *includes* the requested ' +
+        'category / template slug, OR has empty (universal) coverage. ' +
+        'Use for fee-burden analysis: "given a Caribbean diesel deal ' +
+        'under vtc-llc, which commissions trigger and what\'s the ' +
+        'total fee?"\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • Modeling deal economics — sum applicable commissions to ' +
+        'compute realized margin after third-party fees.\n' +
+        '  • Drafting partner agreements — reference an existing ' +
+        'structure rather than reinventing terms.\n' +
+        '  • Auditing fee burden on a deal in flight — multiple ' +
+        'commissions can stack unless `exclusivePerDeal: true`.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • You want the deal structure itself — that\'s ' +
+        'lookup_deal_structure_template.\n' +
+        '  • You want bespoke commission terms negotiated ' +
+        'counterparty-by-counterparty — those live in `contracts.commission_terms`, ' +
+        'not the standard catalog.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • `feeStructure` JSON shape varies by `basisType`. For ' +
+        '`pct-of-net-margin`, `partyShare` is the percentage share. For ' +
+        '`usd-per-unit`, `amountUsd` + `unit` (bbl/mt/cargo). For ' +
+        '`tiered-by-volume`, an array of `{ minVolume, maxVolume, ' +
+        'ratePerUnit, unit }`. Always read `basisType` first.\n' +
+        '  • `exclusivePerDeal: true` means only one of these can apply ' +
+        'to a given deal — flag the conflict if multiple match.\n' +
+        '  • `partyRelationship` tells you cash-flow direction: ' +
+        '`vtc-pays-third-party` is an outgoing fee; ' +
+        '`vtc-receives-from-third-party` is incoming; ' +
+        '`split-with-third-party` is a margin share.',
+      kind: 'read',
+      schema: z.object({
+        dealCategory: z
+          .string()
+          .optional()
+          .describe('From DEAL_CATEGORIES taxonomy. Empty matches commissions with universal coverage.'),
+        dealTemplateSlug: z
+          .string()
+          .optional()
+          .describe(
+            'When provided, filters to commissions applicable to this ' +
+              'specific template. Pass the slug returned by ' +
+              'lookup_deal_structure_template.',
+          ),
+        vtcEntity: z
+          .enum([
+            'vtc-llc',
+            'vector-antilles',
+            'vector-auto-exports',
+            'vector-food-fund',
+            'stabroek-advisory',
+          ])
+          .optional(),
+        partyRelationship: z
+          .enum([
+            'vtc-pays-third-party',
+            'vtc-receives-from-third-party',
+            'split-with-third-party',
+          ])
+          .optional(),
+        status: z.enum(['active', 'draft', 'all']).optional(),
+        limit: z.number().min(1).max(100).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_commission_structures',
+            args: input,
+            summarize: (out: { matchCount: number }) => ({
+              resultCount: out.matchCount,
+              resultSummary: { matchCount: out.matchCount },
+            }),
+          },
+          async () => {
+            const matches = await lookupCommissionStructures(input);
+            return {
+              matchCount: matches.length,
+              commissions: matches.map((c) => ({
+                slug: c.slug,
+                name: c.name,
+                category: c.category,
+                partyRelationship: c.partyRelationship,
+                vtcEntity: c.vtcEntity,
+                basisType: c.basisType,
+                feeStructure: c.feeStructure,
+                triggerEvent: c.triggerEvent,
+                paymentTiming: c.paymentTiming,
+                appliesToCategories: c.appliesToCategories,
+                appliesToTemplateSlugs: c.appliesToTemplateSlugs,
+                exclusivePerDeal: c.exclusivePerDeal,
+                soleAndExclusive: c.soleAndExclusive,
+                termMonths: c.termMonths,
+                autoRenewal: c.autoRenewal,
+                terminationNoticeDays: c.terminationNoticeDays,
+                status: c.status,
+                notes: c.notes,
+              })),
+            };
+          },
         ),
     }),
 

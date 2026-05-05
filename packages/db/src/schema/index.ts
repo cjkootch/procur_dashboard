@@ -55,3 +55,5 @@ export * from './supplier-approvals';
 export * from './entity-sanctions-screens';
 export * from './crude-assays';
 export * from './cargo-trips';
+export * from './deal-structure-templates';
+export * from './commission-structures';
