@@ -62,7 +62,10 @@ type EchoFacilitiesResponse = {
     FacilityCount?: string | number;
     Facilities?: EchoFacility[];
     PageNo?: string | number;
-    Error?: string;
+    /** Live responses have observed `Error` as both a string and a
+     *  nested object (`{ ErrorCode, ErrorMessage }`) — keep
+     *  permissive and stringify at use-site. */
+    Error?: unknown;
   };
 };
 
@@ -127,10 +130,17 @@ async function startQuery(naicsCode: string): Promise<{
     `&responseset=${PAGE_SIZE}`;
   const json = await fetchJson<EchoFacilitiesResponse>(url);
   const r = json.Results ?? {};
-  if (r.Error) throw new Error(`ECHO error: ${r.Error}`);
+  if (r.Error) {
+    const errStr =
+      typeof r.Error === 'string' ? r.Error : JSON.stringify(r.Error);
+    throw new Error(`ECHO error for ${url}: ${errStr.slice(0, 400)}`);
+  }
   if (!r.QueryID) {
+    // No QueryID + no Error means the response shape isn't what we
+    // assumed — dump the whole payload (truncated) so the next
+    // diagnostic pass can see what ECHO actually returned.
     throw new Error(
-      `ECHO returned no QueryID for NAICS ${naicsCode}; payload: ${JSON.stringify(json).slice(0, 200)}`,
+      `ECHO returned no QueryID for ${url}; payload: ${JSON.stringify(json).slice(0, 600)}`,
     );
   }
   const facilities = Array.isArray(r.Facilities) ? r.Facilities : [];
