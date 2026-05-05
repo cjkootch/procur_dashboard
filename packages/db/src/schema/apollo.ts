@@ -74,7 +74,9 @@ export const apolloCreditLog = pgTable(
   'apollo_credit_log',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    /** 'organizations.get' | 'mixed_companies.search' */
+    /** 'organizations.get' | 'mixed_companies.search'
+     *  | 'mixed_people.api_search' | 'people.match'
+     *  | 'people.bulk_match' */
     endpoint: text('endpoint').notNull(),
     /** Hash of the call's args. Lets us spot duplicate calls during
      *  cron-runner tuning without storing potentially-large payloads. */
@@ -90,11 +92,20 @@ export const apolloCreditLog = pgTable(
      *  | 'feature-flag-disabled' | 'transport' | null. */
     errorCode: text('error_code'),
     notes: text('notes'),
+    /** Tenant scope. NULL for cron-driven calls (batch enrichment,
+     *  saved-search runner). Required for on-demand calls so the
+     *  per-tenant per-day enrichment cap (apollo brief §11) can be
+     *  enforced. */
+    companyId: uuid('company_id').references(() => companies.id),
     calledAt: timestamp('called_at').defaultNow().notNull(),
   },
   (table) => ({
     calledAtIdx: index('apollo_credit_log_called_at_idx').on(table.calledAt),
     endpointIdx: index('apollo_credit_log_endpoint_idx').on(table.endpoint),
+    companyCalledAtIdx: index('apollo_credit_log_company_called_at_idx').on(
+      table.companyId,
+      table.calledAt,
+    ),
   }),
 );
 
