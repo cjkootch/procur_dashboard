@@ -18,6 +18,7 @@
     "@procur/auth": "workspace:*",
     "@procur/catalog": "workspace:*",
     "@procur/db": "workspace:*",
+    "@procur/mcp-server": "workspace:*",
     "@procur/payments": "workspace:*",
     "@procur/pricing": "workspace:*",
     "@procur/ui": "workspace:*",

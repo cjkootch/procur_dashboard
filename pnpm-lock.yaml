@@ -105,6 +105,9 @@ importers:
       '@procur/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@procur/mcp-server':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server
       '@procur/payments':
         specifier: workspace:*
         version: link:../../packages/payments
@@ -574,6 +577,31 @@ importers:
       react-email:
         specifier: ^3.0.4
         version: 3.0.7(@opentelemetry/api@1.9.0)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/mcp-server:
+    dependencies:
+      '@procur/db':
+        specifier: workspace:*
+        version: link:../db
+      drizzle-orm:
+        specifier: ^0.38.3
+        version: 0.38.4(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.11.6)(@types/react@19.2.14)(postgres@3.4.9)(react@19.2.5)
+      server-only:
+        specifier: ^0.0.1
+        version: 0.0.1
+    devDependencies:
+      '@procur/config':
+        specifier: workspace:*
+        version: link:../config
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.17
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
