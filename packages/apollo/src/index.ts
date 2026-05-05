@@ -19,8 +19,13 @@ export {
   APOLLO_BATCH_DOMAINS_PER_CALL,
   APOLLO_BATCH_FRESHNESS_DAYS,
   APOLLO_SINGLE_GET_FRESHNESS_DAYS,
+  APOLLO_DAILY_PEOPLE_ENRICHMENT_CAP,
   APOLLO_ENDPOINT_GET_ORG,
   APOLLO_ENDPOINT_SEARCH,
+  APOLLO_ENDPOINT_PEOPLE_SEARCH,
+  APOLLO_ENDPOINT_PEOPLE_MATCH,
+  APOLLO_ENDPOINT_PEOPLE_BULK_MATCH,
+  APOLLO_PEOPLE_ENRICHMENT_ENDPOINTS,
   loadApolloConfig,
   type ApolloConfig,
   type ApolloEndpoint,
@@ -34,6 +39,7 @@ export {
 export {
   logApolloCall,
   describeApolloCallArgs,
+  countPeopleEnrichmentsLastDay,
   type LogApolloCallArgs,
 } from './credit-log';
 
@@ -54,6 +60,16 @@ export {
   type EnrichOrgsBatchResult,
   type SearchOrgsOpts,
 } from './org-service';
+
+export {
+  searchPeople,
+  enrichPerson,
+  enrichPeopleBulk,
+  type SearchPeopleArgs,
+  type EnrichPersonArgs,
+  type EnrichPeopleBulkArgs,
+  type EnrichPeopleBulkResult,
+} from './people-service';
 
 export {
   APOLLO_SENIORITIES,

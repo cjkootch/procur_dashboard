@@ -36,6 +36,8 @@ export async function apolloFetch<T>(args: {
   body?: unknown;
   /** Hash for credit-log dedup detection. Optional. */
   argsHash?: string;
+  /** Tenant scope for credit-log. NULL for cron-driven calls. */
+  companyId?: string;
   /** Echoed into the credit-log row. Optional. */
   page?: number;
   perPage?: number;
@@ -45,6 +47,7 @@ export async function apolloFetch<T>(args: {
   if (!config.enabled) {
     await logApolloCall({
       endpoint: args.endpoint,
+      companyId: args.companyId,
       argsHash: args.argsHash,
       page: args.page,
       perPage: args.perPage,
@@ -60,6 +63,7 @@ export async function apolloFetch<T>(args: {
   if (!config.masterApiKey) {
     await logApolloCall({
       endpoint: args.endpoint,
+      companyId: args.companyId,
       argsHash: args.argsHash,
       errorCode: 'no-master-key',
     });
@@ -73,6 +77,7 @@ export async function apolloFetch<T>(args: {
   if (!sharedRateLimiter.tryAcquire()) {
     await logApolloCall({
       endpoint: args.endpoint,
+      companyId: args.companyId,
       argsHash: args.argsHash,
       errorCode: 'rate-limited-internally',
       notes: `bucket-empty: ${sharedRateLimiter.remainingCapacity()} remaining`,
@@ -111,6 +116,7 @@ export async function apolloFetch<T>(args: {
         const data = (await res.json()) as T;
         await logApolloCall({
           endpoint: args.endpoint,
+          companyId: args.companyId,
           argsHash: args.argsHash,
           page: args.page,
           perPage: args.perPage,
@@ -123,6 +129,7 @@ export async function apolloFetch<T>(args: {
       if (res.status === 401) {
         await logApolloCall({
           endpoint: args.endpoint,
+          companyId: args.companyId,
           argsHash: args.argsHash,
           httpStatus: 401,
           durationMs,
@@ -137,6 +144,7 @@ export async function apolloFetch<T>(args: {
       if (res.status === 403) {
         await logApolloCall({
           endpoint: args.endpoint,
+          companyId: args.companyId,
           argsHash: args.argsHash,
           httpStatus: 403,
           durationMs,
@@ -152,6 +160,7 @@ export async function apolloFetch<T>(args: {
       if (res.status === 422) {
         await logApolloCall({
           endpoint: args.endpoint,
+          companyId: args.companyId,
           argsHash: args.argsHash,
           httpStatus: 422,
           durationMs,
@@ -168,6 +177,7 @@ export async function apolloFetch<T>(args: {
         lastErrorCode = 'apollo-429';
         await logApolloCall({
           endpoint: args.endpoint,
+          companyId: args.companyId,
           argsHash: args.argsHash,
           httpStatus: 429,
           durationMs,
@@ -184,6 +194,7 @@ export async function apolloFetch<T>(args: {
       // Any other 4xx/5xx: log + degrade.
       await logApolloCall({
         endpoint: args.endpoint,
+        companyId: args.companyId,
         argsHash: args.argsHash,
         httpStatus: res.status,
         durationMs,
@@ -201,6 +212,7 @@ export async function apolloFetch<T>(args: {
       lastErrorCode = 'apollo-transport-error';
       await logApolloCall({
         endpoint: args.endpoint,
+        companyId: args.companyId,
         argsHash: args.argsHash,
         durationMs,
         errorCode: 'apollo-transport-error',

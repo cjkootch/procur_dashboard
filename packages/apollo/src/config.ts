@@ -20,12 +20,29 @@ export const APOLLO_BATCH_DOMAINS_PER_CALL = 1000;
 export const APOLLO_BATCH_FRESHNESS_DAYS = 7;
 export const APOLLO_SINGLE_GET_FRESHNESS_DAYS = 30;
 
+/** Default per-tenant per-day cap on people-enrichment calls
+ *  (POST /people/match + /people/bulk_match). Settable upward in
+ *  admin per tenant. Per apollo-integration-brief.md §11. */
+export const APOLLO_DAILY_PEOPLE_ENRICHMENT_CAP = 25;
+
 /** Endpoint identifiers used in the credit log. */
 export const APOLLO_ENDPOINT_GET_ORG = 'organizations.get' as const;
 export const APOLLO_ENDPOINT_SEARCH = 'mixed_companies.search' as const;
+export const APOLLO_ENDPOINT_PEOPLE_SEARCH = 'mixed_people.api_search' as const;
+export const APOLLO_ENDPOINT_PEOPLE_MATCH = 'people.match' as const;
+export const APOLLO_ENDPOINT_PEOPLE_BULK_MATCH = 'people.bulk_match' as const;
 export type ApolloEndpoint =
   | typeof APOLLO_ENDPOINT_GET_ORG
-  | typeof APOLLO_ENDPOINT_SEARCH;
+  | typeof APOLLO_ENDPOINT_SEARCH
+  | typeof APOLLO_ENDPOINT_PEOPLE_SEARCH
+  | typeof APOLLO_ENDPOINT_PEOPLE_MATCH
+  | typeof APOLLO_ENDPOINT_PEOPLE_BULK_MATCH;
+
+/** People-endpoint set — used by the per-tenant cap counter. */
+export const APOLLO_PEOPLE_ENRICHMENT_ENDPOINTS: readonly ApolloEndpoint[] = [
+  APOLLO_ENDPOINT_PEOPLE_MATCH,
+  APOLLO_ENDPOINT_PEOPLE_BULK_MATCH,
+];
 
 export type ApolloConfig = {
   enabled: boolean;
