@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import type { ApolloEntityCache } from '@procur/catalog';
 import { RefreshApolloButton } from './RefreshApolloButton';
 
@@ -21,7 +22,7 @@ export function ApolloCorporateContext({
     return (
       <section className="mb-6">
         <SectionHeader
-          title="Corporate context (Apollo)"
+          title="Corporate context"
           right={<RefreshApolloButton entitySlug={entitySlug} />}
         />
         <p className="text-xs text-[color:var(--color-muted-foreground)]">
@@ -36,7 +37,7 @@ export function ApolloCorporateContext({
   return (
     <section className="mb-6">
       <SectionHeader
-        title="Corporate context (Apollo)"
+        title="Corporate context"
         right={
           <span className="flex items-center gap-2">
             <span className="text-[10px] normal-case tracking-normal text-[color:var(--color-muted-foreground)]">
@@ -105,7 +106,16 @@ export function ApolloCorporateContext({
 function SectionHeader({ title, right }: { title: string; right?: React.ReactNode }) {
   return (
     <h2 className="mb-2 flex items-baseline justify-between text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-      <span>{title}</span>
+      <span className="flex items-center gap-1.5">
+        {title}
+        <Image
+          src="/apollo-logo.svg"
+          alt="Apollo"
+          width={12}
+          height={12}
+          aria-label="Powered by Apollo"
+        />
+      </span>
       {right}
     </h2>
   );
