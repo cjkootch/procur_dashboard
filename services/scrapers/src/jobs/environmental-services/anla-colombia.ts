@@ -70,6 +70,21 @@ export type AnlaRunSummary = {
   finishedAt: string;
 };
 
+/** Unwrap nested causes from a node fetch error so the run summary
+ *  surfaces "fetch failed (Error: getaddrinfo ENOTFOUND ...)" rather
+ *  than just "fetch failed". */
+function describeError(err: unknown): string {
+  const e = err as { message?: string; cause?: unknown };
+  const msg = e?.message ?? String(err);
+  const cause = e?.cause;
+  if (!cause) return msg;
+  const causeStr =
+    typeof cause === 'object' && cause != null
+      ? `${(cause as Error).name ?? 'Cause'}: ${(cause as Error).message ?? JSON.stringify(cause)}`
+      : String(cause);
+  return `${msg} (${causeStr.slice(0, 220)})`;
+}
+
 async function fetchPage(offset: number, limit: number): Promise<AnlaLicenseRow[]> {
   const params = new URLSearchParams({
     resource_id: LICENSES_RESOURCE,
@@ -81,19 +96,33 @@ async function fetchPage(offset: number, limit: number): Promise<AnlaLicenseRow[
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
-      headers: { accept: 'application/json' },
+      headers: {
+        accept: 'application/json',
+        'user-agent': 'ProcurEnvIngest/1.0 (+research)',
+      },
       signal: ctrl.signal,
     });
     if (!res.ok) {
-      throw new Error(`ANLA ${res.status} at offset ${offset}`);
+      const body = await res.text().catch(() => '');
+      throw new Error(`ANLA ${res.status} ${url}: ${body.slice(0, 200)}`);
     }
-    const json = (await res.json()) as {
-      success: boolean;
+    const text = await res.text();
+    let json: {
+      success?: boolean;
       result?: { records?: AnlaLicenseRow[] };
-      error?: { message?: string };
+      error?: { message?: string } | string;
     };
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error(`ANLA non-JSON ${url}: ${text.slice(0, 200)}`);
+    }
     if (!json.success) {
-      throw new Error(`ANLA error: ${json.error?.message ?? 'unknown'}`);
+      const errMsg =
+        typeof json.error === 'string'
+          ? json.error
+          : (json.error?.message ?? JSON.stringify(json.error ?? json));
+      throw new Error(`ANLA error for ${url}: ${errMsg.slice(0, 300)}`);
     }
     return json.result?.records ?? [];
   } finally {
@@ -235,7 +264,7 @@ export async function runAnla(): Promise<AnlaRunSummary> {
         break;
       }
     } catch (err) {
-      errors.push(`ANLA page offset=${offset}: ${(err as Error).message}`);
+      errors.push(`ANLA page offset=${offset}: ${describeError(err)}`);
       break;
     }
   }
