@@ -74,6 +74,20 @@ export const proposals = pgTable(
   submittedBy: uuid('submitted_by').references(() => users.id),
   submissionConfirmation: text('submission_confirmation'),
 
+  /** References deal_structure_templates(slug). Set when the proposal
+   *  was composed against a template from the catalog. NULL for
+   *  legacy proposals (forward-only per
+   *  docs/deal-structures-catalog-brief.md §10.4). */
+  dealStructureTemplateSlug: text('deal_structure_template_slug'),
+
+  /** Slugs of commission_structures that apply to this proposal —
+   *  surfaced at proposal time so fee burden is visible before the
+   *  contract gets signed. Empty array when no structures match. */
+  applicableCommissionSlugs: text('applicable_commission_slugs')
+    .array()
+    .notNull()
+    .default([]),
+
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -81,6 +95,9 @@ export const proposals = pgTable(
     pursuitUpdatedIdx: index('proposals_pursuit_updated_idx').on(
       table.pursuitId,
       table.updatedAt,
+    ),
+    templateSlugIdx: index('proposals_template_slug_idx').on(
+      table.dealStructureTemplateSlug,
     ),
   }),
 );

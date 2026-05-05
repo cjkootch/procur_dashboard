@@ -15,6 +15,7 @@ import {
   getTopImportersByPartner,
   getTopSourcesForReporter,
   analyzeCaribbeanFuelDemand,
+  composeProposalSkeleton,
   findCaribbeanFuelBuyers,
   findEnvironmentalOperatorsByCountry,
   findEnvironmentalOperatorsByWasteType,
@@ -5208,6 +5209,161 @@ export function buildCatalogTools(): ToolRegistry {
                 status: c.status,
                 notes: c.notes,
               })),
+            };
+          },
+        ),
+    }),
+
+    compose_proposal_skeleton: defineTool({
+      name: 'compose_proposal_skeleton',
+      description:
+        'Compose a proposal skeleton from the deal-structure catalog. ' +
+        "Bundles the best-fit template + applicable commissions + " +
+        'counsel-validation status into a single structured object so ' +
+        'the assistant can draft proposal text grounded in VTC\'s ' +
+        'actual standards instead of pattern-matching from training ' +
+        'data. Spec: docs/deal-structures-catalog-brief.md §11.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • The user asks to draft / compose / write a proposal — ' +
+        'ALWAYS call this first, then draft using the returned ' +
+        'template\'s Incoterm + payment + documents + margin range as ' +
+        'the proposal skeleton.\n' +
+        '  • The user asks "what\'s our standard for [Caribbean diesel ' +
+        '/ specialty crude / Vector Antilles SPA]?" — this returns ' +
+        'the actual answer.\n' +
+        '  • Before quoting price terms — the template carries margin ' +
+        'range + unit so price anchors land in the right neighborhood.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • You just want to browse templates — that\'s ' +
+        'lookup_deal_structure_template (returns ranked list, no ' +
+        'commissions or counsel summary).\n' +
+        '  • You just want commissions — that\'s ' +
+        'lookup_commission_structures.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • If `template: null`, surface the `selectionRationale` to ' +
+        'the operator immediately — either VTC has no standard for ' +
+        'the requested shape (gap worth flagging) or the destination ' +
+        'is excluded from every otherwise-fitting template (compliance ' +
+        'perimeter trigger).\n' +
+        "  • If `counselNotes.validatedTemplate: false`, lead the " +
+        'composition with a "this template is not counsel-validated; ' +
+        'the proposal should flag this status before binding terms" ' +
+        'note. Don\'t hide the gap.\n' +
+        '  • `applicableCommissions` lists fees that WOULD apply at ' +
+        'contract signature. Surface the cumulative fee burden when ' +
+        'composing — the operator sees margin AFTER fees, not before.\n' +
+        '  • `destinationExcluded: true` means the destination COULD ' +
+        'have applied to other templates with different perimeters — ' +
+        'verify general-license framework (per the engagement brief\'s ' +
+        'GL 48 / FAQ 1247 discipline) before drafting against the ' +
+        'exposed template.',
+      kind: 'read',
+      schema: z.object({
+        category: z
+          .enum([
+            'refined-product',
+            'specialty-crude',
+            'crude-conventional',
+            'food-commodity',
+            'vehicle',
+            'lng',
+            'lpg',
+          ])
+          .describe('Top-level deal categorization. Required.'),
+        region: z
+          .string()
+          .optional()
+          .describe(
+            'Region from REGIONS taxonomy: caribbean / latam-mainland / ' +
+              'mediterranean / west-africa / east-africa / middle-east-gulf / ' +
+              'south-asia / southeast-asia / east-asia / us-gulf-coast / ' +
+              'us-domestic / canada / eu-ports / baltic / global.',
+          ),
+        vtcEntity: z
+          .enum([
+            'vtc-llc',
+            'vector-antilles',
+            'vector-auto-exports',
+            'vector-food-fund',
+            'stabroek-advisory',
+          ])
+          .optional(),
+        preferredIncoterm: z.string().optional(),
+        preferredPaymentInstrument: z.string().optional(),
+        destinationCountry: z
+          .string()
+          .optional()
+          .describe(
+            'ISO-2 country code. Templates whose excludedJurisdictions ' +
+              'contains this code are filtered out; if the filter removes ' +
+              'matches, `destinationExcluded: true` is set on the response.',
+          ),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'compose_proposal_skeleton',
+            args: input,
+            summarize: (out: { template: { slug: string } | null }) => ({
+              resultCount: out.template ? 1 : 0,
+              resultSummary: {
+                templateSlug: out.template?.slug ?? null,
+                category: input.category,
+              },
+            }),
+          },
+          async () => {
+            const skel = await composeProposalSkeleton(input);
+            const summarizeTemplate = (t: typeof skel.template) =>
+              t == null
+                ? null
+                : {
+                    slug: t.slug,
+                    name: t.name,
+                    category: t.category,
+                    vtcEntity: t.vtcEntity,
+                    incoterm: t.incoterm,
+                    riskTransferPoint: t.riskTransferPoint,
+                    paymentInstrument: t.paymentInstrument,
+                    paymentCurrency: t.paymentCurrency,
+                    lcConfirmationRequired: t.lcConfirmationRequired,
+                    cargoInsurance: t.cargoInsurance,
+                    insuranceCoveragePct: t.insuranceCoveragePct,
+                    inspectionRequirement: t.inspectionRequirement,
+                    qualityStandard: t.qualityStandard,
+                    standardDocuments: t.standardDocuments,
+                    laycanWindow: t.laycanWindow,
+                    typicalCycleTimeDaysMin: t.typicalCycleTimeDaysMin,
+                    typicalCycleTimeDaysMax: t.typicalCycleTimeDaysMax,
+                    marginStructure: t.marginStructure,
+                    typicalMarginMin: t.typicalMarginMin,
+                    typicalMarginMax: t.typicalMarginMax,
+                    marginUnit: t.marginUnit,
+                    excludedJurisdictions: t.excludedJurisdictions,
+                    generalLicenseEligible: t.generalLicenseEligible,
+                    validatedByCounsel: t.validatedByCounsel,
+                    notes: t.notes,
+                  };
+            return {
+              template: summarizeTemplate(skel.template),
+              alternatives: skel.alternatives.map(summarizeTemplate),
+              applicableCommissions: skel.applicableCommissions.map((c) => ({
+                slug: c.slug,
+                name: c.name,
+                category: c.category,
+                partyRelationship: c.partyRelationship,
+                basisType: c.basisType,
+                feeStructure: c.feeStructure,
+                triggerEvent: c.triggerEvent,
+                paymentTiming: c.paymentTiming,
+                exclusivePerDeal: c.exclusivePerDeal,
+                soleAndExclusive: c.soleAndExclusive,
+              })),
+              destinationExcluded: skel.destinationExcluded,
+              counselNotes: skel.counselNotes,
+              selectionRationale: skel.selectionRationale,
+              notes: skel.notes,
             };
           },
         ),
