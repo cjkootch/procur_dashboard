@@ -5,6 +5,9 @@ import {
   timestamp,
   jsonb,
   numeric,
+  bigint,
+  integer,
+  date,
   index,
 } from 'drizzle-orm/pg-core';
 
@@ -79,6 +82,38 @@ export const knownEntities = pgTable(
     latitude: numeric('latitude', { precision: 9, scale: 6 }),
     longitude: numeric('longitude', { precision: 9, scale: 6 }),
 
+    /** Identity key for external corporate-data APIs (Apollo, Clearbit,
+        OpenCorporates, Sayari). Not Apollo-specific — adding it once
+        keeps future enrichment surfaces API-agnostic. NULL for
+        entities without a canonical web presence (ministries, individual
+        brokers). */
+    primaryDomain: text('primary_domain'),
+
+    // ─── Apollo.io enrichment cache (per apollo-integration-brief.md) ─
+
+    /** Apollo's stable org ID, populated by enrichOrgsBatch on first
+        domain match. NULL while unmatched or when Apollo has no record. */
+    apolloOrgId: text('apollo_org_id'),
+    /** When this entity's Apollo data was last refreshed. Drives
+        the on-demand single-get freshness check (default 30 days). */
+    apolloSyncedAt: timestamp('apollo_synced_at'),
+    /** Surfaced in rolodex chip + entity profile. e.g.
+        'Series D', 'Series A', 'Public', 'Private Equity'. */
+    apolloFundingStage: text('apollo_funding_stage'),
+    /** Cumulative funding across all rounds, USD. Sortable in rolodex. */
+    apolloTotalFunding: bigint('apollo_total_funding', { mode: 'number' }),
+    /** Date of most recent funding event. Sortable; powers the
+        "who has fresh capital" workflow. */
+    apolloLatestFundingAt: date('apollo_latest_funding_at'),
+    apolloEstimatedEmployees: integer('apollo_estimated_employees'),
+    apolloAnnualRevenue: bigint('apollo_annual_revenue', { mode: 'number' }),
+    /** Wide / rarely-queried Apollo fields: 24-month
+        employee_metrics by department, current_technologies stack,
+        per-round funding_events, keywords, short_description.
+        Lives in jsonb because none of these are filtered on; rendering
+        is the only access pattern. */
+    apolloSnapshot: jsonb('apollo_snapshot'),
+
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -87,6 +122,14 @@ export const knownEntities = pgTable(
     roleIdx: index('known_entities_role_idx').on(table.role),
     categoriesIdx: index('known_entities_categories_idx').using('gin', table.categories),
     tagsIdx: index('known_entities_tags_idx').using('gin', table.tags),
+    primaryDomainIdx: index('known_entities_primary_domain_idx').on(table.primaryDomain),
+    apolloOrgIdIdx: index('known_entities_apollo_org_id_idx').on(table.apolloOrgId),
+    apolloFundingStageIdx: index('known_entities_apollo_funding_stage_idx').on(
+      table.apolloFundingStage,
+    ),
+    apolloLatestFundingAtIdx: index('known_entities_apollo_latest_funding_at_idx').on(
+      table.apolloLatestFundingAt,
+    ),
   }),
 );
 

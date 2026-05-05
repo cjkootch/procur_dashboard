@@ -4,6 +4,9 @@ import {
   text,
   timestamp,
   jsonb,
+  bigint,
+  integer,
+  date,
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
@@ -50,6 +53,23 @@ export const externalSuppliers = pgTable(
     firstSeenAt: timestamp('first_seen_at').defaultNow().notNull(),
     lastSeenAt: timestamp('last_seen_at').defaultNow().notNull(),
 
+    /** Identity key for external corporate-data APIs. Mirrors
+        known_entities.primary_domain — see that table for why.
+        NULL by default; populated by analyst entry, domain-extraction
+        passes over scraped data, or Apollo match-by-name. */
+    primaryDomain: text('primary_domain'),
+
+    // ─── Apollo.io enrichment cache (per apollo-integration-brief.md) ─
+
+    apolloOrgId: text('apollo_org_id'),
+    apolloSyncedAt: timestamp('apollo_synced_at'),
+    apolloFundingStage: text('apollo_funding_stage'),
+    apolloTotalFunding: bigint('apollo_total_funding', { mode: 'number' }),
+    apolloLatestFundingAt: date('apollo_latest_funding_at'),
+    apolloEstimatedEmployees: integer('apollo_estimated_employees'),
+    apolloAnnualRevenue: bigint('apollo_annual_revenue', { mode: 'number' }),
+    apolloSnapshot: jsonb('apollo_snapshot'),
+
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -61,6 +81,14 @@ export const externalSuppliers = pgTable(
     ),
     jurisdictionIdx: index('ext_supplier_jurisdiction_idx').on(table.jurisdictionId),
     nameIdx: index('ext_supplier_name_idx').on(table.organisationName),
+    primaryDomainIdx: index('external_suppliers_primary_domain_idx').on(table.primaryDomain),
+    apolloOrgIdIdx: index('external_suppliers_apollo_org_id_idx').on(table.apolloOrgId),
+    apolloFundingStageIdx: index('external_suppliers_apollo_funding_stage_idx').on(
+      table.apolloFundingStage,
+    ),
+    apolloLatestFundingAtIdx: index('external_suppliers_apollo_latest_funding_at_idx').on(
+      table.apolloLatestFundingAt,
+    ),
   }),
 );
 
