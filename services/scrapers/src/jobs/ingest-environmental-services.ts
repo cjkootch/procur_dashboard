@@ -80,14 +80,28 @@ export async function run(source: EnvServicesSource): Promise<RunSummary> {
   return WORKERS[source]();
 }
 
-/** Run every source in order. Aborts on hard error in any worker
- *  to avoid cascading partial state. */
+/** Run every source in order. Continues past worker errors —
+ *  partial Phase 1 ingestion is the expected mode (one source's
+ *  4xx shouldn't block another source's clean run). The CLI exits
+ *  non-zero only when EVERY worker errored, not just one. */
 export async function runAll(): Promise<RunSummary[]> {
   const summaries: RunSummary[] = [];
   for (const source of Object.keys(WORKERS) as EnvServicesSource[]) {
-    const summary = await WORKERS[source]();
-    summaries.push(summary);
-    if (summary.status === 'error') break;
+    try {
+      const summary = await WORKERS[source]();
+      summaries.push(summary);
+    } catch (err) {
+      const ts = new Date().toISOString();
+      summaries.push({
+        source,
+        status: 'error',
+        upserted: 0,
+        skipped: 0,
+        errors: [(err as Error).message],
+        startedAt: ts,
+        finishedAt: ts,
+      });
+    }
   }
   return summaries;
 }
