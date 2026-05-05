@@ -40,3 +40,33 @@ export {
   McpRateLimiter,
   sharedMcpRateLimiter,
 } from './rate-limiter';
+
+export {
+  handleMcpRequest,
+  type HandleMcpRequestArgs,
+} from './handler';
+
+export {
+  listMcpTools,
+  findWhitelistedTool,
+  callMcpTool,
+} from './adapter';
+
+export {
+  MCP_TOOL_WHITELIST,
+  MCP_TOOL_WHITELIST_SET,
+} from './whitelist';
+
+export {
+  MCP_PROTOCOL_VERSION,
+  JSONRPC_ERROR,
+  type JsonRpcRequest,
+  type JsonRpcResponse,
+  type JsonRpcError,
+  type McpInitializeResult,
+  type McpListToolsResult,
+  type McpCallToolParams,
+  type McpCallToolResult,
+  type McpToolDescriptor,
+  type McpToolContent,
+} from './types';
