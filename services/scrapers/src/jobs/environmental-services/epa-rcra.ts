@@ -118,21 +118,24 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 /** Issue the initial query to ECHO; returns the QueryID we'll use to
- *  paginate plus the first page of facilities baked into the response. */
-async function startQuery(naicsCode: string): Promise<{
+ *  paginate plus the first page of facilities baked into the response.
+ *
+ *  Strategy: filter by `p_un` (RCRA universe = TSDF — Treatment,
+ *  Storage, and Disposal Facility). TSDFs are the petroleum-relevant
+ *  slice of the RCRA universe (~3-5k facilities nationwide vs the
+ *  full ~1.6M including transient generators). We then narrow by
+ *  NAICS *client-side* off the `FacNAICSCodes` field — bypassing the
+ *  param-name uncertainty around `p_ncs` / `p_naics` / `p_naics_code`
+ *  that earlier traces surfaced. Universe filter is a known-stable
+ *  ECHO contract; NAICS-on-the-row is reliable. */
+async function startTsdfQuery(): Promise<{
   queryId: string;
   totalCount: number;
   firstPage: EchoFacility[];
 }> {
-  // ECHO RCRA REST parameter for NAICS is `p_ncs`, not `p_naics`. The
-  // earlier `p_naics` was silently ignored, leading to 1.59M-row
-  // responses (the entire RCRA universe) and the queryset-limit
-  // error. `p_ncs` is the documented filter name in ECHO's RCRA web
-  // service contract.
   const url =
     `${ECHO_BASE}/rcra_rest_services.get_facilities` +
-    `?output=JSON&p_ncs=${encodeURIComponent(naicsCode)}` +
-    `&responseset=${PAGE_SIZE}`;
+    `?output=JSON&p_un=TSDF&responseset=${PAGE_SIZE}`;
   const json = await fetchJson<EchoFacilitiesResponse>(url);
   const r = json.Results ?? {};
   if (r.Error) {
@@ -141,9 +144,6 @@ async function startQuery(naicsCode: string): Promise<{
     throw new Error(`ECHO error for ${url}: ${errStr.slice(0, 400)}`);
   }
   if (!r.QueryID) {
-    // No QueryID + no Error means the response shape isn't what we
-    // assumed — dump the whole payload (truncated) so the next
-    // diagnostic pass can see what ECHO actually returned.
     throw new Error(
       `ECHO returned no QueryID for ${url}; payload: ${JSON.stringify(json).slice(0, 600)}`,
     );
@@ -260,82 +260,108 @@ async function upsertHandler(
   return 'updated';
 }
 
+/** Pick the NAICS codes we care about out of a facility's
+ *  comma-separated FacNAICSCodes field. Returns empty set when the
+ *  facility carries no petroleum-relevant code (we drop it). */
+function petroleumNaics(f: EchoFacility): Set<string> {
+  const raw = f.FacNAICSCodes ?? '';
+  const codes = raw.split(/[,\s]+/).map((c) => c.trim()).filter(Boolean);
+  const matched = new Set<string>();
+  for (const c of codes) {
+    if (TARGET_NAICS.includes(c)) matched.add(c);
+  }
+  return matched;
+}
+
 export async function runEpaRcra(): Promise<EpaRcraRunSummary> {
   const startedAt = new Date().toISOString();
   let upserted = 0;
   let skipped = 0;
   const errors: string[] = [];
 
-  // Same handler may appear under multiple NAICS — track the union so
-  // the upsert reflects the full NAICS profile.
-  const naicsByHandler = new Map<string, Set<string>>();
-  const allHandlers = new Map<string, EchoFacility>();
-
-  for (const naics of TARGET_NAICS) {
-    let queryId = '';
-    let total = 0;
-    let firstPage: EchoFacility[] = [];
-    try {
-      const start = await startQuery(naics);
-      queryId = start.queryId;
-      total = start.totalCount;
-      firstPage = start.firstPage;
-    } catch (err) {
-      errors.push(`EPA NAICS ${naics} startQuery: ${describeError(err)}`);
-      continue;
-    }
-
-    const ingestPage = (page: EchoFacility[]) => {
-      for (const f of page) {
-        const id = handlerIdOf(f);
-        if (!id) continue;
-        allHandlers.set(id, f);
-        const set = naicsByHandler.get(id) ?? new Set<string>();
-        set.add(naics);
-        naicsByHandler.set(id, set);
-      }
+  // Universe-filter approach: pull all TSDFs nationwide once, then
+  // client-filter to those whose FacNAICSCodes overlaps our target
+  // set. Avoids the per-NAICS param uncertainty (`p_ncs` /
+  // `p_naics` / `p_naics_code` — different ECHO services use
+  // different names).
+  let queryId = '';
+  let total = 0;
+  let firstPage: EchoFacility[] = [];
+  try {
+    const start = await startTsdfQuery();
+    queryId = start.queryId;
+    total = start.totalCount;
+    firstPage = start.firstPage;
+  } catch (err) {
+    return {
+      source: 'epa-rcra',
+      status: 'error',
+      upserted: 0,
+      skipped: 0,
+      errors: [`EPA TSDF startQuery: ${describeError(err)}`],
+      startedAt,
+      finishedAt: new Date().toISOString(),
     };
-    ingestPage(firstPage);
+  }
 
-    if (total > firstPage.length) {
-      const totalPages = Math.min(
-        MAX_PAGES_PER_NAICS,
-        Math.ceil(total / PAGE_SIZE),
+  const allFacilities: EchoFacility[] = [...firstPage];
+  if (total > firstPage.length) {
+    const totalPages = Math.min(
+      MAX_PAGES_PER_NAICS,
+      Math.ceil(total / PAGE_SIZE),
+    );
+    for (let pageNo = 2; pageNo <= totalPages; pageNo += 1) {
+      try {
+        const page = await fetchPage(queryId, pageNo);
+        if (page.length === 0) break;
+        allFacilities.push(...page);
+      } catch (err) {
+        errors.push(`EPA TSDF page ${pageNo}: ${describeError(err)}`);
+        break;
+      }
+      await new Promise((r) => setTimeout(r, PAGE_THROTTLE_MS));
+    }
+    if (totalPages === MAX_PAGES_PER_NAICS && total > MAX_PAGES_PER_NAICS * PAGE_SIZE) {
+      errors.push(
+        `EPA TSDF: hit page cap (${MAX_PAGES_PER_NAICS}); ` +
+          `${total} total handlers, ingested first ${MAX_PAGES_PER_NAICS * PAGE_SIZE}.`,
       );
-      for (let pageNo = 2; pageNo <= totalPages; pageNo += 1) {
-        try {
-          const page = await fetchPage(queryId, pageNo);
-          if (page.length === 0) break;
-          ingestPage(page);
-        } catch (err) {
-          errors.push(
-            `EPA NAICS ${naics} page ${pageNo}: ${describeError(err)}`,
-          );
-          break;
-        }
-        await new Promise((r) => setTimeout(r, PAGE_THROTTLE_MS));
-      }
-      if (totalPages === MAX_PAGES_PER_NAICS && total > MAX_PAGES_PER_NAICS * PAGE_SIZE) {
-        errors.push(
-          `EPA NAICS ${naics}: hit page cap (${MAX_PAGES_PER_NAICS}); ` +
-            `${total} total handlers, ingested first ${MAX_PAGES_PER_NAICS * PAGE_SIZE}.`,
-        );
-      }
     }
   }
 
-  for (const [handlerId, facility] of allHandlers) {
+  // Client-side NAICS filter. Diagnostic: if 0 facilities matched
+  // *any* petroleum NAICS we want to know — surfaces in errors so the
+  // user can see whether ECHO returned an unexpected facility shape
+  // (e.g. NAICS in a different field name). We still status='ok' so
+  // partial-success semantics aren't broken.
+  let petroleumMatched = 0;
+  for (const f of allFacilities) {
+    const matched = petroleumNaics(f);
+    if (matched.size === 0) continue;
+    petroleumMatched += 1;
     try {
-      const result = await upsertHandler(
-        facility,
-        naicsByHandler.get(handlerId) ?? new Set(),
-      );
+      const result = await upsertHandler(f, matched);
       if (result === 'skipped') skipped += 1;
       else upserted += 1;
     } catch (err) {
-      errors.push(`upsert ${handlerId}: ${describeError(err)}`);
+      errors.push(`upsert ${handlerIdOf(f) ?? '?'}: ${describeError(err)}`);
       skipped += 1;
     }
+  }
+
+  // Diagnostic: what universe size ECHO returned and how many we
+  // matched. Helps the next iteration know whether the issue is
+  // ECHO returning empty (broken filter) vs FacNAICSCodes being
+  // populated under a different key.
+  if (allFacilities.length === 0) {
+    errors.push(`EPA TSDF: ECHO returned 0 facilities (FacilityCount=${total}).`);
+  } else if (petroleumMatched === 0) {
+    const sample = allFacilities[0]!;
+    errors.push(
+      `EPA TSDF: pulled ${allFacilities.length} facilities, 0 matched petroleum ` +
+        `NAICS. Sample row keys: ${Object.keys(sample).join(',')}; ` +
+        `sample FacNAICSCodes='${sample.FacNAICSCodes ?? '(unset)'}'`,
+    );
   }
 
   return {
