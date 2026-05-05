@@ -32,6 +32,11 @@ import {
   runAll as runEnvServicesAll,
   type EnvServicesSource,
 } from './jobs/ingest-environmental-services';
+import {
+  run as runFuelBuyerSource,
+  runAll as runFuelBuyerAll,
+  type FuelBuyerSource,
+} from './jobs/ingest-fuel-buyers';
 
 config({ path: '../../.env.local' });
 config({ path: '../../.env' });
@@ -122,6 +127,9 @@ async function main() {
     console.error(
       'env-services rolodex: env-services [epa-rcra|anla|curated-seed|...] (no sub = run all)',
     );
+    console.error(
+      'fuel-buyer rolodex: fuel-buyers [utilities-seed|mining-seed|...] (no sub = run all)',
+    );
     process.exit(1);
   }
 
@@ -182,6 +190,25 @@ async function main() {
     }
     console.log(`running env-services worker: ${sub}...`);
     const summary = await runEnvServicesSource(sub);
+    console.log(JSON.stringify(summary, null, 2));
+    process.exit(summary.status === 'error' ? 1 : 0);
+  }
+
+  if (slug === 'fuel-buyers') {
+    // Usage:
+    //   pnpm --filter @procur/scrapers scrape fuel-buyers            # run all wired
+    //   pnpm --filter @procur/scrapers scrape fuel-buyers utilities-seed
+    const sub = process.argv[3] as FuelBuyerSource | undefined;
+    if (!sub) {
+      console.log('running all wired fuel-buyer workers in order...');
+      const summaries = await runFuelBuyerAll();
+      console.log(JSON.stringify(summaries, null, 2));
+      const anyOk = summaries.some((s) => s.status === 'ok');
+      const anyError = summaries.some((s) => s.status === 'error');
+      process.exit(!anyOk && anyError ? 1 : 0);
+    }
+    console.log(`running fuel-buyer worker: ${sub}...`);
+    const summary = await runFuelBuyerSource(sub);
     console.log(JSON.stringify(summary, null, 2));
     process.exit(summary.status === 'error' ? 1 : 0);
   }

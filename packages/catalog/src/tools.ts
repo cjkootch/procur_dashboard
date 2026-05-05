@@ -14,9 +14,12 @@ import {
   getMatchSignalPerformance,
   getTopImportersByPartner,
   getTopSourcesForReporter,
+  analyzeCaribbeanFuelDemand,
+  findCaribbeanFuelBuyers,
   findEnvironmentalOperatorsByCountry,
   findEnvironmentalOperatorsByWasteType,
   findGradesForRefinery,
+  matchCargoToFuelBuyers,
   findRefineriesForGrade,
   lookupKnownEntities,
   walkOwnershipChainUp,
@@ -4678,6 +4681,267 @@ export function buildCatalogTools(): ToolRegistry {
               })),
             };
           },
+        ),
+    }),
+
+    find_caribbean_fuel_buyers: defineTool({
+      name: 'find_caribbean_fuel_buyers',
+      description:
+        'Find Caribbean refined-fuel buyers — utilities, mining, ' +
+        'marine bunker, aviation, industrial distributors, government ' +
+        'fleets, hospitality, agricultural, LPG distributors — ' +
+        'matching specified segments / fuel types / countries. Backed ' +
+        'by the fuel-buyer-industrial rolodex. See ' +
+        '`docs/caribbean-fuel-buyer-brief.md` for the full schema and ' +
+        'segment taxonomy.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • The user wants the universe of buyers in a Caribbean ' +
+        'country / segment ("who are the major HFO buyers in the DR?", ' +
+        '"Jamaican bauxite operators consuming diesel").\n' +
+        '  • Building a buyer-side outreach list for a refined product ' +
+        'cargo we have in hand.\n' +
+        '  • Cross-segment comparison ("which buyers can clear LC sight ' +
+        'AND consume ULSD at cargo scale?").\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The user wants the supplier side (refineries, traders) — ' +
+        "use lookup_known_entities with role=refiner / trader.\n" +
+        '  • The user named a specific company — use lookup_known_entities ' +
+        'or analyze_supplier directly.\n' +
+        '  • The user wants to match a specific cargo to ranked buyers — ' +
+        'use match_cargo_to_buyers, which scores fit instead of just ' +
+        'filtering.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Lead with Tier-1 buyers (top of segment, well-mapped) and ' +
+        'their volume disclosures. Tier-2 are opportunistic; Tier-3 are ' +
+        'tracked but speculative.\n' +
+        "  • `confidenceScore < 0.7` means single-source — note it; " +
+        "don't pretend the entry is fully validated.\n" +
+        '  • Empty results in a country where the rolodex has no ' +
+        'fuel-buyer-industrial entries yet — direct user to expand ' +
+        'curated seed or run OCDS / customs ingestion.',
+      kind: 'read',
+      schema: z.object({
+        segments: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Segments from FUEL_BUYER_SEGMENTS. Examples: ' +
+              "'utility-power-generation', 'mining-bauxite-alumina', " +
+              "'marine-bunker-supplier', 'aviation-fuel-handler', " +
+              "'industrial-distributor', 'lpg-distributor'.",
+          ),
+        fuelTypes: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Fuel types from FUEL_TYPES_PURCHASED. Examples: ' +
+              "'diesel-ulsd', 'hfo-380cst', 'jet-a-1', 'gasoline-87', " +
+              "'lpg-propane'.",
+          ),
+        inCountries: z
+          .array(isoAlpha2Country)
+          .optional()
+          .describe('ISO-2 Caribbean countries to filter to.'),
+        minAnnualVolumeBbl: z
+          .number()
+          .optional()
+          .describe('Floor on max annual purchase volume in barrels.'),
+        ownershipTypeFilter: z
+          .string()
+          .optional()
+          .describe(
+            "One of 'state-owned', 'state-adjacent', 'private-domestic', " +
+              "'multinational-subsidiary', 'cooperative'.",
+          ),
+        tier: z
+          .union([z.literal(1), z.literal(2), z.literal(3)])
+          .optional(),
+        withPaymentInstrumentCapability: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Restrict to buyers who can clear at least one of these ' +
+              'instruments. Examples: lc-sight, lc-deferred, cad, ' +
+              'tt-prepayment, sblc-backed.',
+          ),
+        minConfidenceScore: z.number().min(0).max(1).optional(),
+        limit: z.number().min(1).max(500).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_caribbean_fuel_buyers',
+            args: input,
+            summarize: (out: { matchCount: number }) => ({
+              resultCount: out.matchCount,
+              resultSummary: { matchCount: out.matchCount },
+            }),
+          },
+          async () => {
+            const matches = await findCaribbeanFuelBuyers(input);
+            return {
+              matchCount: matches.length,
+              matches: matches.map((m) => ({
+                name: m.name,
+                country: m.country,
+                profileUrl: buildEntityProfileUrl({
+                  kind: 'known_entity',
+                  slug: m.slug,
+                }),
+                segments: m.profile.segments,
+                fuelTypesPurchased: m.profile.fuelTypesPurchased,
+                annualPurchaseVolumeBblMin: m.profile.annualPurchaseVolumeBblMin,
+                annualPurchaseVolumeBblMax: m.profile.annualPurchaseVolumeBblMax,
+                annualPurchaseVolumeConfidence: m.profile.annualPurchaseVolumeConfidence,
+                typicalCargoSizeMtMin: m.profile.typicalCargoSizeMtMin,
+                typicalCargoSizeMtMax: m.profile.typicalCargoSizeMtMax,
+                procurementModel: m.profile.procurementModel,
+                paymentInstrumentCapability: m.profile.paymentInstrumentCapability,
+                knownSuppliers: m.profile.knownSuppliers,
+                caribbeanCountriesOperated: m.profile.caribbeanCountriesOperated,
+                ownershipType: m.profile.ownershipType,
+                tier: m.profile.tier,
+                confidenceScore: m.profile.confidenceScore,
+                notes: m.notes,
+              })),
+            };
+          },
+        ),
+    }),
+
+    match_cargo_to_buyers: defineTool({
+      name: 'match_cargo_to_buyers',
+      description:
+        'Given a refined-fuel cargo (volume, fuel type, discharge ' +
+        "country), return ranked candidate Caribbean buyers based on " +
+        'segment + fuel-type fit, geographic feasibility, volume fit, ' +
+        'and payment-instrument capability.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • A specific cargo surfaces (e.g. "we have 30k MT ULSD ' +
+        'discharging at Kingston, who can take it?").\n' +
+        '  • Composing buyer-side outreach for a deal in flight.\n' +
+        '  • Pre-screening buyers when allocating multiple parcels ' +
+        'across a vessel.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The user wants the broader buyer universe — use ' +
+        'find_caribbean_fuel_buyers (filters, no scoring).\n' +
+        '  • The user wants supply-side analysis — different tools.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        "  • `matchScore` is 0-100; lead with the top 3-5. The score's " +
+        'composition is in matchReasons — cite specifically which fits ' +
+        '(fuel-type / volume / geo / payment) when explaining the ranking.\n' +
+        "  • A buyer flagged 'cargo exceeds typical ceiling' may still " +
+        'be viable as a multi-buyer split; surface that option rather ' +
+        'than dismissing.\n' +
+        "  • Lead with Tier-1 + multiple match reasons; don't push " +
+        "Tier-3 buyers into deals where Tier-1's are available.",
+      kind: 'read',
+      schema: z.object({
+        fuelType: z.string().describe('From FUEL_TYPES_PURCHASED.'),
+        volumeMt: z.number().positive().describe('Cargo volume in metric tonnes.'),
+        dischargeCountry: isoAlpha2Country.describe(
+          'ISO-2 country of discharge port. Caller resolves port → country.',
+        ),
+        paymentInstrumentRequired: z
+          .string()
+          .optional()
+          .describe(
+            'Payment instrument the cargo seller requires (lc-sight, ' +
+              'lc-deferred, cad, tt-prepayment, sblc-backed). Buyers ' +
+              'lacking the capability are noted but not excluded.',
+          ),
+        limit: z.number().min(1).max(100).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'match_cargo_to_buyers',
+            args: input,
+            summarize: (out: { matchCount: number }) => ({
+              resultCount: out.matchCount,
+              resultSummary: {
+                fuelType: input.fuelType,
+                volumeMt: input.volumeMt,
+                dischargeCountry: input.dischargeCountry,
+                matchCount: out.matchCount,
+              },
+            }),
+          },
+          async () => {
+            const matches = await matchCargoToFuelBuyers(input);
+            return {
+              cargo: {
+                fuelType: input.fuelType,
+                volumeMt: input.volumeMt,
+                dischargeCountry: input.dischargeCountry,
+                paymentInstrumentRequired: input.paymentInstrumentRequired,
+              },
+              matchCount: matches.length,
+              matches: matches.map((m) => ({
+                name: m.name,
+                country: m.country,
+                profileUrl: buildEntityProfileUrl({
+                  kind: 'known_entity',
+                  slug: m.slug,
+                }),
+                tier: m.profile.tier,
+                segments: m.profile.segments,
+                annualPurchaseVolumeBblMax: m.profile.annualPurchaseVolumeBblMax,
+                paymentInstrumentCapability: m.profile.paymentInstrumentCapability,
+                matchScore: m.matchScore,
+                matchReasons: m.matchReasons,
+              })),
+            };
+          },
+        ),
+    }),
+
+    analyze_caribbean_fuel_demand: defineTool({
+      name: 'analyze_caribbean_fuel_demand',
+      description:
+        "Summarize a Caribbean country's fuel demand structure — " +
+        'segments by volume, dominant entities per segment, fuel-type ' +
+        'breakdown, total estimated annual barrels.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • Go-to-market planning for a new Caribbean market.\n' +
+        '  • Sense-checking whether a country can absorb a given cargo ' +
+        'volume.\n' +
+        '  • Identifying the top 1-2 segments worth focused outreach.\n\n' +
+        "WHEN NOT TO CALL:\n" +
+        '  • The user wants per-buyer detail — use ' +
+        'find_caribbean_fuel_buyers.\n' +
+        '  • The user wants supply-side (refineries) — different tools.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Volume estimates aggregate the rolodex entries\' published ' +
+        'min/max — cite confidence per segment, not just the total.\n' +
+        '  • Empty result is a real signal: the country has no ' +
+        'fuel-buyer-industrial entries yet. Direct to expansion (Phase ' +
+        '1 curation OR OCDS / customs ingest).',
+      kind: 'read',
+      schema: z.object({
+        country: isoAlpha2Country.describe('Caribbean country (ISO-2).'),
+        fuelType: z
+          .string()
+          .optional()
+          .describe('Optional fuel type to narrow the analysis.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'analyze_caribbean_fuel_demand',
+            args: input,
+            summarize: (out: { totalBuyersTracked: number }) => ({
+              resultCount: out.totalBuyersTracked,
+              resultSummary: {
+                country: input.country,
+                totalBuyersTracked: out.totalBuyersTracked,
+              },
+            }),
+          },
+          async () => analyzeCaribbeanFuelDemand(input),
         ),
     }),
 

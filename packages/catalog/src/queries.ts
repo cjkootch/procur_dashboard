@@ -8218,6 +8218,377 @@ export async function findEnvironmentalOperatorsByCountry(args: {
   return filtered.slice(0, limit);
 }
 
+// ─── Caribbean fuel buyer rolodex queries ────────────────────────
+
+export type FuelBuyerMatch = {
+  slug: string;
+  name: string;
+  country: string;
+  /** Best-effort dehydrated view of the structured slot at
+   *  `metadata.fuelBuyerProfile`. Empty defaults when not yet
+   *  populated so callers can filter / display without inner
+   *  narrowing. */
+  profile: {
+    segments: string[];
+    fuelTypesPurchased: string[];
+    annualPurchaseVolumeBblMin: number | null;
+    annualPurchaseVolumeBblMax: number | null;
+    annualPurchaseVolumeConfidence: string;
+    typicalCargoSizeMtMin: number | null;
+    typicalCargoSizeMtMax: number | null;
+    procurementModel: string;
+    procurementAuthority: string;
+    paymentInstrumentCapability: string[];
+    knownSuppliers: string[];
+    caribbeanCountriesOperated: string[];
+    decisionMakerCountry: string | null;
+    ownershipType: string;
+    tier: 1 | 2 | 3 | null;
+    confidenceScore: number;
+  };
+  notes: string | null;
+};
+
+/** Read the fuel-buyer profile slot off metadata with sane defaults
+ *  for partially-populated rows during Phase 1/2 ingestion. */
+function readFuelBuyerProfile(metadata: unknown): FuelBuyerMatch['profile'] {
+  const fb =
+    metadata != null &&
+    typeof metadata === 'object' &&
+    'fuelBuyerProfile' in metadata
+      ? (metadata as Record<string, unknown>).fuelBuyerProfile
+      : null;
+  const p = fb != null && typeof fb === 'object' ? (fb as Record<string, unknown>) : {};
+  const arr = (k: string): string[] => {
+    const v = p[k];
+    return Array.isArray(v) ? v.map(String) : [];
+  };
+  const numOrNull = (k: string): number | null => {
+    const v = p[k];
+    if (v == null) return null;
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string') {
+      const n = Number.parseFloat(v);
+      if (Number.isFinite(n)) return n;
+    }
+    return null;
+  };
+  const cargo = (p.typicalCargoSizeMt ?? null) as { min?: unknown; max?: unknown } | null;
+  const cargoMin =
+    cargo && typeof cargo === 'object' && cargo.min != null
+      ? Number(cargo.min)
+      : null;
+  const cargoMax =
+    cargo && typeof cargo === 'object' && cargo.max != null
+      ? Number(cargo.max)
+      : null;
+  const tierRaw = p.tier;
+  const tier =
+    tierRaw === 1 || tierRaw === 2 || tierRaw === 3 ? (tierRaw as 1 | 2 | 3) : null;
+  return {
+    segments: arr('segments'),
+    fuelTypesPurchased: arr('fuelTypesPurchased'),
+    annualPurchaseVolumeBblMin: numOrNull('annualPurchaseVolumeBblMin'),
+    annualPurchaseVolumeBblMax: numOrNull('annualPurchaseVolumeBblMax'),
+    annualPurchaseVolumeConfidence:
+      typeof p.annualPurchaseVolumeConfidence === 'string'
+        ? p.annualPurchaseVolumeConfidence
+        : 'unknown',
+    typicalCargoSizeMtMin: cargoMin,
+    typicalCargoSizeMtMax: cargoMax,
+    procurementModel:
+      typeof p.procurementModel === 'string' ? p.procurementModel : 'unknown',
+    procurementAuthority:
+      typeof p.procurementAuthority === 'string' ? p.procurementAuthority : 'unknown',
+    paymentInstrumentCapability: arr('paymentInstrumentCapability'),
+    knownSuppliers: arr('knownSuppliers'),
+    caribbeanCountriesOperated: arr('caribbeanCountriesOperated'),
+    decisionMakerCountry:
+      typeof p.decisionMakerCountry === 'string' ? p.decisionMakerCountry : null,
+    ownershipType:
+      typeof p.ownershipType === 'string' ? p.ownershipType : 'unknown',
+    tier,
+    confidenceScore: numOrNull('confidenceScore') ?? 0,
+  };
+}
+
+/**
+ * Find Caribbean fuel buyers matching segment, fuel type, and
+ * geography filters. Backs the `find_caribbean_fuel_buyers` chat
+ * tool. Sorts by tier ASC (Tier-1 first), then confidence DESC.
+ */
+export async function findCaribbeanFuelBuyers(args: {
+  segments?: string[];
+  fuelTypes?: string[];
+  inCountries?: string[];
+  minAnnualVolumeBbl?: number;
+  ownershipTypeFilter?: string;
+  tier?: 1 | 2 | 3;
+  withPaymentInstrumentCapability?: string[];
+  minConfidenceScore?: number;
+  limit?: number;
+}): Promise<FuelBuyerMatch[]> {
+  const limit = Math.min(args.limit ?? 100, 500);
+  const minConf = args.minConfidenceScore ?? 0.6;
+
+  const result = await db.execute(sql`
+    SELECT slug, name, country, metadata, notes
+    FROM known_entities
+    WHERE role = 'fuel-buyer-industrial'
+      ${
+        args.inCountries && args.inCountries.length > 0
+          ? sql`AND country = ANY(${args.inCountries})`
+          : sql``
+      }
+    ORDER BY name ASC
+    LIMIT 5000;
+  `);
+  const rows = (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    slug: String(r.slug),
+    name: String(r.name),
+    country: String(r.country),
+    notes: r.notes == null ? null : String(r.notes),
+    profile: readFuelBuyerProfile(r.metadata),
+  }));
+
+  const filtered = rows.filter((row) => {
+    if (row.profile.confidenceScore < minConf) return false;
+    if (args.segments && args.segments.length > 0) {
+      const overlap = args.segments.some((s) => row.profile.segments.includes(s));
+      if (!overlap) return false;
+    }
+    if (args.fuelTypes && args.fuelTypes.length > 0) {
+      const overlap = args.fuelTypes.some((f) => row.profile.fuelTypesPurchased.includes(f));
+      if (!overlap) return false;
+    }
+    if (args.minAnnualVolumeBbl != null) {
+      const max = row.profile.annualPurchaseVolumeBblMax;
+      if (max == null || max < args.minAnnualVolumeBbl) return false;
+    }
+    if (args.ownershipTypeFilter && row.profile.ownershipType !== args.ownershipTypeFilter) {
+      return false;
+    }
+    if (args.tier != null && row.profile.tier !== args.tier) return false;
+    if (args.withPaymentInstrumentCapability && args.withPaymentInstrumentCapability.length > 0) {
+      const overlap = args.withPaymentInstrumentCapability.some((p) =>
+        row.profile.paymentInstrumentCapability.includes(p),
+      );
+      if (!overlap) return false;
+    }
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    // Tier ASC (1 before 2 before 3 before null), confidence DESC.
+    const tierA = a.profile.tier ?? 99;
+    const tierB = b.profile.tier ?? 99;
+    if (tierA !== tierB) return tierA - tierB;
+    return b.profile.confidenceScore - a.profile.confidenceScore;
+  });
+
+  return filtered.slice(0, limit);
+}
+
+export type RankedBuyerMatch = FuelBuyerMatch & {
+  /** Why this buyer fits the cargo. */
+  matchReasons: string[];
+  /** 0-100 fit score; higher = better match. Composed of segment
+   *  fit, volume fit, geographic fit, payment-instrument fit. */
+  matchScore: number;
+};
+
+/**
+ * Match a specific cargo (volume, fuel type, discharge port) to
+ * ranked candidate buyers. Backs `match_cargo_to_buyers`.
+ *
+ * Scoring (0-100):
+ *   +40 fuel-type match
+ *   +25 geographic feasibility (country contains discharge port OR
+ *       country in caribbeanCountriesOperated)
+ *   +20 volume fit (typical cargo size envelope contains the cargo)
+ *   +15 payment-instrument fit (when a paymentInstrumentRequired is
+ *       supplied)
+ *   - tier penalty applied at sort: tier 1 +10, tier 2 +0, tier 3 -10
+ */
+export async function matchCargoToFuelBuyers(args: {
+  fuelType: string;
+  volumeMt: number;
+  /** ISO-2 country of discharge — port-to-country resolution is
+   *  the caller's responsibility. */
+  dischargeCountry: string;
+  /** Optional payment instrument the cargo requires (e.g. 'lc-sight'). */
+  paymentInstrumentRequired?: string;
+  limit?: number;
+}): Promise<RankedBuyerMatch[]> {
+  const limit = Math.min(args.limit ?? 25, 100);
+  const candidates = await findCaribbeanFuelBuyers({
+    fuelTypes: [args.fuelType],
+    minConfidenceScore: 0.5,
+    limit: 500,
+  });
+
+  const ranked: RankedBuyerMatch[] = [];
+  for (const c of candidates) {
+    const reasons: string[] = [];
+    let score = 0;
+
+    if (c.profile.fuelTypesPurchased.includes(args.fuelType)) {
+      score += 40;
+      reasons.push(`buys ${args.fuelType} at cargo scale`);
+    }
+
+    const geoFit =
+      c.country === args.dischargeCountry ||
+      c.profile.caribbeanCountriesOperated.includes(args.dischargeCountry);
+    if (geoFit) {
+      score += 25;
+      reasons.push(`operates in ${args.dischargeCountry}`);
+    } else {
+      // No geo fit at all = drop it.
+      continue;
+    }
+
+    const cargoMin = c.profile.typicalCargoSizeMtMin;
+    const cargoMax = c.profile.typicalCargoSizeMtMax;
+    if (cargoMin != null && cargoMax != null) {
+      if (args.volumeMt >= cargoMin && args.volumeMt <= cargoMax) {
+        score += 20;
+        reasons.push(`typical cargo ${cargoMin}-${cargoMax} MT contains ${args.volumeMt} MT`);
+      } else if (args.volumeMt < cargoMin) {
+        reasons.push(
+          `cargo ${args.volumeMt} MT is below buyer's typical floor ${cargoMin} MT — may need parcel split`,
+        );
+      } else {
+        reasons.push(
+          `cargo ${args.volumeMt} MT exceeds buyer's typical ceiling ${cargoMax} MT — may need multi-buyer split`,
+        );
+      }
+    }
+
+    if (args.paymentInstrumentRequired) {
+      if (
+        c.profile.paymentInstrumentCapability.includes(args.paymentInstrumentRequired)
+      ) {
+        score += 15;
+        reasons.push(`clears ${args.paymentInstrumentRequired}`);
+      } else {
+        reasons.push(
+          `does NOT clear ${args.paymentInstrumentRequired} — payment instrument mismatch`,
+        );
+      }
+    }
+
+    if (c.profile.tier === 1) score += 10;
+    else if (c.profile.tier === 3) score -= 10;
+
+    ranked.push({ ...c, matchReasons: reasons, matchScore: score });
+  }
+
+  ranked.sort((a, b) => b.matchScore - a.matchScore);
+  return ranked.slice(0, limit);
+}
+
+export type CountryDemandSummary = {
+  country: string;
+  totalBuyersTracked: number;
+  segmentBreakdown: Array<{
+    segment: string;
+    buyerCount: number;
+    estimatedAnnualVolumeBblMin: number;
+    estimatedAnnualVolumeBblMax: number;
+    topBuyers: Array<{ slug: string; name: string; tier: 1 | 2 | 3 | null }>;
+  }>;
+  fuelTypeBreakdown: Array<{ fuelType: string; buyerCount: number }>;
+  totalEstimatedAnnualVolumeBblMin: number;
+  totalEstimatedAnnualVolumeBblMax: number;
+  notes: string[];
+};
+
+/**
+ * Summarize fuel demand structure for a country. Backs
+ * `analyze_caribbean_fuel_demand`.
+ */
+export async function analyzeCaribbeanFuelDemand(args: {
+  country: string;
+  fuelType?: string;
+}): Promise<CountryDemandSummary> {
+  const buyers = await findCaribbeanFuelBuyers({
+    inCountries: [args.country],
+    fuelTypes: args.fuelType ? [args.fuelType] : undefined,
+    minConfidenceScore: 0,
+    limit: 1000,
+  });
+
+  const segmentMap = new Map<
+    string,
+    {
+      buyerCount: number;
+      volMin: number;
+      volMax: number;
+      buyers: Array<{ slug: string; name: string; tier: 1 | 2 | 3 | null }>;
+    }
+  >();
+  const fuelMap = new Map<string, number>();
+  let totalMin = 0;
+  let totalMax = 0;
+
+  for (const b of buyers) {
+    const min = b.profile.annualPurchaseVolumeBblMin ?? 0;
+    const max = b.profile.annualPurchaseVolumeBblMax ?? 0;
+    totalMin += min;
+    totalMax += max;
+    for (const s of b.profile.segments) {
+      const slot = segmentMap.get(s) ?? { buyerCount: 0, volMin: 0, volMax: 0, buyers: [] };
+      slot.buyerCount += 1;
+      slot.volMin += min;
+      slot.volMax += max;
+      if (slot.buyers.length < 5) {
+        slot.buyers.push({ slug: b.slug, name: b.name, tier: b.profile.tier });
+      }
+      segmentMap.set(s, slot);
+    }
+    for (const f of b.profile.fuelTypesPurchased) {
+      fuelMap.set(f, (fuelMap.get(f) ?? 0) + 1);
+    }
+  }
+
+  const segmentBreakdown = [...segmentMap.entries()]
+    .sort((a, b) => b[1].volMax - a[1].volMax || b[1].buyerCount - a[1].buyerCount)
+    .map(([segment, v]) => ({
+      segment,
+      buyerCount: v.buyerCount,
+      estimatedAnnualVolumeBblMin: v.volMin,
+      estimatedAnnualVolumeBblMax: v.volMax,
+      topBuyers: v.buyers,
+    }));
+  const fuelTypeBreakdown = [...fuelMap.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([fuelType, buyerCount]) => ({ fuelType, buyerCount }));
+
+  const notes: string[] = [];
+  if (buyers.length === 0) {
+    notes.push(
+      `No fuel-buyer-industrial entities tracked for ${args.country} yet. ` +
+        'Populate via curated-utilities seed or OCDS / customs ingestion.',
+    );
+  } else if (totalMax === 0) {
+    notes.push(
+      `${buyers.length} buyers tracked but no volume estimates populated. ` +
+        'Volume figures are placeholder until Phase 1 hand-curation completes.',
+    );
+  }
+
+  return {
+    country: args.country,
+    totalBuyersTracked: buyers.length,
+    segmentBreakdown,
+    fuelTypeBreakdown,
+    totalEstimatedAnnualVolumeBblMin: totalMin,
+    totalEstimatedAnnualVolumeBblMax: totalMax,
+    notes,
+  };
+}
+
 // ─── Refinery import context (slate × actual flows) ─────────────
 
 export type RefineryImportContext = {
