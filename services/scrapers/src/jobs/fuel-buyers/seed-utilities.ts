@@ -19,37 +19,9 @@
  *   1 MW ADO baseload @ 80% CF → ~38-45 kbbl/yr (lower BTU/kg)
  *   1 MW gas turbine peaker @ 20% CF → ~10-12 kbbl/yr equivalent
  */
-import { sql } from 'drizzle-orm';
-import { db } from '@procur/db';
+import { ingestSegmentSeed, type FuelBuyerSeedEntry, type SegmentRunSummary } from './_shared';
 
-type SeedEntry = {
-  slug: string;
-  name: string;
-  country: string;
-  aliases?: string[];
-  notes?: string;
-  profile: {
-    segments: string[];
-    fuelTypesPurchased: string[];
-    annualPurchaseVolumeBblMin: number | null;
-    annualPurchaseVolumeBblMax: number | null;
-    annualPurchaseVolumeConfidence: string;
-    typicalCargoSizeMt: { min: number; max: number } | null;
-    procurementModel: string;
-    procurementAuthority: string;
-    knownSuppliers: string[];
-    caribbeanCountriesOperated: string[];
-    decisionMakerCountry: string | null;
-    paymentInstrumentCapability: string[];
-    knownBanks: string[];
-    ownershipType: string;
-    tier: 1 | 2 | 3 | null;
-    primaryContactRole: string | null;
-    primaryContactName: string | null;
-    notes: string;
-    confidenceScore: number;
-  };
-};
+type SeedEntry = FuelBuyerSeedEntry;
 
 const SEED: SeedEntry[] = [
   // ─── Jamaica ────────────────────────────────────────────────────
@@ -58,6 +30,9 @@ const SEED: SeedEntry[] = [
     name: 'Jamaica Public Service Company (JPS)',
     country: 'JM',
     aliases: ['JPS', 'Jamaica Public Service'],
+    // Old Harbour Bay Power Station — JPS's largest HFO baseload plant.
+    latitude: 17.9343,
+    longitude: -77.0917,
     notes:
       'Jamaica\'s monopoly electric utility. ~600+ MW thermal capacity (HFO + ADO + LNG). Procures via Petrojam primarily, with some direct imports.',
     profile: {
@@ -87,6 +62,9 @@ const SEED: SeedEntry[] = [
     slug: 'fuel-buyer:jep-jamaica',
     name: 'Jamaica Energy Partners (JEP)',
     country: 'JM',
+    // Barge-mounted HFO plant moored at Old Harbour Bay.
+    latitude: 17.9343,
+    longitude: -77.0917,
     notes:
       'Independent power producer, HFO consumer. Multiple barge-mounted generation units.',
     profile: {
@@ -118,6 +96,9 @@ const SEED: SeedEntry[] = [
     name: 'Bahamas Power and Light (BPL)',
     country: 'BS',
     aliases: ['BPL', 'BEC'],
+    // Clifton Pier Power Station, Nassau — BPL's primary HFO plant.
+    latitude: 25.0067,
+    longitude: -77.5482,
     notes:
       'State-owned electric utility serving New Providence + Family Islands. Significant HFO and ADO consumer; Bahamas imports almost all fuel.',
     profile: {
@@ -149,6 +130,9 @@ const SEED: SeedEntry[] = [
     name: 'EGE Haina',
     country: 'DO',
     aliases: ['Empresa Generadora de Electricidad Haina'],
+    // Haina port complex — EGE Haina's primary thermal generation hub.
+    latitude: 18.4153,
+    longitude: -70.0339,
     notes:
       'Major Dominican IPP. Multiple thermal plants (Sultana del Este, Quisqueya, Barahona, Pedernales). HFO + diesel consumer.',
     profile: {
@@ -178,6 +162,9 @@ const SEED: SeedEntry[] = [
     name: 'AES Andrés',
     country: 'DO',
     aliases: ['AES Dominicana'],
+    // Boca Chica LNG terminal + 319 MW combined-cycle plant.
+    latitude: 18.4408,
+    longitude: -69.6202,
     notes:
       'AES Corp subsidiary. LNG terminal + 319 MW combined-cycle plant. Some HFO backup capacity.',
     profile: {
@@ -207,6 +194,8 @@ const SEED: SeedEntry[] = [
     name: 'CESPM',
     country: 'DO',
     aliases: ['Compañía de Electricidad de San Pedro de Macorís'],
+    latitude: 18.4561,
+    longitude: -69.3083,
     notes: 'Dominican IPP with 300 MW HFO/diesel-fired generation in San Pedro de Macorís.',
     profile: {
       segments: ['utility-power-generation'],
@@ -235,6 +224,9 @@ const SEED: SeedEntry[] = [
     name: 'EGE Itabo',
     country: 'DO',
     aliases: ['Empresa de Generación Eléctrica Itabo'],
+    // Bajos de Haina, near EGE Haina.
+    latitude: 18.4127,
+    longitude: -70.0319,
     notes: 'Coal + HFO IPP near Santo Domingo. ~280 MW capacity.',
     profile: {
       segments: ['utility-power-generation'],
@@ -265,6 +257,9 @@ const SEED: SeedEntry[] = [
     name: 'PREPA',
     country: 'PR',
     aliases: ['Puerto Rico Electric Power Authority', 'Autoridad de Energía Eléctrica'],
+    // Aguirre Power Complex, Salinas — PREPA's largest HFO/distillate plant.
+    latitude: 17.9501,
+    longitude: -66.2153,
     notes:
       'Largest US-territory power utility. Significant HFO + diesel consumption despite ongoing restructuring under federal oversight (PROMESA).',
     profile: {
@@ -296,6 +291,9 @@ const SEED: SeedEntry[] = [
     name: 'WAPA US Virgin Islands',
     country: 'VI',
     aliases: ['Virgin Islands Water and Power Authority'],
+    // Estate Krum Bay, St. Thomas — primary thermal generation hub.
+    latitude: 18.3389,
+    longitude: -64.9261,
     notes:
       'St. Thomas + St. Croix + St. John generation. ADO and HFO. Aging fleet under transition.',
     profile: {
@@ -327,6 +325,9 @@ const SEED: SeedEntry[] = [
     name: 'Trinidad and Tobago Electricity Commission (T&TEC)',
     country: 'TT',
     aliases: ['T&TEC'],
+    // Penal Power Station — T&TEC's principal thermal plant.
+    latitude: 10.2156,
+    longitude: -61.4528,
     notes:
       'State-owned utility. Primarily natural gas-fueled (Trinidad has abundant domestic gas) but maintains HFO backup capacity.',
     profile: {
@@ -358,6 +359,9 @@ const SEED: SeedEntry[] = [
     name: 'Barbados Light & Power (BLPC)',
     country: 'BB',
     aliases: ['BLPC'],
+    // Spring Garden Plant, Bridgetown.
+    latitude: 13.1019,
+    longitude: -59.6228,
     notes:
       'Single utility for Barbados. ADO + HFO; transitioning to renewables but baseload still oil-fired.',
     profile: {
@@ -388,6 +392,9 @@ const SEED: SeedEntry[] = [
     slug: 'fuel-buyer:aqualectra',
     name: 'Aqualectra',
     country: 'CW',
+    // Mundo Nobo plant, Willemstad.
+    latitude: 12.1167,
+    longitude: -68.9333,
     notes:
       'Curaçao\'s combined power + water utility. HFO, ADO, and water desalination.',
     profile: {
@@ -419,6 +426,9 @@ const SEED: SeedEntry[] = [
     name: 'LUCELEC',
     country: 'LC',
     aliases: ['St. Lucia Electricity Services'],
+    // Cul de Sac Power Station.
+    latitude: 13.9981,
+    longitude: -60.9719,
     notes: 'St. Lucia\'s utility. ADO + HFO; transitioning generation mix.',
     profile: {
       segments: ['utility-power-generation'],
@@ -447,6 +457,9 @@ const SEED: SeedEntry[] = [
     name: 'GRENLEC',
     country: 'GD',
     aliases: ['Grenada Electricity Services'],
+    // Queen's Park Power Station, St. George's.
+    latitude: 12.0533,
+    longitude: -61.7517,
     notes: 'Grenada\'s utility. ADO + HFO.',
     profile: {
       segments: ['utility-power-generation'],
@@ -503,6 +516,9 @@ const SEED: SeedEntry[] = [
     name: 'DOMLEC',
     country: 'DM',
     aliases: ['Dominica Electricity Services'],
+    // Fond Cole Power Station, Roseau.
+    latitude: 15.2986,
+    longitude: -61.3878,
     notes: 'Dominica\'s utility. Small island grid.',
     profile: {
       segments: ['utility-power-generation'],
@@ -561,6 +577,9 @@ const SEED: SeedEntry[] = [
     name: 'Belize Electricity Limited (BEL)',
     country: 'BZ',
     aliases: ['BEL'],
+    // Belize City — main thermal generation hub.
+    latitude: 17.5028,
+    longitude: -88.1958,
     notes:
       'Belize\'s utility. Diesel-fired generation; partial Mexican grid imports complicate the demand picture.',
     profile: {
@@ -592,6 +611,9 @@ const SEED: SeedEntry[] = [
     name: 'Électricité d\'Haïti (EdH)',
     country: 'HT',
     aliases: ['EdH'],
+    // Carrefour-area generation, Port-au-Prince.
+    latitude: 18.5417,
+    longitude: -72.3367,
     notes:
       'Haiti\'s state utility. ADO + HFO when supply is available; chronically constrained on fuel procurement, with ongoing political and security overlay.',
     profile: {
@@ -623,6 +645,9 @@ const SEED: SeedEntry[] = [
     name: 'EBS (NV Energiebedrijven Suriname)',
     country: 'SR',
     aliases: ['EBS'],
+    // Paramaribo — main thermal generation site.
+    latitude: 5.852,
+    longitude: -55.2038,
     notes:
       'Suriname\'s state utility. Diesel-dominant generation with significant fuel-import dependency.',
     profile: {
@@ -654,6 +679,9 @@ const SEED: SeedEntry[] = [
     name: 'Guyana Power and Light (GPL)',
     country: 'GY',
     aliases: ['GPL'],
+    // Vreed-en-Hoop / Kingston Power Station, Georgetown area.
+    latitude: 6.8167,
+    longitude: -58.175,
     notes:
       'Guyana\'s utility. ADO + HFO; demand structure is rapidly evolving with the offshore oil ramp-up and gas-to-shore project.',
     profile: {
@@ -680,64 +708,8 @@ const SEED: SeedEntry[] = [
   },
 ];
 
-export type FuelBuyerSeedRunSummary = {
-  source: 'fuel-buyer-utilities-seed';
-  status: 'ok' | 'error';
-  upserted: number;
-  skipped: number;
-  errors: string[];
-  startedAt: string;
-  finishedAt: string;
-};
+export type FuelBuyerSeedRunSummary = SegmentRunSummary<'utilities-seed'>;
 
 export async function runFuelBuyerUtilitiesSeed(): Promise<FuelBuyerSeedRunSummary> {
-  const startedAt = new Date().toISOString();
-  let upserted = 0;
-  let skipped = 0;
-  const errors: string[] = [];
-
-  for (const e of SEED) {
-    try {
-      const tags = ['fuel-buyer', 'source:curated-seed', 'segment:utility'];
-      tags.push(`region:caribbean`);
-      const aliases = e.aliases ?? [];
-      await db.execute(sql`
-        INSERT INTO known_entities (
-          slug, name, country, role, categories, aliases, tags, notes, metadata
-        ) VALUES (
-          ${e.slug},
-          ${e.name},
-          ${e.country},
-          ${'fuel-buyer-industrial'},
-          ARRAY['fuel-buyer','utility']::text[],
-          ${aliases.length > 0 ? sql`ARRAY[${sql.join(aliases.map((a) => sql`${a}`), sql`, `)}]::text[]` : sql`NULL`},
-          ARRAY[${sql.join(tags.map((t) => sql`${t}`), sql`, `)}]::text[],
-          ${e.notes ?? null},
-          ${JSON.stringify({ fuelBuyerProfile: e.profile })}::jsonb
-        )
-        ON CONFLICT (slug) DO UPDATE SET
-          name       = EXCLUDED.name,
-          aliases    = EXCLUDED.aliases,
-          categories = EXCLUDED.categories,
-          tags       = EXCLUDED.tags,
-          notes      = EXCLUDED.notes,
-          metadata   = EXCLUDED.metadata,
-          updated_at = NOW();
-      `);
-      upserted += 1;
-    } catch (err) {
-      errors.push(`seed ${e.slug}: ${(err as Error).message}`);
-      skipped += 1;
-    }
-  }
-
-  return {
-    source: 'fuel-buyer-utilities-seed',
-    status: errors.length > 0 && upserted === 0 ? 'error' : 'ok',
-    upserted,
-    skipped,
-    errors,
-    startedAt,
-    finishedAt: new Date().toISOString(),
-  };
+  return ingestSegmentSeed('utilities-seed', SEED, 'utility');
 }

@@ -13,6 +13,14 @@ export type FuelBuyerSeedEntry = {
   country: string;
   aliases?: string[];
   notes?: string;
+  /** WGS84 decimal degrees for the entity's primary operating
+   *  asset (power plant, mine site, terminal, port). Optional —
+   *  populate only when there's a single-point asset whose lat/lng
+   *  is meaningful for vessel-activity / proximity-radius queries.
+   *  Diversified distributor networks or corporate HQs without a
+   *  single physical asset should leave this null. */
+  latitude?: number;
+  longitude?: number;
   /** Categories on the row (defaulted to ['fuel-buyer'] + segment if
    *  not supplied). */
   extraCategories?: string[];
@@ -80,7 +88,7 @@ export async function ingestSegmentSeed<S extends string>(
       const aliases = e.aliases ?? [];
       await db.execute(sql`
         INSERT INTO known_entities (
-          slug, name, country, role, categories, aliases, tags, notes, metadata
+          slug, name, country, role, categories, aliases, tags, notes, metadata, latitude, longitude
         ) VALUES (
           ${e.slug},
           ${e.name},
@@ -90,7 +98,9 @@ export async function ingestSegmentSeed<S extends string>(
           ${aliases.length > 0 ? sql`ARRAY[${sql.join(aliases.map((a) => sql`${a}`), sql`, `)}]::text[]` : sql`NULL`},
           ARRAY[${sql.join(tags.map((t) => sql`${t}`), sql`, `)}]::text[],
           ${e.notes ?? null},
-          ${JSON.stringify({ fuelBuyerProfile: e.profile })}::jsonb
+          ${JSON.stringify({ fuelBuyerProfile: e.profile })}::jsonb,
+          ${e.latitude ?? null},
+          ${e.longitude ?? null}
         )
         ON CONFLICT (slug) DO UPDATE SET
           name       = EXCLUDED.name,
@@ -99,6 +109,8 @@ export async function ingestSegmentSeed<S extends string>(
           tags       = EXCLUDED.tags,
           notes      = EXCLUDED.notes,
           metadata   = EXCLUDED.metadata,
+          latitude   = COALESCE(EXCLUDED.latitude, known_entities.latitude),
+          longitude  = COALESCE(EXCLUDED.longitude, known_entities.longitude),
           updated_at = NOW();
       `);
       upserted += 1;

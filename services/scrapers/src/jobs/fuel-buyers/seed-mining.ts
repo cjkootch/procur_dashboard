@@ -22,6 +22,9 @@ const SEED: FuelBuyerSeedEntry[] = [
     name: 'JISCO Alpart',
     country: 'JM',
     aliases: ['Alpart Jamaica'],
+    // Alumina refinery in Nain, St. Elizabeth.
+    latitude: 17.95,
+    longitude: -77.61,
     notes:
       'Alumina refinery in Nain, St. Elizabeth. Status note: operations suspended since 2019 for $1.1B modernization; phased reopening targeted Q4 2025. Verify operational status before treating as active buyer.',
     profile: {
@@ -50,6 +53,9 @@ const SEED: FuelBuyerSeedEntry[] = [
     slug: 'fuel-buyer:noranda-bauxite',
     name: 'Noranda Bauxite',
     country: 'JM',
+    // Discovery Bay loadout, St. Ann parish.
+    latitude: 18.46,
+    longitude: -77.41,
     notes: 'Bauxite mining operation in St. Ann. Direct fuel importer.',
     profile: {
       segments: ['mining-bauxite-alumina'],
@@ -78,6 +84,9 @@ const SEED: FuelBuyerSeedEntry[] = [
     name: 'Jamalco',
     country: 'JM',
     aliases: ['Clarendon Alumina', 'Jamaica Alumina Company'],
+    // Alumina refinery in Hayes, Clarendon.
+    latitude: 17.85,
+    longitude: -77.3,
     notes: 'Alumina refinery JV in Hayes, Clarendon. Government of Jamaica + Noble Group.',
     profile: {
       segments: ['mining-bauxite-alumina'],
@@ -106,6 +115,9 @@ const SEED: FuelBuyerSeedEntry[] = [
     name: 'Windalco',
     country: 'JM',
     aliases: ['West Indies Alumina Company'],
+    // Ewarton refinery (Kirkvine refinery is a sibling site).
+    latitude: 18.18,
+    longitude: -77.1,
     notes: 'Alumina operations in Ewarton + Kirkvine. Owned by UC Rusal.',
     profile: {
       segments: ['mining-bauxite-alumina'],
@@ -134,6 +146,9 @@ const SEED: FuelBuyerSeedEntry[] = [
     name: 'Barrick Pueblo Viejo',
     country: 'DO',
     aliases: ['Pueblo Viejo Mine', 'Barrick / Newmont Pueblo Viejo'],
+    // Pueblo Viejo gold mine, Cotuí, Sánchez Ramírez.
+    latitude: 19.06,
+    longitude: -70.13,
     notes:
       'One of the largest gold mines in the Americas. JV between Barrick (60%) and Newmont (40%). Significant fuel consumption for haulage + processing.',
     profile: {
@@ -163,6 +178,9 @@ const SEED: FuelBuyerSeedEntry[] = [
     name: 'Falconbridge Dominicana (Falcondo)',
     country: 'DO',
     aliases: ['Falcondo'],
+    // Ferronickel operation in Bonao.
+    latitude: 18.94,
+    longitude: -70.41,
     notes:
       'Ferronickel operation in Bonao. Status note: operations have been intermittent since Americano Nickel acquired from Glencore in 2015. Verify production status before treating as active fuel buyer.',
     profile: {
@@ -191,6 +209,9 @@ const SEED: FuelBuyerSeedEntry[] = [
     slug: 'fuel-buyer:iamgold-rosebel',
     name: 'IAmGold Rosebel',
     country: 'SR',
+    // Brokopondo District, Suriname.
+    latitude: 5.1,
+    longitude: -55.2,
     notes:
       'Surinamese gold mine, fuel-intensive open-pit + heap leach operation.',
     profile: {
@@ -219,6 +240,9 @@ const SEED: FuelBuyerSeedEntry[] = [
     slug: 'fuel-buyer:newmont-merian',
     name: 'Newmont Merian',
     country: 'SR',
+    // Eastern Suriname, Marowijne District.
+    latitude: 4.91,
+    longitude: -54.45,
     notes: 'Newmont gold mine in eastern Suriname. Major diesel consumer.',
     profile: {
       segments: ['mining-gold'],
