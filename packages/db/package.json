@@ -46,6 +46,8 @@
     "ingest-bankruptcy-recap": "tsx src/ingest-bankruptcy-recap.ts",
     "seed-country-currencies": "tsx src/seed-country-currencies.ts",
     "seed-commodity-benchmarks": "tsx src/seed-commodity-benchmarks.ts",
+    "seed-deal-structure-templates": "tsx src/seed-deal-structure-templates.ts",
+    "seed-commission-structures": "tsx src/seed-commission-structures.ts",
     "ingest-crude-assays": "tsx src/ingest-crude-assays.ts",
     "infer-cargo-trips": "tsx src/infer-cargo-trips.ts",
     "backfill-crude-grade-properties": "tsx src/backfill-crude-grade-properties.ts",
