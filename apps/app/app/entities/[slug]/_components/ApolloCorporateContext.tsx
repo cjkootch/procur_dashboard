@@ -1,25 +1,31 @@
 import type { ApolloEntityCache } from '@procur/catalog';
+import { RefreshApolloButton } from './RefreshApolloButton';
 
 /**
  * "Corporate context" panel on the entity profile, sourced from the
  * cached Apollo org snapshot. Renders empty-state gracefully when the
  * entity has no Apollo match yet (cache = null).
  *
- * Read-only in v1 — the "Refresh from Apollo" + "Search by name"
- * buttons are deliberately deferred to a follow-up PR so the read
- * path lands first.
+ * Refresh button calls the server action which invokes
+ * enrichOrgFromApollo (or enrichOrgsBatch if no apollo_org_id yet)
+ * and revalidates the page.
  */
 export function ApolloCorporateContext({
   cache,
+  entitySlug,
 }: {
   cache: ApolloEntityCache | null;
+  entitySlug: string;
 }) {
   if (!cache) {
     return (
       <section className="mb-6">
-        <SectionHeader title="Corporate context (Apollo)" />
+        <SectionHeader
+          title="Corporate context (Apollo)"
+          right={<RefreshApolloButton entitySlug={entitySlug} />}
+        />
         <p className="text-xs text-[color:var(--color-muted-foreground)]">
-          Apollo: not matched. Set the entity&apos;s primary domain to enable enrichment.
+          Apollo: not matched. Set the entity&apos;s primary domain, then click Refresh.
         </p>
       </section>
     );
@@ -32,9 +38,12 @@ export function ApolloCorporateContext({
       <SectionHeader
         title="Corporate context (Apollo)"
         right={
-          <span className="text-[10px] normal-case tracking-normal text-[color:var(--color-muted-foreground)]">
-            synced {formatRelativeDate(cache.syncedAt)}
-            {stale ? ' · stale' : ''}
+          <span className="flex items-center gap-2">
+            <span className="text-[10px] normal-case tracking-normal text-[color:var(--color-muted-foreground)]">
+              synced {formatRelativeDate(cache.syncedAt)}
+              {stale ? ' · stale' : ''}
+            </span>
+            <RefreshApolloButton entitySlug={entitySlug} />
           </span>
         }
       />

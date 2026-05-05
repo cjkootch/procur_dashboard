@@ -1,4 +1,6 @@
 import type { EntityContactEnrichment } from '@procur/catalog';
+import { EnrichApolloPersonButton } from './EnrichApolloPersonButton';
+import { FindApolloPeopleForm } from './FindApolloPeopleForm';
 
 const SENIORITY_LABEL: Record<string, string> = {
   owner: 'Owner',
@@ -20,19 +22,21 @@ const SENIORITY_LABEL: Record<string, string> = {
  * their own existing Contacts section).
  *
  * Two row states:
- *   - Pre-enrichment: obfuscated last name (Apollo's free search
- *     output), title + seniority shown, "Not enriched" indicator.
- *     The Enrich button lands in a follow-up PR.
- *   - Enriched: full name, email, phone, linkedin URL all present.
+ *   - Pre-enrichment: obfuscated last name + Enrich button (paid call,
+ *     gated by per-tenant per-day cap).
+ *   - Enriched: full name, email, phone, linkedin URL.
+ *
+ * The "+ Find people" form runs a free Apollo search scoped to this
+ * entity and persists matches as new pre-enrichment rows.
  */
 export function ApolloDecisionMakers({
   contacts,
+  entitySlug,
 }: {
   contacts: EntityContactEnrichment[];
+  entitySlug: string;
 }) {
   const apolloContacts = contacts.filter((c) => c.source === 'apollo');
-
-  if (apolloContacts.length === 0) return null;
 
   return (
     <section className="mb-6">
@@ -43,21 +47,35 @@ export function ApolloDecisionMakers({
             ({apolloContacts.length})
           </span>
         </span>
+        <FindApolloPeopleForm entitySlug={entitySlug} />
       </h2>
-      <div className="space-y-2">
-        {apolloContacts.map((c) => (
-          <ApolloPersonRow key={c.id} contact={c} />
-        ))}
-      </div>
+      {apolloContacts.length === 0 ? (
+        <p className="text-xs text-[color:var(--color-muted-foreground)]">
+          No Apollo-sourced contacts yet. Click <strong>+ Find people</strong> above to search.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {apolloContacts.map((c) => (
+            <ApolloPersonRow key={c.id} contact={c} entitySlug={entitySlug} />
+          ))}
+        </div>
+      )}
       <p className="mt-2 text-[10px] italic text-[color:var(--color-muted-foreground)]">
         Pre-enrichment rows show the obfuscated form Apollo returns from the free
-        search endpoint. Enriching resolves the full name + email + direct phone.
+        search endpoint. Enriching resolves the full name + email + direct phone
+        and consumes credits (per-tenant daily cap applies).
       </p>
     </section>
   );
 }
 
-function ApolloPersonRow({ contact }: { contact: EntityContactEnrichment }) {
+function ApolloPersonRow({
+  contact,
+  entitySlug,
+}: {
+  contact: EntityContactEnrichment;
+  entitySlug: string;
+}) {
   const enriched = contact.email != null;
   return (
     <div className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-3">
@@ -76,13 +94,11 @@ function ApolloPersonRow({ contact }: { contact: EntityContactEnrichment }) {
             )}
           </p>
         </div>
-        {!enriched && (
-          <span
-            className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-700 dark:text-amber-300"
-            title="Apollo has data but procur hasn't enriched the row yet"
-          >
-            Not enriched
-          </span>
+        {!enriched && contact.apolloPersonId && (
+          <EnrichApolloPersonButton
+            entitySlug={entitySlug}
+            apolloPersonId={contact.apolloPersonId}
+          />
         )}
       </div>
       {enriched && (

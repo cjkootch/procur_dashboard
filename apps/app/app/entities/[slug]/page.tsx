@@ -184,8 +184,12 @@ export default async function EntityProfilePage({ params }: Props) {
       {/* Apollo corporate context — funding / headcount / revenue /
           tech stack. Reads from the cached snapshot populated by the
           nightly batch-enrichment cron. Renders an empty-state
-          message when the entity hasn't been Apollo-matched yet. */}
-      <ApolloCorporateContext cache={apolloCache} />
+          message when the entity hasn't been Apollo-matched yet.
+          Refresh button forces a fresh single-get. */}
+      <ApolloCorporateContext
+        cache={apolloCache}
+        entitySlug={profile.canonicalKey}
+      />
 
       {/* Quote anchors — refiner-only. Renders the realistic CIF
           mid for a default product into the desk's most-active dest
@@ -318,9 +322,13 @@ export default async function EntityProfilePage({ params }: Props) {
 
       {/* Apollo decision-makers — separate section above the existing
           vex Contacts list. Renders both pre-enrichment (obfuscated
-          last name) and enriched rows; Enrich button lands in a
-          follow-up PR. */}
-      <ApolloDecisionMakers contacts={contactEnrichments} />
+          last name) and enriched rows; "+ Find people" form lets
+          operators search; Enrich button on each row resolves the
+          full email + phone (paid, per-tenant daily cap applies). */}
+      <ApolloDecisionMakers
+        contacts={contactEnrichments}
+        entitySlug={profile.canonicalKey}
+      />
 
       {contactEnrichments.filter((c) => c.source !== 'apollo').length > 0 && (
         <section className="mb-6">

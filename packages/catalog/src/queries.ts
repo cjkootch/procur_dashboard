@@ -7106,6 +7106,57 @@ export type ApolloEntityCache = {
 };
 
 /**
+ * Resolves an entity's canonical key to (table, rowId, primaryDomain)
+ * so server actions can call enrichOrgFromApollo / enrichOrgsBatch
+ * without re-doing the slug-vs-uuid discrimination inline.
+ */
+export type ApolloEntityRef = {
+  table: 'known_entities' | 'external_suppliers';
+  rowId: string;
+  primaryDomain: string | null;
+  apolloOrgId: string | null;
+};
+
+export async function resolveApolloEntityRef(
+  canonicalKey: string,
+): Promise<ApolloEntityRef | null> {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    canonicalKey,
+  );
+  if (isUuid) {
+    const result = await db.execute(sql`
+      SELECT id, primary_domain, apollo_org_id
+      FROM external_suppliers
+      WHERE id = ${canonicalKey}
+      LIMIT 1
+    `);
+    const row = (result.rows as Array<Record<string, unknown>>)[0];
+    if (!row) return null;
+    return {
+      table: 'external_suppliers',
+      rowId: String(row.id),
+      primaryDomain: row.primary_domain == null ? null : String(row.primary_domain),
+      apolloOrgId: row.apollo_org_id == null ? null : String(row.apollo_org_id),
+    };
+  }
+
+  const result = await db.execute(sql`
+    SELECT id, primary_domain, apollo_org_id
+    FROM known_entities
+    WHERE slug = ${canonicalKey}
+    LIMIT 1
+  `);
+  const row = (result.rows as Array<Record<string, unknown>>)[0];
+  if (!row) return null;
+  return {
+    table: 'known_entities',
+    rowId: String(row.id),
+    primaryDomain: row.primary_domain == null ? null : String(row.primary_domain),
+    apolloOrgId: row.apollo_org_id == null ? null : String(row.apollo_org_id),
+  };
+}
+
+/**
  * Read the Apollo org cache for an entity by its canonical key
  * (known_entities.slug or external_suppliers.id, same shape that
  * getEntityProfile accepts). Returns null when the entity has no
