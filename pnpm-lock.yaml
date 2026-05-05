@@ -93,6 +93,9 @@ importers:
       '@procur/analytics':
         specifier: workspace:*
         version: link:../../packages/analytics
+      '@procur/apollo':
+        specifier: workspace:*
+        version: link:../../packages/apollo
       '@procur/auth':
         specifier: workspace:*
         version: link:../../packages/auth
