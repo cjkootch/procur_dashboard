@@ -7985,6 +7985,204 @@ function numericOrNullCG(v: unknown): number | null {
   const n = typeof v === 'number' ? v : Number(v);
   return Number.isFinite(n) ? n : null;
 }
+
+// ─── Refinery import context (slate × actual flows) ─────────────
+
+export type RefineryImportContext = {
+  refinerySlug: string;
+  refineryName: string;
+  refineryCountry: string;
+  /** HS code used for the customs aggregation (2709 = crude). */
+  productCode: string;
+  /** Lookback window in months (default 12). */
+  monthsLookback: number;
+  /**
+   * Per slate-compatible grade: how much of that grade's origin
+   * country DID the refinery's country actually import in the
+   * window? Aggregated at country-pair level (Eurostat / UN
+   * Comtrade resolution); per-cargo attribution is out of scope.
+   *
+   * Sorted by `quantityKg DESC NULLS LAST` so the largest realized
+   * flows surface first — that's the strongest "the slate envelope
+   * isn't lying" signal.
+   */
+  rows: Array<{
+    gradeSlug: string;
+    gradeName: string;
+    gradeOriginCountry: string;
+    gradeApiGravity: number | null;
+    gradeSulfurPct: number | null;
+    /** Total imported mass over the lookback. NULL when no rows
+     *  exist in customs_imports for the (refinery_country,
+     *  grade_origin_country) pair. */
+    quantityKg: number | null;
+    valueUsd: number | null;
+    monthsActive: number;
+    mostRecentPeriod: string | null;
+  }>;
+  /**
+   * Aggregate hint for the panel header: how many grades the
+   * refinery is theoretically slate-fit to run, vs how many of
+   * those have any actual import evidence.
+   */
+  summary: {
+    slateCompatibleGradeCount: number;
+    gradesWithImportEvidence: number;
+    totalQuantityKg: number | null;
+  };
+};
+
+/**
+ * Cross-reference a refinery's slate against its country's actual
+ * crude import flows. Answers the gap that pure slate-compatibility
+ * misses: an envelope can SAY a refinery accepts Es Sider, but if
+ * the country has imported ZERO Libyan crude in the last 12 months
+ * the slate window is hypothetical — the buyer relationship doesn't
+ * exist yet.
+ *
+ * Granularity: customs flows are reporter × partner country level
+ * (Eurostat / UN Comtrade). We can't say "Sannazzaro specifically
+ * ran Es Sider"; we can say "Italy imported 8.2M kg of Libyan
+ * crude over the last 12 months and Sannazzaro's slate accepts
+ * it" — vastly stronger signal than slate alone.
+ *
+ * Default product code: HS 2709 (crude petroleum). Caller can pass
+ * a refined-products code (HS 2710) for refiner profiles where
+ * crude-side flows aren't the right framing — but that's an edge
+ * case; v1 ships with the crude default.
+ */
+export async function getRefineryImportContext(
+  refinerySlug: string,
+  options: {
+    productCode?: string;
+    monthsLookback?: number;
+  } = {},
+): Promise<RefineryImportContext | null> {
+  const productCode = options.productCode ?? '2709';
+  const monthsLookback = options.monthsLookback ?? 12;
+
+  // Pull the slate-compatible grades for this refinery. Reuse the
+  // existing helper so the slate-fit semantics stay in one place.
+  const slateRows = await findGradesForRefinery({
+    refinerySlug,
+    compatibleOnly: true,
+    limit: 100,
+  });
+  if (slateRows.length === 0) return null;
+
+  const refineryCountry = slateRows[0]!.refineryCountry;
+  const refineryName = slateRows[0]!.refineryName;
+
+  // Collect distinct origin countries for the slate-fit grades,
+  // skip nulls (grades without an origin country can't be matched
+  // to import flows).
+  const origins = Array.from(
+    new Set(
+      slateRows
+        .map((r) => r.gradeOriginCountry)
+        .filter((c): c is string => Boolean(c)),
+    ),
+  );
+
+  let flowByOrigin = new Map<
+    string,
+    { quantityKg: number | null; valueUsd: number | null; monthsActive: number; mostRecentPeriod: string | null }
+  >();
+  if (origins.length > 0) {
+    // Aggregate over the lookback window per partner country. Same
+    // source-priority dedup as getMonthlyImportFlow (Eurostat for
+    // EU reporters, UN Comtrade fallback) so cross-source double-
+    // counting doesn't inflate totals.
+    const result = await db.execute(sql`
+      WITH ranked AS (
+        SELECT
+          partner_country,
+          period,
+          quantity_kg,
+          value_usd,
+          source,
+          ROW_NUMBER() OVER (
+            PARTITION BY partner_country, period
+            ORDER BY
+              CASE
+                WHEN ${refineryCountry} IN ('AT','BE','BG','HR','CY','CZ','DK','EE','FI','FR','DE','GR','HU','IE','IT','LV','LT','LU','MT','NL','PL','PT','RO','SK','SI','ES','SE')
+                  AND source = 'eurostat-comext' THEN 1
+                WHEN source = 'un-comtrade' THEN 2
+                ELSE 3
+              END
+          ) AS rn
+        FROM customs_imports
+        WHERE
+          reporter_country = ${refineryCountry}
+          AND product_code = ${productCode}
+          AND flow_direction = 'import'
+          AND partner_country = ANY(${origins})
+          AND period >= date_trunc('month', NOW() - (${monthsLookback}::int || ' months')::interval)
+      )
+      SELECT
+        partner_country,
+        SUM(quantity_kg)            AS quantity_kg,
+        SUM(value_usd)              AS value_usd,
+        COUNT(DISTINCT period)::int AS months_active,
+        to_char(MAX(period), 'YYYY-MM') AS most_recent_period
+      FROM ranked
+      WHERE rn = 1
+      GROUP BY partner_country;
+    `);
+    for (const row of result.rows as Array<Record<string, unknown>>) {
+      const origin = String(row.partner_country);
+      flowByOrigin.set(origin, {
+        quantityKg: row.quantity_kg == null ? null : Number.parseFloat(String(row.quantity_kg)),
+        valueUsd: row.value_usd == null ? null : Number.parseFloat(String(row.value_usd)),
+        monthsActive: Number(row.months_active ?? 0),
+        mostRecentPeriod: row.most_recent_period == null ? null : String(row.most_recent_period),
+      });
+    }
+  }
+
+  const rows = slateRows
+    .filter((r) => r.gradeOriginCountry != null)
+    .map((r) => {
+      const flow = flowByOrigin.get(r.gradeOriginCountry!);
+      return {
+        gradeSlug: r.gradeSlug,
+        gradeName: r.gradeName,
+        gradeOriginCountry: r.gradeOriginCountry!,
+        gradeApiGravity: r.gradeApiGravity,
+        gradeSulfurPct: r.gradeSulfurPct,
+        quantityKg: flow?.quantityKg ?? null,
+        valueUsd: flow?.valueUsd ?? null,
+        monthsActive: flow?.monthsActive ?? 0,
+        mostRecentPeriod: flow?.mostRecentPeriod ?? null,
+      };
+    })
+    .sort((a, b) => {
+      // Bigger flow first; null flows fall to the bottom.
+      if (a.quantityKg == null && b.quantityKg == null) return 0;
+      if (a.quantityKg == null) return 1;
+      if (b.quantityKg == null) return -1;
+      return b.quantityKg - a.quantityKg;
+    });
+
+  const totalQuantityKg = rows.reduce(
+    (acc, r) => (r.quantityKg == null ? acc : (acc ?? 0) + r.quantityKg),
+    null as number | null,
+  );
+
+  return {
+    refinerySlug,
+    refineryName,
+    refineryCountry,
+    productCode,
+    monthsLookback,
+    rows,
+    summary: {
+      slateCompatibleGradeCount: slateRows.length,
+      gradesWithImportEvidence: rows.filter((r) => r.quantityKg != null && r.quantityKg > 0).length,
+      totalQuantityKg,
+    },
+  };
+}
 // ─── Recursive ownership walks (work item 2) ──────────────────────
 
 export type OwnershipEdge = {
@@ -8996,6 +9194,245 @@ export async function listCrudeGradesForIndex(
   }));
 }
 
+// ─── Grade yield value (cut-weighted refined-product valuation) ───
+
+/**
+ * Cut-label → benchmark-series + handling. Producer assays don't
+ * agree on a fixed cut vocabulary — TotalEnergies splits naphtha
+ * into Light/Heavy, BP uses "Kero" / "Gas oil" / "Atm. residue",
+ * Haverly-format reports emit start/end temps without canonical
+ * names. We classify by lowercased label substring, falling back
+ * to start_temp_c bins for the temperature-only producers.
+ *
+ * `multiplier` is what the cut contributes to the valuation:
+ *   1.0  = full benchmark price
+ *   <1.0 = downgraded for handling losses (residue cracking yield,
+ *          intermediate streams that need further upgrade).
+ * Tune the multipliers as real refining-margin calibration data
+ * surfaces from the operator.
+ */
+const CUT_BENCHMARKS: Array<{
+  match: (label: string, startC: number | null) => boolean;
+  series: string;
+  multiplier: number;
+  category: 'lpg' | 'naphtha' | 'gasoline' | 'kerosene' | 'gasoil' | 'residue';
+}> = [
+  {
+    match: (l) => /lpg|c3|c4|propane|butane/.test(l),
+    series: 'brent',
+    multiplier: 1.0, // No good LPG benchmark in the ingest yet — proxy off Brent at parity.
+    category: 'lpg',
+  },
+  {
+    match: (l, s) => /naphtha/.test(l) || (s != null && s < 175),
+    series: 'nyh-gasoline',
+    multiplier: 0.85, // Naphtha trades at a discount to finished gasoline.
+    category: 'naphtha',
+  },
+  {
+    match: (l) => /gasoline|mogas|reform/.test(l),
+    series: 'nyh-gasoline',
+    multiplier: 1.0,
+    category: 'gasoline',
+  },
+  {
+    match: (l, s) => /kero|jet|avtur/.test(l) || (s != null && s >= 175 && s < 250),
+    series: 'nyh-heating-oil',
+    multiplier: 1.05, // Jet typically over heating-oil benchmark.
+    category: 'kerosene',
+  },
+  {
+    match: (l, s) => /gas[- ]?oil|diesel|distillate|lgo|hgo/.test(l) || (s != null && s >= 250 && s < 360),
+    series: 'nyh-diesel',
+    multiplier: 1.0,
+    category: 'gasoil',
+  },
+  {
+    match: (l, s) => /residue|resid|bottoms|atmospheric|vacuum|vgo/.test(l) || (s != null && s >= 360),
+    series: 'brent',
+    multiplier: 0.7, // Residue → cracking yield haircut. Calibrate later.
+    category: 'residue',
+  },
+];
+
+export type GradeYieldValuation = {
+  gradeSlug: string;
+  gradeName: string;
+  /** Source assay used for the cut yields. Latest sampleDate per grade. */
+  assayReference: string;
+  assaySource: string;
+  assayDate: string | null;
+  /** Per-cut contribution. Uses cut weight (yield_wt_pct) since the
+   *  benchmark prices are mass-equivalent (USD/bbl with 1 bbl ≈ 1 unit). */
+  contributions: Array<{
+    cutLabel: string;
+    category: string;
+    yieldWtPct: number;
+    benchmarkSeries: string;
+    benchmarkPriceUsdBbl: number | null;
+    multiplier: number;
+    contributionUsdBbl: number | null;
+  }>;
+  /** Sum of contributions (USD/bbl crude equivalent). NULL when any
+   *  required benchmark is missing. */
+  grossProductValueUsdBbl: number | null;
+  /** % of cuts that resolved to a benchmark — diagnostic for whether
+   *  the assay's vocabulary mapped cleanly. < 80 % → result is rough. */
+  cutsCoveredPct: number;
+  notes: string[];
+};
+
+/**
+ * Cut-weighted gross product value for a single crude grade. For
+ * each cut in the most recent assay, look up the closest refined-
+ * product benchmark and multiply by the cut's weight yield. Sum
+ * = "what you'd theoretically realize from this crude at today's
+ * product prices."
+ *
+ * Useful as a calibration check on FOB cost: a Brent-priced cargo
+ * whose theoretical product value is $90/bbl while the FOB is
+ * $82/bbl is a +$8 gross refining margin (before utilities + freight
+ * + working capital — those land in compose_deal_economics). Lighter
+ * grades (Bonny Light, Es Sider) typically value out 5-10 %above
+ * Brent due to higher distillate yields; heavier sour grades
+ * (Maya, Urals) are 5-15 % below.
+ *
+ * NOT a substitute for compose_deal_economics — this is a single-
+ * grade reference number, not a P&L. Treat it as the "gross product
+ * value vs. FOB" anchor; the calculator handles the per-trade
+ * mechanics.
+ */
+export async function getGradeYieldValue(
+  gradeSlug: string,
+): Promise<GradeYieldValuation | null> {
+  // Pick the most recent assay for this grade (by sample_date,
+  // falling back to created_at when sample_date is null).
+  const assayRows = await db.execute(sql`
+    SELECT id, name, source, reference, sample_date::text AS sample_date
+    FROM crude_assays
+    WHERE grade_slug = ${gradeSlug}
+    ORDER BY sample_date DESC NULLS LAST, created_at DESC
+    LIMIT 1;
+  `);
+  const assay = (assayRows.rows as Array<Record<string, unknown>>)[0];
+  if (!assay) return null;
+
+  const cutRows = await db.execute(sql`
+    SELECT cut_label, cut_order, start_temp_c, yield_wt_pct
+    FROM crude_assay_cuts
+    WHERE assay_id = ${String(assay.id)}
+    ORDER BY cut_order ASC;
+  `);
+  const cuts = (cutRows.rows as Array<Record<string, unknown>>).map((c) => ({
+    cutLabel: String(c.cut_label),
+    cutOrder: Number(c.cut_order),
+    startTempC: c.start_temp_c == null ? null : Number.parseFloat(String(c.start_temp_c)),
+    yieldWtPct: c.yield_wt_pct == null ? null : Number.parseFloat(String(c.yield_wt_pct)),
+  }));
+  if (cuts.length === 0) {
+    const gradeRow = (
+      await db.execute(sql`SELECT name FROM crude_grades WHERE slug = ${gradeSlug} LIMIT 1;`)
+    ).rows as Array<Record<string, unknown>>;
+    return {
+      gradeSlug,
+      gradeName: String(gradeRow[0]?.name ?? gradeSlug),
+      assayReference: String(assay.reference),
+      assaySource: String(assay.source),
+      assayDate: assay.sample_date == null ? null : String(assay.sample_date),
+      contributions: [],
+      grossProductValueUsdBbl: null,
+      cutsCoveredPct: 0,
+      notes: ['Assay has no cut breakdown — cut-weighted value cannot be computed.'],
+    };
+  }
+
+  // Pull all distinct benchmark series that the cut classifier might
+  // need, fetch each spot price in parallel.
+  const seriesNeeded = Array.from(new Set(CUT_BENCHMARKS.map((b) => b.series)));
+  const priceBySeries = new Map<string, number | null>();
+  await Promise.all(
+    seriesNeeded.map(async (series) => {
+      const ctx = await getCommodityPriceContext(series, 30);
+      priceBySeries.set(series, ctx.latest?.price ?? null);
+    }),
+  );
+
+  const notes: string[] = [];
+  let grossSum = 0;
+  let coveredYield = 0;
+  let totalYield = 0;
+
+  const contributions = cuts.map((c) => {
+    const lower = c.cutLabel.toLowerCase();
+    const match = CUT_BENCHMARKS.find((b) => b.match(lower, c.startTempC));
+    const yld = c.yieldWtPct ?? 0;
+    if (yld > 0) totalYield += yld;
+    if (!match || c.yieldWtPct == null) {
+      return {
+        cutLabel: c.cutLabel,
+        category: 'unmatched',
+        yieldWtPct: yld,
+        benchmarkSeries: '',
+        benchmarkPriceUsdBbl: null,
+        multiplier: 0,
+        contributionUsdBbl: null,
+      };
+    }
+    const benchmark = priceBySeries.get(match.series) ?? null;
+    if (benchmark == null) {
+      notes.push(`Benchmark ${match.series} unavailable — cut "${c.cutLabel}" excluded.`);
+      return {
+        cutLabel: c.cutLabel,
+        category: match.category,
+        yieldWtPct: yld,
+        benchmarkSeries: match.series,
+        benchmarkPriceUsdBbl: null,
+        multiplier: match.multiplier,
+        contributionUsdBbl: null,
+      };
+    }
+    // yield_wt_pct is already in % — divide by 100 before weighting.
+    const contribution = benchmark * match.multiplier * (yld / 100);
+    grossSum += contribution;
+    coveredYield += yld;
+    return {
+      cutLabel: c.cutLabel,
+      category: match.category,
+      yieldWtPct: yld,
+      benchmarkSeries: match.series,
+      benchmarkPriceUsdBbl: benchmark,
+      multiplier: match.multiplier,
+      contributionUsdBbl: contribution,
+    };
+  });
+
+  const cutsCoveredPct = totalYield > 0 ? (coveredYield / totalYield) * 100 : 0;
+  const grossProductValueUsdBbl = cutsCoveredPct > 0 ? grossSum : null;
+
+  if (cutsCoveredPct < 80) {
+    notes.push(
+      `Only ${cutsCoveredPct.toFixed(1)} % of yield mapped to a benchmark — ` +
+        `result is approximate. Add cut-label cases to CUT_BENCHMARKS in queries.ts.`,
+    );
+  }
+
+  const gradeRow = (
+    await db.execute(sql`SELECT name FROM crude_grades WHERE slug = ${gradeSlug} LIMIT 1;`)
+  ).rows as Array<Record<string, unknown>>;
+
+  return {
+    gradeSlug,
+    gradeName: String(gradeRow[0]?.name ?? gradeSlug),
+    assayReference: String(assay.reference),
+    assaySource: String(assay.source),
+    assayDate: assay.sample_date == null ? null : String(assay.sample_date),
+    contributions,
+    grossProductValueUsdBbl,
+    cutsCoveredPct,
+    notes,
+  };
+}
+
 /** Distinct regions present in `crude_grades` — drives the filter
  *  dropdown without hard-coding the taxonomy. */
 export async function listCrudeGradeRegions(): Promise<string[]> {
@@ -9057,6 +9494,33 @@ export async function listTopKnownEntityTagsByPrefix(
  * Keys are case-insensitive substring matches on the signal name.
  * Add as real chat traces surface new chokepoints.
  */
+/**
+ * Chokepoint coordinates — center point + ports radius. Used by the
+ * proximity exposure pass: refineries within `radiusKm` of a chokepoint
+ * face physical disruption (port closures, shipping insurance spikes,
+ * crew/insurance constraints) regardless of whether the slate envelope
+ * overlaps the affected origins.
+ *
+ * Radii are deliberately generous — a chokepoint event ripples to
+ * the surrounding port complex, not just the literal narrows. Tune
+ * downward if real signals show false positives.
+ *
+ * Match key is the SAME pattern as `CHOKEPOINT_COUNTRIES` so a single
+ * regex hit gives both country expansion and coordinate.
+ */
+const CHOKEPOINT_COORDINATES: Array<{
+  pattern: RegExp;
+  name: string;
+  lat: number;
+  lng: number;
+  radiusKm: number;
+}> = [
+  { pattern: /strait of hormuz|hormuz|persian gulf/i, name: 'Strait of Hormuz', lat: 26.566, lng: 56.25, radiusKm: 600 },
+  { pattern: /bab[- ]el[- ]mandeb|red sea/i, name: 'Bab-el-Mandeb', lat: 12.583, lng: 43.333, radiusKm: 800 },
+  { pattern: /suez canal|suez/i, name: 'Suez Canal', lat: 30.0, lng: 32.55, radiusKm: 400 },
+  { pattern: /bosphorus|turkish strait|dardanelles/i, name: 'Bosphorus', lat: 41.0, lng: 29.0, radiusKm: 400 },
+];
+
 const CHOKEPOINT_COUNTRIES: Array<{ pattern: RegExp; countries: string[] }> = [
   {
     // Strait of Hormuz — exits the Persian Gulf. Captures
@@ -9090,6 +9554,13 @@ export type MacroSignalExposure = {
   signalId: string;
   /** Which countries' supply is implicated by this signal. */
   affectedCountries: string[];
+  /** Chokepoint hit (if any) — drives the proximity pass. */
+  chokepoint: {
+    name: string;
+    lat: number;
+    lng: number;
+    radiusKm: number;
+  } | null;
   /** Crude grades originating from those countries. */
   affectedGrades: Array<{
     slug: string;
@@ -9098,17 +9569,26 @@ export type MacroSignalExposure = {
     apiGravity: number | null;
     sulfurPct: number | null;
   }>;
-  /** Refineries whose slate runs at least one affected grade.
-   *  Sorted by `affectedGradeCount` DESC — refineries with the
-   *  broadest exposure first. */
+  /** Refineries the signal touches — by slate (their diet runs an
+   *  affected grade), by proximity (within radiusKm of the chokepoint
+   *  center), or both. Sorted: both-kinds first, then slate, then
+   *  proximity; within each kind by affectedGradeCount DESC. */
   exposedRefineries: Array<{
     slug: string;
     name: string;
     country: string;
-    /** How many of the affected grades fit the refinery's slate. */
+    /** 'slate' = grade-fit only, 'proximity' = within chokepoint
+     *  radius only, 'both' = grade-fit AND in radius. */
+    exposureKind: 'slate' | 'proximity' | 'both';
+    /** How many of the affected grades fit the refinery's slate.
+     *  0 for proximity-only refineries. */
     affectedGradeCount: number;
-    /** Top 3 grades the refinery would lose (by API gravity DESC). */
+    /** Top 3 grades the refinery would lose (by API gravity DESC).
+     *  Empty for proximity-only refineries. */
     primaryGradeNames: string[];
+    /** Distance to chokepoint center in km. NULL for slate-only
+     *  refineries (no chokepoint hit). */
+    distanceKm: number | null;
   }>;
 };
 
@@ -9154,7 +9634,8 @@ export async function getMacroSignalExposure(
     row.sourceEntityName,
     row.sourceEntityCountry,
   );
-  const exposure = await getExposureForCountries(affectedCountries);
+  const chokepoint = resolveChokepoint(row.sourceEntityName);
+  const exposure = await getExposureForCountries(affectedCountries, chokepoint);
   return { signalId, ...exposure };
 }
 
@@ -9179,14 +9660,16 @@ export async function getExposureForGeoPhrase(
   resolvedFrom: 'chokepoint' | 'iso2' | 'country-name' | 'unresolved';
   matchedPattern: string | null;
   affectedCountries: string[];
+  chokepoint: MacroSignalExposure['chokepoint'];
   affectedGrades: MacroSignalExposure['affectedGrades'];
   exposedRefineries: MacroSignalExposure['exposedRefineries'];
 }> {
   const trimmed = phrase.trim();
-  // Try chokepoint first.
+  // Try chokepoint first — also pulls coordinates for the proximity pass.
   for (const cp of CHOKEPOINT_COUNTRIES) {
     if (cp.pattern.test(trimmed)) {
-      const exposure = await getExposureForCountries(cp.countries);
+      const choke = resolveChokepoint(trimmed);
+      const exposure = await getExposureForCountries(cp.countries, choke);
       return {
         resolvedFrom: 'chokepoint',
         matchedPattern: cp.pattern.source,
@@ -9197,70 +9680,97 @@ export async function getExposureForGeoPhrase(
   // ISO-2 short-circuit.
   if (/^[A-Za-z]{2}$/.test(trimmed)) {
     const code = trimmed.toUpperCase();
-    const exposure = await getExposureForCountries([code]);
+    const exposure = await getExposureForCountries([code], null);
     return { resolvedFrom: 'iso2', matchedPattern: null, ...exposure };
   }
   // Country-name normalization (e.g. "Russia", "Côte d'Ivoire").
   const { normalizeCountryCode } = await import('./country-codes');
   const normalized = normalizeCountryCode(trimmed);
   if (normalized) {
-    const exposure = await getExposureForCountries([normalized]);
+    const exposure = await getExposureForCountries([normalized], null);
     return { resolvedFrom: 'country-name', matchedPattern: null, ...exposure };
   }
   return {
     resolvedFrom: 'unresolved',
     matchedPattern: null,
     affectedCountries: [],
+    chokepoint: null,
     affectedGrades: [],
     exposedRefineries: [],
   };
 }
 
-/** Inner walker: countries → affected grades → exposed refineries.
- *  Shared by both signal-id and free-text entry points. */
-async function getExposureForCountries(countries: string[]): Promise<{
+/** Inner walker: countries (and optional chokepoint) → affected
+ *  grades → exposed refineries. Shared by both signal-id and
+ *  free-text entry points.
+ *
+ *  Two parallel passes both contribute to `exposedRefineries`:
+ *    1. Slate match — refineries whose configured envelope accepts
+ *       at least one grade originating in `countries`.
+ *    2. Proximity match — refineries within `chokepoint.radiusKm`
+ *       of the chokepoint's center coordinate.
+ *  Refineries that hit both are merged with `exposureKind: 'both'`.
+ *  Sort order: both → slate → proximity, then affectedGradeCount
+ *  DESC within each kind. */
+async function getExposureForCountries(
+  countries: string[],
+  chokepoint: MacroSignalExposure['chokepoint'],
+): Promise<{
   affectedCountries: string[];
+  chokepoint: MacroSignalExposure['chokepoint'];
   affectedGrades: MacroSignalExposure['affectedGrades'];
   exposedRefineries: MacroSignalExposure['exposedRefineries'];
 }> {
-  if (countries.length === 0) {
-    return { affectedCountries: [], affectedGrades: [], exposedRefineries: [] };
+  if (countries.length === 0 && chokepoint == null) {
+    return { affectedCountries: [], chokepoint: null, affectedGrades: [], exposedRefineries: [] };
   }
-  const gradesRow = await db.execute(sql`
-    SELECT slug, name, origin_country, api_gravity, sulfur_pct
-    FROM crude_grades
-    WHERE origin_country = ANY(${countries})
-    ORDER BY api_gravity DESC NULLS LAST;
-  `);
-  const affectedGrades = (gradesRow.rows as Array<Record<string, unknown>>).map((g) => ({
-    slug: String(g.slug),
-    name: String(g.name),
-    originCountry: g.origin_country == null ? null : String(g.origin_country),
-    apiGravity: g.api_gravity == null ? null : Number.parseFloat(String(g.api_gravity)),
-    sulfurPct: g.sulfur_pct == null ? null : Number.parseFloat(String(g.sulfur_pct)),
-  }));
-  if (affectedGrades.length === 0) {
-    return { affectedCountries: countries, affectedGrades: [], exposedRefineries: [] };
+
+  // Affected grades from origin-country expansion.
+  let affectedGrades: MacroSignalExposure['affectedGrades'] = [];
+  if (countries.length > 0) {
+    const gradesRow = await db.execute(sql`
+      SELECT slug, name, origin_country, api_gravity, sulfur_pct
+      FROM crude_grades
+      WHERE origin_country = ANY(${countries})
+      ORDER BY api_gravity DESC NULLS LAST;
+    `);
+    affectedGrades = (gradesRow.rows as Array<Record<string, unknown>>).map((g) => ({
+      slug: String(g.slug),
+      name: String(g.name),
+      originCountry: g.origin_country == null ? null : String(g.origin_country),
+      apiGravity: g.api_gravity == null ? null : Number.parseFloat(String(g.api_gravity)),
+      sulfurPct: g.sulfur_pct == null ? null : Number.parseFloat(String(g.sulfur_pct)),
+    }));
   }
-  const affectedSlugs = affectedGrades.map((g) => g.slug);
-  const exposedRow = await db.execute(sql`
-    SELECT
-      refinery_slug,
-      refinery_name,
-      refinery_country,
-      COUNT(*)::int AS affected_count,
-      (
-        ARRAY_AGG(grade_name ORDER BY grade_api_gravity DESC NULLS LAST)
-      )[1:3] AS primary_grades
-    FROM refinery_grade_compatibility
-    WHERE slate_compatible = TRUE
-      AND grade_slug = ANY(${affectedSlugs})
-    GROUP BY refinery_slug, refinery_name, refinery_country
-    ORDER BY affected_count DESC, refinery_name ASC
-    LIMIT 25;
-  `);
-  const exposedRefineries = (exposedRow.rows as Array<Record<string, unknown>>).map(
-    (r) => ({
+
+  // Slate-match pass.
+  type SlateRow = {
+    slug: string;
+    name: string;
+    country: string;
+    affectedGradeCount: number;
+    primaryGradeNames: string[];
+  };
+  let slateRows: SlateRow[] = [];
+  if (affectedGrades.length > 0) {
+    const affectedSlugs = affectedGrades.map((g) => g.slug);
+    const exposedRow = await db.execute(sql`
+      SELECT
+        refinery_slug,
+        refinery_name,
+        refinery_country,
+        COUNT(*)::int AS affected_count,
+        (
+          ARRAY_AGG(grade_name ORDER BY grade_api_gravity DESC NULLS LAST)
+        )[1:3] AS primary_grades
+      FROM refinery_grade_compatibility
+      WHERE slate_compatible = TRUE
+        AND grade_slug = ANY(${affectedSlugs})
+      GROUP BY refinery_slug, refinery_name, refinery_country
+      ORDER BY affected_count DESC, refinery_name ASC
+      LIMIT 50;
+    `);
+    slateRows = (exposedRow.rows as Array<Record<string, unknown>>).map((r) => ({
       slug: String(r.refinery_slug),
       name: String(r.refinery_name),
       country: String(r.refinery_country),
@@ -9268,9 +9778,107 @@ async function getExposureForCountries(countries: string[]): Promise<{
       primaryGradeNames: Array.isArray(r.primary_grades)
         ? (r.primary_grades as string[])
         : [],
-    }),
-  );
-  return { affectedCountries: countries, affectedGrades, exposedRefineries };
+    }));
+  }
+
+  // Proximity pass — only when a chokepoint coordinate is supplied.
+  // Uses haversine over `known_entities` for refineries with lat/lng
+  // within `radiusKm`. Cap at 25 to keep the result envelope small;
+  // this is a "who else is in the blast radius" lens, not a full
+  // refinery census.
+  type ProxRow = { slug: string; name: string; country: string; distanceKm: number };
+  let proxRows: ProxRow[] = [];
+  if (chokepoint) {
+    const r = await db.execute(sql`
+      SELECT
+        slug,
+        name,
+        country,
+        (
+          6371 * acos(
+            cos(radians(${chokepoint.lat})) * cos(radians(latitude::float8)) *
+            cos(radians(longitude::float8) - radians(${chokepoint.lng})) +
+            sin(radians(${chokepoint.lat})) * sin(radians(latitude::float8))
+          )
+        ) AS distance_km
+      FROM known_entities
+      WHERE role = 'refiner'
+        AND latitude IS NOT NULL
+        AND longitude IS NOT NULL
+        AND (
+          6371 * acos(
+            cos(radians(${chokepoint.lat})) * cos(radians(latitude::float8)) *
+            cos(radians(longitude::float8) - radians(${chokepoint.lng})) +
+            sin(radians(${chokepoint.lat})) * sin(radians(latitude::float8))
+          )
+        ) <= ${chokepoint.radiusKm}
+      ORDER BY distance_km ASC
+      LIMIT 25;
+    `);
+    proxRows = (r.rows as Array<Record<string, unknown>>).map((row) => ({
+      slug: String(row.slug),
+      name: String(row.name),
+      country: String(row.country),
+      distanceKm: Number.parseFloat(String(row.distance_km)),
+    }));
+  }
+
+  // Merge slate × proximity. Same refinery in both passes → 'both'.
+  const bySlug = new Map<string, MacroSignalExposure['exposedRefineries'][number]>();
+  for (const s of slateRows) {
+    bySlug.set(s.slug, {
+      slug: s.slug,
+      name: s.name,
+      country: s.country,
+      exposureKind: 'slate',
+      affectedGradeCount: s.affectedGradeCount,
+      primaryGradeNames: s.primaryGradeNames,
+      distanceKm: null,
+    });
+  }
+  for (const p of proxRows) {
+    const existing = bySlug.get(p.slug);
+    if (existing) {
+      bySlug.set(p.slug, {
+        ...existing,
+        exposureKind: 'both',
+        distanceKm: p.distanceKm,
+      });
+    } else {
+      bySlug.set(p.slug, {
+        slug: p.slug,
+        name: p.name,
+        country: p.country,
+        exposureKind: 'proximity',
+        affectedGradeCount: 0,
+        primaryGradeNames: [],
+        distanceKm: p.distanceKm,
+      });
+    }
+  }
+  const kindRank = { both: 0, slate: 1, proximity: 2 } as const;
+  const exposedRefineries = [...bySlug.values()].sort((a, b) => {
+    const k = kindRank[a.exposureKind] - kindRank[b.exposureKind];
+    if (k !== 0) return k;
+    if (a.exposureKind === 'proximity' && b.exposureKind === 'proximity') {
+      return (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity);
+    }
+    return b.affectedGradeCount - a.affectedGradeCount || a.name.localeCompare(b.name);
+  });
+
+  return { affectedCountries: countries, chokepoint, affectedGrades, exposedRefineries };
+}
+
+/** Resolve free-text → chokepoint coordinate record (or null). */
+function resolveChokepoint(
+  source: string,
+): MacroSignalExposure['chokepoint'] {
+  for (const cp of CHOKEPOINT_COORDINATES) {
+    if (cp.pattern.test(source)) {
+      return { name: cp.name, lat: cp.lat, lng: cp.lng, radiusKm: cp.radiusKm };
+    }
+  }
+  return null;
 }
 
 function resolveAffectedCountries(

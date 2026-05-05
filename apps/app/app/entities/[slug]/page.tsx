@@ -7,6 +7,7 @@ import {
   getEntityProfile,
   getEntityVesselActivity,
   getOwnershipChain,
+  getRefineryImportContext,
   getSupplierApproval,
 } from '@procur/catalog';
 import { KycBadge } from '../../../components/KycBadge';
@@ -14,6 +15,7 @@ import { parseEntityNotes } from '../../../lib/entity-notes';
 import { PushToVexButton } from './_components/PushToVexButton';
 import { EntityDocumentsPanel } from './_components/EntityDocumentsPanel';
 import { QuoteAnchorsPanel } from './_components/QuoteAnchorsPanel';
+import { RefineryImportContextPanel } from './_components/RefineryImportContextPanel';
 import { SupplierApprovalForm } from './_components/SupplierApprovalForm';
 
 /**
@@ -52,21 +54,32 @@ export default async function EntityProfilePage({ params }: Props) {
   // itself for traders / NOCs whose primary identity IS the operator.
   const cap = profile.capabilities;
   const ownershipQueryName = cap.operator ?? profile.name;
-  const [directOwners, ownershipChain, vesselActivity, contactEnrichments] =
-    await Promise.all([
-      getDirectOwners(ownershipQueryName),
-      getOwnershipChain(ownershipQueryName, 5),
-      profile.latitude != null && profile.longitude != null
-        ? getEntityVesselActivity({
-            lat: profile.latitude,
-            lng: profile.longitude,
-            radiusNm: 50,
-            daysBack: 30,
-            recentLimit: 10,
-          }).catch(() => null)
-        : Promise.resolve(null),
-      getContactEnrichmentsBySlug(profile.canonicalKey).catch(() => []),
-    ]);
+  const [
+    directOwners,
+    ownershipChain,
+    vesselActivity,
+    contactEnrichments,
+    refineryImportCtx,
+  ] = await Promise.all([
+    getDirectOwners(ownershipQueryName),
+    getOwnershipChain(ownershipQueryName, 5),
+    profile.latitude != null && profile.longitude != null
+      ? getEntityVesselActivity({
+          lat: profile.latitude,
+          lng: profile.longitude,
+          radiusNm: 50,
+          daysBack: 30,
+          recentLimit: 10,
+        }).catch(() => null)
+      : Promise.resolve(null),
+    getContactEnrichmentsBySlug(profile.canonicalKey).catch(() => []),
+    // Slate × actual customs flow cross-reference. Refiner-only;
+    // resolves to null silently for non-refiner entities or when
+    // no slate envelope is configured.
+    profile.role === 'refiner'
+      ? getRefineryImportContext(profile.canonicalKey).catch(() => null)
+      : Promise.resolve(null),
+  ]);
 
   const fmtUsd = (n: number | null) =>
     n != null ? `$${Math.round(n).toLocaleString()}` : '—';
@@ -161,6 +174,14 @@ export default async function EntityProfilePage({ params }: Props) {
           to "what could we quote out of here today." */}
       {profile.role === 'refiner' && (
         <QuoteAnchorsPanel entityCountry={profile.country ?? null} />
+      )}
+
+      {/* Slate × actual customs flow cross-reference. Lifts the
+          realism on slate-fit lookups: a refinery whose slate
+          accepts 12 grades but whose country only imports 3 of
+          them is worth 3, not 12. */}
+      {refineryImportCtx && refineryImportCtx.rows.length > 0 && (
+        <RefineryImportContextPanel ctx={refineryImportCtx} />
       )}
 
       {/* Per-tenant document attachments — KYC packs, MSAs, contracts,
