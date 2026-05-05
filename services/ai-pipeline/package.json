@@ -6,6 +6,7 @@
   "scripts": {
     "type-check": "tsc --noEmit",
     "test": "node --import tsx --test 'src/**/*.test.ts'",
+    "apollo:batch-enrich": "tsx scripts/apollo-batch-enrich.ts",
     "clean": "rm -rf dist .turbo node_modules"
   },
   "dependencies": {
