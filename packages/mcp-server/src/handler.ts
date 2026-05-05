@@ -49,21 +49,28 @@ export async function handleMcpRequest(
   args: HandleMcpRequestArgs,
 ): Promise<Response> {
   const config = loadMcpConfig();
-  if (!config.enabled) {
-    return jsonRpcResponse(null, {
-      error: {
-        code: JSONRPC_ERROR.INTERNAL_ERROR,
-        message: 'MCP integration is not enabled in this environment.',
-      },
-    });
-  }
 
+  // GET probe: hosts hit this before sending a real JSON-RPC POST.
+  // Return up-check info regardless of the feature flag — flag-off
+  // detection should look at the body of a GET, not a JSON-RPC error
+  // (clients with strict schemas reject id=null responses).
   if (args.request.method === 'GET') {
-    // Some MCP hosts probe with GET to check the endpoint is up.
+    if (!config.enabled) {
+      return new Response(
+        JSON.stringify({
+          protocol: 'mcp',
+          version: MCP_PROTOCOL_VERSION,
+          enabled: false,
+          message: 'MCP integration is not enabled in this environment.',
+        }),
+        { status: 503, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
     return new Response(
       JSON.stringify({
         protocol: 'mcp',
         version: MCP_PROTOCOL_VERSION,
+        enabled: true,
         message: 'Send POST with JSON-RPC payload + Authorization: Bearer <key>.',
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -74,7 +81,9 @@ export async function handleMcpRequest(
     return new Response('Method Not Allowed', { status: 405 });
   }
 
-  // Parse envelope.
+  // Parse envelope BEFORE checking the feature flag so degrade
+  // responses can echo the request's id. Strict clients (mcp-remote)
+  // reject id=null responses against requests that had a numeric id.
   let body: JsonRpcRequest;
   try {
     body = (await args.request.json()) as JsonRpcRequest;
@@ -96,6 +105,18 @@ export async function handleMcpRequest(
 
   const id = body.id ?? null;
   const hostIdentifier = args.request.headers.get('user-agent') ?? null;
+
+  // Feature flag — checked after body parsing so the error response
+  // carries the request's id. Same pattern as the auth + rate-limit
+  // returns below.
+  if (!config.enabled) {
+    return jsonRpcResponse(id, {
+      error: {
+        code: JSONRPC_ERROR.INTERNAL_ERROR,
+        message: 'MCP integration is not enabled in this environment.',
+      },
+    });
+  }
 
   // Auth.
   const authHeader = args.request.headers.get('authorization') ?? '';
