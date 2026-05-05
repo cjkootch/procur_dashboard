@@ -14,6 +14,8 @@ import {
   getMatchSignalPerformance,
   getTopImportersByPartner,
   getTopSourcesForReporter,
+  findEnvironmentalOperatorsByCountry,
+  findEnvironmentalOperatorsByWasteType,
   findGradesForRefinery,
   findRefineriesForGrade,
   lookupKnownEntities,
@@ -4460,6 +4462,220 @@ export function buildCatalogTools(): ToolRegistry {
               cutsCoveredPct: v.cutsCoveredPct,
               contributions: v.contributions,
               notes: v.notes,
+            };
+          },
+        ),
+    }),
+
+    find_environmental_operators_for_waste_type: defineTool({
+      name: 'find_environmental_operators_for_waste_type',
+      description:
+        'Find environmental services operators (refinery sludge, ' +
+        'oilfield waste, contaminated soil remediation, NORM ' +
+        'handlers) capable of handling a specific waste type. Backed ' +
+        'by the environmental-services rolodex (regulator-verified ' +
+        'licensing layer — SEMARNAT, IBAMA, ANLA, EPA RCRA, regional ' +
+        'CARs). See `docs/environmental-services-rolodex-brief.md` ' +
+        'for the full schema + ingestion plan.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • A refinery turnaround / decommissioning / spill cleanup ' +
+        'conversation surfaces and the user wants the universe of ' +
+        'authorized handlers.\n' +
+        '  • Pair with find_recent_port_calls / refinery profile to ' +
+        'pre-build an outreach list for a specific facility.\n' +
+        '  • Cross-jurisdiction comparison — "which authorized ' +
+        'oily-sludge handlers operate in both MX and CO?"\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The user named a specific company — that\'s ' +
+        'analyze_supplier or lookup_known_entities.\n' +
+        '  • The waste isn\'t in the petroleum-relevant set (medical ' +
+        'waste, e-waste, etc.) — this rolodex is upstream / midstream ' +
+        'petroleum waste only.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Lead with the regulator licenses on each match — that\'s ' +
+        'the credibility differentiator vs. a generic vendor list. ' +
+        '"SEMARNAT Rubro 5 + 6 + 8 since 2018" is much stronger than ' +
+        '"the company says they handle this."\n' +
+        '  • `confidenceScore < 0.7` means the entry is single-source; ' +
+        'flag the limitation rather than pretending it\'s vetted.\n' +
+        '  • Empty result set is meaningful — either the country ' +
+        'truly has no licensed handlers (rare) or the rolodex hasn\'t ' +
+        'ingested that registry yet (more common during Phase 2 ' +
+        'rollout). Direct the user to follow up if the absence is ' +
+        'surprising.',
+      kind: 'read',
+      schema: z.object({
+        wasteType: z
+          .string()
+          .min(1)
+          .describe(
+            'Waste type slug from WASTE_TYPES taxonomy in ' +
+              '`environmental-services-taxonomy.ts`. Examples: ' +
+              "'oily-sludge', 'drill-cuttings', 'refinery-sludge', " +
+              "'contaminated-soil', 'spent-catalysts', " +
+              "'naturally-occurring-radioactive-material'.",
+          ),
+        inCountries: z
+          .array(isoAlpha2Country)
+          .optional()
+          .describe(
+            'Restrict to operators whose seat country is in this ' +
+              'set. Note: doesn\'t apply to operators based ' +
+              'elsewhere who serve these countries — use ' +
+              'find_environmental_operators_for_country for that.',
+          ),
+        withLicenseFrom: z
+          .string()
+          .optional()
+          .describe(
+            'Restrict to operators with a license issued by this ' +
+              'authority code. Examples: \'SEMARNAT\', \'IBAMA\', ' +
+              "'ANLA', 'CAR-Cundinamarca', 'EPA-RCRA'.",
+          ),
+        mobileCapabilityRequired: z
+          .boolean()
+          .optional()
+          .describe(
+            'When true, restrict to operators who deploy mobile ' +
+              'units to project sites (vs requiring waste transport ' +
+              'to a fixed facility).',
+          ),
+        minConfidenceScore: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe('Default 0.6 — keeps low-confidence Phase 1 entries out.'),
+        limit: z.number().min(1).max(200).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_environmental_operators_for_waste_type',
+            args: input,
+            summarize: (out: { matchCount: number }) => ({
+              resultCount: out.matchCount,
+              resultSummary: { wasteType: input.wasteType },
+            }),
+          },
+          async () => {
+            const matches = await findEnvironmentalOperatorsByWasteType({
+              wasteType: input.wasteType,
+              inCountries: input.inCountries,
+              withLicenseFrom: input.withLicenseFrom,
+              mobileCapabilityRequired: input.mobileCapabilityRequired,
+              minConfidenceScore: input.minConfidenceScore,
+              limit: input.limit,
+            });
+            return {
+              wasteType: input.wasteType,
+              matchCount: matches.length,
+              matches: matches.map((m) => ({
+                name: m.name,
+                country: m.country,
+                profileUrl: buildEntityProfileUrl({
+                  kind: 'known_entity',
+                  slug: m.slug,
+                }),
+                wasteTypesHandled: m.capability.wasteTypesHandled,
+                treatmentTechnologies: m.capability.treatmentTechnologies,
+                mobileCapability: m.capability.mobileCapability,
+                labCapability: m.capability.labCapability,
+                countriesServed: m.capability.countriesServed,
+                priorOilGasClients: m.capability.priorOilGasClients,
+                licenseAuthorities: m.capability.licenseAuthorities,
+                licenseCount: m.capability.licenseCount,
+                confidenceScore: m.capability.confidenceScore,
+                notes: m.notes,
+              })),
+            };
+          },
+        ),
+    }),
+
+    find_environmental_operators_for_country: defineTool({
+      name: 'find_environmental_operators_for_country',
+      description:
+        'Find environmental services operators with operational ' +
+        'presence in a specific country. Includes operators based ' +
+        'elsewhere whose `countriesServed` array covers the target ' +
+        'country (a Mexican operator with Casanare presence appears ' +
+        'in a CO query).\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • Assessing capability density in a market — "what\'s the ' +
+        'universe of authorized operators in Casanare for ' +
+        'hydrocarbon-contaminated soil remediation?"\n' +
+        '  • Pre-mapping a region before a specific opportunity ' +
+        'surfaces.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • You already know the waste type and want the strongest ' +
+        'hits — that\'s find_environmental_operators_for_waste_type ' +
+        'with `inCountries`.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • An operator listed with high confidence but in a ' +
+        'country where the rolodex hasn\'t ingested the regulator ' +
+        'registry yet means we have multi-source evidence (website, ' +
+        'industry directory, prior client disclosures) but no ' +
+        'regulator-license layer. Note the gap.',
+      kind: 'read',
+      schema: z.object({
+        country: isoAlpha2Country.describe('Target country (ISO-2).'),
+        capabilityFilter: z
+          .object({
+            wasteTypes: z.array(z.string()).optional(),
+            treatmentTechnologies: z.array(z.string()).optional(),
+            requireLabCapability: z.boolean().optional(),
+            requireMobileCapability: z.boolean().optional(),
+          })
+          .optional()
+          .describe(
+            'Optional capability narrowing. wasteTypes / ' +
+              'treatmentTechnologies are OR-overlap filters (any match); ' +
+              'requireLabCapability + requireMobileCapability are AND.',
+          ),
+        minConfidenceScore: z.number().min(0).max(1).optional(),
+        limit: z.number().min(1).max(500).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_environmental_operators_for_country',
+            args: input,
+            summarize: (out: { matchCount: number }) => ({
+              resultCount: out.matchCount,
+              resultSummary: { country: input.country },
+            }),
+          },
+          async () => {
+            const matches = await findEnvironmentalOperatorsByCountry({
+              country: input.country,
+              capabilityFilter: input.capabilityFilter,
+              minConfidenceScore: input.minConfidenceScore,
+              limit: input.limit,
+            });
+            return {
+              country: input.country,
+              matchCount: matches.length,
+              matches: matches.map((m) => ({
+                name: m.name,
+                country: m.country,
+                profileUrl: buildEntityProfileUrl({
+                  kind: 'known_entity',
+                  slug: m.slug,
+                }),
+                wasteTypesHandled: m.capability.wasteTypesHandled,
+                treatmentTechnologies: m.capability.treatmentTechnologies,
+                mobileCapability: m.capability.mobileCapability,
+                labCapability: m.capability.labCapability,
+                countriesServed: m.capability.countriesServed,
+                priorOilGasClients: m.capability.priorOilGasClients,
+                licenseAuthorities: m.capability.licenseAuthorities,
+                licenseCount: m.capability.licenseCount,
+                confidenceScore: m.capability.confidenceScore,
+                notes: m.notes,
+              })),
             };
           },
         ),

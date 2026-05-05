@@ -1,0 +1,106 @@
+/**
+ * Environmental services rolodex ingestion — orchestrator.
+ *
+ * Spec lives in `docs/environmental-services-rolodex-brief.md`. This
+ * file is the entry point for the Phase 1 + Phase 2 + Phase 3
+ * ingestion workstreams; each source has its own dedicated worker
+ * file (one per regulator), invoked from here.
+ *
+ * Wired so far (Phase 1 first cut):
+ *   - `epa-rcra`        — EPA Envirofacts REST API, NAICS-filtered
+ *   - `anla`            — ANLA Colombia open-data portal (CKAN)
+ *   - `curated-seed`    — manually-curated LatAm + USGC seed
+ *
+ * Stubs (return `skipped-not-implemented` until each is wired):
+ *   - `ibama-ctf`       — IBAMA CTF/APP per-CNPJ verification (BR)
+ *   - `energy-dais`     — commercial directory cross-reference
+ *   - `semarnat`        — Mexico 15 rubros PDFs (OCR pipeline)
+ *   - `co-cars`         — Colombian regional CARs (5 priority)
+ *   - `ar-provinces`    — Argentine provincial Sec. de Ambiente
+ *   - `latam-other`     — Peru / Ecuador / Trinidad / Guyana
+ *   - `contact-enrich`  — Apollo / Cognism Tier 1+2 enrichment
+ *
+ * The dispatcher returns a structured run summary so the cron logger
+ * can record per-source counts without touching the workers.
+ */
+import { runAnla } from './environmental-services/anla-colombia';
+import { runEpaRcra } from './environmental-services/epa-rcra';
+import { runCuratedSeed } from './environmental-services/seed-curated';
+
+export type EnvServicesSource =
+  | 'epa-rcra'
+  | 'ibama-ctf'
+  | 'anla'
+  | 'energy-dais'
+  | 'curated-seed'
+  | 'semarnat'
+  | 'co-cars'
+  | 'ar-provinces'
+  | 'latam-other'
+  | 'contact-enrich';
+
+export type RunSummary = {
+  source: EnvServicesSource;
+  /** Status reported by the per-source worker. */
+  status: 'ok' | 'skipped-not-implemented' | 'error';
+  upserted: number;
+  skipped: number;
+  errors: string[];
+  startedAt: string;
+  finishedAt: string;
+};
+
+/**
+ * Per-source worker registry. Each entry returns a Promise<RunSummary>
+ * when invoked. Workers that aren't wired yet return
+ * `status: 'skipped-not-implemented'` so the orchestrator can fail
+ * forward — partial Phase 1 ingestion is the expected mode during
+ * rollout.
+ */
+const WORKERS: Record<EnvServicesSource, () => Promise<RunSummary>> = {
+  'epa-rcra': () =>
+    runEpaRcra().then(
+      (s) => ({ ...s, source: 'epa-rcra' as const }),
+    ),
+  'ibama-ctf': () => stub('ibama-ctf'),
+  anla: () =>
+    runAnla().then((s) => ({ ...s, source: 'anla' as const })),
+  'energy-dais': () => stub('energy-dais'),
+  'curated-seed': () =>
+    runCuratedSeed().then((s) => ({ ...s, source: 'curated-seed' as const })),
+  semarnat: () => stub('semarnat'),
+  'co-cars': () => stub('co-cars'),
+  'ar-provinces': () => stub('ar-provinces'),
+  'latam-other': () => stub('latam-other'),
+  'contact-enrich': () => stub('contact-enrich'),
+};
+
+/** Run a single source by slug. */
+export async function run(source: EnvServicesSource): Promise<RunSummary> {
+  return WORKERS[source]();
+}
+
+/** Run every source in order. Aborts on hard error in any worker
+ *  to avoid cascading partial state. */
+export async function runAll(): Promise<RunSummary[]> {
+  const summaries: RunSummary[] = [];
+  for (const source of Object.keys(WORKERS) as EnvServicesSource[]) {
+    const summary = await WORKERS[source]();
+    summaries.push(summary);
+    if (summary.status === 'error') break;
+  }
+  return summaries;
+}
+
+async function stub(source: EnvServicesSource): Promise<RunSummary> {
+  const ts = new Date().toISOString();
+  return {
+    source,
+    status: 'skipped-not-implemented',
+    upserted: 0,
+    skipped: 0,
+    errors: [],
+    startedAt: ts,
+    finishedAt: ts,
+  };
+}

@@ -7986,6 +7986,233 @@ function numericOrNullCG(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// ─── Environmental services rolodex queries ──────────────────────
+
+export type EnvironmentalOperatorMatch = {
+  slug: string;
+  name: string;
+  country: string;
+  /** Best-effort dehydrated view of the structured slot at
+   *  `metadata.environmentalServices`. Fields default to safe empties
+   *  when the metadata hasn't been populated yet — caller can still
+   *  filter / display without an inner narrow. */
+  capability: {
+    wasteTypesHandled: string[];
+    treatmentTechnologies: string[];
+    mobileCapability: boolean;
+    labCapability: boolean;
+    countriesServed: string[];
+    priorOilGasClients: string[];
+    confidenceScore: number;
+    /** Compact summary of regulator licenses for ranking / display.
+     *  Full license list lives at `metadata.environmentalServices.
+     *  regulatorLicenses`. */
+    licenseCount: number;
+    licenseAuthorities: string[];
+  };
+  notes: string | null;
+};
+
+/**
+ * Helper: pull the env-services capability slot off `metadata` with
+ * sane defaults when the slot is missing or partial. Centralizes the
+ * "this rolodex entry hasn't been fully enriched yet" defense — the
+ * brief's Phase 2 is multi-week, so partial entries are the norm
+ * during ingestion.
+ */
+function readEnvServicesCapability(
+  metadata: unknown,
+): EnvironmentalOperatorMatch['capability'] {
+  const env =
+    metadata != null &&
+    typeof metadata === 'object' &&
+    'environmentalServices' in metadata
+      ? (metadata as Record<string, unknown>).environmentalServices
+      : null;
+  const cap =
+    env != null && typeof env === 'object' ? (env as Record<string, unknown>) : {};
+  const arr = (key: string): string[] => {
+    const v = cap[key];
+    return Array.isArray(v) ? v.map(String) : [];
+  };
+  const bool = (key: string): boolean => cap[key] === true;
+  const num = (key: string): number => {
+    const v = cap[key];
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string') {
+      const n = Number.parseFloat(v);
+      if (Number.isFinite(n)) return n;
+    }
+    return 0;
+  };
+  const licenses = Array.isArray(cap.regulatorLicenses)
+    ? (cap.regulatorLicenses as Array<Record<string, unknown>>)
+    : [];
+  const licenseAuthorities = Array.from(
+    new Set(licenses.map((l) => (l.authority == null ? '' : String(l.authority))).filter(Boolean)),
+  );
+  return {
+    wasteTypesHandled: arr('wasteTypesHandled'),
+    treatmentTechnologies: arr('treatmentTechnologies'),
+    mobileCapability: bool('mobileCapability'),
+    labCapability: bool('labCapability'),
+    countriesServed: arr('countriesServed'),
+    priorOilGasClients: arr('priorOilGasClients'),
+    confidenceScore: num('confidenceScore'),
+    licenseCount: licenses.length,
+    licenseAuthorities,
+  };
+}
+
+/**
+ * Find environmental services operators capable of handling a
+ * specific waste type, optionally filtered by country or by issuing
+ * regulator authority.
+ *
+ * Implementation: filters `known_entities` to `role =
+ * 'environmental-services'` and applies the capability filter
+ * post-load (the structured slot lives in JSONB; for ~thousands of
+ * rows the post-filter is fine — switch to a JSONB GIN index if
+ * the rolodex grows past ~10k env-services entries).
+ *
+ * Result is sorted by confidence DESC then license count DESC then
+ * name — surface the most-credible operators first.
+ */
+export async function findEnvironmentalOperatorsByWasteType(args: {
+  wasteType: string;
+  inCountries?: string[];
+  withLicenseFrom?: string;
+  mobileCapabilityRequired?: boolean;
+  /** 0-1; default 0.6 keeps low-confidence Phase 1 entries out of
+   *  outreach lists by default. */
+  minConfidenceScore?: number;
+  limit?: number;
+}): Promise<EnvironmentalOperatorMatch[]> {
+  const limit = Math.min(args.limit ?? 50, 200);
+  const minConf = args.minConfidenceScore ?? 0.6;
+  const result = await db.execute(sql`
+    SELECT slug, name, country, metadata, notes
+    FROM known_entities
+    WHERE role = 'environmental-services'
+      ${
+        args.inCountries && args.inCountries.length > 0
+          ? sql`AND country = ANY(${args.inCountries})`
+          : sql``
+      }
+    ORDER BY name ASC
+    LIMIT 1000;
+  `);
+  const rows = (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    slug: String(r.slug),
+    name: String(r.name),
+    country: String(r.country),
+    notes: r.notes == null ? null : String(r.notes),
+    capability: readEnvServicesCapability(r.metadata),
+  }));
+
+  const filtered = rows.filter((row) => {
+    if (!row.capability.wasteTypesHandled.includes(args.wasteType)) return false;
+    if (args.mobileCapabilityRequired && !row.capability.mobileCapability) return false;
+    if (
+      args.withLicenseFrom &&
+      !row.capability.licenseAuthorities.includes(args.withLicenseFrom)
+    ) {
+      return false;
+    }
+    if (row.capability.confidenceScore < minConf) return false;
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    if (b.capability.confidenceScore !== a.capability.confidenceScore) {
+      return b.capability.confidenceScore - a.capability.confidenceScore;
+    }
+    if (b.capability.licenseCount !== a.capability.licenseCount) {
+      return b.capability.licenseCount - a.capability.licenseCount;
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  return filtered.slice(0, limit);
+}
+
+/**
+ * Find environmental services operators with operational presence
+ * in a specific country. Uses `known_entities.country` as the
+ * primary filter, OR the entity's `metadata.environmentalServices.
+ * countriesServed` array — a Mexican operator with documented
+ * Casanare presence appears in a Colombia query even if its
+ * registered seat is MX.
+ *
+ * Capability filter is applied post-load (same JSONB-on-the-app-
+ * side discipline as the waste-type query).
+ */
+export async function findEnvironmentalOperatorsByCountry(args: {
+  country: string;
+  capabilityFilter?: {
+    wasteTypes?: string[];
+    treatmentTechnologies?: string[];
+    requireLabCapability?: boolean;
+    requireMobileCapability?: boolean;
+  };
+  minConfidenceScore?: number;
+  limit?: number;
+}): Promise<EnvironmentalOperatorMatch[]> {
+  const limit = Math.min(args.limit ?? 100, 500);
+  const minConf = args.minConfidenceScore ?? 0.6;
+  // Pull a wider set than `country = X` would — operators based
+  // elsewhere may serve this country. Filter by countriesServed in JS.
+  const result = await db.execute(sql`
+    SELECT slug, name, country, metadata, notes
+    FROM known_entities
+    WHERE role = 'environmental-services'
+    ORDER BY name ASC
+    LIMIT 5000;
+  `);
+  const rows = (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    slug: String(r.slug),
+    name: String(r.name),
+    country: String(r.country),
+    notes: r.notes == null ? null : String(r.notes),
+    capability: readEnvServicesCapability(r.metadata),
+  }));
+
+  const cf = args.capabilityFilter;
+  const filtered = rows.filter((row) => {
+    const presentInCountry =
+      row.country === args.country || row.capability.countriesServed.includes(args.country);
+    if (!presentInCountry) return false;
+    if (row.capability.confidenceScore < minConf) return false;
+    if (cf?.wasteTypes && cf.wasteTypes.length > 0) {
+      const overlap = cf.wasteTypes.some((w) =>
+        row.capability.wasteTypesHandled.includes(w),
+      );
+      if (!overlap) return false;
+    }
+    if (cf?.treatmentTechnologies && cf.treatmentTechnologies.length > 0) {
+      const overlap = cf.treatmentTechnologies.some((t) =>
+        row.capability.treatmentTechnologies.includes(t),
+      );
+      if (!overlap) return false;
+    }
+    if (cf?.requireLabCapability && !row.capability.labCapability) return false;
+    if (cf?.requireMobileCapability && !row.capability.mobileCapability) return false;
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    if (b.capability.confidenceScore !== a.capability.confidenceScore) {
+      return b.capability.confidenceScore - a.capability.confidenceScore;
+    }
+    if (b.capability.licenseCount !== a.capability.licenseCount) {
+      return b.capability.licenseCount - a.capability.licenseCount;
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  return filtered.slice(0, limit);
+}
+
 // ─── Refinery import context (slate × actual flows) ─────────────
 
 export type RefineryImportContext = {
