@@ -779,6 +779,21 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
                                 />
                               </>
                             )}
+                            {e.apolloFundingStage && (
+                              <>
+                                {' '}
+                                <span
+                                  className="inline-block rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]"
+                                  title={
+                                    e.apolloLatestFundingAt
+                                      ? `Latest funding: ${e.apolloLatestFundingAt} (Apollo)`
+                                      : 'Apollo funding stage'
+                                  }
+                                >
+                                  {e.apolloFundingStage}
+                                </span>
+                              </>
+                            )}
                             {e.aliases.length > 1 && (
                               <div className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
                                 aka {e.aliases.filter((a) => a !== e.name).slice(0, 2).join(', ')}
