@@ -27,6 +27,11 @@ import {
   buildOcdrYearUrls,
   getPublisherPreset,
 } from './awards-extractors/ocds-bulk/publishers';
+import {
+  run as runEnvServicesSource,
+  runAll as runEnvServicesAll,
+  type EnvServicesSource,
+} from './jobs/ingest-environmental-services';
 
 config({ path: '../../.env.local' });
 config({ path: '../../.env' });
@@ -114,6 +119,9 @@ async function main() {
     console.error(
       `OCDS bulk: awards-ocds <publisher> [yearsBack=5]; publishers: ${Object.keys(OCDS_PUBLISHERS).join(', ')}`,
     );
+    console.error(
+      'env-services rolodex: env-services [epa-rcra|anla|curated-seed|...] (no sub = run all)',
+    );
     process.exit(1);
   }
 
@@ -152,6 +160,26 @@ async function main() {
     }
     await runOcdsBulkExtractor(publisher, process.argv[4]);
     return;
+  }
+
+  if (slug === 'env-services') {
+    // Usage:
+    //   pnpm --filter @procur/scrapers scrape env-services            # run all wired workers
+    //   pnpm --filter @procur/scrapers scrape env-services curated-seed
+    //   pnpm --filter @procur/scrapers scrape env-services epa-rcra
+    //   pnpm --filter @procur/scrapers scrape env-services anla
+    const sub = process.argv[3] as EnvServicesSource | undefined;
+    if (!sub) {
+      console.log('running all wired env-services workers in order...');
+      const summaries = await runEnvServicesAll();
+      console.log(JSON.stringify(summaries, null, 2));
+      const anyError = summaries.some((s) => s.status === 'error');
+      process.exit(anyError ? 1 : 0);
+    }
+    console.log(`running env-services worker: ${sub}...`);
+    const summary = await runEnvServicesSource(sub);
+    console.log(JSON.stringify(summary, null, 2));
+    process.exit(summary.status === 'error' ? 1 : 0);
   }
 
   const scraper = getScraper(slug);
