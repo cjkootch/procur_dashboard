@@ -34,7 +34,17 @@
 import { sql } from 'drizzle-orm';
 import { db } from '@procur/db';
 
-const EPA_BASE = 'https://data.epa.gov/efservice';
+/**
+ * EPA Envirofacts has two functioning hosts that mirror the same
+ * data — `data.epa.gov/efservice` (modern) and
+ * `enviro.epa.gov/enviro/efservice` (legacy). We try the modern host
+ * first, fall back to legacy on network failure. Both accept the same
+ * URL grammar: <table-chain>/<filter>/JSON/ROWS/<start>:<end>.
+ */
+const EPA_BASES = [
+  'https://data.epa.gov/efservice',
+  'https://enviro.epa.gov/enviro/efservice',
+];
 const TARGET_NAICS = ['562211', '562910', '562998', '213112'];
 const PAGE_SIZE = 1000;
 const FETCH_TIMEOUT_MS = 60_000;
@@ -67,40 +77,87 @@ export type EpaRcraRunSummary = {
   finishedAt: string;
 };
 
-/** Ingest one page of handlers for one NAICS code. The Envirofacts
- *  REST API uses /<row_start>:<row_end> path params for pagination
- *  (1-indexed, inclusive). */
+/** Unwrap nested causes from a node fetch error so the runtime
+ *  surface is "fetch failed (Error: getaddrinfo ENOTFOUND data.epa.gov)"
+ *  rather than just "fetch failed". */
+function describeError(err: unknown): string {
+  const e = err as { message?: string; cause?: unknown };
+  const msg = e?.message ?? String(err);
+  const cause = e?.cause;
+  if (!cause) return msg;
+  const causeStr =
+    typeof cause === 'object' && cause != null
+      ? `${(cause as Error).name ?? 'Cause'}: ${(cause as Error).message ?? JSON.stringify(cause)}`
+      : String(cause);
+  return `${msg} (${causeStr.slice(0, 220)})`;
+}
+
+/** Ingest one page of handlers for one NAICS code. Envirofacts URL
+ *  grammar is `<base>/<table-chain>/<filter>/JSON/ROWS/<start>:<end>`.
+ *  Tries each EPA host in order so a single-host outage doesn't
+ *  block the run. */
 async function fetchPage(
   naicsCode: string,
   rowStart: number,
   rowEnd: number,
 ): Promise<EnvirofactsHandler[]> {
-  // The handler view that exposes NAICS filtering in one hop is
-  // HD_HANDLER joined to HD_NAICS — filter URL pattern:
-  //   /HD_HANDLER/HD_NAICS/NAICS_CODE/<code>/<start>:<end>/JSON
-  const url =
-    `${EPA_BASE}/HD_HANDLER/HD_NAICS/NAICS_CODE/${naicsCode}` +
-    `/rows/${rowStart}:${rowEnd}/JSON`;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      headers: { accept: 'application/json' },
-      signal: ctrl.signal,
-    });
-    if (!res.ok) {
-      throw new Error(`Envirofacts ${res.status} for NAICS ${naicsCode} ${rowStart}-${rowEnd}`);
+  // Both hosts mirror the same grammar; the only difference is the
+  // base prefix.
+  const lastErrors: string[] = [];
+  for (const base of EPA_BASES) {
+    const url =
+      `${base}/HD_HANDLER/HD_NAICS/NAICS_CODE/${naicsCode}` +
+      `/JSON/ROWS/${rowStart}:${rowEnd}`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        headers: {
+          accept: 'application/json',
+          'user-agent': 'ProcurEnvIngest/1.0 (+research)',
+        },
+        signal: ctrl.signal,
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        lastErrors.push(
+          `Envirofacts ${res.status} ${url} ${body.slice(0, 120)}`,
+        );
+        continue;
+      }
+      const text = await res.text();
+      // Some Envirofacts hosts wrap the array in `{ "results": [...] }`
+      // — handle both.
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        lastErrors.push(
+          `Envirofacts non-JSON response from ${url}: ${text.slice(0, 200)}`,
+        );
+        continue;
+      }
+      const arr = Array.isArray(parsed)
+        ? (parsed as EnvirofactsHandler[])
+        : Array.isArray((parsed as { results?: unknown }).results)
+          ? ((parsed as { results: EnvirofactsHandler[] }).results)
+          : null;
+      if (!arr) {
+        lastErrors.push(
+          `Envirofacts unexpected shape from ${url}: ${text.slice(0, 200)}`,
+        );
+        continue;
+      }
+      return arr;
+    } catch (err) {
+      lastErrors.push(`${url}: ${describeError(err)}`);
+    } finally {
+      clearTimeout(timer);
     }
-    const json = (await res.json()) as EnvirofactsHandler[] | { error?: string };
-    if (!Array.isArray(json)) {
-      throw new Error(
-        `Envirofacts non-array response: ${JSON.stringify(json).slice(0, 200)}`,
-      );
-    }
-    return json;
-  } finally {
-    clearTimeout(timer);
   }
+  throw new Error(
+    `all Envirofacts hosts failed for NAICS ${naicsCode} ${rowStart}-${rowEnd}: ${lastErrors.join(' | ')}`,
+  );
 }
 
 /** Slugify for idempotent upsert key. Lowercase + ASCII only — handler
@@ -237,7 +294,7 @@ export async function runEpaRcra(): Promise<EpaRcraRunSummary> {
           break;
         }
       } catch (err) {
-        errors.push(`EPA NAICS ${naics} page ${pageStart}: ${(err as Error).message}`);
+        errors.push(`EPA NAICS ${naics} page ${pageStart}: ${describeError(err)}`);
         break;
       }
     }
