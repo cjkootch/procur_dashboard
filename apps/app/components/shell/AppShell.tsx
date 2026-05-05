@@ -45,6 +45,7 @@ const NAV: SidebarNavGroup[] = [
       { href: '/insights', label: 'My pipeline', iconName: 'kanban' },
       { href: '/capture', label: 'Capture', iconName: 'kanban' },
       { href: '/contract', label: 'Contracts', iconName: 'document-text' },
+      { href: '/deal-structures', label: 'Deal structures', iconName: 'map' },
       { href: '/pricer', label: 'Pricer', iconName: 'calculator' },
     ],
   },
