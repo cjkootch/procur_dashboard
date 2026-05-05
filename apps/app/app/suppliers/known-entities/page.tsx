@@ -303,10 +303,14 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
   // the auth context here (the rolodex is an authenticated surface).
   const { company } = await requireCompany();
 
-  // Map clustering handles thousands of points fine; list rendering is the
-  // slower path. Map gets the bigger budget so the user sees the full
-  // geographic footprint after large ingests like GOGPT (~1.7k power plants).
-  const queryLimit = activeView === 'map' ? 5000 : 2000;
+  // The full rolodex is currently a few thousand rows and growing
+  // (refiners + traders + producers + power plants + env-services
+  // ingest). 50k ceiling matches the lookupKnownEntities upper bound
+  // so the page is effectively uncapped for browsing — the previous
+  // 2k list cap was tripping the "capped, narrow filters" UI for
+  // normal use. The "capped" message still appears if the response
+  // genuinely hits 50k, which would be a real signal to paginate.
+  const queryLimit = 50_000;
   const [rows, allCrudeGrades, regionTags] = await Promise.all([
     lookupKnownEntities({
       categoryTag,

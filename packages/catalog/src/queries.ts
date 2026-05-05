@@ -2952,7 +2952,12 @@ export type SupplierApprovalStatusValue =
 export async function lookupKnownEntities(
   filters: KnownEntityFilters,
 ): Promise<KnownEntityRow[]> {
-  const limit = Math.min(filters.limit ?? 100, 5000);
+  // Default keeps small-result-set callers tight; ceiling raised to
+  // 50k so the rolodex page can pull the full universe without
+  // tripping the "capped" UI for normal browsing. The query is a
+  // single indexed `WHERE role / country / tag` scan — even at 50k
+  // it returns in <500 ms on Neon HTTP.
+  const limit = Math.min(filters.limit ?? 100, 50_000);
   const companyId = filters.companyId ?? null;
   // Approval-status filter is a no-op without companyId — without
   // the join there's nothing to filter on. Returning [] would silently
