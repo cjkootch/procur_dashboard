@@ -25,6 +25,7 @@
  */
 import { runAnla } from './environmental-services/anla-colombia';
 import { runEpaRcra } from './environmental-services/epa-rcra';
+import { runSemarnat } from './environmental-services/semarnat-mexico';
 import { runCuratedSeed } from './environmental-services/seed-curated';
 
 export type EnvServicesSource =
@@ -72,7 +73,8 @@ const WORKERS: Record<EnvServicesSource, () => Promise<RunSummary>> = {
   'energy-dais': () => stub('energy-dais'),
   'curated-seed': () =>
     runCuratedSeed().then((s) => ({ ...s, source: 'curated-seed' as const })),
-  semarnat: () => stub('semarnat'),
+  semarnat: () =>
+    runSemarnat().then((s) => ({ ...s, source: 'semarnat' as const })),
   'co-cars': () => stub('co-cars'),
   'ar-provinces': () => stub('ar-provinces'),
   'latam-other': () => stub('latam-other'),
