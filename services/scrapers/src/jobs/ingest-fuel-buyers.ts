@@ -5,23 +5,32 @@
  * dispatch point for the per-source workers across the 11
  * segments. Mirrors the env-services orchestrator pattern.
  *
- * Wired so far (Phase 1 first cut):
- *   - `utilities-seed` — Tier-1 hand-curated utilities (~22 entries)
+ * Wired Tier-1 segment seeds (Phase 1):
+ *   - `utilities-seed`              — power utilities (~22 entries)
+ *   - `mining-seed`                 — bauxite/alumina/nickel/gold
+ *   - `marine-bunker-seed`          — bunker suppliers + cruise corp
+ *   - `aviation-seed`               — handlers + airlines
+ *   - `industrial-distributor-seed` — multinationals + independents
+ *   - `construction-seed`           — Caribbean infra contractors
+ *   - `government-seed`             — military + public transport
+ *   - `hospitality-seed`            — major resort operators
+ *   - `lpg-seed`                    — LPG distributors
  *
  * Stubs (return `skipped-not-implemented` until each is wired):
- *   - `mining-seed`         — Tier-1 mining buyers (Phase 1)
- *   - `marine-bunker-seed`  — Tier-1 marine bunker (Phase 1)
- *   - `aviation-seed`       — Tier-1 aviation (Phase 1)
- *   - `industrial-distributor-seed` — Tier-1 distributors (Phase 1)
- *   - `government-seed`     — Tier-1 government fleets (Phase 1)
- *   - `hospitality-seed`    — Tier-1 hospitality (Phase 1)
- *   - `agricultural-seed`   — Tier-1 agriculture (Phase 1)
- *   - `lpg-seed`            — Tier-1 LPG distributors (Phase 1)
+ *   - `agricultural-seed`   — fragmented; needs focused curation (§4.9)
  *   - `ocds-caribbean`      — OCDS fuel-tender ingest (Phase 2)
  *   - `customs-flows`       — Customs entity-level imports (Phase 2)
  *   - `industry-directory`  — CARILEC / IBIA / ACI cross-ref (Phase 2)
  *   - `contact-enrich`      — Apollo / Cognism Tier 1+2 (Phase 3)
  */
+import { runFuelBuyerAviationSeed } from './fuel-buyers/seed-aviation';
+import { runFuelBuyerConstructionSeed } from './fuel-buyers/seed-construction';
+import { runFuelBuyerGovernmentSeed } from './fuel-buyers/seed-government';
+import { runFuelBuyerHospitalitySeed } from './fuel-buyers/seed-hospitality';
+import { runFuelBuyerIndustrialDistributorSeed } from './fuel-buyers/seed-industrial-distributors';
+import { runFuelBuyerLpgSeed } from './fuel-buyers/seed-lpg';
+import { runFuelBuyerMarineBunkerSeed } from './fuel-buyers/seed-marine-bunker';
+import { runFuelBuyerMiningSeed } from './fuel-buyers/seed-mining';
 import { runFuelBuyerUtilitiesSeed } from './fuel-buyers/seed-utilities';
 
 export type FuelBuyerSource =
@@ -30,6 +39,7 @@ export type FuelBuyerSource =
   | 'marine-bunker-seed'
   | 'aviation-seed'
   | 'industrial-distributor-seed'
+  | 'construction-seed'
   | 'government-seed'
   | 'hospitality-seed'
   | 'agricultural-seed'
@@ -51,18 +61,41 @@ export type FuelBuyerRunSummary = {
 
 const WORKERS: Record<FuelBuyerSource, () => Promise<FuelBuyerRunSummary>> = {
   'utilities-seed': () =>
-    runFuelBuyerUtilitiesSeed().then((s) => ({
+    runFuelBuyerUtilitiesSeed().then((s) => ({ ...s, source: 'utilities-seed' as const })),
+  'mining-seed': () =>
+    runFuelBuyerMiningSeed().then((s) => ({ ...s, source: 'mining-seed' as const })),
+  'marine-bunker-seed': () =>
+    runFuelBuyerMarineBunkerSeed().then((s) => ({
       ...s,
-      source: 'utilities-seed' as const,
+      source: 'marine-bunker-seed' as const,
     })),
-  'mining-seed': () => stub('mining-seed'),
-  'marine-bunker-seed': () => stub('marine-bunker-seed'),
-  'aviation-seed': () => stub('aviation-seed'),
-  'industrial-distributor-seed': () => stub('industrial-distributor-seed'),
-  'government-seed': () => stub('government-seed'),
-  'hospitality-seed': () => stub('hospitality-seed'),
+  'aviation-seed': () =>
+    runFuelBuyerAviationSeed().then((s) => ({ ...s, source: 'aviation-seed' as const })),
+  'industrial-distributor-seed': () =>
+    runFuelBuyerIndustrialDistributorSeed().then((s) => ({
+      ...s,
+      source: 'industrial-distributor-seed' as const,
+    })),
+  'government-seed': () =>
+    runFuelBuyerGovernmentSeed().then((s) => ({
+      ...s,
+      source: 'government-seed' as const,
+    })),
+  'hospitality-seed': () =>
+    runFuelBuyerHospitalitySeed().then((s) => ({
+      ...s,
+      source: 'hospitality-seed' as const,
+    })),
+  // agricultural segment is fragmented + low public disclosure — staying
+  // stubbed pending a focused curation pass per brief §4.9.
   'agricultural-seed': () => stub('agricultural-seed'),
-  'lpg-seed': () => stub('lpg-seed'),
+  'lpg-seed': () =>
+    runFuelBuyerLpgSeed().then((s) => ({ ...s, source: 'lpg-seed' as const })),
+  'construction-seed': () =>
+    runFuelBuyerConstructionSeed().then((s) => ({
+      ...s,
+      source: 'construction-seed' as const,
+    })),
   'ocds-caribbean': () => stub('ocds-caribbean'),
   'customs-flows': () => stub('customs-flows'),
   'industry-directory': () => stub('industry-directory'),
