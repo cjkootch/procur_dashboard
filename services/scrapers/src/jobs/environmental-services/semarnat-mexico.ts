@@ -421,6 +421,8 @@ export async function runSemarnat(): Promise<SemarnatRunSummary> {
   const datasetId = process.env.SEMARNAT_DATASET_ID?.trim() || DEFAULT_DATASET;
 
   let resources: CkanResource[] = [];
+  let packageNotFound = false;
+  let packageShowError: string | null = null;
   try {
     const url = `${CKAN_BASE}/package_show?id=${encodeURIComponent(datasetId)}`;
     const json = await fetchJson<CkanPackageResponse>(url);
@@ -429,33 +431,46 @@ export async function runSemarnat(): Promise<SemarnatRunSummary> {
         typeof json.error === 'string'
           ? json.error
           : (json.error?.message ?? JSON.stringify(json.error ?? json));
-      // Fall back to package_search to surface candidate datasets so
-      // the user can pick the right slug and set SEMARNAT_DATASET_ID.
-      const candidates = await discoverCandidateDatasets('residuos peligrosos');
+      packageNotFound = true;
+      packageShowError = errMsg;
+    } else {
+      resources = json.result.resources ?? [];
+    }
+  } catch (err) {
+    // datos.gob.mx returns 404 (not 200 + success:false) when the
+    // dataset doesn't exist — fetchJson throws on !res.ok. Catch and
+    // re-route to the search-fallback path below.
+    const msg = describeError(err);
+    if (msg.includes('404') || msg.includes('Not Found')) {
+      packageNotFound = true;
+      packageShowError = msg;
+    } else {
       return {
         source: 'semarnat',
-        status: 'skipped-needs-discovery',
+        status: 'error',
         upserted: 0,
         skipped: 0,
-        errors: [
-          `SEMARNAT dataset slug "${datasetId}" not found at datos.gob.mx ` +
-            `(${errMsg.slice(0, 200)}). The brief's slug appears to have ` +
-            `been renamed or replaced. Candidate datasets from CKAN ` +
-            `package_search:\n  ${candidates}\nPick the right id and set ` +
-            `SEMARNAT_DATASET_ID env to enable the worker.`,
-        ],
+        errors: [`SEMARNAT package_show: ${msg}`],
         startedAt,
         finishedAt: new Date().toISOString(),
       };
     }
-    resources = json.result.resources ?? [];
-  } catch (err) {
+  }
+
+  if (packageNotFound) {
+    const candidates = await discoverCandidateDatasets('residuos peligrosos');
     return {
       source: 'semarnat',
-      status: 'error',
+      status: 'skipped-needs-discovery',
       upserted: 0,
       skipped: 0,
-      errors: [`SEMARNAT package_show: ${describeError(err)}`],
+      errors: [
+        `SEMARNAT dataset slug "${datasetId}" not found at datos.gob.mx ` +
+          `(${packageShowError?.slice(0, 200) ?? '404'}). The brief's slug ` +
+          `appears to have been renamed or replaced. Candidate datasets ` +
+          `from CKAN package_search:\n  ${candidates}\nPick the right id ` +
+          `and set SEMARNAT_DATASET_ID env to enable the worker.`,
+      ],
       startedAt,
       finishedAt: new Date().toISOString(),
     };
