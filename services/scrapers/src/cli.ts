@@ -173,8 +173,11 @@ async function main() {
       console.log('running all wired env-services workers in order...');
       const summaries = await runEnvServicesAll();
       console.log(JSON.stringify(summaries, null, 2));
-      const anyError = summaries.some((s) => s.status === 'error');
-      process.exit(anyError ? 1 : 0);
+      // Exit non-zero only when every worker errored — partial
+      // success is expected (e.g. epa-rcra 4xx + curated-seed ok)
+      // and shouldn't fail the whole cron.
+      const allErrored = summaries.length > 0 && summaries.every((s) => s.status === 'error');
+      process.exit(allErrored ? 1 : 0);
     }
     console.log(`running env-services worker: ${sub}...`);
     const summary = await runEnvServicesSource(sub);
