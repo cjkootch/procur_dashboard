@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { createMcpApiKeyAction } from '../actions';
+import { HostConfigSnippets } from './HostConfigSnippets';
 
 /**
  * "Generate new key" form. The raw key is returned by the action
@@ -48,6 +49,12 @@ export function CreateMcpKeyForm() {
         <p className="mt-3 text-[10px] italic text-[color:var(--color-muted-foreground)]">
           Lost keys can&apos;t be recovered. Generate a new one if you lose this.
         </p>
+        <div className="mt-4">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Drop into your AI host
+          </p>
+          <HostConfigSnippets apiKey={rawKey} />
+        </div>
       </div>
     );
   }

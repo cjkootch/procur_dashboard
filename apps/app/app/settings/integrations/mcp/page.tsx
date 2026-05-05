@@ -1,6 +1,7 @@
 import { requireCompany } from '@procur/auth';
 import { listMcpKeysForCompany, MCP_KEY_PREFIX } from '@procur/mcp-server';
 import { CreateMcpKeyForm } from './_components/CreateKeyForm';
+import { HostConfigSnippets } from './_components/HostConfigSnippets';
 import { RevokeKeyButton } from './_components/RevokeKeyButton';
 
 export const dynamic = 'force-dynamic';
@@ -106,6 +107,13 @@ export default async function McpIntegrationPage() {
           </div>
         </section>
       )}
+
+      <section className="mb-6">
+        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          Connection guides
+        </h2>
+        <HostConfigSnippets />
+      </section>
 
       <section>
         <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
