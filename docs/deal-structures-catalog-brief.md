@@ -1,5 +1,34 @@
 # Deal Structure and Commission Catalog — Global
 
+> **IMPLEMENTATION STATUS — refreshed 2026-05-05**
+>
+> **Status: shipped end-to-end across three PRs.** Both catalogs are in production; the assistant treats them as the source of truth for proposal composition.
+>
+> **PR 1 — Foundation (#386, merged):** schema, taxonomy, queries, two chat tools, system prompt
+> - Migration 0063 (`deal_structure_templates`, `commission_structures`) live
+> - `packages/catalog/src/trade-taxonomy.ts` — VTC entity / category / Incoterm / payment-instrument / margin-structure / commission-basis enums
+> - `lookupDealStructureTemplates`, `lookupCommissionStructures` in `queries.ts`
+> - `lookup_deal_structure_template`, `lookup_commission_structures` chat tools
+> - System prompt §9 trade vocabulary section
+>
+> **PR 2 — Seed (#387, merged):** 23 hand-curated deal structure templates + 9 commission structures
+> - Spans all 7 categories (refined-product, specialty-crude, crude-conventional, food-commodity, vehicle, lng, lpg) and all 5 VTC entities
+> - Idempotent on slug; ON CONFLICT DO UPDATE
+>
+> **PR 3 — Integration (#388, merged):** template references on `proposals` / `pricing_models` / `contracts` + composer chat tool
+> - Migration 0064 — `deal_structure_template_slug` + `applicable_commission_slugs[]` on proposals; same on contracts as `applied_commission_slugs[]`; `deal_structure_template_slug` on pricing_models
+> - `compose_proposal_skeleton` chat tool — best-fit template + top-3 alternatives + scoped commissions + counsel-validation surface + destination-exclusion check
+> - System prompt "Proposal composition workflow (hard rule)" — assistant must call composer before drafting; lead with template slug; surface counsel gaps before binding terms; show fee burden BEFORE realized margin
+> - Forward-only per §10.4 — existing proposals/contracts have NULL slug references; no backfill of legacy free-text terms
+>
+> **Browse UI (#389, draft):** read-only `/deal-structures` catalog browse + per-template detail page wired into AppShell sidebar. The "admin-edit deferred to v2" rule from §11 still applies — write paths are not in scope for v1.
+>
+> **What's NOT yet shipped (deferred per brief §10):**
+> - Close-rate / margin-realization analytics — the 6+-month-of-template-references threshold from §12 ("Structure analytics") hasn't accumulated yet. Defer until late 2026 / early 2027.
+> - Counsel-review-pipeline tooling for new origin × destination × payment permutations (§12 "Counsel review at scale") — operator does this manually until volume justifies UI.
+>
+> ---
+
 **Status:** spec, not yet implemented
 **Owner:** Cole
 **Last updated:** 2026-05-04
