@@ -21,6 +21,16 @@ const isPublicRoute = createRouteMatcher([
   // gate access — Clerk must let these through unauthenticated so
   // the bearer check is what actually decides.
   '/api/intelligence/(.*)',
+  // MCP server: token-authed via Authorization: Bearer
+  // procur_mcp_<…>. Same shape as intelligence — Clerk must let
+  // these through unauthenticated so the per-tenant API key check
+  // in @procur/mcp-server is what actually decides. Spec:
+  // docs/mcp-server-brief.md.
+  '/api/mcp(.*)',
+  // Public docs at /docs/* — operator-facing reference for the
+  // MCP integration. No Clerk session needed; pages are static
+  // content + a live-rendered tool catalog from the whitelist.
+  '/docs/(.*)',
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
