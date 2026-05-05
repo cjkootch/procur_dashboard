@@ -74,21 +74,26 @@ export async function handleChatgptMcpRequest(
   args: HandleChatgptMcpRequestArgs,
 ): Promise<Response> {
   const config = loadMcpConfig();
-  if (!config.enabled) {
-    return jsonRpcResponse(null, {
-      error: {
-        code: JSONRPC_ERROR.INTERNAL_ERROR,
-        message: 'MCP integration is not enabled in this environment.',
-      },
-    });
-  }
 
   if (args.request.method === 'GET') {
+    if (!config.enabled) {
+      return new Response(
+        JSON.stringify({
+          protocol: 'mcp',
+          variant: 'chatgpt-search-fetch',
+          version: MCP_PROTOCOL_VERSION,
+          enabled: false,
+          message: 'MCP integration is not enabled in this environment.',
+        }),
+        { status: 503, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
     return new Response(
       JSON.stringify({
         protocol: 'mcp',
         variant: 'chatgpt-search-fetch',
         version: MCP_PROTOCOL_VERSION,
+        enabled: true,
         tools: ['search', 'fetch'],
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -99,6 +104,9 @@ export async function handleChatgptMcpRequest(
     return new Response('Method Not Allowed', { status: 405 });
   }
 
+  // Parse envelope BEFORE the feature-flag check so degrade responses
+  // carry the request's id. Strict clients reject id=null responses
+  // against requests that had a numeric id.
   let body: JsonRpcRequest;
   try {
     body = (await args.request.json()) as JsonRpcRequest;
@@ -116,6 +124,15 @@ export async function handleChatgptMcpRequest(
 
   const id = body.id ?? null;
   const hostIdentifier = args.request.headers.get('user-agent') ?? null;
+
+  if (!config.enabled) {
+    return jsonRpcResponse(id, {
+      error: {
+        code: JSONRPC_ERROR.INTERNAL_ERROR,
+        message: 'MCP integration is not enabled in this environment.',
+      },
+    });
+  }
 
   // Auth.
   const authHeader = args.request.headers.get('authorization') ?? '';
