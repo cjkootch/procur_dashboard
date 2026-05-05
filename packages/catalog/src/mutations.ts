@@ -230,17 +230,28 @@ export class SupplierApprovalEntityMissingError extends Error {
  * created a supplier_approvals row pointing at a slug whose
  * propose_create_known_entity proposal had not been applied yet
  * (resulting in /entities/<slug> 404).
+ *
+ * `external_suppliers.id` is a UUID column. Querying it with a
+ * non-UUID-shaped slug throws "invalid input syntax for type uuid"
+ * which previously killed the whole Promise.all even when the
+ * known_entities lookup would have succeeded — surfacing as a
+ * spurious "entity not found" error in chat traces. Pre-check the
+ * shape before running the external_suppliers branch.
  */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function entitySlugExists(entitySlug: string): Promise<boolean> {
   const [ke, es] = await Promise.all([
     db.query.knownEntities.findFirst({
       where: eq(knownEntities.slug, entitySlug),
       columns: { id: true },
     }),
-    db.query.externalSuppliers.findFirst({
-      where: eq(externalSuppliers.id, entitySlug),
-      columns: { id: true },
-    }),
+    UUID_RE.test(entitySlug)
+      ? db.query.externalSuppliers.findFirst({
+          where: eq(externalSuppliers.id, entitySlug),
+          columns: { id: true },
+        })
+      : Promise.resolve(null),
   ]);
   return Boolean(ke || es);
 }

@@ -7896,7 +7896,7 @@ export async function findRefineriesForGrade(args: {
       ${compatibleOnly ? sql`AND slate_compatible = TRUE` : sql``}
       ${
         args.inCountries && args.inCountries.length > 0
-          ? sql`AND refinery_country = ANY(${args.inCountries})`
+          ? sql`AND refinery_country = ANY(${pgArray(args.inCountries)})`
           : sql``
       }
     ORDER BY slate_compatible DESC,
@@ -7940,12 +7940,12 @@ export async function findGradesForRefinery(args: {
       ${compatibleOnly ? sql`AND rgc.slate_compatible = TRUE` : sql``}
       ${
         args.fromOriginCountries && args.fromOriginCountries.length > 0
-          ? sql`AND rgc.grade_origin_country = ANY(${args.fromOriginCountries})`
+          ? sql`AND rgc.grade_origin_country = ANY(${pgArray(args.fromOriginCountries)})`
           : sql``
       }
       ${
         args.fromRegions && args.fromRegions.length > 0
-          ? sql`AND rgc.grade_region = ANY(${args.fromRegions})`
+          ? sql`AND rgc.grade_region = ANY(${pgArray(args.fromRegions)})`
           : sql``
       }
     ORDER BY rgc.slate_compatible DESC,
@@ -8101,7 +8101,7 @@ export async function findEnvironmentalOperatorsByWasteType(args: {
     WHERE role = 'environmental-services'
       ${
         args.inCountries && args.inCountries.length > 0
-          ? sql`AND country = ANY(${args.inCountries})`
+          ? sql`AND country = ANY(${pgArray(args.inCountries)})`
           : sql``
       }
     ORDER BY name ASC
@@ -8337,7 +8337,7 @@ export async function findCaribbeanFuelBuyers(args: {
     WHERE role = 'fuel-buyer-industrial'
       ${
         args.inCountries && args.inCountries.length > 0
-          ? sql`AND country = ANY(${args.inCountries})`
+          ? sql`AND country = ANY(${pgArray(args.inCountries)})`
           : sql``
       }
     ORDER BY name ASC
@@ -8923,7 +8923,7 @@ export async function getRefineryImportContext(
           reporter_country = ${refineryCountry}
           AND product_code = ${productCode}
           AND flow_direction = 'import'
-          AND partner_country = ANY(${origins})
+          AND partner_country = ANY(${pgArray(origins)})
           AND period >= date_trunc('month', NOW() - (${monthsLookback}::int || ' months')::interval)
       )
       SELECT
@@ -9525,13 +9525,13 @@ export async function analyzeEntityCargoActivity(args: {
       ct.inferred_volume_bbl,
       ct.confidence,
       CASE
-        WHEN ct.discharge_port_slug = ANY(${portSlugs}) THEN 'discharge'
+        WHEN ct.discharge_port_slug = ANY(${pgArray(portSlugs)}) THEN 'discharge'
         ELSE 'load'
       END AS entity_side
     FROM cargo_trips ct
     WHERE (
-      ct.load_port_slug = ANY(${portSlugs})
-      OR ct.discharge_port_slug = ANY(${portSlugs})
+      ct.load_port_slug = ANY(${pgArray(portSlugs)})
+      OR ct.discharge_port_slug = ANY(${pgArray(portSlugs)})
     )
       AND ct.load_started_at >= NOW() - (${windowDays}::int * INTERVAL '1 day')
     ORDER BY ct.load_started_at DESC;
@@ -10538,7 +10538,7 @@ async function getExposureForCountries(
     const gradesRow = await db.execute(sql`
       SELECT slug, name, origin_country, api_gravity, sulfur_pct
       FROM crude_grades
-      WHERE origin_country = ANY(${countries})
+      WHERE origin_country = ANY(${pgArray(countries)})
       ORDER BY api_gravity DESC NULLS LAST;
     `);
     affectedGrades = (gradesRow.rows as Array<Record<string, unknown>>).map((g) => ({
@@ -10572,7 +10572,7 @@ async function getExposureForCountries(
         )[1:3] AS primary_grades
       FROM refinery_grade_compatibility
       WHERE slate_compatible = TRUE
-        AND grade_slug = ANY(${affectedSlugs})
+        AND grade_slug = ANY(${pgArray(affectedSlugs)})
       GROUP BY refinery_slug, refinery_name, refinery_country
       ORDER BY affected_count DESC, refinery_name ASC
       LIMIT 50;

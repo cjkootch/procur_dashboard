@@ -4687,13 +4687,21 @@ export function buildCatalogTools(): ToolRegistry {
     find_caribbean_fuel_buyers: defineTool({
       name: 'find_caribbean_fuel_buyers',
       description:
-        'Find Caribbean refined-fuel buyers — utilities, mining, ' +
-        'marine bunker, aviation, industrial distributors, government ' +
-        'fleets, hospitality, agricultural, LPG distributors — ' +
-        'matching specified segments / fuel types / countries. Backed ' +
-        'by the fuel-buyer-industrial rolodex. See ' +
-        '`docs/caribbean-fuel-buyer-brief.md` for the full schema and ' +
-        'segment taxonomy.\n\n' +
+        'Find Caribbean refined-fuel buyers from the curated ' +
+        'fuel-buyer-industrial rolodex — utilities, mining, marine ' +
+        'bunker, aviation, industrial distributors, government fleets, ' +
+        'hospitality, agricultural, LPG distributors. Backed by the ' +
+        '~73-entry Tier-1 seed across 11 segments. See ' +
+        '`docs/caribbean-fuel-buyer-brief.md` for the schema.\n\n' +
+        'PARAMETER NAMES (do not confuse with find_buyers_for_offer):\n' +
+        '  • segments       — array of FUEL_BUYER_SEGMENTS slugs\n' +
+        '  • fuelTypes      — array of FUEL_TYPES_PURCHASED slugs\n' +
+        '  • inCountries    — array of ISO-2 country codes\n' +
+        '  • tier           — 1 | 2 | 3\n' +
+        '  • withPaymentInstrumentCapability — array of LC / CAD / etc\n' +
+        'NOT `categoryTag` (singular) and NOT `buyerCountries` — those ' +
+        'are find_buyers_for_offer\'s param names; that tool reads from ' +
+        'the public-tender awards graph, not this curated rolodex.\n\n' +
         'WHEN TO CALL:\n' +
         '  • The user wants the universe of buyers in a Caribbean ' +
         'country / segment ("who are the major HFO buyers in the DR?", ' +
@@ -4703,12 +4711,14 @@ export function buildCatalogTools(): ToolRegistry {
         '  • Cross-segment comparison ("which buyers can clear LC sight ' +
         'AND consume ULSD at cargo scale?").\n\n' +
         'WHEN NOT TO CALL:\n' +
-        '  • The user wants the supplier side (refineries, traders) — ' +
-        "use lookup_known_entities with role=refiner / trader.\n" +
-        '  • The user named a specific company — use lookup_known_entities ' +
+        '  • You want public-tender award history → find_buyers_for_offer ' +
+        '(different schema: categoryTag + buyerCountries).\n' +
+        '  • The user wants the supplier side (refineries, traders) → ' +
+        'lookup_known_entities with role=refiner / trader.\n' +
+        '  • The user named a specific company → lookup_known_entities ' +
         'or analyze_supplier directly.\n' +
-        '  • The user wants to match a specific cargo to ranked buyers — ' +
-        'use match_cargo_to_buyers, which scores fit instead of just ' +
+        '  • The user wants to match a specific cargo to ranked buyers → ' +
+        'match_cargo_to_buyers, which scores fit instead of just ' +
         'filtering.\n\n' +
         'INTERPRETATION DISCIPLINE:\n' +
         '  • Lead with Tier-1 buyers (top of segment, well-mapped) and ' +
