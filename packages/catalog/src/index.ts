@@ -46,3 +46,12 @@ export {
   readCustomsContext,
   type CustomsContextMapping,
 } from './customs-context';
+export {
+  ENVIRONMENTAL_SERVICES_ROLE,
+  WASTE_TYPES,
+  TREATMENT_TECHNOLOGIES,
+  REGULATOR_AUTHORITIES,
+  type WasteType,
+  type TreatmentTechnology,
+  type EnvironmentalServicesCapability,
+} from './environmental-services-taxonomy';

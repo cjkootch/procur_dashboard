@@ -43,6 +43,11 @@ const ROLE_OPTIONS = [
   { value: 'producer', label: 'producers' },
   { value: 'state-buyer', label: 'state buyers' },
   { value: 'power-plant', label: 'power plants' },
+  // Environmental services rolodex per
+  // docs/environmental-services-rolodex-brief.md. Empty until the
+  // Phase 1 / Phase 2 ingestion runs — chip is visible regardless
+  // so the surface is discoverable from day 1.
+  { value: 'environmental-services', label: 'env services' },
 ];
 
 /**
@@ -276,6 +281,7 @@ const ROLE_TAG_SET = new Set([
   'producer',
   'state-buyer',
   'power-plant',
+  'environmental-services',
 ]);
 function isNoiseTag(t: string): boolean {
   if (ROLE_TAG_SET.has(t)) return true;
