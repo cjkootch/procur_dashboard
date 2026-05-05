@@ -113,7 +113,21 @@ type CkanPackageResponse = {
     name?: string;
     resources?: CkanResource[];
   };
-  error?: { message?: string } | string;
+  error?: { message?: string; __type?: string } | string;
+};
+
+type CkanSearchResponse = {
+  success?: boolean;
+  result?: {
+    count?: number;
+    results?: Array<{
+      id: string;
+      name: string;
+      title?: string;
+      organization?: { name?: string; title?: string };
+      resources?: CkanResource[];
+    }>;
+  };
 };
 
 type CkanDatastoreResponse = {
@@ -375,6 +389,33 @@ async function fetchViaCsv(url: string): Promise<Array<Record<string, unknown>>>
   return records as Array<Record<string, unknown>>;
 }
 
+/**
+ * Fall-back: CKAN package_search to discover candidate datasets when
+ * the configured slug 404s. Returns the top matches as a single
+ * formatted string so the caller can dump it in the run summary —
+ * the user can pick the right id and set SEMARNAT_DATASET_ID.
+ */
+async function discoverCandidateDatasets(query: string): Promise<string> {
+  const url =
+    `${CKAN_BASE}/package_search` +
+    `?q=${encodeURIComponent(query)}&rows=15`;
+  try {
+    const json = await fetchJson<CkanSearchResponse>(url);
+    const results = json.result?.results ?? [];
+    if (results.length === 0) {
+      return `(package_search returned 0 hits for "${query}")`;
+    }
+    return results
+      .map((r) => {
+        const org = r.organization?.title ?? r.organization?.name ?? '?';
+        return `id=${r.name} | "${r.title ?? r.name}" | org=${org}`;
+      })
+      .join('\n  ');
+  } catch (err) {
+    return `(package_search failed: ${describeError(err)})`;
+  }
+}
+
 export async function runSemarnat(): Promise<SemarnatRunSummary> {
   const startedAt = new Date().toISOString();
   const datasetId = process.env.SEMARNAT_DATASET_ID?.trim() || DEFAULT_DATASET;
@@ -388,12 +429,21 @@ export async function runSemarnat(): Promise<SemarnatRunSummary> {
         typeof json.error === 'string'
           ? json.error
           : (json.error?.message ?? JSON.stringify(json.error ?? json));
+      // Fall back to package_search to surface candidate datasets so
+      // the user can pick the right slug and set SEMARNAT_DATASET_ID.
+      const candidates = await discoverCandidateDatasets('residuos peligrosos');
       return {
         source: 'semarnat',
-        status: 'error',
+        status: 'skipped-needs-discovery',
         upserted: 0,
         skipped: 0,
-        errors: [`CKAN package_show failed for "${datasetId}": ${errMsg.slice(0, 300)}`],
+        errors: [
+          `SEMARNAT dataset slug "${datasetId}" not found at datos.gob.mx ` +
+            `(${errMsg.slice(0, 200)}). The brief's slug appears to have ` +
+            `been renamed or replaced. Candidate datasets from CKAN ` +
+            `package_search:\n  ${candidates}\nPick the right id and set ` +
+            `SEMARNAT_DATASET_ID env to enable the worker.`,
+        ],
         startedAt,
         finishedAt: new Date().toISOString(),
       };
