@@ -3,34 +3,38 @@
  * licensed operators in the petroleum-relevant sectors per
  * docs/environmental-services-rolodex-brief.md §4.3.
  *
- * Source: ANLA open-data portal at https://datos.anla.gov.co
- *   - Resource catalog: /api/3/action/package_list (CKAN-shaped)
- *   - Per-resource records: /api/3/action/datastore_search
+ * STATUS: needs URL discovery. The brief assumed a CKAN portal at
+ * `datos.anla.gov.co`, but DNS for that host doesn't resolve —
+ * Colombia's open data is actually on the national Socrata portal
+ * at `datos.gov.co`, which uses 4x4 dataset IDs (e.g. `abcd-1234`)
+ * instead of named resources. The right dataset ID for the ANLA
+ * "Reporte de Licencias Ambientales" needs to be discovered by
+ * browsing https://www.datos.gov.co and copying the `id` from the
+ * dataset's view URL.
  *
- * Sector filter: ANLA publishes the "Reporte de Licencias
- * Ambientales" with a `sector` column. We narrow to:
- *   - 'Hidrocarburos' (oil and gas)
- *   - 'Residuos Peligrosos' (hazardous waste)
- *   - 'Remediación Ambiental' (environmental remediation)
+ * Set `ANLA_DATASET_ID=<4x4-id>` in env to enable. Without it the
+ * worker returns `skipped-needs-discovery` and the orchestrator
+ * continues past it.
  *
- * Each licensed operator → one row in `known_entities`. Resolution
- * is operator name (sometimes parent company), country=CO, role=
- * 'environmental-services'. Federal-level licenses only; regional
- * CARs ship in a sibling worker (`co-cars.ts`, deferred).
+ * Once enabled the worker pulls the dataset via Socrata SoQL:
+ *   GET https://www.datos.gov.co/resource/<id>.json?
+ *     $select=...&$where=...&$limit=500&$offset=0
  *
- * Idempotency: keyed on `slug = 'anla:<operator-slug>'` where the
- * operator-slug is a normalized lowercase form of the company name.
- * Same operator with multiple resolutions surfaces as one rolodex
- * entry; the licenses array merges across resolutions.
+ * Sector filter: pulls rows where the sector column matches one of
+ *   - 'Hidrocarburos'
+ *   - 'Residuos Peligrosos'
+ *   - 'Remediación Ambiental'
+ *
+ * Each licensed operator → one row in `known_entities` keyed on
+ * `anla:<operator-slug>`.
  */
 import { sql } from 'drizzle-orm';
 import { db } from '@procur/db';
 
-const ANLA_BASE = 'https://datos.anla.gov.co';
-/** CKAN-shaped resource id for the consolidated environmental
- *  licenses dataset. ANLA renames resources occasionally — if this
- *  404s, the worker logs and a follow-up updates the id. */
-const LICENSES_RESOURCE = 'reporte-licencias-ambientales';
+/** Colombia's national open-data portal — Socrata-based. Hosts ANLA's
+ *  "Reporte de Licencias Ambientales" under a 4x4 dataset ID that
+ *  needs to be set via env. */
+const SOCRATA_BASE = 'https://www.datos.gov.co/resource';
 const FETCH_TIMEOUT_MS = 60_000;
 const PAGE_SIZE = 500;
 const PAGE_THROTTLE_MS = 750;
@@ -62,7 +66,7 @@ const TARGET_SECTORS = [
 
 export type AnlaRunSummary = {
   source: 'anla';
-  status: 'ok' | 'error';
+  status: 'ok' | 'error' | 'skipped-needs-discovery';
   upserted: number;
   skipped: number;
   errors: string[];
@@ -85,13 +89,16 @@ function describeError(err: unknown): string {
   return `${msg} (${causeStr.slice(0, 220)})`;
 }
 
-async function fetchPage(offset: number, limit: number): Promise<AnlaLicenseRow[]> {
+async function fetchPage(
+  datasetId: string,
+  offset: number,
+  limit: number,
+): Promise<AnlaLicenseRow[]> {
   const params = new URLSearchParams({
-    resource_id: LICENSES_RESOURCE,
-    offset: String(offset),
-    limit: String(limit),
+    $limit: String(limit),
+    $offset: String(offset),
   });
-  const url = `${ANLA_BASE}/api/3/action/datastore_search?${params}`;
+  const url = `${SOCRATA_BASE}/${datasetId}.json?${params}`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -107,24 +114,19 @@ async function fetchPage(offset: number, limit: number): Promise<AnlaLicenseRow[
       throw new Error(`ANLA ${res.status} ${url}: ${body.slice(0, 200)}`);
     }
     const text = await res.text();
-    let json: {
-      success?: boolean;
-      result?: { records?: AnlaLicenseRow[] };
-      error?: { message?: string } | string;
-    };
+    // Socrata returns a bare array of row objects (no envelope).
+    let json: unknown;
     try {
       json = JSON.parse(text);
     } catch {
       throw new Error(`ANLA non-JSON ${url}: ${text.slice(0, 200)}`);
     }
-    if (!json.success) {
-      const errMsg =
-        typeof json.error === 'string'
-          ? json.error
-          : (json.error?.message ?? JSON.stringify(json.error ?? json));
-      throw new Error(`ANLA error for ${url}: ${errMsg.slice(0, 300)}`);
+    if (!Array.isArray(json)) {
+      throw new Error(
+        `ANLA unexpected shape ${url}: ${JSON.stringify(json).slice(0, 300)}`,
+      );
     }
-    return json.result?.records ?? [];
+    return json as AnlaLicenseRow[];
   } finally {
     clearTimeout(timer);
   }
@@ -243,6 +245,27 @@ async function upsertOperator(
 
 export async function runAnla(): Promise<AnlaRunSummary> {
   const startedAt = new Date().toISOString();
+  const finishedAt = () => new Date().toISOString();
+
+  const datasetId = process.env.ANLA_DATASET_ID?.trim();
+  if (!datasetId) {
+    return {
+      source: 'anla',
+      status: 'skipped-needs-discovery',
+      upserted: 0,
+      skipped: 0,
+      errors: [
+        'ANLA_DATASET_ID env var not set. Discover the right Socrata ' +
+          'dataset ID by browsing https://www.datos.gov.co (filter to ' +
+          'ANLA datasets, find the "Reporte de Licencias Ambientales" ' +
+          'or sector-specific equivalent), then set the 4x4 id (e.g. ' +
+          '`abcd-1234`) in env. Worker re-runs idempotently once set.',
+      ],
+      startedAt,
+      finishedAt: finishedAt(),
+    };
+  }
+
   let upserted = 0;
   let skipped = 0;
   const errors: string[] = [];
@@ -252,7 +275,7 @@ export async function runAnla(): Promise<AnlaRunSummary> {
   let pages = 0;
   while (true) {
     try {
-      const page = await fetchPage(offset, PAGE_SIZE);
+      const page = await fetchPage(datasetId, offset, PAGE_SIZE);
       if (page.length === 0) break;
       allRows.push(...page);
       pages += 1;

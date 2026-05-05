@@ -42,7 +42,11 @@ export type EnvServicesSource =
 export type RunSummary = {
   source: EnvServicesSource;
   /** Status reported by the per-source worker. */
-  status: 'ok' | 'skipped-not-implemented' | 'error';
+  /** ok = ran successfully (may have non-fatal errors).
+   *  skipped-not-implemented = stub worker, source not yet wired.
+   *  skipped-needs-discovery = wired but missing config (e.g. dataset id).
+   *  error = ran but no rows landed and at least one fatal error. */
+  status: 'ok' | 'skipped-not-implemented' | 'skipped-needs-discovery' | 'error';
   upserted: number;
   skipped: number;
   errors: string[];
