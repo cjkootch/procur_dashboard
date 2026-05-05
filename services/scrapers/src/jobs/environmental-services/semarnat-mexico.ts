@@ -390,30 +390,50 @@ async function fetchViaCsv(url: string): Promise<Array<Record<string, unknown>>>
 }
 
 /**
- * Fall-back: CKAN package_search to discover candidate datasets when
- * the configured slug 404s. Returns the top matches as a single
- * formatted string so the caller can dump it in the run summary —
- * the user can pick the right id and set SEMARNAT_DATASET_ID.
+ * Fall-back: CKAN package_search across multiple queries that might
+ * surface the authorized-handler list. The brief's slug
+ * (`tratamiento-de-residuos-peligrosos-industriales`) 404s, and a
+ * single-query search for "residuos peligrosos" only finds
+ * tangential datasets (transboundary flows, inspections, lab
+ * approvals — none of which are the handler universe).
+ *
+ * We try multiple queries and dedup by id so the user sees the
+ * widest plausible candidate set in one summary block.
  */
-async function discoverCandidateDatasets(query: string): Promise<string> {
-  const url =
-    `${CKAN_BASE}/package_search` +
-    `?q=${encodeURIComponent(query)}&rows=15`;
-  try {
-    const json = await fetchJson<CkanSearchResponse>(url);
-    const results = json.result?.results ?? [];
-    if (results.length === 0) {
-      return `(package_search returned 0 hits for "${query}")`;
+async function discoverCandidateDatasets(): Promise<string> {
+  const queries = [
+    'residuos peligrosos',
+    'empresas autorizadas',
+    'manejo residuos',
+    'tratamiento residuos',
+    'autorizadas residuos',
+  ];
+  type Hit = { id: string; title: string; org: string };
+  const seen = new Map<string, Hit>();
+  for (const q of queries) {
+    const url =
+      `${CKAN_BASE}/package_search?q=${encodeURIComponent(q)}&rows=10`;
+    try {
+      const json = await fetchJson<CkanSearchResponse>(url);
+      for (const r of json.result?.results ?? []) {
+        if (seen.has(r.name)) continue;
+        seen.set(r.name, {
+          id: r.name,
+          title: r.title ?? r.name,
+          org: r.organization?.title ?? r.organization?.name ?? '?',
+        });
+      }
+    } catch {
+      // ignore per-query failures; aggregate what worked
     }
-    return results
-      .map((r) => {
-        const org = r.organization?.title ?? r.organization?.name ?? '?';
-        return `id=${r.name} | "${r.title ?? r.name}" | org=${org}`;
-      })
-      .join('\n  ');
-  } catch (err) {
-    return `(package_search failed: ${describeError(err)})`;
+    await new Promise((res) => setTimeout(res, PAGE_THROTTLE_MS));
   }
+  if (seen.size === 0) {
+    return '(no candidate datasets returned across any query)';
+  }
+  return [...seen.values()]
+    .map((h) => `id=${h.id} | "${h.title}" | org=${h.org}`)
+    .join('\n  ');
 }
 
 export async function runSemarnat(): Promise<SemarnatRunSummary> {
@@ -458,7 +478,7 @@ export async function runSemarnat(): Promise<SemarnatRunSummary> {
   }
 
   if (packageNotFound) {
-    const candidates = await discoverCandidateDatasets('residuos peligrosos');
+    const candidates = await discoverCandidateDatasets();
     return {
       source: 'semarnat',
       status: 'skipped-needs-discovery',
@@ -466,10 +486,21 @@ export async function runSemarnat(): Promise<SemarnatRunSummary> {
       skipped: 0,
       errors: [
         `SEMARNAT dataset slug "${datasetId}" not found at datos.gob.mx ` +
-          `(${packageShowError?.slice(0, 200) ?? '404'}). The brief's slug ` +
-          `appears to have been renamed or replaced. Candidate datasets ` +
-          `from CKAN package_search:\n  ${candidates}\nPick the right id ` +
-          `and set SEMARNAT_DATASET_ID env to enable the worker.`,
+          `(${packageShowError?.slice(0, 200) ?? '404'}). The brief's claim ` +
+          `that the handler list is published as structured open data on ` +
+          `datos.gob.mx may be wrong — multi-query search returned only ` +
+          `tangential datasets (transboundary flows, PROFEPA inspections, ` +
+          `lab approvals) — none are the authorized-handler universe. ` +
+          `Candidate datasets:\n  ${candidates}\n` +
+          `\nNext-step options: ` +
+          `(a) browse https://datos.gob.mx manually — the dataset may ` +
+          `exist under a query our keywords miss; set SEMARNAT_DATASET_ID ` +
+          `if found. ` +
+          `(b) accept the PDF + OCR path the brief originally specified ` +
+          `(gob.mx/semarnat 15-rubros PDFs); requires Tesseract or ` +
+          `commercial OCR. ` +
+          `(c) defer SEMARNAT and expand curated-seed coverage of MX ` +
+          `operators (already includes Veolia, Pochteca, PASA, Befesa).`,
       ],
       startedAt,
       finishedAt: new Date().toISOString(),
