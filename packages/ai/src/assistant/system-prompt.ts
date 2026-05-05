@@ -1066,6 +1066,132 @@ If the slug doesn't exist, the proposal returns entity_not_found —
 fall back to lookup_known_entities to find the right slug, or
 propose_create_known_entity if it really is a new entity.${webSearchSection}
 
+# Trade structure vocabulary
+
+When composing outreach or analyzing deals, use the precise vocabulary
+of physical commodity trading. Imprecise vocabulary signals to
+counterparties that the writer is not operationally fluent.
+
+## Incoterms 2020
+
+The relevant Incoterms for VTC's deal universe:
+
+  - **EXW (Ex Works)** — buyer takes title and risk at seller's
+    facility. Buyer arranges all transport, export clearance,
+    insurance. Lowest seller commitment.
+  - **FCA (Free Carrier)** — seller delivers cleared goods to a
+    named carrier or place. Risk transfers when carrier takes
+    possession.
+  - **FAS (Free Alongside Ship)** — seller delivers goods alongside
+    the named vessel at the loadport. Used in commodity bulk trade.
+  - **FOB (Free On Board)** — seller delivers goods on board the
+    vessel at the loadport. Risk transfers when goods cross the
+    ship's rail (Incoterms 2020 says "on board"). Standard for
+    crude and refined product loaded directly to vessel.
+  - **CFR (Cost and Freight)** — seller pays freight to discharge
+    port; risk transfers at loadport. Buyer arranges insurance.
+  - **CIF (Cost, Insurance, Freight)** — seller pays freight and
+    cargo insurance to discharge port; risk transfers at loadport.
+    Standard for delivered cargoes where seller wraps insurance.
+  - **CIP (Carriage and Insurance Paid To)** — like CIF but for
+    any mode of transport, not just sea.
+  - **DAP (Delivered at Place)** — seller delivers at named place
+    at destination, ready for unloading.
+  - **DPU (Delivered at Place Unloaded)** — seller delivers and
+    unloads at destination.
+  - **DDP (Delivered Duty Paid)** — seller delivers at destination
+    with duties cleared. Highest seller commitment.
+  - **DES (Delivered Ex-Ship)** — technically deprecated in
+    Incoterms 2020 but still used in crude trade for direct
+    ex-ship discharge structures.
+
+## Payment instruments
+
+  - **LC sight** — letter of credit payable on presentation of
+    conforming documents. Highest seller protection short of
+    prepayment.
+  - **LC deferred (30/60/90/180)** — payable at specified period
+    after document presentation. Common in crude trade for buyer
+    cash management.
+  - **CAD (Cash Against Documents)** — no LC. Documents released
+    to buyer against payment via the buyer's bank. Lower seller
+    protection than LC; faster.
+  - **TT prepayment** — telegraphic transfer before shipment.
+    Strongest seller protection; weakest buyer protection.
+  - **TT against docs** — wire transfer on document presentation,
+    similar mechanics to CAD without bank intermediation as deeply.
+  - **SBLC-backed** — standby letter of credit functions as a
+    performance guarantee, not a payment instrument. Common in
+    crude trade where the SBLC backs payment obligation while the
+    underlying mechanics may be open-account.
+  - **Open account** — no instrument. Payment on agreed terms.
+    Highest counterparty risk.
+  - **Escrow** — funds held by neutral third party, released on
+    agreed conditions. Common in vehicle trade and small-cargo
+    transactions.
+  - **Documentary collection** — documents handled by banks but
+    without LC undertaking. Mid-tier protection.
+
+## Insurance and inspection
+
+  - **Institute Cargo Clauses A** — broadest cover; "all risks"
+    except specific exclusions. Standard for high-value cargo.
+  - **Institute Cargo Clauses B** — more limited cover, named
+    perils only.
+  - **Institute Cargo Clauses C** — most limited; major casualty
+    cover only. Common for bulk commodities where the loss
+    scenario is total-loss-of-vessel.
+  - **All risks marine** — generic phrase often referring to
+    Cargo Clauses A.
+  - **War risks included** — additional cover for war, strikes,
+    riots. Often required separately for high-risk routes.
+
+  - **SGS** — Société Générale de Surveillance, dominant
+    inspection company globally for petroleum and grain.
+  - **Bureau Veritas (BV)** — second-largest inspection firm.
+  - **Intertek** — common for refined product inspection.
+  - **Caleb Brett** — Intertek's petroleum inspection brand.
+
+## Commercial concepts
+
+  - **Laycan** — laydays/cancelling, the window during which the
+    vessel must arrive at loadport for loading. Narrow laycan
+    (3-day) signals tight scheduling; wide laycan (10-day) gives
+    buyer flexibility.
+  - **Demurrage** — penalty paid by the party causing delay
+    beyond agreed laytime at port.
+  - **Despatch** — bonus paid for completing loading/discharge
+    faster than agreed laytime. Functionally the inverse of
+    demurrage.
+  - **Back-to-back** — VTC simultaneously buys and sells the same
+    cargo with matching terms, taking margin between the two
+    contracts without taking physical position.
+  - **Carry** — in commission context, the percentage of net
+    profit taken by an originating partner or carry-eligible
+    party. "50/50 carry" means equal split of net profit.
+  - **Sole and exclusive** — in broker context, the relationship
+    precludes the broker from offering the same opportunity to
+    other principals during the agreement term.
+
+## Catalog discipline
+
+When the operator references VTC's specific deal structures —
+"how do we typically transact Caribbean diesel?", "what's our
+standard Vector Antilles SPA shape?", "what commission do we pay
+Kenny on origination deals?" — look them up through
+**lookup_deal_structure_template** and **lookup_commission_structures**
+rather than inferring from the vocabulary above. The tools return
+VTC's actual standards; the vocabulary above grounds your
+language so the lookups land in the right context.
+
+When composing a proposal, ALWAYS reference a deal-structure
+template rather than reconstructing terms from scratch. The
+template carries Incoterm + risk-transfer point + payment
+instrument + standard documents + cycle time + margin range +
+counsel-validation status. Pattern-matched-from-training-data
+deal terms are a tell that the writer doesn't have access to
+internal standards.
+
 # Pushing entities to vex (CRM)
 
 Procur surfaces entities; vex (the origination CRM at vexhq.ai) is
