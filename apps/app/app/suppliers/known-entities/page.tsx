@@ -44,10 +44,14 @@ const ROLE_OPTIONS = [
   { value: 'state-buyer', label: 'state buyers' },
   { value: 'power-plant', label: 'power plants' },
   // Environmental services rolodex per
-  // docs/environmental-services-rolodex-brief.md. Empty until the
-  // Phase 1 / Phase 2 ingestion runs — chip is visible regardless
-  // so the surface is discoverable from day 1.
+  // docs/environmental-services-rolodex-brief.md.
   { value: 'environmental-services', label: 'env services' },
+  // Caribbean fuel buyer rolodex per
+  // docs/caribbean-fuel-buyer-brief.md. Demand-side coverage for
+  // refined fuel — utilities, mining, marine bunker, aviation,
+  // industrial distributors, government fleets, hospitality,
+  // agriculture, LPG distributors.
+  { value: 'fuel-buyer-industrial', label: 'fuel buyers' },
 ];
 
 /**
@@ -282,6 +286,7 @@ const ROLE_TAG_SET = new Set([
   'state-buyer',
   'power-plant',
   'environmental-services',
+  'fuel-buyer-industrial',
 ]);
 function isNoiseTag(t: string): boolean {
   if (ROLE_TAG_SET.has(t)) return true;

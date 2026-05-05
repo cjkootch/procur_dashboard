@@ -55,3 +55,21 @@ export {
   type TreatmentTechnology,
   type EnvironmentalServicesCapability,
 } from './environmental-services-taxonomy';
+export {
+  FUEL_BUYER_ROLE,
+  FUEL_BUYER_SEGMENTS,
+  FUEL_TYPES_PURCHASED,
+  PROCUREMENT_MODELS,
+  PROCUREMENT_AUTHORITIES,
+  PAYMENT_INSTRUMENTS,
+  OWNERSHIP_TYPES,
+  VOLUME_CONFIDENCE_LEVELS,
+  type FuelBuyerSegment,
+  type FuelTypePurchased,
+  type ProcurementModel,
+  type ProcurementAuthority,
+  type PaymentInstrument,
+  type OwnershipType,
+  type VolumeConfidence,
+  type FuelBuyerProfile,
+} from './fuel-buyer-taxonomy';
