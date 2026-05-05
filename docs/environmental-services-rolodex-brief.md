@@ -157,7 +157,7 @@ The federal hazardous waste tracking database, public, queryable by NAICS code. 
 - **562998** — All Other Miscellaneous Waste Management
 - **213112** — Support Activities for Oil and Gas Operations (cross-filter)
 
-Approach: bulk download the RCRA Info dataset (CSV available at data.gov), filter to handlers active in the last 24 months across the four NAICS codes above, intersect with petroleum-related waste codes (RCRA codes F-series, K-series specific to petroleum refining wastes). Result: the verified universe of US hazardous waste operators with petroleum sector exposure.
+Approach: bulk download from the canonical EPA-direct sources — `rcrapublic.epa.gov/rcra-public-export/` (weekly Monday refresh, fixed-format files for the full RCRAInfo module set) and `echo.epa.gov/tools/data-downloads/rcrainfo-download-summary` (ECHO's CSV mirror with documented data dictionary, easier to parse). Filter to handlers active in the last 24 months across the four NAICS codes above, intersect with petroleum-related waste codes (RCRA codes F-series, K-series specific to petroleum refining wastes). Result: the verified universe of US hazardous waste operators with petroleum sector exposure.
 
 Geographic coverage: Texas, Louisiana, Oklahoma, California are the heaviest concentrations and the most operationally relevant for VTC's Caribbean / LatAm work (proximity for mobile deployment, US Gulf Coast operator base).
 
@@ -170,7 +170,7 @@ Brazil's federal environmental agency maintains the Cadastro Técnico Federal (C
 - **CTF/APP** — Atividades Potencialmente Poluidoras (potentially polluting activities), which includes waste transport, treatment, oilfield services
 - **CTF/AIDA** — Atividades e Instrumentos de Defesa Ambiental (environmental defense activities), which includes waste-management consulting and lab services
 
-The public consulta is at gov.br/ibama with CNPJ lookup. There's no bulk-export API, but the consulta is queryable programmatically.
+The public consulta endpoints are at `servicos.ibama.gov.br/ctf/publico/certificado_regularidade_consulta.php` for the CTF/APP regularity check (CNPJ or CPF input, returns Certificate of Regularity status with category breakdown) and `servicos.ibama.gov.br/ctf/publico/cons_defesa_ambiental.php` for CTF/AIDA defense-activities lookup. The official service landing at `www.gov.br/ibama/pt-br/servicos/consultas/ctf` provides the navigation context. There's no bulk-export API, but the consulta endpoints are queryable programmatically by CNPJ.
 
 Approach: seed list of Brazilian environmental services CNPJs from publicly-available industry directories (Abetre member list, ABREPETRO oilfield services directory). For each CNPJ, query CTF consulta to verify registration status and pull registered activity codes. Categories that matter for petroleum waste:
 
@@ -185,7 +185,7 @@ Estimated entity count: ~150-300.
 
 ### 4.3 ANLA Colombia open-data portal
 
-Colombia's federal environmental licensing authority publishes structured datasets at datos.anla.gov.co, including federally-licensed operators across multiple sectors. The relevant sectors:
+Colombia's federal environmental licensing authority publishes its open data through an ArcGIS Hub portal at `datosabiertos-anla.hub.arcgis.com`, with feature-server REST APIs available at `portalsig.anla.gov.co` for programmatic access (e.g. the Áreas Licenciadas Hidrocarburos layer at `portalsig.anla.gov.co/publico/rest/services/OPENDATA/ANLA_Areas_Licenciadas_Hidrocarburos/MapServer/0` returns geographic feature data on every licensed hydrocarbon project as queryable JSON / geoJSON). The portal includes federally-licensed operators across multiple sectors. The relevant sectors:
 
 - **Hidrocarburos** (oil and gas) — licensed under Decreto 1076 de 2015
 - **Residuos peligrosos** (hazardous waste)
@@ -222,7 +222,13 @@ Phase 2 is the work that creates the moat. The Latin American regulator registri
 
 ### 5.1 Mexico — SEMARNAT
 
-The Secretaría de Medio Ambiente y Recursos Naturales publishes a downloadable list of authorized hazardous waste companies divided into 15 rubros (categories). The list shows company names, authorization numbers, validity dates, and operating states. Hosted at gob.mx/semarnat.
+The Secretaría de Medio Ambiente y Recursos Naturales publishes a downloadable list of authorized hazardous waste companies divided into 15 rubros (categories). The list shows company names, authorization numbers, validity dates, and operating states. Two access paths exist:
+
+1. **PDF document at the SEMARNAT site:** `www.gob.mx/semarnat/documentos/empresas-autorizadas-para-el-manejo-de-residuos-peligrosos`. This is the canonical authoritative list (currently shows a maintenance notice intermittently; refreshed periodically by SEMARNAT).
+
+2. **Structured open data at Mexico's federal data portal:** `datos.gob.mx/busca/dataset/tratamiento-de-residuos-peligrosos-industriales`. **Significant finding worth flagging — the SEMARNAT list is also published as structured open data (CSV / JSON) by the Mexican federal government's open data portal.** This eliminates the need for OCR-and-parse work on the PDF for the treatment-rubro subset; pull the structured dataset instead.
+
+Other rubros (incineration, transport, storage, recycling, co-processing) may require the PDF path if structured open data isn't published for them. Verify per-rubro before committing to the OCR pipeline.
 
 The 15 rubros and which matter for petroleum waste:
 
@@ -284,10 +290,10 @@ These have lower density of relevant operators. Ingest opportunistically as Phas
 
 ### 5.5 Phase 2 deliverables
 
-- Per-source scraping jobs in `packages/ingestion/src/environmental-services/regulators/`
-- OCR pipeline for PDF-only sources using Tesseract or commercial OCR API for higher accuracy on Spanish-language documents
+- Per-source ingestion jobs in `packages/ingestion/src/environmental-services/regulators/`
+- OCR pipeline for PDF-only sources using Tesseract or commercial OCR API for higher accuracy on Spanish-language documents — **scope conditional on per-rubro and per-CAR open-data availability**. Where structured open data is published (e.g. SEMARNAT treatment rubro at datos.gob.mx, ANLA hydrocarbon licenses at portalsig.anla.gov.co), prefer direct ingestion. OCR is the fallback path, not the default.
 - Entity deduplication logic — many operators appear in multiple regulator registries (e.g. a Mexican operator licensed in both SEMARNAT Rubro 5 and Rubro 8); the deduplication merges these into single entities with the full license profile
-- Periodic refresh schedule — quarterly for SEMARNAT and CAR PDFs (regulator publication cadence), monthly for ANLA and IBAMA (more responsive sources)
+- Periodic refresh schedule — quarterly for SEMARNAT and CAR PDFs (regulator publication cadence), monthly for ANLA, datos.gob.mx, and IBAMA (more responsive sources)
 
 ---
 
