@@ -1,70 +1,69 @@
 /**
- * EPA RCRA Info ingest — US hazardous waste handlers, filtered to
- * the petroleum-relevant universe per
+ * EPA RCRA Info ingest via ECHO. Pulls US hazardous-waste handlers
+ * filtered to the petroleum-relevant NAICS set per
  * docs/environmental-services-rolodex-brief.md §4.1.
  *
- * Source: EPA Envirofacts REST API
- *   https://data.epa.gov/efservice/HD_HANDLER/...
+ * Source: ECHO REST API (echodata.epa.gov/echo/...). The earlier
+ * cut of this worker tried Envirofacts (data.epa.gov/efservice)
+ * with `HD_HANDLER`/`HD_NAICS` table names — both 404 with "The
+ * table is not available." Envirofacts' RCRA schema doesn't expose
+ * those table names; pivoting to ECHO which is the documented,
+ * stable surface for facility-level RCRA queries.
  *
- * Why Envirofacts (not the data.gov bulk CSV): the bulk CSV is the
- * full RCRA universe (hundreds of MB, ~3M rows) which we'd then
- * filter down to ~400-600 NAICS-relevant entries. The Envirofacts
- * REST API supports server-side filtering so we pull only the slice
- * we care about — a few thousand rows, manageable in a single run
- * without a temp-file step.
+ * ECHO RCRA web service: 2-step query pattern
+ *   1. GET get_facilities?p_naics=<code>&output=JSON
+ *      → returns { Results: { QueryID, FacilityCount, Facilities[] } }
+ *      with a small first page baked in.
+ *   2. GET get_qid?qid=<QueryID>&output=JSON&pagesize=N&pageno=K
+ *      → paginated subsequent pages of the same result set.
  *
- * Filter: handlers active in the last 24 months whose primary NAICS
- * code is in the petroleum-relevant set:
+ * Filter: handlers whose NAICS includes one of:
  *   - 562211 — Hazardous Waste Treatment & Disposal
  *   - 562910 — Environmental Remediation Services
  *   - 562998 — All Other Miscellaneous Waste Management
  *   - 213112 — Support Activities for Oil and Gas Operations
  *
- * Each handler maps to one row in `known_entities` with role=
- * 'environmental-services'. The `metadata.environmentalServices`
- * slot captures the structured capability shape from
- * `@procur/catalog/environmental-services-taxonomy`.
+ * Each handler maps to one row in `known_entities`. Slug:
+ * `epa-rcra:<EPA_HANDLER_ID>`. Re-runs UPSERT in place.
  *
- * Idempotency: keyed on `slug = 'epa-rcra:<EPA_ID>'`. Re-running
- * upserts in place — handlers that fall out of the filter (status
- * change, NAICS change) are NOT removed; they age out via the
- * regulator's own deactivation flow surfaced in
- * `regulatorLicenses[].validUntil`.
+ * Idempotency: same handler appearing under multiple NAICS codes is
+ * collapsed at upsert (NAICS list unioned into licenseCategory).
  */
 import { sql } from 'drizzle-orm';
 import { db } from '@procur/db';
 
-/**
- * EPA Envirofacts has two functioning hosts that mirror the same
- * data — `data.epa.gov/efservice` (modern) and
- * `enviro.epa.gov/enviro/efservice` (legacy). We try the modern host
- * first, fall back to legacy on network failure. Both accept the same
- * URL grammar: <table-chain>/<filter>/JSON/ROWS/<start>:<end>.
- */
-const EPA_BASES = [
-  'https://data.epa.gov/efservice',
-  'https://enviro.epa.gov/enviro/efservice',
-];
+const ECHO_BASE = 'https://echodata.epa.gov/echo';
 const TARGET_NAICS = ['562211', '562910', '562998', '213112'];
-const PAGE_SIZE = 1000;
+const PAGE_SIZE = 500;
 const FETCH_TIMEOUT_MS = 60_000;
 const PAGE_THROTTLE_MS = 500;
+const MAX_PAGES_PER_NAICS = 25;
 
-/** Subset of HD_HANDLER fields we care about. The Envirofacts JSON
- *  envelope returns lowercase column names. */
-type EnvirofactsHandler = {
-  handler_id: string;
-  handler_name: string;
-  location_street_no?: string;
-  location_street1?: string;
-  location_city: string;
-  location_state: string;
-  location_zip?: string;
-  /** ISO date or RCRAInfo's MM/DD/YYYY — both observed. */
-  current_record_date?: string;
-  /** Federal universe code — primary NAICS comes from a sibling
-   *  table HD_NAICS, which we filter on at the URL level. */
-  fed_waste_generator?: string;
+/** Subset of ECHO RCRA facility fields we care about. ECHO returns
+ *  PascalCase keys with embedded underscores in some places; treat
+ *  every field as optional and tolerate either casing. */
+type EchoFacility = {
+  RegistryID?: string;
+  HandlerID?: string;
+  EPAHandlerID?: string;
+  FacName?: string;
+  HandlerName?: string;
+  FacCity?: string;
+  FacState?: string;
+  FacZip?: string;
+  FacNAICSCodes?: string; // comma-separated string, e.g. "562211,562910"
+  FacLat?: string;
+  FacLong?: string;
+};
+
+type EchoFacilitiesResponse = {
+  Results?: {
+    QueryID?: string;
+    FacilityCount?: string | number;
+    Facilities?: EchoFacility[];
+    PageNo?: string | number;
+    Error?: string;
+  };
 };
 
 export type EpaRcraRunSummary = {
@@ -77,9 +76,6 @@ export type EpaRcraRunSummary = {
   finishedAt: string;
 };
 
-/** Unwrap nested causes from a node fetch error so the runtime
- *  surface is "fetch failed (Error: getaddrinfo ENOTFOUND data.epa.gov)"
- *  rather than just "fetch failed". */
 function describeError(err: unknown): string {
   const e = err as { message?: string; cause?: unknown };
   const msg = e?.message ?? String(err);
@@ -92,95 +88,90 @@ function describeError(err: unknown): string {
   return `${msg} (${causeStr.slice(0, 220)})`;
 }
 
-/** Ingest one page of handlers for one NAICS code. Envirofacts URL
- *  grammar is `<base>/<table-chain>/<filter>/JSON/ROWS/<start>:<end>`.
- *  Tries each EPA host in order so a single-host outage doesn't
- *  block the run. */
-async function fetchPage(
-  naicsCode: string,
-  rowStart: number,
-  rowEnd: number,
-): Promise<EnvirofactsHandler[]> {
-  // Both hosts mirror the same grammar; the only difference is the
-  // base prefix.
-  const lastErrors: string[] = [];
-  for (const base of EPA_BASES) {
-    const url =
-      `${base}/HD_HANDLER/HD_NAICS/NAICS_CODE/${naicsCode}` +
-      `/JSON/ROWS/${rowStart}:${rowEnd}`;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, {
-        headers: {
-          accept: 'application/json',
-          'user-agent': 'ProcurEnvIngest/1.0 (+research)',
-        },
-        signal: ctrl.signal,
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        lastErrors.push(
-          `Envirofacts ${res.status} ${url} ${body.slice(0, 120)}`,
-        );
-        continue;
-      }
-      const text = await res.text();
-      // Some Envirofacts hosts wrap the array in `{ "results": [...] }`
-      // — handle both.
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        lastErrors.push(
-          `Envirofacts non-JSON response from ${url}: ${text.slice(0, 200)}`,
-        );
-        continue;
-      }
-      const arr = Array.isArray(parsed)
-        ? (parsed as EnvirofactsHandler[])
-        : Array.isArray((parsed as { results?: unknown }).results)
-          ? ((parsed as { results: EnvirofactsHandler[] }).results)
-          : null;
-      if (!arr) {
-        lastErrors.push(
-          `Envirofacts unexpected shape from ${url}: ${text.slice(0, 200)}`,
-        );
-        continue;
-      }
-      return arr;
-    } catch (err) {
-      lastErrors.push(`${url}: ${describeError(err)}`);
-    } finally {
-      clearTimeout(timer);
+async function fetchJson<T>(url: string): Promise<T> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: {
+        accept: 'application/json',
+        'user-agent': 'ProcurEnvIngest/1.0 (+research)',
+      },
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`ECHO ${res.status} ${url} ${body.slice(0, 200)}`);
     }
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new Error(`ECHO non-JSON ${url}: ${text.slice(0, 200)}`);
+    }
+  } finally {
+    clearTimeout(timer);
   }
-  throw new Error(
-    `all Envirofacts hosts failed for NAICS ${naicsCode} ${rowStart}-${rowEnd}: ${lastErrors.join(' | ')}`,
-  );
 }
 
-/** Slugify for idempotent upsert key. Lowercase + ASCII only — handler
- *  IDs are already alphanumeric uppercase so a simple lowercase is
- *  enough. */
+/** Issue the initial query to ECHO; returns the QueryID we'll use to
+ *  paginate plus the first page of facilities baked into the response. */
+async function startQuery(naicsCode: string): Promise<{
+  queryId: string;
+  totalCount: number;
+  firstPage: EchoFacility[];
+}> {
+  const url =
+    `${ECHO_BASE}/rcra_rest_services.get_facilities` +
+    `?output=JSON&p_naics=${encodeURIComponent(naicsCode)}` +
+    `&responseset=${PAGE_SIZE}`;
+  const json = await fetchJson<EchoFacilitiesResponse>(url);
+  const r = json.Results ?? {};
+  if (r.Error) throw new Error(`ECHO error: ${r.Error}`);
+  if (!r.QueryID) {
+    throw new Error(
+      `ECHO returned no QueryID for NAICS ${naicsCode}; payload: ${JSON.stringify(json).slice(0, 200)}`,
+    );
+  }
+  const facilities = Array.isArray(r.Facilities) ? r.Facilities : [];
+  const total = Number(r.FacilityCount ?? facilities.length);
+  return { queryId: r.QueryID, totalCount: total, firstPage: facilities };
+}
+
+/** Pull subsequent pages of an existing ECHO query. */
+async function fetchPage(queryId: string, pageNo: number): Promise<EchoFacility[]> {
+  const url =
+    `${ECHO_BASE}/rcra_rest_services.get_qid` +
+    `?qid=${encodeURIComponent(queryId)}&output=JSON` +
+    `&responseset=${PAGE_SIZE}&pageno=${pageNo}`;
+  const json = await fetchJson<EchoFacilitiesResponse>(url);
+  return Array.isArray(json.Results?.Facilities) ? json.Results!.Facilities! : [];
+}
+
 function epaSlug(handlerId: string): string {
   return `epa-rcra:${handlerId.toLowerCase()}`;
 }
 
-/** Best-effort name normalization: trim, collapse whitespace, drop
- *  trailing legal-form noise that pollutes alias-matching ("INC.",
- *  "LLC", "LP" all kept on the canonical name; lowercase comparison
- *  happens at query time). */
 function normalizeName(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim();
 }
 
+/** Pull the handler's EPA ID from whichever field ECHO populates. */
+function handlerIdOf(f: EchoFacility): string | null {
+  const id = f.HandlerID ?? f.EPAHandlerID ?? f.RegistryID;
+  return id ? id.trim() : null;
+}
+
+function nameOf(f: EchoFacility): string {
+  return normalizeName(f.HandlerName ?? f.FacName ?? '');
+}
+
 async function upsertHandler(
-  h: EnvirofactsHandler,
+  f: EchoFacility,
   naicsCodes: Set<string>,
 ): Promise<'inserted' | 'updated' | 'skipped'> {
-  const handlerId = h.handler_id?.trim();
-  const name = normalizeName(h.handler_name ?? '');
+  const handlerId = handlerIdOf(f);
+  const name = nameOf(f);
   if (!handlerId || !name) return 'skipped';
 
   const slug = epaSlug(handlerId);
@@ -188,10 +179,9 @@ async function upsertHandler(
   const role = 'environmental-services';
   const categories = ['environmental-services', 'hazardous-waste'];
 
-  // Capability slot — Phase 1 EPA ingest writes the structured shape
-  // with what we know from RCRA Info; treatment technologies + waste
-  // types are inferred from NAICS only at this layer (more specific
-  // RCRA waste-codes would require a second pass against HD_HWASTE).
+  // NAICS-derived waste-type inference. NAICS-only resolution is
+  // coarse — Phase 1 ships this; a Phase 2 pass against the RCRA
+  // waste-code table (HD_HWASTE / similar) would refine.
   const wasteTypesByNaics: Record<string, string[]> = {
     '562211': ['oily-sludge', 'tank-bottoms', 'refinery-sludge', 'spent-catalysts'],
     '562910': ['contaminated-soil', 'hydrocarbon-contaminated-water', 'crude-spill-residue'],
@@ -199,15 +189,13 @@ async function upsertHandler(
     '213112': ['drilling-mud-water-based', 'drill-cuttings', 'pit-waste'],
   };
   const wasteTypesHandled = Array.from(
-    new Set(
-      [...naicsCodes].flatMap((n) => wasteTypesByNaics[n] ?? []),
-    ),
+    new Set([...naicsCodes].flatMap((n) => wasteTypesByNaics[n] ?? [])),
   );
 
   const capability = {
     wasteTypesHandled,
-    treatmentTechnologies: [], // unknown at NAICS-only resolution
-    mobileCapability: false, // can't infer from RCRA Info
+    treatmentTechnologies: [],
+    mobileCapability: false,
     labCapability: false,
     countriesServed: [country],
     regulatorLicenses: [
@@ -217,19 +205,21 @@ async function upsertHandler(
         licenseCategory: `NAICS-${[...naicsCodes].sort().join(',')}`,
         licenseNumber: handlerId,
         validUntil: null,
-        sourceUrl: `https://rcrapublic.epa.gov/rcrainfoweb/action/modules/hd/handlersearchresults?epaid=${encodeURIComponent(handlerId)}`,
+        sourceUrl: `https://echo.epa.gov/detailed-facility-report?fid=${encodeURIComponent(handlerId)}`,
       },
     ],
     priorOilGasClients: [],
     notes: '',
-    confidenceScore: 0.7, // single-source regulator data — entry is real but unenriched
+    confidenceScore: 0.7,
   };
 
-  const cityState = [h.location_city, h.location_state].filter(Boolean).join(', ');
+  const cityState = [f.FacCity, f.FacState].filter(Boolean).join(', ');
+  const lat = f.FacLat && Number.isFinite(Number(f.FacLat)) ? Number(f.FacLat) : null;
+  const lng = f.FacLong && Number.isFinite(Number(f.FacLong)) ? Number(f.FacLong) : null;
 
   await db.execute(sql`
     INSERT INTO known_entities (
-      slug, name, country, role, categories, tags, notes, metadata
+      slug, name, country, role, categories, tags, notes, metadata, latitude, longitude
     ) VALUES (
       ${slug},
       ${name},
@@ -238,7 +228,9 @@ async function upsertHandler(
       ARRAY[${sql.join(categories.map((c) => sql`${c}`), sql`, `)}]::text[],
       ARRAY['env-services', 'source:epa-rcra']::text[],
       ${cityState ? `Location: ${cityState}` : null},
-      ${JSON.stringify({ environmentalServices: capability })}::jsonb
+      ${JSON.stringify({ environmentalServices: capability })}::jsonb,
+      ${lat},
+      ${lng}
     )
     ON CONFLICT (slug) DO UPDATE SET
       name        = EXCLUDED.name,
@@ -246,67 +238,87 @@ async function upsertHandler(
       tags        = EXCLUDED.tags,
       notes       = EXCLUDED.notes,
       metadata    = EXCLUDED.metadata,
+      latitude    = COALESCE(EXCLUDED.latitude, known_entities.latitude),
+      longitude   = COALESCE(EXCLUDED.longitude, known_entities.longitude),
       updated_at  = NOW();
   `);
   return 'updated';
 }
 
-/** Run the EPA RCRA ingest. Iterates each target NAICS code, paginates
- *  Envirofacts pages of PAGE_SIZE, and upserts each handler. Same
- *  handler appearing under multiple NAICS codes is collapsed at upsert
- *  time (re-runs union the NAICS list into licenseCategory). */
 export async function runEpaRcra(): Promise<EpaRcraRunSummary> {
   const startedAt = new Date().toISOString();
   let upserted = 0;
   let skipped = 0;
   const errors: string[] = [];
 
-  // Track handler_id → naics_codes seen so the second-pass NAICS
-  // lookup doesn't have to re-fetch.
+  // Same handler may appear under multiple NAICS — track the union so
+  // the upsert reflects the full NAICS profile.
   const naicsByHandler = new Map<string, Set<string>>();
-  const allHandlers = new Map<string, EnvirofactsHandler>();
+  const allHandlers = new Map<string, EchoFacility>();
 
   for (const naics of TARGET_NAICS) {
-    let pageStart = 1;
-    let pagesFetched = 0;
-    while (true) {
-      try {
-        const page = await fetchPage(naics, pageStart, pageStart + PAGE_SIZE - 1);
-        if (page.length === 0) break;
-        for (const h of page) {
-          if (!h.handler_id) continue;
-          allHandlers.set(h.handler_id, h);
-          const set = naicsByHandler.get(h.handler_id) ?? new Set<string>();
-          set.add(naics);
-          naicsByHandler.set(h.handler_id, set);
-        }
-        pagesFetched += 1;
-        if (page.length < PAGE_SIZE) break;
-        pageStart += PAGE_SIZE;
-        await new Promise((r) => setTimeout(r, PAGE_THROTTLE_MS));
-        // Cap at 50 pages per NAICS to bound cost in case a filter
-        // change explodes the result set.
-        if (pagesFetched >= 50) {
+    let queryId = '';
+    let total = 0;
+    let firstPage: EchoFacility[] = [];
+    try {
+      const start = await startQuery(naics);
+      queryId = start.queryId;
+      total = start.totalCount;
+      firstPage = start.firstPage;
+    } catch (err) {
+      errors.push(`EPA NAICS ${naics} startQuery: ${describeError(err)}`);
+      continue;
+    }
+
+    const ingestPage = (page: EchoFacility[]) => {
+      for (const f of page) {
+        const id = handlerIdOf(f);
+        if (!id) continue;
+        allHandlers.set(id, f);
+        const set = naicsByHandler.get(id) ?? new Set<string>();
+        set.add(naics);
+        naicsByHandler.set(id, set);
+      }
+    };
+    ingestPage(firstPage);
+
+    if (total > firstPage.length) {
+      const totalPages = Math.min(
+        MAX_PAGES_PER_NAICS,
+        Math.ceil(total / PAGE_SIZE),
+      );
+      for (let pageNo = 2; pageNo <= totalPages; pageNo += 1) {
+        try {
+          const page = await fetchPage(queryId, pageNo);
+          if (page.length === 0) break;
+          ingestPage(page);
+        } catch (err) {
           errors.push(
-            `EPA NAICS ${naics}: hit 50-page cap, results truncated. ` +
-              `Tighten filter or raise cap.`,
+            `EPA NAICS ${naics} page ${pageNo}: ${describeError(err)}`,
           );
           break;
         }
-      } catch (err) {
-        errors.push(`EPA NAICS ${naics} page ${pageStart}: ${describeError(err)}`);
-        break;
+        await new Promise((r) => setTimeout(r, PAGE_THROTTLE_MS));
+      }
+      if (totalPages === MAX_PAGES_PER_NAICS && total > MAX_PAGES_PER_NAICS * PAGE_SIZE) {
+        errors.push(
+          `EPA NAICS ${naics}: hit page cap (${MAX_PAGES_PER_NAICS}); ` +
+            `${total} total handlers, ingested first ${MAX_PAGES_PER_NAICS * PAGE_SIZE}.`,
+        );
       }
     }
   }
 
-  for (const [handlerId, handler] of allHandlers) {
+  for (const [handlerId, facility] of allHandlers) {
     try {
-      const result = await upsertHandler(handler, naicsByHandler.get(handlerId) ?? new Set());
+      const result = await upsertHandler(
+        facility,
+        naicsByHandler.get(handlerId) ?? new Set(),
+      );
       if (result === 'skipped') skipped += 1;
       else upserted += 1;
     } catch (err) {
-      errors.push(`upsert ${handlerId}: ${(err as Error).message}`);
+      errors.push(`upsert ${handlerId}: ${describeError(err)}`);
       skipped += 1;
     }
   }
