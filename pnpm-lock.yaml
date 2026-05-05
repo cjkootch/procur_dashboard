@@ -583,6 +583,9 @@ importers:
 
   packages/mcp-server:
     dependencies:
+      '@procur/ai':
+        specifier: workspace:*
+        version: link:../ai
       '@procur/db':
         specifier: workspace:*
         version: link:../db
@@ -592,6 +595,9 @@ importers:
       server-only:
         specifier: ^0.0.1
         version: 0.0.1
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
     devDependencies:
       '@procur/config':
         specifier: workspace:*
