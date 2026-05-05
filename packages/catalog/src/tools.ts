@@ -22,7 +22,9 @@ import {
   lookupSanctionsScreens,
   getCrudeGradeDetail,
   getExposureForGeoPhrase,
+  getGradeYieldValue,
   getMacroSignalExposure,
+  getRefineryImportContext,
   listCrudeGrades,
   lookupCrudeAssay,
   lookupRefineriesByGrade,
@@ -4248,6 +4250,216 @@ export function buildCatalogTools(): ToolRegistry {
                 }),
               })),
               exposedRefineryCount: result.exposedRefineries.length,
+            };
+          },
+        ),
+    }),
+
+    lookup_refinery_import_context: defineTool({
+      name: 'lookup_refinery_import_context',
+      description:
+        'For a single refinery in the rolodex, cross-reference its ' +
+        'configured slate envelope (apiMin/apiMax/sulfurMaxPct/tanMax) ' +
+        'against the customs-import flows of its country. Closes the ' +
+        'gap between "the slate window permits this grade" (theory) ' +
+        'and "the country actually imports this grade" (reality).\n\n' +
+        'Granularity: customs flows are reporter × partner-country ' +
+        'level (Eurostat / UN Comtrade). We CAN tell you "Italy ' +
+        'imported 8.2M kg of Libyan crude over the last 12 months and ' +
+        'Sannazzaro\'s slate accepts Es Sider" — vastly stronger than ' +
+        'slate alone. We CANNOT tell you "Sannazzaro specifically ran ' +
+        'this cargo" — per-cargo attribution requires AIS+Kpler/' +
+        'Vortexa, which is out of scope.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • The user names a refinery and wants the realistic supply ' +
+        '"shopping list" — what their country actually buys + what ' +
+        'their slate accepts.\n' +
+        '  • Building outreach: pitch grades the country already ' +
+        'imports first; pitch hypothetical-fit grades second.\n' +
+        '  • Validating a slate-fit lookup that returned more grades ' +
+        'than feel realistic — surfaces which are "live" supply lines.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The user wants per-cargo attribution — flag the limitation ' +
+        'and direct them to find_recent_port_calls / ' +
+        'analyze_entity_cargo_activity (AIS-derived, vessel-level).\n' +
+        '  • The refinery is in a country with no Eurostat reporter ' +
+        '(most non-EU + non-US): the customs side will be empty.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Lead with the rows that have BOTH slate fit AND non-zero ' +
+        'flow — those are real today.\n' +
+        '  • Slate fit + zero flow = either (a) the refinery uses a ' +
+        'different supply route procur can\'t see, or (b) genuine ' +
+        'whitespace. Mention the ambiguity.\n' +
+        '  • `summary.gradesWithImportEvidence / ' +
+        'summary.slateCompatibleGradeCount` is the realism score: a ' +
+        'refinery whose slate accepts 12 grades but only 3 have ' +
+        'import evidence is worth 3, not 12.',
+      kind: 'read',
+      schema: z.object({
+        refinerySlug: z
+          .string()
+          .min(1)
+          .describe(
+            'known_entities.slug for the refinery. Use lookup_known_entities ' +
+              'with role=refiner first if the user names by free text.',
+          ),
+        productCode: z
+          .string()
+          .optional()
+          .describe(
+            'HS code for customs filter. Default 2709 (crude petroleum). ' +
+              'Pass 2710 for refined-product flows on a refiner that imports ' +
+              'finished product (rare).',
+          ),
+        monthsLookback: z
+          .number()
+          .min(1)
+          .max(36)
+          .optional()
+          .describe('Default 12 months; cap 36.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_refinery_import_context',
+            args: input,
+            summarize: (out: { gradeCount: number } | { resolved: false }) => ({
+              resultCount: 'gradeCount' in out ? out.gradeCount : 0,
+              resultSummary: { refinerySlug: input.refinerySlug },
+            }),
+          },
+          async () => {
+            const ctxResult = await getRefineryImportContext(input.refinerySlug, {
+              productCode: input.productCode,
+              monthsLookback: input.monthsLookback,
+            });
+            if (!ctxResult) {
+              return {
+                resolved: false as const,
+                reason:
+                  'no-slate-or-not-found — refinery slug missing OR no slate ' +
+                  'envelope configured. Use lookup_known_entities to find the ' +
+                  'right slug, or check that the refinery has metadata.slate ' +
+                  'set in the rolodex.',
+                gradeCount: 0,
+              };
+            }
+            return {
+              resolved: true as const,
+              refinerySlug: ctxResult.refinerySlug,
+              refineryName: ctxResult.refineryName,
+              refineryCountry: ctxResult.refineryCountry,
+              profileUrl: buildEntityProfileUrl({
+                kind: 'known_entity',
+                slug: ctxResult.refinerySlug,
+              }),
+              productCode: ctxResult.productCode,
+              monthsLookback: ctxResult.monthsLookback,
+              gradeCount: ctxResult.rows.length,
+              summary: ctxResult.summary,
+              rows: ctxResult.rows.map((r) => ({
+                gradeName: r.gradeName,
+                gradeOriginCountry: r.gradeOriginCountry,
+                gradeApiGravity: r.gradeApiGravity,
+                gradeSulfurPct: r.gradeSulfurPct,
+                quantityKg: r.quantityKg,
+                valueUsd: r.valueUsd,
+                monthsActive: r.monthsActive,
+                mostRecentPeriod: r.mostRecentPeriod,
+                profileUrl: buildEntityProfileUrl({
+                  kind: 'crude_grade',
+                  slug: r.gradeSlug,
+                }),
+              })),
+            };
+          },
+        ),
+    }),
+
+    compute_grade_yield_value: defineTool({
+      name: 'compute_grade_yield_value',
+      description:
+        'Cut-weighted gross product value for a single crude grade ' +
+        '— "what would this crude theoretically realize at today\'s ' +
+        'product prices, given its TBP cut breakdown." Maps each ' +
+        'producer-assay cut (light naphtha → vacuum residue) to the ' +
+        'closest refined-product benchmark series, applies a handling ' +
+        'multiplier, and sums across cuts to a USD/bbl figure.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • The user wants a sanity-check anchor on FOB cost — ' +
+        '"is $82/bbl reasonable for Bonny Light?" → grade yield value ' +
+        'is the gross product side of that question.\n' +
+        '  • Comparing two grades intuitively — yield value tells you ' +
+        'which crude is structurally more valuable to a refiner.\n' +
+        '  • Pair with get_crude_basis: yield value − basis-FOB = ' +
+        'the gross refining margin estimate.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The user wants a P&L — use compose_deal_economics. This ' +
+        'tool is the gross-product-value anchor only; freight, ' +
+        'utilities, working capital, target margin all live in the ' +
+        'calculator.\n' +
+        '  • The grade has no producer assay yet — the tool returns ' +
+        'null. Check view_crude_grade_detail first.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • `cutsCoveredPct` < 80 means the assay\'s cut vocabulary ' +
+        'didn\'t map cleanly to benchmarks — flag that the result is ' +
+        'rough, don\'t stake a narrative on it.\n' +
+        '  • Lighter sweet grades (Bonny Light, Es Sider, Brent) ' +
+        'value out 5-10 % above Brent due to higher distillate yield. ' +
+        'Heavier sour grades (Maya, Urals) value 5-15 % below.\n' +
+        '  • Treat the multiplier curve as approximate — calibrate as ' +
+        'real margin data surfaces.',
+      kind: 'read',
+      schema: z.object({
+        gradeSlug: z
+          .string()
+          .min(1)
+          .describe(
+            'crude_grades.slug — must have at least one producer assay ' +
+              'with cut breakdown.',
+          ),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'compute_grade_yield_value',
+            args: input,
+            summarize: (
+              out: { grossProductValueUsdBbl: number | null } | { resolved: false },
+            ) => ({
+              resultCount:
+                'grossProductValueUsdBbl' in out && out.grossProductValueUsdBbl != null ? 1 : 0,
+              resultSummary: { gradeSlug: input.gradeSlug },
+            }),
+          },
+          async () => {
+            const v = await getGradeYieldValue(input.gradeSlug);
+            if (!v) {
+              return {
+                resolved: false as const,
+                reason:
+                  'no-assay — grade has no producer assay with cut data. ' +
+                  'Use list_crude_grades to discover slugs that have assays, ' +
+                  'or view_crude_grade_detail to see what data exists.',
+              };
+            }
+            return {
+              resolved: true as const,
+              gradeSlug: v.gradeSlug,
+              gradeName: v.gradeName,
+              profileUrl: buildEntityProfileUrl({
+                kind: 'crude_grade',
+                slug: v.gradeSlug,
+              }),
+              assaySource: v.assaySource,
+              assayReference: v.assayReference,
+              assayDate: v.assayDate,
+              grossProductValueUsdBbl: v.grossProductValueUsdBbl,
+              cutsCoveredPct: v.cutsCoveredPct,
+              contributions: v.contributions,
+              notes: v.notes,
             };
           },
         ),

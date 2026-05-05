@@ -277,6 +277,12 @@ export default async function BriefPage() {
             {marketSignals.slice(0, 3).map((item) => {
               const exposure = macroExposureById.get(item.id) ?? null;
               const refs = exposure?.exposedRefineries ?? [];
+              const slateCount = refs.filter(
+                (r) => r.exposureKind === 'slate' || r.exposureKind === 'both',
+              ).length;
+              const proxCount = refs.filter(
+                (r) => r.exposureKind === 'proximity' || r.exposureKind === 'both',
+              ).length;
               return (
                 <div
                   key={item.id}
@@ -300,6 +306,15 @@ export default async function BriefPage() {
                     <p className="mt-1 text-[10px] text-[color:var(--color-foreground)]">
                       <span className="font-semibold">Exposed:</span>{' '}
                       {refs.length} refiner{refs.length === 1 ? 'y' : 'ies'}
+                      {(slateCount > 0 || proxCount > 0) && (
+                        <span className="text-[color:var(--color-muted-foreground)]">
+                          {' ('}
+                          {slateCount > 0 ? `${slateCount} slate` : ''}
+                          {slateCount > 0 && proxCount > 0 ? ', ' : ''}
+                          {proxCount > 0 ? `${proxCount} nearby` : ''}
+                          {')'}
+                        </span>
+                      )}
                       {' · '}
                       {refs.slice(0, 3).map((r, i) => (
                         <span key={r.slug}>
