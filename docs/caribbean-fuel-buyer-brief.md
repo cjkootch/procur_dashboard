@@ -1,5 +1,28 @@
 # Caribbean Fuel Buyer Rolodex — Expansive
 
+> **IMPLEMENTATION STATUS — refreshed 2026-05-05**
+>
+> **Status: Phase 1 partially shipped; Phases 2 and 3 deferred.** The structural foundation (schema, taxonomy, chat tools, ingestion helper) is in production. Tier 1 seed expansion is in operator-driven flight.
+>
+> **Phase 1 — Tier 1 hand-curation:** ✓ foundation shipped, seed ongoing
+> - PR #380 (foundation, merged) — `fuel_buyer_profile` schema, `packages/catalog/src/fuel-buyer-taxonomy.ts` with FUEL_BUYER_SEGMENTS / FUEL_TYPES_PURCHASED / PROCUREMENT_MODELS / OWNERSHIP_TYPES / VOLUME_CONFIDENCE_LEVELS enums, `find_caribbean_fuel_buyers` chat tool, utilities-segment seed (~12 entities)
+> - PR #381 (segment seeds, merged) — Tier-1 seeds across mining, marine bunker, aviation, distributors, construction, government, hospitality, LPG. Total seeded: **~73 entities** against the §5.1 target of 100-150. Per-segment orchestrator dispatch so each segment's seed runs independently.
+> - **Operator is driving the remaining 30-80 Tier-1 entries** — explicit owner request to finish hand-curation outside Claude sessions ("Ship, I'll seed all when finished sprint").
+>
+> **Beyond brief:** PR #383 added lat/lng on physical-asset buyer entities (refineries, terminals, ports, plants) + buyer-demand validation against ingested customs flows. This wasn't specified in the brief but pairs naturally with `data-graph-connections-brief.md` work item 5 (customs flow × entity profile) and made the rolodex more useful for slate-fit reasoning.
+>
+> **Phase 2 — Tier 2 OCDS expansion:** ✗ not shipped
+> - Jamaica / DR / T&T / Bahamas / Barbados / Guyana fuel-tender ingestion not yet wired in. Brief estimates 1-2 weeks; defer until Phase 1 seed expansion completes so we know the gap.
+>
+> **Phase 3 — Contact enrichment:** ✗ not shipped
+> - Person-level data on Tier 1 entities deferred. Will likely benefit from the Apollo integration (see `apollo-integration-brief.md`) for org-level enrichment first, then a person-data source layered on top.
+>
+> **What's NOT yet shipped beyond the phase work:**
+> - Buyer-tender procurement-event indexing into `supplier_signals` (brief §9 integration)
+> - Match-queue priority signals from buyer-side import recency (brief §9)
+>
+> ---
+
 **Status:** spec, not yet implemented
 **Owner:** Cole
 **Last updated:** 2026-05-04
