@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import type { EntityContactEnrichment } from '@procur/catalog';
 import { EnrichApolloPersonButton } from './EnrichApolloPersonButton';
 import { FindApolloPeopleForm } from './FindApolloPeopleForm';
@@ -41,8 +42,15 @@ export function ApolloDecisionMakers({
   return (
     <section className="mb-6">
       <h2 className="mb-2 flex items-baseline justify-between text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-        <span>
-          Decision-makers (Apollo){' '}
+        <span className="flex items-center gap-1.5">
+          Decision-makers
+          <Image
+            src="/apollo-logo.svg"
+            alt="Apollo"
+            width={12}
+            height={12}
+            aria-label="Powered by Apollo"
+          />
           <span className="ml-1 normal-case tracking-normal text-[color:var(--color-muted-foreground)]">
             ({apolloContacts.length})
           </span>
