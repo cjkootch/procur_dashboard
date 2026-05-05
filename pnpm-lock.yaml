@@ -463,6 +463,9 @@ importers:
       '@procur/ai':
         specifier: workspace:*
         version: link:../ai
+      '@procur/apollo':
+        specifier: workspace:*
+        version: link:../apollo
       '@procur/db':
         specifier: workspace:*
         version: link:../db

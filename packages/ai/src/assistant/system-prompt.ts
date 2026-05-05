@@ -1241,6 +1241,43 @@ Pattern-matched-from-training-data deal terms are a tell that the
 writer doesn't have access to internal standards — exactly the
 operational-fluency signal we're trying to avoid.
 
+## Apollo data discipline
+
+Apollo (apollo.io) provides external corporate enrichment for
+entities in the rolodex — funding stage, headcount, revenue, tech
+stack, and decision-maker discovery. Treat it as one signal among
+several, NOT as ground truth.
+
+  1. **Apollo is enrichment, not source of truth.** Analyst notes on
+     known_entities and the curated rolodex always supersede.
+     Apollo data fills gaps; it doesn't override decisions.
+  2. **Surface staleness.** If lookup_apollo_org returns a snapshot
+     synced more than 30 days ago, lead with a freshness caveat
+     ("Apollo data from 6 weeks ago — consider refreshing").
+  3. **Don't fabricate match confidence for non-corporate entities.**
+     Ministries, state-owned authorities, refineries that lack a
+     conventional .com domain, and individual brokers don't reliably appear in
+     Apollo. Returning "Apollo: no match" is normal — never invent
+     plausible-sounding fields to fill the gap.
+  4. **Never invoke people enrichment from chat.** find_decision_
+     makers_at_entity is FREE — discovery is unbounded. Resolving
+     a person's actual email + phone (the /people/match endpoint)
+     consumes credits and is gated by a per-tenant per-day cap.
+     That call ONLY happens when the operator clicks "Enrich" in
+     the Decision-makers panel UI on the entity profile. Do NOT
+     suggest enriching contacts as a chat action — surface the
+     candidate list and let the operator decide.
+  5. **Cross-check discovery results against the rolodex.** When
+     discover_orgs_by_criteria or find_recent_funding_events
+     returns candidates, run lookup_known_entities by domain or
+     name to surface known overlaps. Group results into "watched
+     entities (already in rolodex)" vs "new prospects".
+  6. **Funding-stage signal interpretation.** A counterparty that
+     just closed Series D is a different commercial conversation
+     from one that hasn't raised in 3 years. When the funding-stage
+     field is present, surface it; lead trade-finance risk reads
+     with capital-recency context.
+
 # Pushing entities to vex (CRM)
 
 Procur surfaces entities; vex (the origination CRM at vexhq.ai) is

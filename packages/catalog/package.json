@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@procur/ai": "workspace:*",
+    "@procur/apollo": "workspace:*",
     "@procur/db": "workspace:*",
     "@procur/pricing": "workspace:*",
     "drizzle-orm": "^0.38.3",
