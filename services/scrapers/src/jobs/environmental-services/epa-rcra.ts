@@ -124,9 +124,14 @@ async function startQuery(naicsCode: string): Promise<{
   totalCount: number;
   firstPage: EchoFacility[];
 }> {
+  // ECHO RCRA REST parameter for NAICS is `p_ncs`, not `p_naics`. The
+  // earlier `p_naics` was silently ignored, leading to 1.59M-row
+  // responses (the entire RCRA universe) and the queryset-limit
+  // error. `p_ncs` is the documented filter name in ECHO's RCRA web
+  // service contract.
   const url =
     `${ECHO_BASE}/rcra_rest_services.get_facilities` +
-    `?output=JSON&p_naics=${encodeURIComponent(naicsCode)}` +
+    `?output=JSON&p_ncs=${encodeURIComponent(naicsCode)}` +
     `&responseset=${PAGE_SIZE}`;
   const json = await fetchJson<EchoFacilitiesResponse>(url);
   const r = json.Results ?? {};
