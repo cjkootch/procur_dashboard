@@ -10933,3 +10933,162 @@ export async function lookupCommissionStructures(
     updatedAt: new Date(String(r.updated_at)),
   })) as CommissionStructure[];
 }
+
+// ─── Proposal skeleton composition ────────────────────────────────
+
+export type ProposalSkeleton = {
+  /** The best-fit template selected from the catalog, or null when
+   *  no template matches the deal context cleanly. */
+  template: DealStructureTemplate | null;
+  /** Top-3 alternates if the operator wants to compare. Same ranking
+   *  as lookupDealStructureTemplates; index 0 of `alternatives` is
+   *  the next-best behind `template`. */
+  alternatives: DealStructureTemplate[];
+  /** Commissions that would apply to a deal of this template +
+   *  category + entity. Already filtered to `status='active'` and
+   *  ordered with exclusivePerDeal first. */
+  applicableCommissions: CommissionStructure[];
+  /** Whether OFAC pre-screening flagged the destination — TRUE if
+   *  destinationCountry hit any template's `excludedJurisdictions`
+   *  before filtering, surfacing the perimeter check explicitly. */
+  destinationExcluded: boolean;
+  /** Counsel-validation summary. `validatedTemplate: false` is the
+   *  most common signal worth surfacing — composition can proceed,
+   *  but the proposal layer should flag the unreviewed shape. */
+  counselNotes: {
+    validatedTemplate: boolean;
+    validatedByFirm: string | null;
+  };
+  /** Plain-language summary of why this template was selected, for
+   *  the assistant to lead with. */
+  selectionRationale: string;
+  notes: string[];
+};
+
+/**
+ * Compose a proposal skeleton from the catalog. Used by the chat
+ * tool `compose_proposal_skeleton` to seed proposal authoring with
+ * the right template + commissions + counsel discipline before any
+ * text is drafted. Spec: docs/deal-structures-catalog-brief.md §11
+ * day-4 integration ("update proposal-generation flow to record
+ * deal_structure_template_slug when a template is referenced").
+ *
+ * Returns a structured object that:
+ *   - identifies the best-fit template (if any)
+ *   - surfaces 1-3 alternatives for operator comparison
+ *   - lists applicable commissions (universal + template-scoped)
+ *   - flags destination-jurisdiction exclusion BEFORE the assistant
+ *     drafts text against an excluded perimeter
+ *   - reports counsel-validation status so the assistant can flag
+ *     unreviewed shapes
+ *
+ * Does NOT write to the proposals table — the chat layer or proposal
+ * UI is responsible for persisting the slug onto the row when the
+ * proposal is actually created.
+ */
+export async function composeProposalSkeleton(args: {
+  category: string;
+  region?: string;
+  vtcEntity?: string;
+  preferredIncoterm?: string;
+  preferredPaymentInstrument?: string;
+  destinationCountry?: string;
+}): Promise<ProposalSkeleton> {
+  // Phase 1: check if destination is excluded somewhere we need to
+  // flag (run a wider lookup ignoring destination filter so we can
+  // tell the operator "yes, your destination IS excluded by these
+  // templates" — different from "no template matched the criteria").
+  const allMatching = await lookupDealStructureTemplates({
+    category: args.category,
+    region: args.region,
+    vtcEntity: args.vtcEntity,
+    preferredIncoterm: args.preferredIncoterm,
+    preferredPaymentInstrument: args.preferredPaymentInstrument,
+    // intentionally NO destinationCountry filter here
+    limit: 10,
+  });
+
+  let destinationExcluded = false;
+  let filteredMatching = allMatching;
+  if (args.destinationCountry) {
+    const dest = args.destinationCountry;
+    filteredMatching = allMatching.filter((t) => !t.excludedJurisdictions.includes(dest));
+    destinationExcluded = filteredMatching.length < allMatching.length;
+  }
+
+  const template = filteredMatching[0] ?? null;
+  const alternatives = filteredMatching.slice(1, 4);
+
+  // Phase 2: applicable commissions — pulled scoped to the chosen
+  // template + category + entity. Universal-coverage commissions
+  // (empty appliesToCategories / appliesToTemplateSlugs) come back
+  // because the lookup helper treats them as wildcards.
+  const applicableCommissions = template
+    ? await lookupCommissionStructures({
+        dealCategory: args.category,
+        dealTemplateSlug: template.slug,
+        vtcEntity: template.vtcEntity,
+        limit: 10,
+      })
+    : [];
+
+  // Counsel discipline summary.
+  const counselNotes = {
+    validatedTemplate: template?.validatedByCounsel ?? false,
+    validatedByFirm: template?.validatedByFirm ?? null,
+  };
+
+  // Selection rationale — operator-readable explanation of why we
+  // landed on this template.
+  let selectionRationale: string;
+  if (!template) {
+    selectionRationale = destinationExcluded
+      ? `No active template matched: destination ${args.destinationCountry} is excluded from every template that would otherwise fit category=${args.category}${args.region ? ` region=${args.region}` : ''}. Confirm with counsel whether a general license applies before composing.`
+      : `No active template matched the requested criteria. Either (a) VTC doesn't have a standard for this shape yet — flag the gap to the operator and consider drafting a new template, or (b) one of the criteria (region, Incoterm, payment instrument) is too narrow.`;
+  } else {
+    const reasons: string[] = [`category=${template.category}`];
+    if (args.region && template.applicableRegions.includes(args.region)) {
+      reasons.push(`region=${args.region}`);
+    }
+    if (args.preferredIncoterm && template.incoterm === args.preferredIncoterm) {
+      reasons.push(`Incoterm=${template.incoterm}`);
+    }
+    if (
+      args.preferredPaymentInstrument &&
+      template.paymentInstrument === args.preferredPaymentInstrument
+    ) {
+      reasons.push(`payment=${template.paymentInstrument}`);
+    }
+    if (template.validatedByCounsel) {
+      reasons.push('counsel-validated');
+    }
+    selectionRationale = `Selected ${template.slug} based on ${reasons.join(' + ')}. Active status, ranked best-fit by composite score.`;
+  }
+
+  const notes: string[] = [];
+  if (!counselNotes.validatedTemplate && template) {
+    notes.push(
+      `Template ${template.slug} is NOT counsel-validated. Composition can proceed, but the proposal should flag this status; per origination-partners-brief §4, every origin × destination × payment-instrument permutation needs counsel review.`,
+    );
+  }
+  if (destinationExcluded && template) {
+    notes.push(
+      `Some otherwise-matching templates excluded destination ${args.destinationCountry}; the surfaced template's perimeter does NOT exclude it, but verify the operator's compliance perimeter against the broader exclusion list.`,
+    );
+  }
+  if (applicableCommissions.length === 0 && template) {
+    notes.push(
+      `No applicable commissions matched. Either no third-party fees apply to this deal (in-house origination) or commission catalog coverage needs expansion.`,
+    );
+  }
+
+  return {
+    template,
+    alternatives,
+    applicableCommissions,
+    destinationExcluded,
+    counselNotes,
+    selectionRationale,
+    notes,
+  };
+}

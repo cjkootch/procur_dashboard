@@ -46,6 +46,13 @@ export const pricingModels = pgTable('pricing_models', {
   currency: text('currency').default('USD'),
   fxRateToUsd: numeric('fx_rate_to_usd', { precision: 10, scale: 4 }),
 
+  /** References deal_structure_templates(slug). When set, the pricing
+   *  model inherits margin parameters from the template (margin
+   *  structure, range, unit) — only deal-specific values need to be
+   *  overridden. NULL for legacy / template-less pricing per
+   *  docs/deal-structures-catalog-brief.md §10.4. */
+  dealStructureTemplateSlug: text('deal_structure_template_slug'),
+
   notes: text('notes'),
 
   createdAt: timestamp('created_at').defaultNow().notNull(),

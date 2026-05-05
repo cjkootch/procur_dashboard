@@ -59,6 +59,23 @@ export const contracts = pgTable(
 
   notes: text('notes'),
 
+  /** References deal_structure_templates(slug). Set when the contract
+   *  was instantiated from a catalog template. NULL for legacy
+   *  contracts (forward-only per
+   *  docs/deal-structures-catalog-brief.md §10.4). Surfaces "which
+   *  templates close at what rate" analytics once 6+ months of
+   *  contracts reference templates. */
+  dealStructureTemplateSlug: text('deal_structure_template_slug'),
+
+  /** Slugs of commission_structures that actually applied to this
+   *  contract — captured at signature time, may differ from
+   *  proposals.applicableCommissionSlugs if negotiation altered the
+   *  fee structure. Empty array when no structures applied. */
+  appliedCommissionSlugs: text('applied_commission_slugs')
+    .array()
+    .notNull()
+    .default([]),
+
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -66,6 +83,9 @@ export const contracts = pgTable(
     companyIdx: index('contracts_company_idx').on(table.companyId),
     pursuitIdx: index('contracts_pursuit_idx').on(table.pursuitId),
     parentIdx: index('contracts_parent_idx').on(table.parentContractId),
+    templateSlugIdx: index('contracts_template_slug_idx').on(
+      table.dealStructureTemplateSlug,
+    ),
   }),
 );
 
