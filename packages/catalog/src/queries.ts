@@ -2933,6 +2933,14 @@ export interface KnownEntityRow {
   approvalApprovedAt: string | null;
   /** ISO-8601. KYC re-cert date, when set. */
   approvalExpiresAt: string | null;
+  /** Apollo funding stage cached on the entity row. NULL when the
+   *  entity hasn't been Apollo-matched yet, or when the matched org
+   *  has no funding stage info. */
+  apolloFundingStage: string | null;
+  /** ISO yyyy-mm-dd of the most recent funding event. NULL when no
+   *  funding events are known. Sortable to surface "who has fresh
+   *  capital" at the top of the rolodex. */
+  apolloLatestFundingAt: string | null;
 }
 
 /** Mirrors SupplierApprovalStatus in @procur/db; duplicated here to
@@ -2973,6 +2981,7 @@ export async function lookupKnownEntities(
       ke.id, ke.slug, ke.name, ke.country, ke.role, ke.categories, ke.notes,
       ke.contact_entity, ke.aliases, ke.tags, ke.metadata,
       ke.latitude, ke.longitude,
+      ke.apollo_funding_stage, ke.apollo_latest_funding_at,
       ${companyId ? sql`sa.status` : sql`NULL::text`} AS approval_status,
       ${companyId ? sql`sa.approved_at` : sql`NULL::timestamptz`} AS approval_approved_at,
       ${companyId ? sql`sa.expires_at` : sql`NULL::timestamptz`} AS approval_expires_at
@@ -3047,6 +3056,14 @@ export async function lookupKnownEntities(
         : r.approval_expires_at == null
           ? null
           : String(r.approval_expires_at),
+    apolloFundingStage:
+      r.apollo_funding_stage == null ? null : String(r.apollo_funding_stage),
+    apolloLatestFundingAt:
+      r.apollo_latest_funding_at instanceof Date
+        ? r.apollo_latest_funding_at.toISOString().slice(0, 10)
+        : r.apollo_latest_funding_at == null
+          ? null
+          : String(r.apollo_latest_funding_at),
   }));
 }
 
@@ -3145,6 +3162,10 @@ export async function findEntitiesNearLocation(filters: {
     approvalStatus: null,
     approvalApprovedAt: null,
     approvalExpiresAt: null,
+    // Apollo cache fields not selected in this proximity query —
+    // proximity is a fast geographic narrow, not an enriched listing.
+    apolloFundingStage: null,
+    apolloLatestFundingAt: null,
   }));
 }
 
@@ -6987,6 +7008,14 @@ export type EntityContactEnrichment = {
   title: { value: string; confidence: number; sourceUrl: string | null } | null;
   phone: { value: string; confidence: number; sourceUrl: string | null } | null;
   linkedinUrl: { value: string; confidence: number; sourceUrl: string | null } | null;
+  /** Apollo person ID — populated only for `source = 'apollo'` rows.
+   *  Used by the Decision-makers panel to wire the Enrich button. */
+  apolloPersonId: string | null;
+  /** Apollo's structured seniority field. */
+  seniority: string | null;
+  /** When Apollo last refreshed this person's data. Distinct from
+   *  `enrichedAt` (procur's last write). */
+  apolloLastRefreshedAt: string | null;
 };
 
 /**
@@ -7011,10 +7040,14 @@ export async function getContactEnrichmentsBySlug(
       email, email_confidence, email_source_url,
       title, title_confidence, title_source_url,
       phone, phone_confidence, phone_source_url,
-      linkedin_url, linkedin_confidence, linkedin_source_url
+      linkedin_url, linkedin_confidence, linkedin_source_url,
+      apollo_person_id, seniority, apollo_last_refreshed_at
     FROM entity_contact_enrichments
     WHERE entity_slug = ${entitySlug}
-    ORDER BY enriched_at DESC, contact_name ASC
+    ORDER BY
+      CASE WHEN source = 'apollo' THEN 0 ELSE 1 END,
+      enriched_at DESC,
+      contact_name ASC
     LIMIT 50
   `);
 
@@ -7043,8 +7076,100 @@ export async function getContactEnrichmentsBySlug(
       title: field(r.title, r.title_confidence, r.title_source_url),
       phone: field(r.phone, r.phone_confidence, r.phone_source_url),
       linkedinUrl: field(r.linkedin_url, r.linkedin_confidence, r.linkedin_source_url),
+      apolloPersonId: r.apollo_person_id == null ? null : String(r.apollo_person_id),
+      seniority: r.seniority == null ? null : String(r.seniority),
+      apolloLastRefreshedAt:
+        r.apollo_last_refreshed_at instanceof Date
+          ? r.apollo_last_refreshed_at.toISOString()
+          : r.apollo_last_refreshed_at == null
+            ? null
+            : String(r.apollo_last_refreshed_at),
     };
   });
+}
+
+// ─── Apollo entity cache reader ──────────────────────────────────
+
+export type ApolloEntityCache = {
+  apolloOrgId: string;
+  syncedAt: string;
+  fundingStage: string | null;
+  totalFunding: number | null;
+  latestFundingAt: string | null;
+  estimatedEmployees: number | null;
+  annualRevenue: number | null;
+  /** Wide jsonb — full Apollo org snapshot (employee_metrics,
+   *  technology stack, per-round funding events, keywords,
+   *  short_description). Shape mirrors @procur/apollo's
+   *  ApolloOrgFull. */
+  snapshot: Record<string, unknown> | null;
+};
+
+/**
+ * Read the Apollo org cache for an entity by its canonical key
+ * (known_entities.slug or external_suppliers.id, same shape that
+ * getEntityProfile accepts). Returns null when the entity has no
+ * Apollo match yet — surfaces "Apollo: not matched" in the UI.
+ */
+export async function getApolloEntityCache(
+  canonicalKey: string,
+): Promise<ApolloEntityCache | null> {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    canonicalKey,
+  );
+
+  const result = isUuid
+    ? await db.execute(sql`
+        SELECT
+          apollo_org_id, apollo_synced_at,
+          apollo_funding_stage, apollo_total_funding,
+          apollo_latest_funding_at, apollo_estimated_employees,
+          apollo_annual_revenue, apollo_snapshot
+        FROM external_suppliers
+        WHERE id = ${canonicalKey}
+        LIMIT 1
+      `)
+    : await db.execute(sql`
+        SELECT
+          apollo_org_id, apollo_synced_at,
+          apollo_funding_stage, apollo_total_funding,
+          apollo_latest_funding_at, apollo_estimated_employees,
+          apollo_annual_revenue, apollo_snapshot
+        FROM known_entities
+        WHERE slug = ${canonicalKey}
+        LIMIT 1
+      `);
+
+  const row = (result.rows as Array<Record<string, unknown>>)[0];
+  if (!row || row.apollo_org_id == null || row.apollo_synced_at == null) {
+    return null;
+  }
+
+  return {
+    apolloOrgId: String(row.apollo_org_id),
+    syncedAt:
+      row.apollo_synced_at instanceof Date
+        ? row.apollo_synced_at.toISOString()
+        : String(row.apollo_synced_at),
+    fundingStage: row.apollo_funding_stage == null ? null : String(row.apollo_funding_stage),
+    totalFunding: row.apollo_total_funding == null ? null : Number(row.apollo_total_funding),
+    latestFundingAt:
+      row.apollo_latest_funding_at instanceof Date
+        ? row.apollo_latest_funding_at.toISOString().slice(0, 10)
+        : row.apollo_latest_funding_at == null
+          ? null
+          : String(row.apollo_latest_funding_at),
+    estimatedEmployees:
+      row.apollo_estimated_employees == null
+        ? null
+        : Number(row.apollo_estimated_employees),
+    annualRevenue:
+      row.apollo_annual_revenue == null ? null : Number(row.apollo_annual_revenue),
+    snapshot:
+      row.apollo_snapshot == null
+        ? null
+        : (row.apollo_snapshot as Record<string, unknown>),
+  };
 }
 
 // ─── Supplier approvals (per-tenant KYC state) ──────────────────

@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
 import {
+  getApolloEntityCache,
   getContactEnrichmentsBySlug,
   getDirectOwners,
   getEntityProfile,
@@ -14,6 +15,8 @@ import {
 import { KycBadge } from '../../../components/KycBadge';
 import { parseEntityNotes } from '../../../lib/entity-notes';
 import { PushToVexButton } from './_components/PushToVexButton';
+import { ApolloCorporateContext } from './_components/ApolloCorporateContext';
+import { ApolloDecisionMakers } from './_components/ApolloDecisionMakers';
 import { EntityDocumentsPanel } from './_components/EntityDocumentsPanel';
 import { FuelBuyerImportContextPanel } from './_components/FuelBuyerImportContextPanel';
 import { QuoteAnchorsPanel } from './_components/QuoteAnchorsPanel';
@@ -63,6 +66,7 @@ export default async function EntityProfilePage({ params }: Props) {
     contactEnrichments,
     refineryImportCtx,
     fuelBuyerImportCtx,
+    apolloCache,
   ] = await Promise.all([
     getDirectOwners(ownershipQueryName),
     getOwnershipChain(ownershipQueryName, 5),
@@ -87,6 +91,7 @@ export default async function EntityProfilePage({ params }: Props) {
     profile.role === 'fuel-buyer-industrial'
       ? getFuelBuyerImportContext(profile.canonicalKey).catch(() => null)
       : Promise.resolve(null),
+    getApolloEntityCache(profile.canonicalKey).catch(() => null),
   ]);
 
   const fmtUsd = (n: number | null) =>
@@ -175,6 +180,12 @@ export default async function EntityProfilePage({ params }: Props) {
           {cap.status && <Stat label="Status" value={cap.status} />}
         </section>
       )}
+
+      {/* Apollo corporate context — funding / headcount / revenue /
+          tech stack. Reads from the cached snapshot populated by the
+          nightly batch-enrichment cron. Renders an empty-state
+          message when the entity hasn't been Apollo-matched yet. */}
+      <ApolloCorporateContext cache={apolloCache} />
 
       {/* Quote anchors — refiner-only. Renders the realistic CIF
           mid for a default product into the desk's most-active dest
@@ -305,13 +316,19 @@ export default async function EntityProfilePage({ params }: Props) {
         </section>
       )}
 
-      {contactEnrichments.length > 0 && (
+      {/* Apollo decision-makers — separate section above the existing
+          vex Contacts list. Renders both pre-enrichment (obfuscated
+          last name) and enriched rows; Enrich button lands in a
+          follow-up PR. */}
+      <ApolloDecisionMakers contacts={contactEnrichments} />
+
+      {contactEnrichments.filter((c) => c.source !== 'apollo').length > 0 && (
         <section className="mb-6">
           <h2 className="mb-2 flex items-baseline justify-between text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             <span>
               Contacts{' '}
               <span className="ml-1 normal-case tracking-normal text-[color:var(--color-muted-foreground)]">
-                ({contactEnrichments.length})
+                ({contactEnrichments.filter((c) => c.source !== 'apollo').length})
               </span>
             </span>
             <span className="font-normal normal-case tracking-normal text-[10px]">
@@ -319,9 +336,11 @@ export default async function EntityProfilePage({ params }: Props) {
             </span>
           </h2>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {contactEnrichments.map((c) => (
-              <ContactCard key={c.id} contact={c} />
-            ))}
+            {contactEnrichments
+              .filter((c) => c.source !== 'apollo')
+              .map((c) => (
+                <ContactCard key={c.id} contact={c} />
+              ))}
           </div>
           <p className="mt-2 text-[10px] italic text-[color:var(--color-muted-foreground)]">
             Discoveries from connected integrations (vex CRM today). Procur treats these
