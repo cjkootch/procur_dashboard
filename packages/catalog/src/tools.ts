@@ -22,6 +22,8 @@ import {
   findGradesForRefinery,
   lookupCommissionStructures,
   lookupDealStructureTemplates,
+  getApolloEntityCache,
+  resolveApolloEntityRef,
   matchCargoToFuelBuyers,
   findRefineriesForGrade,
   lookupKnownEntities,
@@ -80,6 +82,12 @@ import {
   evaluateMultiProductRfq,
   type ProductSlug,
 } from './plausibility';
+import {
+  searchOrgs,
+  searchPeople,
+  APOLLO_SENIORITIES,
+  type ApolloSeniority,
+} from '@procur/apollo';
 
 /**
  * Discover catalog URL base — opportunities are viewed on Discover
@@ -5484,6 +5492,429 @@ export function buildCatalogTools(): ToolRegistry {
           // See packages/db/src/schema/supplier-signals.ts.
           signals: result.signals?.slice(0, 10) ?? [],
         };
+          },
+        ),
+    }),
+
+    // ─── Apollo (read-only) ──────────────────────────────────────
+
+    lookup_apollo_org: defineTool({
+      name: 'lookup_apollo_org',
+      description:
+        "Read the cached Apollo org snapshot for a procur entity by " +
+        "slug. Returns funding stage, total funding, latest round date, " +
+        "estimated employees, annual revenue, industry, technology " +
+        "stack, and short description. Spec: " +
+        "docs/apollo-integration-brief.md §6.5.\n\n" +
+        'WHEN TO CALL:\n' +
+        '  • Before answering "is this counterparty a viable buyer / ' +
+        'supplier" questions — funding-stage and headcount-trend are ' +
+        'the relevant signals for trade-finance risk.\n' +
+        '  • When the operator asks about a specific entity\'s scale, ' +
+        'recent funding, or technology stack.\n' +
+        '  • As a follow-up to lookup_known_entities when the operator ' +
+        'wants more depth on a candidate.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Apollo is enrichment, not source of truth. Analyst notes ' +
+        "on `known_entities` always supersede; flag conflicts.\n" +
+        '  • If `syncedAt` is older than 30 days, lead the response ' +
+        'with a freshness caveat and offer to refresh.\n' +
+        '  • For ministries, state-owned authorities, refineries with ' +
+        'no `.com` domain — Apollo silently has no record. Returning ' +
+        'null here is normal, not an error worth surfacing.',
+      kind: 'read',
+      schema: z.object({
+        entitySlug: z
+          .string()
+          .describe(
+            'known_entities.slug or external_suppliers.id (UUID). ' +
+              'Same shape that getEntityProfile / lookup_known_entities ' +
+              'use as a canonical key.',
+          ),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_apollo_org',
+            args: input,
+            summarize: (out: { matched: boolean }) => ({
+              resultCount: out.matched ? 1 : 0,
+              resultSummary: { matched: out.matched },
+            }),
+          },
+          async () => {
+            const cache = await getApolloEntityCache(input.entitySlug);
+            if (!cache) {
+              return {
+                matched: false,
+                message:
+                  'Apollo has no cached snapshot for this entity. ' +
+                  "Either the entity hasn't been matched to an Apollo org yet, " +
+                  "or Apollo doesn't index this counterparty (common for " +
+                  'ministries, state-owned authorities, and entities without ' +
+                  'a public domain).',
+              };
+            }
+            return {
+              matched: true,
+              apolloOrgId: cache.apolloOrgId,
+              syncedAt: cache.syncedAt,
+              fundingStage: cache.fundingStage,
+              totalFunding: cache.totalFunding,
+              latestFundingAt: cache.latestFundingAt,
+              estimatedEmployees: cache.estimatedEmployees,
+              annualRevenue: cache.annualRevenue,
+              industry: (cache.snapshot?.industry as string | null) ?? null,
+              shortDescription:
+                (cache.snapshot?.shortDescription as string | null) ?? null,
+              technologyNames:
+                (cache.snapshot?.technologyNames as string[] | undefined)?.slice(
+                  0,
+                  20,
+                ) ?? [],
+              keywords:
+                (cache.snapshot?.keywords as string[] | undefined)?.slice(
+                  0,
+                  20,
+                ) ?? [],
+            };
+          },
+        ),
+    }),
+
+    discover_orgs_by_criteria: defineTool({
+      name: 'discover_orgs_by_criteria',
+      description:
+        "Search Apollo's global company database by criteria — " +
+        'industry keywords, geographic location, headcount, revenue, ' +
+        'funding date / size, technology stack, hiring-activity. ' +
+        'Returns up to 25 candidate organizations with name, domain, ' +
+        'LinkedIn URL, founded year. Spec: ' +
+        'docs/apollo-integration-brief.md §6.5.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • The operator describes a counterparty profile they want ' +
+        'to find ("Caribbean fuel distributors with 50-500 employees ' +
+        'that raised in the last 12 months").\n' +
+        '  • Building outbound prospect lists outside the curated ' +
+        'rolodex.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • If the operator wants entities procur already knows about — ' +
+        'use lookup_known_entities first; the curated rolodex carries ' +
+        'analyst notes Apollo doesn\'t.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Results are CANDIDATES, not vetted entries. Mark them as ' +
+        'such — operator decides which to add to the rolodex.\n' +
+        '  • Cross-check returned domains against the existing rolodex ' +
+        '(via lookup_known_entities) to surface known overlaps.',
+      kind: 'read',
+      schema: z.object({
+        keywordTags: z
+          .array(z.string())
+          .optional()
+          .describe('Industry keywords, e.g. ["fuel distribution", "marine bunker"].'),
+        countries: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'ISO-2 country codes or full country names. e.g. ["JM", "DO", "TT"].',
+          ),
+        employeesMin: z.number().int().optional(),
+        employeesMax: z.number().int().optional(),
+        revenueMin: z.number().int().optional(),
+        revenueMax: z.number().int().optional(),
+        latestFundingAfterDate: z
+          .string()
+          .optional()
+          .describe('ISO yyyy-mm-dd. Filters to orgs whose most recent funding round is on or after this date.'),
+        totalFundingMin: z.number().int().optional(),
+        page: z.number().int().min(1).default(1),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'discover_orgs_by_criteria',
+            args: input,
+            summarize: (out: { totalEntries: number; orgsCount: number }) => ({
+              resultCount: out.orgsCount,
+              resultSummary: { totalEntries: out.totalEntries },
+            }),
+          },
+          async () => {
+            const result = await searchOrgs(
+              {
+                organizationKeywordTags: input.keywordTags,
+                organizationLocations: input.countries
+                  ?.map((c) => normalizeCountryCode(c))
+                  .filter((c): c is string => c != null),
+                organizationNumEmployeesRanges:
+                  input.employeesMin != null || input.employeesMax != null
+                    ? [`${input.employeesMin ?? 0},${input.employeesMax ?? 1_000_000}`]
+                    : undefined,
+                revenueRangeMin: input.revenueMin,
+                revenueRangeMax: input.revenueMax,
+                latestFundingDateMin: input.latestFundingAfterDate,
+                totalFundingMin: input.totalFundingMin,
+              },
+              { page: input.page, perPage: 25 },
+            );
+
+            if ('ok' in result) {
+              return {
+                degraded: true,
+                reason: result.reason,
+                message: result.message,
+                totalEntries: 0,
+                orgsCount: 0,
+                organizations: [],
+              };
+            }
+
+            return {
+              degraded: false,
+              totalEntries: result.pagination.totalEntries,
+              orgsCount: result.organizations.length,
+              page: result.pagination.page,
+              partialResultsOnly: result.partialResultsOnly,
+              organizations: result.organizations.map((o) => ({
+                apolloOrgId: o.id,
+                name: o.name,
+                primaryDomain: o.primaryDomain,
+                linkedinUrl: o.linkedinUrl,
+                websiteUrl: o.websiteUrl,
+                foundedYear: o.foundedYear,
+              })),
+            };
+          },
+        ),
+    }),
+
+    find_recent_funding_events: defineTool({
+      name: 'find_recent_funding_events',
+      description:
+        'Find organizations that closed a funding round in the last N ' +
+        'days. Convenience wrapper around discover_orgs_by_criteria ' +
+        'with the latest-funding-date filter pre-set. Spec: ' +
+        'docs/apollo-integration-brief.md §6.5.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • "Who has fresh capital in [region]?" — a counterparty ' +
+        'that just raised is a different commercial conversation than ' +
+        'one that hasn\'t raised in years.\n' +
+        '  • Outbound lead generation triggered by recent funding.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Cross-check against the rolodex — known overlaps surface ' +
+        'as "watched" alerts; novel matches as prospects.',
+      kind: 'read',
+      schema: z.object({
+        sinceDays: z
+          .number()
+          .int()
+          .min(1)
+          .max(365)
+          .default(90)
+          .describe('Number of days back to look. Default 90.'),
+        countries: z
+          .array(z.string())
+          .optional()
+          .describe('ISO-2 country codes or full country names.'),
+        keywordTags: z.array(z.string()).optional(),
+        totalFundingMin: z.number().int().optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_recent_funding_events',
+            args: input,
+            summarize: (out: { totalEntries: number; orgsCount: number }) => ({
+              resultCount: out.orgsCount,
+              resultSummary: {
+                sinceDays: input.sinceDays,
+                totalEntries: out.totalEntries,
+              },
+            }),
+          },
+          async () => {
+            const sinceDate = new Date(
+              Date.now() - input.sinceDays * 24 * 60 * 60 * 1000,
+            )
+              .toISOString()
+              .slice(0, 10);
+
+            const result = await searchOrgs(
+              {
+                organizationKeywordTags: input.keywordTags,
+                organizationLocations: input.countries
+                  ?.map((c) => normalizeCountryCode(c))
+                  .filter((c): c is string => c != null),
+                latestFundingDateMin: sinceDate,
+                totalFundingMin: input.totalFundingMin,
+              },
+              { page: 1, perPage: 25 },
+            );
+
+            if ('ok' in result) {
+              return {
+                degraded: true,
+                reason: result.reason,
+                message: result.message,
+                totalEntries: 0,
+                orgsCount: 0,
+                sinceDate,
+                organizations: [],
+              };
+            }
+
+            return {
+              degraded: false,
+              sinceDate,
+              totalEntries: result.pagination.totalEntries,
+              orgsCount: result.organizations.length,
+              partialResultsOnly: result.partialResultsOnly,
+              organizations: result.organizations.map((o) => ({
+                apolloOrgId: o.id,
+                name: o.name,
+                primaryDomain: o.primaryDomain,
+                linkedinUrl: o.linkedinUrl,
+                foundedYear: o.foundedYear,
+              })),
+            };
+          },
+        ),
+    }),
+
+    find_decision_makers_at_entity: defineTool({
+      name: 'find_decision_makers_at_entity',
+      description:
+        "Find decision-makers (procurement directors, commercial " +
+        'heads, C-suite, etc.) at a specific procur entity using ' +
+        "Apollo's people search. FREE — no credits consumed. Returns " +
+        'obfuscated last names + titles + seniority + email-availability ' +
+        'flags. Resolving the actual email/phone requires the operator ' +
+        'to click "Enrich" in the Decision-makers panel — that is ' +
+        "deliberately NOT a chat tool to prevent accidental credit " +
+        'burn. Spec: docs/apollo-integration-brief.md §6.5.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • The operator asks "who\'s the procurement director at ' +
+        '[entity]?" or similar.\n' +
+        '  • Preparing for outreach to a specific counterparty.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Last names come back obfuscated (e.g. "Hu***n"). The full ' +
+        'name resolves only when the operator clicks Enrich in the UI.\n' +
+        '  • Surface the most senior matching candidate first.\n' +
+        '  • DO NOT suggest enrichment automatically — surface the ' +
+        'candidate list and let the operator decide which to enrich.\n' +
+        '  • If the entity has no Apollo org match, this tool returns ' +
+        'an empty list — that\'s normal for ministries / state-owned ' +
+        'entities Apollo doesn\'t index.',
+      kind: 'read',
+      schema: z.object({
+        entitySlug: z
+          .string()
+          .describe('known_entities.slug or external_suppliers.id (UUID).'),
+        titles: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Title-contains filters, e.g. ["procurement", "supply chain", "logistics"]. ' +
+              'Apollo does fuzzy matching by default.',
+          ),
+        seniorities: z
+          .array(z.enum(APOLLO_SENIORITIES))
+          .optional()
+          .describe(
+            'One or more of: ' + APOLLO_SENIORITIES.join(', ') + '.',
+          ),
+        keywords: z
+          .string()
+          .optional()
+          .describe('Free-text keyword search across the person record.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_decision_makers_at_entity',
+            args: input,
+            summarize: (out: { peopleCount: number }) => ({
+              resultCount: out.peopleCount,
+              resultSummary: { entitySlug: input.entitySlug },
+            }),
+          },
+          async () => {
+            const ref = await resolveApolloEntityRef(input.entitySlug);
+            if (!ref) {
+              return {
+                degraded: true,
+                reason: 'entity-not-found',
+                message: 'Entity not found.',
+                peopleCount: 0,
+                people: [],
+              };
+            }
+            if (!ref.apolloOrgId && !ref.primaryDomain) {
+              return {
+                degraded: true,
+                reason: 'no-apollo-scope',
+                message:
+                  'Entity has no Apollo org match and no primary_domain. ' +
+                  'Set the primary_domain via Neon SQL or the entity profile, ' +
+                  'then run the Apollo refresh.',
+                peopleCount: 0,
+                people: [],
+              };
+            }
+
+            const result = await searchPeople({
+              filters: {
+                organizationIds: ref.apolloOrgId
+                  ? [ref.apolloOrgId]
+                  : undefined,
+                organizationDomainsList:
+                  !ref.apolloOrgId && ref.primaryDomain
+                    ? [ref.primaryDomain]
+                    : undefined,
+                personTitles: input.titles,
+                personSeniorities: input.seniorities as
+                  | ApolloSeniority[]
+                  | undefined,
+                qKeywords: input.keywords,
+              },
+              entitySlug: input.entitySlug,
+              companyId: ctx.companyId,
+              opts: { perPage: 25 },
+            });
+
+            if ('ok' in result) {
+              return {
+                degraded: true,
+                reason: result.reason,
+                message: result.message,
+                peopleCount: 0,
+                people: [],
+              };
+            }
+
+            return {
+              degraded: false,
+              peopleCount: result.people.length,
+              totalEntries: result.totalEntries,
+              people: result.people.map((p) => ({
+                apolloPersonId: p.id,
+                firstName: p.firstName,
+                lastNameObfuscated: p.lastNameObfuscated,
+                title: p.title,
+                hasEmail: p.hasEmail,
+                hasDirectPhone: p.hasDirectPhone,
+                organization: p.organization?.name ?? null,
+              })),
+              note:
+                'Last names are obfuscated. Full name + email + phone ' +
+                'resolve only when the operator clicks Enrich in the ' +
+                'Decision-makers panel of the entity profile. Do NOT ' +
+                'invoke enrichment from chat.',
+            };
           },
         ),
     }),
