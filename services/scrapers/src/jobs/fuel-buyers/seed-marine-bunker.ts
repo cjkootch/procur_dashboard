@@ -16,6 +16,9 @@ const SEED: FuelBuyerSeedEntry[] = [
     name: 'Petrojam Bunkering',
     country: 'JM',
     aliases: ['Petrojam Bunker'],
+    // Kingston Harbour, Jamaica.
+    latitude: 17.97,
+    longitude: -76.85,
     notes:
       'Petrojam\'s bunkering arm at Kingston Harbour. Already in supplier rolodex on the supply side; flagged here as a buyer-side relationship for off-take of refined product surpluses.',
     profile: {
@@ -103,6 +106,9 @@ const SEED: FuelBuyerSeedEntry[] = [
     name: 'BORCO (Buckeye Bahamas)',
     country: 'BS',
     aliases: ['Bahamas Oil Refining Company', 'Buckeye Bahamas Hub'],
+    // Freeport, Grand Bahama.
+    latitude: 26.52,
+    longitude: -78.78,
     notes:
       'Major Bahamas terminal at Freeport. Storage + bunker capability; serves transshipment traffic. Owned by Buckeye Partners.',
     profile: {
@@ -132,6 +138,9 @@ const SEED: FuelBuyerSeedEntry[] = [
     name: 'Statia Terminals',
     country: 'BQ',
     aliases: ['NuStar Statia'],
+    // St. Eustatius (Sint Eustatius), Caribbean Netherlands.
+    latitude: 17.49,
+    longitude: -62.99,
     notes: 'St. Eustatius terminal. Major storage + bunker capability serving Caribbean transshipment.',
     profile: {
       segments: ['marine-bunker-supplier', 'industrial-distributor'],
@@ -160,6 +169,9 @@ const SEED: FuelBuyerSeedEntry[] = [
     name: 'Curoil',
     country: 'CW',
     aliases: ['Curaçao Oil Storage'],
+    // Bullen Bay / Willemstad terminal complex.
+    latitude: 12.18,
+    longitude: -68.94,
     notes: 'Curaçao bunker supplier active at Willemstad. Pure physical bunker operator.',
     profile: {
       segments: ['marine-bunker-supplier'],

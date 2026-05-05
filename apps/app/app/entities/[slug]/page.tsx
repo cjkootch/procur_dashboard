@@ -6,6 +6,7 @@ import {
   getDirectOwners,
   getEntityProfile,
   getEntityVesselActivity,
+  getFuelBuyerImportContext,
   getOwnershipChain,
   getRefineryImportContext,
   getSupplierApproval,
@@ -14,6 +15,7 @@ import { KycBadge } from '../../../components/KycBadge';
 import { parseEntityNotes } from '../../../lib/entity-notes';
 import { PushToVexButton } from './_components/PushToVexButton';
 import { EntityDocumentsPanel } from './_components/EntityDocumentsPanel';
+import { FuelBuyerImportContextPanel } from './_components/FuelBuyerImportContextPanel';
 import { QuoteAnchorsPanel } from './_components/QuoteAnchorsPanel';
 import { RefineryImportContextPanel } from './_components/RefineryImportContextPanel';
 import { SupplierApprovalForm } from './_components/SupplierApprovalForm';
@@ -60,6 +62,7 @@ export default async function EntityProfilePage({ params }: Props) {
     vesselActivity,
     contactEnrichments,
     refineryImportCtx,
+    fuelBuyerImportCtx,
   ] = await Promise.all([
     getDirectOwners(ownershipQueryName),
     getOwnershipChain(ownershipQueryName, 5),
@@ -78,6 +81,11 @@ export default async function EntityProfilePage({ params }: Props) {
     // no slate envelope is configured.
     profile.role === 'refiner'
       ? getRefineryImportContext(profile.canonicalKey).catch(() => null)
+      : Promise.resolve(null),
+    // Demand validation — declared volume × country flows. Fuel-buyer-
+    // only; resolves to null for other roles.
+    profile.role === 'fuel-buyer-industrial'
+      ? getFuelBuyerImportContext(profile.canonicalKey).catch(() => null)
       : Promise.resolve(null),
   ]);
 
@@ -182,6 +190,14 @@ export default async function EntityProfilePage({ params }: Props) {
           them is worth 3, not 12. */}
       {refineryImportCtx && refineryImportCtx.rows.length > 0 && (
         <RefineryImportContextPanel ctx={refineryImportCtx} />
+      )}
+
+      {/* Demand validation — declared volume × country flows.
+          Fuel-buyer-only; surfaces "buyer claims X bbl/yr but
+          country imports Y" so the seed's volume estimates are
+          checked against customs reality. */}
+      {fuelBuyerImportCtx && (
+        <FuelBuyerImportContextPanel ctx={fuelBuyerImportCtx} />
       )}
 
       {/* Per-tenant document attachments — KYC packs, MSAs, contracts,

@@ -8589,6 +8589,210 @@ export async function analyzeCaribbeanFuelDemand(args: {
   };
 }
 
+// ─── Fuel-buyer import context (declared mix × actual country flows) ─
+
+export type FuelBuyerImportContext = {
+  buyerSlug: string;
+  buyerName: string;
+  buyerCountry: string;
+  /** HS code group used for the customs aggregation. 2710 covers
+   *  refined-product imports broadly; per-fuel-type sub-codes
+   *  (271012 light oils, 271019 medium/heavy, 271020 fuel oil)
+   *  could be added later for finer attribution. */
+  productCode: string;
+  monthsLookback: number;
+  /** Country's total imports of `productCode` over the window. */
+  countryImportTotalKg: number | null;
+  /** Buyer's declared annual purchase volume from their profile,
+   *  converted to kg using barrel→tonne assumption (~7.3 bbl/MT
+   *  for residual + middle distillate; we use 7.0 for blended
+   *  refined-product accounting since the mix tilts heavier in
+   *  the Caribbean utility universe). */
+  buyerVolumeBblMin: number | null;
+  buyerVolumeBblMax: number | null;
+  buyerVolumeKgMin: number | null;
+  buyerVolumeKgMax: number | null;
+  /** Buyer's implied share of country imports (max-volume basis).
+   *  NULL when either side is missing. */
+  impliedShareOfCountryMax: number | null;
+  fuelTypesDeclared: string[];
+  /** Per-partner-country breakdown of where the country actually
+   *  imports refined product from. Sorted by quantity DESC.
+   *  Surfaces "Jamaica imported 8.2M kg of HFO from US, 3.1M from
+   *  Russia, 1.4M from Aruba" — buyer's exposure profile by source. */
+  partnerBreakdown: Array<{
+    partnerCountry: string;
+    quantityKg: number | null;
+    valueUsd: number | null;
+    monthsActive: number;
+    mostRecentPeriod: string | null;
+  }>;
+  notes: string[];
+};
+
+const BBL_PER_MT_REFINED_BLEND = 7.0;
+const KG_PER_MT = 1000;
+
+/**
+ * Country-level imports of refined product (HS 2710 by default)
+ * cross-referenced against the buyer's declared annual purchase
+ * volume + fuel mix. Validates whether the buyer's profile is
+ * plausible given country-level customs data, and surfaces
+ * partner-country source mix for outreach context.
+ *
+ * Granularity: country-level imports vs entity-level claim — same
+ * limitation as `getRefineryImportContext` for refineries. We can
+ * say "Jamaica imports 12M bbl HFO/yr; JPS claims 2.5-4M = 20-33%
+ * — plausible". We can't say "JPS imported X cargoes specifically"
+ * — that requires per-cargo AIS+commercial data.
+ *
+ * Returns null when the buyer slug doesn't resolve OR isn't a
+ * fuel-buyer-industrial role.
+ */
+export async function getFuelBuyerImportContext(
+  buyerSlug: string,
+  options: {
+    productCode?: string;
+    monthsLookback?: number;
+  } = {},
+): Promise<FuelBuyerImportContext | null> {
+  const productCode = options.productCode ?? '2710';
+  const monthsLookback = options.monthsLookback ?? 12;
+
+  const [buyer] = await db
+    .select({
+      slug: knownEntities.slug,
+      name: knownEntities.name,
+      country: knownEntities.country,
+      role: knownEntities.role,
+      metadata: knownEntities.metadata,
+    })
+    .from(knownEntities)
+    .where(eq(knownEntities.slug, buyerSlug))
+    .limit(1);
+  if (!buyer || buyer.role !== 'fuel-buyer-industrial') return null;
+
+  const meta = buyer.metadata as { fuelBuyerProfile?: Record<string, unknown> } | null;
+  const profile = meta?.fuelBuyerProfile ?? {};
+  const fuelTypesDeclared = Array.isArray(profile.fuelTypesPurchased)
+    ? (profile.fuelTypesPurchased as string[])
+    : [];
+  const buyerVolumeBblMin =
+    typeof profile.annualPurchaseVolumeBblMin === 'number'
+      ? profile.annualPurchaseVolumeBblMin
+      : null;
+  const buyerVolumeBblMax =
+    typeof profile.annualPurchaseVolumeBblMax === 'number'
+      ? profile.annualPurchaseVolumeBblMax
+      : null;
+
+  // Aggregate country imports by partner.
+  const partnerRows = await db.execute(sql`
+    WITH ranked AS (
+      SELECT
+        partner_country,
+        period,
+        quantity_kg,
+        value_usd,
+        source,
+        ROW_NUMBER() OVER (
+          PARTITION BY partner_country, period
+          ORDER BY
+            CASE
+              WHEN ${buyer.country} IN ('AT','BE','BG','HR','CY','CZ','DK','EE','FI','FR','DE','GR','HU','IE','IT','LV','LT','LU','MT','NL','PL','PT','RO','SK','SI','ES','SE')
+                AND source = 'eurostat-comext' THEN 1
+              WHEN source = 'un-comtrade' THEN 2
+              ELSE 3
+            END
+        ) AS rn
+      FROM customs_imports
+      WHERE
+        reporter_country = ${buyer.country}
+        AND product_code = ${productCode}
+        AND flow_direction = 'import'
+        AND period >= date_trunc('month', NOW() - (${monthsLookback}::int || ' months')::interval)
+    )
+    SELECT
+      partner_country,
+      SUM(quantity_kg)            AS quantity_kg,
+      SUM(value_usd)              AS value_usd,
+      COUNT(DISTINCT period)::int AS months_active,
+      to_char(MAX(period), 'YYYY-MM') AS most_recent_period
+    FROM ranked
+    WHERE rn = 1
+    GROUP BY partner_country
+    ORDER BY quantity_kg DESC NULLS LAST
+    LIMIT 25;
+  `);
+  const partnerBreakdown = (partnerRows.rows as Array<Record<string, unknown>>).map((r) => ({
+    partnerCountry: String(r.partner_country),
+    quantityKg: r.quantity_kg == null ? null : Number.parseFloat(String(r.quantity_kg)),
+    valueUsd: r.value_usd == null ? null : Number.parseFloat(String(r.value_usd)),
+    monthsActive: Number(r.months_active ?? 0),
+    mostRecentPeriod: r.most_recent_period == null ? null : String(r.most_recent_period),
+  }));
+
+  const countryImportTotalKg = partnerBreakdown.reduce(
+    (acc, r) => (r.quantityKg == null ? acc : (acc ?? 0) + r.quantityKg),
+    null as number | null,
+  );
+
+  // Convert buyer's bbl/yr → kg/yr for share comparison.
+  const buyerVolumeKgMin =
+    buyerVolumeBblMin != null
+      ? (buyerVolumeBblMin / BBL_PER_MT_REFINED_BLEND) * KG_PER_MT
+      : null;
+  const buyerVolumeKgMax =
+    buyerVolumeBblMax != null
+      ? (buyerVolumeBblMax / BBL_PER_MT_REFINED_BLEND) * KG_PER_MT
+      : null;
+  const impliedShareOfCountryMax =
+    countryImportTotalKg != null && buyerVolumeKgMax != null && countryImportTotalKg > 0
+      ? buyerVolumeKgMax / countryImportTotalKg
+      : null;
+
+  const notes: string[] = [];
+  if (partnerBreakdown.length === 0) {
+    notes.push(
+      `No customs flows found for ${buyer.country} HS ${productCode} in ` +
+        `the last ${monthsLookback} months. Either the country isn't covered ` +
+        `by Eurostat / UN Comtrade ingest, or imports were genuinely zero.`,
+    );
+  }
+  if (impliedShareOfCountryMax != null) {
+    if (impliedShareOfCountryMax > 1.0) {
+      notes.push(
+        `Buyer's declared volume (${(buyerVolumeKgMax! / 1_000_000).toFixed(1)}M kg) ` +
+          `exceeds country's total HS ${productCode} imports ` +
+          `(${(countryImportTotalKg! / 1_000_000).toFixed(1)}M kg) — declared volume ` +
+          `is high or includes domestic refining offtake not captured by customs.`,
+      );
+    } else if (impliedShareOfCountryMax > 0.6) {
+      notes.push(
+        `Buyer's declared volume implies >60% of country imports — plausible for ` +
+          `dominant utilities but verify against the volume confidence flag.`,
+      );
+    }
+  }
+
+  return {
+    buyerSlug,
+    buyerName: buyer.name,
+    buyerCountry: buyer.country,
+    productCode,
+    monthsLookback,
+    countryImportTotalKg,
+    buyerVolumeBblMin,
+    buyerVolumeBblMax,
+    buyerVolumeKgMin,
+    buyerVolumeKgMax,
+    impliedShareOfCountryMax,
+    fuelTypesDeclared,
+    partnerBreakdown,
+    notes,
+  };
+}
+
 // ─── Refinery import context (slate × actual flows) ─────────────
 
 export type RefineryImportContext = {
