@@ -1,16 +1,16 @@
 /**
- * @procur/apollo — Apollo.io organization enrichment + discovery.
+ * @procur/apollo — Apollo.io organization + people enrichment +
+ * discovery.
  *
- * Day 1 skeleton: types, config, credit-log helper, and rate
- * limiter are in place. The three top-level entry points
- * (enrichOrgFromApollo, enrichOrgsBatch, searchOrgs) and the live
- * Apollo HTTP transport land in Day 2 of the build per
- * docs/apollo-integration-brief.md §7.
+ * Day 1 (PR #393, merged): schema + types + credit-log + rate limiter.
+ * Day 1.5 + Day 2 (this PR): people-side types + org-side HTTP
+ * transport (enrichOrgFromApollo, enrichOrgsBatch, searchOrgs).
+ * Day 3+ (future PRs): people-side HTTP transport, cron, surfaces,
+ * chat tools.
  *
- * Until Day 2 lands, importing this package is safe — it does not
- * call the Apollo API, does not consume credits, and does not block
- * deployment. The cache columns and credit-log table are migrated
- * (0065) and ready to be written to.
+ * APOLLO_ENABLED defaults to false; importing this package is safe
+ * even without credentials. Set the env var + APOLLO_MASTER_API_KEY
+ * to enable live calls.
  */
 
 export {
@@ -37,6 +37,31 @@ export {
   type LogApolloCallArgs,
 } from './credit-log';
 
+export {
+  apolloFetch,
+  type ApolloFetchResult,
+  type ApolloFetchSuccess,
+} from './transport';
+
+export {
+  enrichOrgFromApollo,
+  enrichOrgsBatch,
+  searchOrgs,
+  type EnrichOrgTarget,
+  type EnrichOrgFromApolloArgs,
+  type EnrichOrgFromApolloResult,
+  type EnrichOrgsBatchArgs,
+  type EnrichOrgsBatchResult,
+  type SearchOrgsOpts,
+} from './org-service';
+
+export {
+  APOLLO_SENIORITIES,
+  APOLLO_EMAIL_STATUSES,
+  type ApolloSeniority,
+  type ApolloEmailStatus,
+} from './types';
+
 export type {
   ApolloOrgFull,
   ApolloOrgThin,
@@ -46,6 +71,11 @@ export type {
   ApolloOrgSnapshot,
   ApolloSearchFilters,
   ApolloSearchResult,
+  ApolloPersonThin,
+  ApolloPersonFull,
+  ApolloPeopleSearchFilters,
+  ApolloPeopleSearchResult,
+  ApolloPersonEnrichmentResult,
   ApolloDegradeReason,
   ApolloDegradeResult,
 } from './types';

@@ -48,9 +48,27 @@ export const entityContactEnrichments = pgTable(
     linkedinConfidence: numeric('linkedin_confidence', { precision: 3, scale: 2 }),
     linkedinSourceUrl: text('linkedin_source_url'),
 
-    /** Provider tag — 'vex' today; reserved for future sources. */
+    /** Provider tag — 'vex' originally; 'apollo' added per
+        apollo-integration-brief.md §4.4. */
     source: text('source').notNull().default('vex'),
     enrichedAt: timestamp('enriched_at', { withTimezone: true }).notNull(),
+
+    // ─── Apollo people enrichment fields (per apollo brief §4.4) ──
+
+    /** Apollo's stable person ID. Required when source = 'apollo';
+        nullable for legacy source = 'vex' rows. Used for
+        re-enrichment over time. */
+    apolloPersonId: text('apollo_person_id'),
+
+    /** Apollo's structured seniority field: 'owner' | 'founder' |
+        'c_suite' | 'partner' | 'vp' | 'head' | 'director' |
+        'manager' | 'senior' | 'entry' | 'intern'. Filterable in
+        the Decision-makers panel. */
+    seniority: text('seniority'),
+
+    /** Apollo's data-freshness timestamp — distinct from enrichedAt
+        (procur's last write to this row). */
+    apolloLastRefreshedAt: timestamp('apollo_last_refreshed_at'),
 
     createdAt: timestamp('created_at', { withTimezone: true })
       .defaultNow()
@@ -66,6 +84,10 @@ export const entityContactEnrichments = pgTable(
       table.contactNameNormalized,
     ),
     entityIdx: index('entity_contact_enrichments_entity_idx').on(table.entitySlug),
+    apolloPersonIdIdx: index('entity_contact_enrichments_apollo_person_id_idx').on(
+      table.apolloPersonId,
+    ),
+    seniorityIdx: index('entity_contact_enrichments_seniority_idx').on(table.seniority),
   }),
 );
 
