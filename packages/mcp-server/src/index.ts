@@ -47,6 +47,15 @@ export {
 } from './handler';
 
 export {
+  handleChatgptMcpRequest,
+  type HandleChatgptMcpRequestArgs,
+  type ChatgptSearchProvider,
+  type ChatgptFetchProvider,
+  type ChatgptSearchResult,
+  type ChatgptFetchResult,
+} from './chatgpt-handler';
+
+export {
   listMcpTools,
   findWhitelistedTool,
   callMcpTool,

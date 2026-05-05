@@ -21,11 +21,13 @@ import { useState } from 'react';
  */
 
 const ENDPOINT_URL = 'https://app.procur.app/api/mcp';
+const CHATGPT_ENDPOINT_URL = 'https://app.procur.app/api/mcp/chatgpt';
 
 const HOSTS = [
   { id: 'claude-desktop', label: 'Claude Desktop' },
   { id: 'cursor', label: 'Cursor' },
   { id: 'continue', label: 'Continue.dev' },
+  { id: 'chatgpt', label: 'ChatGPT (custom GPT)' },
 ] as const;
 
 type HostId = (typeof HOSTS)[number]['id'];
@@ -92,6 +94,8 @@ function pathHint(host: HostId): string {
       return 'Add to ~/.cursor/mcp.json or .cursor/mcp.json in the workspace root.';
     case 'continue':
       return 'Add to ~/.continue/config.yaml under the mcpServers key.';
+    case 'chatgpt':
+      return "In the GPT builder, add an MCP connector with this URL + Authorization header. ChatGPT requires the search/fetch tool shape — procur exposes a separate endpoint for that.";
   }
 }
 
@@ -138,6 +142,20 @@ function renderSnippet(host: HostId, key: string): string {
         `    url: ${ENDPOINT_URL}`,
         '    headers:',
         `      Authorization: Bearer ${key}`,
+      ].join('\n');
+    case 'chatgpt':
+      return [
+        '# ChatGPT custom GPT — Connector setup',
+        `URL:           ${CHATGPT_ENDPOINT_URL}`,
+        `Auth header:   Authorization: Bearer ${key}`,
+        '',
+        '# Tools exposed: search + fetch (ChatGPT MCP contract)',
+        '#   search({query})  -> [{id, title, url}]',
+        '#   fetch({id})      -> {id, title, text, url, metadata}',
+        '#',
+        '# Example: ask ChatGPT "find Caribbean fuel buyers in Jamaica"',
+        '# - search returns candidate procur entities',
+        '# - fetch returns the entity profile by ID',
       ].join('\n');
   }
 }
