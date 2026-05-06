@@ -31,6 +31,7 @@ import {
   getFuelConsumptionSignals,
   getFuelConsumptionSignalsBatch,
   predictEntityAttributes,
+  resolveEntityMention,
   walkOwnershipChainUp,
   walkSubsidiaries,
   lookupSanctionsScreens,
@@ -5825,6 +5826,72 @@ export function buildCatalogTools(): ToolRegistry {
               })),
             };
           },
+        ),
+    }),
+
+    resolve_entity_mention: defineTool({
+      name: 'resolve_entity_mention',
+      description:
+        'Resolve a free-text entity mention (e.g. "JBC Bauxite", ' +
+        '"the Jamaican bauxite producer") to a canonical ' +
+        'known_entities row using text-embedding similarity. ' +
+        "Spec: docs/procur-ml-layer-brief.md §7.1.\n\n" +
+        'WHEN TO CALL:\n' +
+        '  • The operator pastes a news article or document mentioning ' +
+        'a counterparty, and asks "is this in our rolodex".\n' +
+        '  • Before creating a new known_entities row from extracted ' +
+        'text, to check if the entity already exists under a different ' +
+        'name spelling.\n' +
+        '  • As a follow-up to ingest-bond-prospectus / ingest-ni-43-101 ' +
+        'when the issuer / operator name didn\'t fuzzy-match via pg_trgm.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • When `resolved=true`, the top candidate is the right answer. ' +
+        'Use the resolvedSlug.\n' +
+        '  • When `resolved=false`, surface the candidates list to the ' +
+        "operator for review — don't silently pick.\n" +
+        '  • If `candidates=[]`, entity_text_embeddings is empty (run ' +
+        'pnpm --filter @procur/ai seed-entity-text-embeddings) or no ' +
+        'rolodex entity matches.\n' +
+        '  • Pass countryHint when the mention came from a country-specific ' +
+        'context (article geo, customs filing country) to break ties ' +
+        'between multinationals with country variants.',
+      kind: 'read',
+      schema: z.object({
+        mention: z
+          .string()
+          .min(2)
+          .describe('The free-text mention to resolve.'),
+        countryHint: z
+          .string()
+          .optional()
+          .describe(
+            'Optional ISO-2 country code from the source context — ' +
+              'nudges same-country candidates up by +0.05 similarity.',
+          ),
+        candidateLimit: z
+          .number()
+          .int()
+          .min(1)
+          .max(20)
+          .optional()
+          .describe('How many candidates to surface even when not resolved. Default 5.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'resolve_entity_mention',
+            args: input,
+            summarize: (out: { resolved: boolean }) => ({
+              resultCount: out.resolved ? 1 : 0,
+              resultSummary: { resolved: out.resolved },
+            }),
+          },
+          async () =>
+            resolveEntityMention(input.mention, {
+              countryHint: input.countryHint?.toUpperCase() ?? null,
+              candidateLimit: input.candidateLimit,
+            }),
         ),
     }),
 
