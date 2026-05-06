@@ -7,7 +7,7 @@ import {
   db,
   events,
 } from '@procur/db';
-import { createId } from '@procur/ai';
+import { ActionDescriptor, createId, type ActionDescriptorT } from '@procur/ai';
 
 /**
  * Read/write helpers for the agent runtime (vex-into-procur merge
@@ -212,4 +212,74 @@ export async function countPendingApprovals(): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+/**
+ * Insert an approval row from the chat-tool surface (vex-into-procur
+ * merge Phase 7.6). Mirrors @procur/ai's ApprovalGate but takes no
+ * agent_run_id — chat-driven proposals don't run through AgentRunner;
+ * they're a direct user → approval queue path.
+ *
+ * Validates the action via the ActionDescriptor union before insert
+ * so a malformed payload from the model can't produce a poisoned
+ * approval row.
+ */
+export async function insertChatApproval(
+  action: ActionDescriptorT,
+  source: { userId: string; threadId?: string },
+): Promise<{
+  id: string;
+  actionType: string;
+  createdAt: Date;
+}> {
+  // Re-validate via the union — guards against malformed model output.
+  const parsed = ActionDescriptor.parse(action);
+
+  const id = createId();
+  const now = new Date();
+
+  const [row] = await db
+    .insert(approvals)
+    .values({
+      id,
+      agentRunId: null,
+      actionType: parsed.kind,
+      proposedPayload: parsed as unknown as Record<string, unknown>,
+      decision: 'pending',
+    })
+    .returning({
+      id: approvals.id,
+      actionType: approvals.actionType,
+      createdAt: approvals.createdAt,
+    });
+
+  if (!row) {
+    throw new Error(`approval ${id} insert returned no row`);
+  }
+
+  await db
+    .insert(events)
+    .values({
+      id: createId(),
+      verb: 'approval.created',
+      subjectType: 'approval',
+      subjectId: row.id,
+      actorType: 'user',
+      actorId: source.userId,
+      objectType: 'approval',
+      objectId: row.id,
+      occurredAt: now,
+      idempotencyKey: `approval.created:${row.id}`,
+      metadata: {
+        action_type: parsed.kind,
+        tier: parsed.tier,
+        source: 'chat',
+        ...(source.threadId ? { thread_id: source.threadId } : {}),
+      },
+    })
+    .onConflictDoNothing({
+      target: [events.occurredAt, events.idempotencyKey],
+    });
+
+  return row;
 }
