@@ -1861,6 +1861,25 @@ export function buildCatalogTools(): ToolRegistry {
                 approvalStatus: r.approvalStatus,
                 approvalApprovedAt: r.approvalApprovedAt,
                 approvalExpiresAt: r.approvalExpiresAt,
+                // Apollo enrichment cache — null fields when the
+                // entity hasn't been Apollo-matched. When present,
+                // gives the assistant trade-finance risk context
+                // (capital recency / scale) without a separate
+                // lookup_apollo_org call.
+                apollo:
+                  r.apolloFundingStage ||
+                  r.apolloEstimatedEmployees != null ||
+                  r.apolloAnnualRevenue != null ||
+                  r.apolloTotalFunding != null ||
+                  r.apolloLatestFundingAt
+                    ? {
+                        fundingStage: r.apolloFundingStage,
+                        latestFundingAt: r.apolloLatestFundingAt,
+                        estimatedEmployees: r.apolloEstimatedEmployees,
+                        annualRevenue: r.apolloAnnualRevenue,
+                        totalFunding: r.apolloTotalFunding,
+                      }
+                    : null,
               })),
               caveat:
                 'Curated analyst rolodex — facts here are public-knowledge basics (refinery name, ' +
@@ -1868,7 +1887,9 @@ export function buildCatalogTools(): ToolRegistry {
                 'when current import flows matter. The notes field captures editorial; treat it as a ' +
                 'starting point, not ground truth. approvalStatus reflects the calling company\'s ' +
                 'KYC/approval state with this entity (null = not engaged yet); lead with approved ' +
-                'counterparties when ranking for a deal.',
+                'counterparties when ranking for a deal. The apollo field carries cached ' +
+                'funding-stage / headcount / revenue when Apollo has indexed the entity — use it ' +
+                'for capital-recency context without a separate lookup_apollo_org call.',
             };
           },
         ),
@@ -5491,6 +5512,12 @@ export function buildCatalogTools(): ToolRegistry {
           // ctx.companyId once the table starts holding private data.
           // See packages/db/src/schema/supplier-signals.ts.
           signals: result.signals?.slice(0, 10) ?? [],
+          // Apollo enrichment — funding stage, headcount, revenue,
+          // tech stack, short description. Surfaced inline in the
+          // dossier so the assistant doesn't need a separate
+          // lookup_apollo_org call to factor capital-recency or
+          // scale into a counterparty read.
+          apollo: result.apollo,
         };
           },
         ),
