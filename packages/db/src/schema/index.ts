@@ -68,3 +68,41 @@ export * from './feedback-events';
 export * from './friction-status';
 export * from './entity-dispositions';
 export * from './deal-retrospectives';
+
+// ============================================================================
+// Vex-merge Phase 1 (docs/vex-into-procur-merge-brief.md)
+// ============================================================================
+export * from './organizations';
+export * from './contacts';
+export * from './contact-org-memberships';
+export * from './organization-products';
+export * from './organization-relationships';
+export * from './agent-runs';
+export * from './approvals';
+export * from './cost-ledger';
+export * from './embedding-chunks';
+export * from './raw-events';
+export * from './events';
+export * from './activities';
+export * from './summaries';
+export * from './signals';
+export * from './threads';
+export * from './messages';
+export * from './follow-ups';
+export * from './campaigns';
+export * from './campaign-steps';
+export * from './campaign-enrollments';
+export * from './leads';
+export * from './touchpoints';
+export * from './procur-intelligence-snapshots';
+export * from './port-events';
+export * from './fuel-market-rates';
+export * from './freight-rates';
+export * from './fuel-deals';
+export * from './fuel-deal-cost-stack';
+export * from './fuel-deal-cashflow-events';
+export * from './fuel-deal-scenarios';
+export * from './fuel-deal-counterparty-scores';
+export * from './fuel-deal-documents';
+export * from './fuel-deal-market-context';
+export * from './fuel-deal-participants';
