@@ -146,3 +146,31 @@ export {
   type UserAttachment,
   type AppendAssistantMessageInput,
 } from './threads';
+
+// Vex-into-procur merge Phase 2 — agent runtime + cost ledger.
+// Per docs/vex-into-procur-merge-brief.md.
+export {
+  ActionDescriptor,
+  actionRequiresApproval,
+  ApprovalTier,
+  requiresApproval,
+  ApprovalGate,
+  AgentRunner,
+  DEFAULT_DAILY_COST_LIMIT_USD,
+  createId,
+  isUlid,
+  type ActionDescriptorT,
+  type AgentContext,
+  type AgentOutput,
+  type AgentRunRecord,
+  type AgentRunnerOptions,
+  type IAgent,
+} from './agents';
+export {
+  InMemoryCostLedger,
+  PostgresCostLedger,
+  sumCostLedgerToday,
+  type CostEntry,
+  type CostLedger,
+  type CostOperation,
+} from './cost-ledger';
