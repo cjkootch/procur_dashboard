@@ -12658,3 +12658,143 @@ export async function listSignalMuteRulesForUser(userId: string): Promise<MutedR
   }));
 }
 
+// ─── Pattern 2 (entity attribute quality) per feedback-ui-brief.md §5 ─
+
+/**
+ * Editable attribute names — whitelist for safety. Adding new
+ * fields requires explicit listing here (defense against arbitrary
+ * column update via the API route).
+ */
+export const EDITABLE_ENTITY_ATTRIBUTES = [
+  'name',
+  'country',
+  'role',
+  'categories',
+  'notes',
+  'primary_domain',
+] as const;
+export type EditableEntityAttribute = (typeof EDITABLE_ENTITY_ATTRIBUTES)[number];
+
+export type UpdateKnownEntityAttributeInput = {
+  slug: string;
+  attribute: EditableEntityAttribute;
+  /** New value. Strings for scalar fields; string[] for `categories`. */
+  newValue: string | string[] | null;
+};
+
+export type UpdateKnownEntityAttributeResult = {
+  ok: boolean;
+  oldValue: string | string[] | null;
+  newValue: string | string[] | null;
+};
+
+/**
+ * Update a single attribute on a known_entities row, returning the
+ * old value so the caller (API route) can log it to feedback_events.
+ *
+ * Uses a single UPDATE … RETURNING dance to atomically capture
+ * old + new in one round-trip; no separate SELECT needed.
+ */
+export async function updateKnownEntityAttribute(
+  input: UpdateKnownEntityAttributeInput,
+): Promise<UpdateKnownEntityAttributeResult> {
+  const { slug, attribute, newValue } = input;
+
+  // Read old value first — need it for the feedback_events row even
+  // when the new value is identical (no-op edits are still signal).
+  const beforeRows = (await db.execute(sql`
+    SELECT name, country, role, categories, notes, primary_domain
+      FROM known_entities WHERE slug = ${slug}
+  `)) as unknown as Array<Record<string, unknown>>;
+  if (!beforeRows[0]) throw new Error(`updateKnownEntityAttribute: no entity with slug=${slug}`);
+  const oldRaw = beforeRows[0][attribute];
+  const oldValue: string | string[] | null = Array.isArray(oldRaw)
+    ? (oldRaw as string[])
+    : oldRaw == null
+    ? null
+    : String(oldRaw);
+
+  // Per-attribute UPDATE — Drizzle template literal binds the value
+  // safely. Branching by attribute keeps the SQL minimal.
+  switch (attribute) {
+    case 'name':
+      await db.execute(sql`UPDATE known_entities SET name = ${newValue}, updated_at = now() WHERE slug = ${slug}`);
+      break;
+    case 'country':
+      await db.execute(sql`UPDATE known_entities SET country = ${newValue}, updated_at = now() WHERE slug = ${slug}`);
+      break;
+    case 'role':
+      await db.execute(sql`UPDATE known_entities SET role = ${newValue}, updated_at = now() WHERE slug = ${slug}`);
+      break;
+    case 'categories': {
+      const arr = Array.isArray(newValue) ? newValue : newValue ? [String(newValue)] : [];
+      await db.execute(sql`
+        UPDATE known_entities
+           SET categories = ARRAY[${sql.join(arr.map((v) => sql`${v}`), sql`, `)}]::text[],
+               updated_at = now()
+         WHERE slug = ${slug}
+      `);
+      break;
+    }
+    case 'notes':
+      await db.execute(sql`UPDATE known_entities SET notes = ${newValue}, updated_at = now() WHERE slug = ${slug}`);
+      break;
+    case 'primary_domain':
+      await db.execute(sql`UPDATE known_entities SET primary_domain = ${newValue}, updated_at = now() WHERE slug = ${slug}`);
+      break;
+  }
+
+  return { ok: true, oldValue, newValue };
+}
+
+export type EntityAttributeEditRow = {
+  attribute: string;
+  oldValue: string | string[] | null;
+  newValue: string | string[] | null;
+  editorUserId: string | null;
+  createdAt: string;
+};
+
+/**
+ * Edit history per attribute — sourced from feedback_events with
+ * feedback_kind='entity_attribute'. Returns most recent first.
+ */
+export async function getEntityAttributeEditHistory(
+  entitySlug: string,
+  attribute?: string,
+  limit: number = 20,
+): Promise<EntityAttributeEditRow[]> {
+  const attrFilter = attribute
+    ? sql`AND payload->>'attribute' = ${attribute}`
+    : sql``;
+  const rows = (await db.execute(sql`
+    SELECT
+      payload->>'attribute' AS attribute,
+      payload->'old_value' AS old_value,
+      payload->'new_value' AS new_value,
+      user_id,
+      created_at
+    FROM feedback_events
+    WHERE feedback_kind = 'entity_attribute'
+      AND target_type = 'entity'
+      AND target_id = ${entitySlug}
+      AND revoked_at IS NULL
+      ${attrFilter}
+    ORDER BY created_at DESC
+    LIMIT ${limit};
+  `)) as unknown as Array<{
+    attribute: string;
+    old_value: unknown;
+    new_value: unknown;
+    user_id: string | null;
+    created_at: Date;
+  }>;
+  return rows.map((r) => ({
+    attribute: r.attribute,
+    oldValue: r.old_value as string | string[] | null,
+    newValue: r.new_value as string | string[] | null,
+    editorUserId: r.user_id,
+    createdAt: r.created_at.toISOString(),
+  }));
+}
+
