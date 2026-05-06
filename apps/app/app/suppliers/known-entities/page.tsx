@@ -6,6 +6,7 @@ import {
   lookupKnownEntities,
   type CrudeGradeRow,
 } from '@procur/catalog';
+import { EntityAvatar } from '../../../components/EntityAvatar';
 import { KycBadge } from '../../../components/KycBadge';
 import { MapViewClient } from './_components/MapViewClient';
 import type { MapEntity } from './_components/MapView';
@@ -460,10 +461,6 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
       ? 'mx-auto max-w-screen-2xl px-4 py-6'
       : 'mx-auto max-w-6xl px-6 py-10';
 
-  // When filtered to a single role, the Role column repeats N times —
-  // hide it.
-  const showRoleColumn = !role;
-
   return (
     <div className={containerClass}>
       <nav className="mb-4 text-sm text-[color:var(--color-muted-foreground)]">
@@ -476,13 +473,16 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
         </Link>
       </nav>
 
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Known entities</h1>
-        <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
-          Analyst-curated rolodex — buyers, sellers, refiners, and trading houses VTC has researched
-          as relevant to its deal flow. Includes entities with no public-tender activity (private
-          refiners, trading houses) that the supplier-graph queries can&apos;t see.
-        </p>
+      <header className="mb-6 overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] shadow-sm">
+        <div className="h-20 bg-gradient-to-r from-sky-100 via-indigo-100 to-violet-100" />
+        <div className="px-5 pb-5 pt-4">
+          <h1 className="text-2xl font-semibold tracking-tight">Known entities</h1>
+          <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
+            Analyst-curated rolodex — buyers, sellers, refiners, and trading houses VTC has researched
+            as relevant to its deal flow. Includes entities with no public-tender activity (private
+            refiners, trading houses) that the supplier-graph queries can&apos;t see.
+          </p>
+        </div>
       </header>
 
       <section className="mb-6 space-y-3 text-xs">
@@ -693,16 +693,6 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
       ) : (
         countries.map((c) => {
           const groupRows = byCountry.get(c)!;
-          // Hide the Tags column for this country group when nothing
-          // visible would render in it — the column was wasting space
-          // for power-plant-heavy countries where every tag is
-          // role/size/status (all suppressed by isNoiseTag).
-          const groupHasTags = groupRows.some(
-            (e) => e.tags.filter((t) => !isNoiseTag(t)).length > 0,
-          );
-          // Per-group role breakdown rendered next to the country
-          // header — answers "what kind of entities are in this
-          // country" without having to scan the Role column.
           const roleCounts = new Map<string, number>();
           for (const e of groupRows) {
             roleCounts.set(e.role, (roleCounts.get(e.role) ?? 0) + 1);
@@ -722,145 +712,121 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
                   · {roleBreakdown}
                 </span>
               </h2>
-              <div className="overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)]">
-                <table className="w-full text-left text-sm">
-                  <thead className="border-b border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30">
-                    <tr>
-                      <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                        Name
-                      </th>
-                      {showRoleColumn && (
-                        <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                          Role
-                        </th>
-                      )}
-                      <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                        Notes
-                      </th>
-                      {groupHasTags && (
-                        <th className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                          Tags
-                        </th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groupRows.map((e) => {
-                      const rawNoteKv = parseNotes(e.notes);
-                      const noteKv = rawNoteKv ? collapseOwnership(rawNoteKv, e.country) : null;
-                      // Power plants share a uniform shape (capacity,
-                      // fuel, started, status); render those as a
-                      // single-line stats string and keep the residual
-                      // kv pairs (operator, owner) below.
-                      const isPlant = e.role === 'power-plant';
-                      const { stats, remaining } =
-                        isPlant && noteKv
-                          ? extractPlantStats(noteKv)
-                          : { stats: null, remaining: noteKv ?? [] };
-                      const visibleTags = e.tags.filter((t) => !isNoiseTag(t));
-                      return (
-                        <tr
-                          key={e.id}
-                          className="border-b border-[color:var(--color-border)] last:border-b-0"
-                        >
-                          <td className="px-3 py-2 align-top">
-                            <Link
-                              href={`/entities/${encodeURIComponent(e.slug)}`}
-                              className="font-medium hover:underline"
+              <ul className="divide-y divide-[color:var(--color-border)] overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] shadow-sm">
+                {groupRows.map((e) => {
+                  const rawNoteKv = parseNotes(e.notes);
+                  const noteKv = rawNoteKv ? collapseOwnership(rawNoteKv, e.country) : null;
+                  const isPlant = e.role === 'power-plant';
+                  const { stats, remaining } =
+                    isPlant && noteKv
+                      ? extractPlantStats(noteKv)
+                      : { stats: null, remaining: noteKv ?? [] };
+                  const visibleTags = e.tags.filter((t) => !isNoiseTag(t));
+                  const headlineParts: string[] = [];
+                  if (e.role) headlineParts.push(e.role);
+                  if (e.categories.length > 0) headlineParts.push(e.categories.slice(0, 2).join(' · '));
+                  const headline = headlineParts.join(' · ');
+                  const aliasLine =
+                    e.aliases.length > 1
+                      ? e.aliases.filter((a) => a !== e.name).slice(0, 2).join(', ')
+                      : null;
+                  return (
+                    <li
+                      key={e.id}
+                      className="group flex gap-4 px-4 py-4 transition-colors hover:bg-[color:var(--color-muted)]/20"
+                    >
+                      <div className="pt-0.5">
+                        <EntityAvatar name={e.name} size="md" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <Link
+                            href={`/entities/${encodeURIComponent(e.slug)}`}
+                            className="text-base font-semibold tracking-tight hover:underline"
+                          >
+                            {e.name}
+                          </Link>
+                          {e.approvalStatus && (
+                            <KycBadge
+                              status={e.approvalStatus}
+                              expiresAt={e.approvalExpiresAt}
+                            />
+                          )}
+                          {e.apolloFundingStage && (
+                            <span
+                              className="inline-block rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]"
+                              title={
+                                e.apolloLatestFundingAt
+                                  ? `Latest funding: ${e.apolloLatestFundingAt} (Apollo)`
+                                  : 'Apollo funding stage'
+                              }
                             >
-                              {e.name}
-                            </Link>
-                            {e.approvalStatus && (
-                              <>
-                                {' '}
-                                <KycBadge
-                                  status={e.approvalStatus}
-                                  expiresAt={e.approvalExpiresAt}
-                                />
-                              </>
-                            )}
-                            {e.apolloFundingStage && (
-                              <>
-                                {' '}
-                                <span
-                                  className="inline-block rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]"
-                                  title={
-                                    e.apolloLatestFundingAt
-                                      ? `Latest funding: ${e.apolloLatestFundingAt} (Apollo)`
-                                      : 'Apollo funding stage'
-                                  }
-                                >
-                                  {e.apolloFundingStage}
-                                </span>
-                              </>
-                            )}
-                            {e.aliases.length > 1 && (
-                              <div className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-                                aka {e.aliases.filter((a) => a !== e.name).slice(0, 2).join(', ')}
-                              </div>
-                            )}
-                          </td>
-                          {showRoleColumn && (
-                            <td className="px-3 py-2 align-top text-[color:var(--color-muted-foreground)]">
-                              {e.role}
-                            </td>
+                              {e.apolloFundingStage}
+                            </span>
                           )}
-                          <td className="px-3 py-2 align-top">
-                            {stats && (
-                              <div className="text-sm tabular-nums">{stats}</div>
-                            )}
-                            {remaining.length === 0 && !stats && (
-                              <span className="text-[color:var(--color-muted-foreground)]">—</span>
-                            )}
-                            {remaining.length > 0 && (
-                              <dl className={`space-y-0.5 ${stats ? 'mt-1' : ''}`}>
-                                {remaining.slice(0, 4).map((kv, i) => (
-                                  <div
-                                    key={i}
-                                    className="flex flex-wrap gap-1 leading-snug"
-                                  >
-                                    {kv.key && (
-                                      <dt className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                                        {kv.key}:
-                                      </dt>
-                                    )}
-                                    <dd className="text-sm">{kv.value}</dd>
-                                  </div>
-                                ))}
-                                {remaining.length > 4 && (
-                                  <div className="text-[11px] text-[color:var(--color-muted-foreground)]">
-                                    +{remaining.length - 4} more
-                                  </div>
+                        </div>
+                        {headline && (
+                          <p className="mt-0.5 text-sm text-[color:var(--color-muted-foreground)]">
+                            {headline}
+                          </p>
+                        )}
+                        <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
+                          {formatCountry(e.country)}
+                          {aliasLine && <> · aka {aliasLine}</>}
+                        </p>
+                        {stats && (
+                          <p className="mt-2 text-sm tabular-nums">{stats}</p>
+                        )}
+                        {remaining.length > 0 && (
+                          <dl className={`${stats ? 'mt-1.5' : 'mt-2'} grid gap-x-4 gap-y-0.5 sm:grid-cols-2`}>
+                            {remaining.slice(0, 4).map((kv, i) => (
+                              <div key={i} className="flex flex-wrap gap-1 leading-snug">
+                                {kv.key && (
+                                  <dt className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                                    {kv.key}:
+                                  </dt>
                                 )}
-                              </dl>
-                            )}
-                            {e.contactEntity && (
-                              <div className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
-                                Contact: {e.contactEntity}
+                                <dd className="text-sm">{kv.value}</dd>
+                              </div>
+                            ))}
+                            {remaining.length > 4 && (
+                              <div className="text-[11px] text-[color:var(--color-muted-foreground)]">
+                                +{remaining.length - 4} more
                               </div>
                             )}
-                          </td>
-                          {groupHasTags && (
-                            <td className="px-3 py-2 align-top">
-                              <div className="flex flex-wrap gap-1">
-                                {visibleTags.slice(0, 5).map((t) => (
-                                  <Link
-                                    key={t}
-                                    href={baseHref({ tag: t })}
-                                    className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1.5 py-0.5 text-xs hover:border-[color:var(--color-foreground)]"
-                                  >
-                                    {t}
-                                  </Link>
-                                ))}
-                              </div>
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                          </dl>
+                        )}
+                        {e.contactEntity && (
+                          <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+                            Contact: {e.contactEntity}
+                          </p>
+                        )}
+                        {visibleTags.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {visibleTags.slice(0, 6).map((t) => (
+                              <Link
+                                key={t}
+                                href={baseHref({ tag: t })}
+                                className="rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[11px] text-[color:var(--color-muted-foreground)] hover:border-[color:var(--color-foreground)] hover:text-[color:var(--color-foreground)]"
+                              >
+                                {t}
+                              </Link>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="hidden shrink-0 items-start sm:flex">
+                        <Link
+                          href={`/entities/${encodeURIComponent(e.slug)}`}
+                          className="rounded-full border border-[color:var(--color-foreground)]/70 px-3 py-1 text-xs font-medium text-[color:var(--color-foreground)] hover:bg-[color:var(--color-foreground)] hover:text-[color:var(--color-background)]"
+                        >
+                          View profile
+                        </Link>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
             </section>
           );
         })
