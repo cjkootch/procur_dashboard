@@ -12747,6 +12747,132 @@ export async function updateKnownEntityAttribute(
   return { ok: true, oldValue, newValue };
 }
 
+// ─── Pattern 4 (disposition tracking) per feedback-ui-brief.md §7 ─
+
+export const ENTITY_DISPOSITIONS = [
+  'active_pursuing',
+  'active_exploratory',
+  'dormant',
+  'dead',
+  'declined',
+  'never_contacted',
+] as const;
+export type EntityDispositionValue = (typeof ENTITY_DISPOSITIONS)[number];
+
+export type CurrentDispositionRow = {
+  entitySlug: string;
+  userId: string;
+  disposition: EntityDispositionValue;
+  declineReason: string | null;
+  setAt: string;
+  isStale: boolean;
+};
+
+const STALE_DAYS = 30;
+
+export async function getCurrentDisposition(
+  entitySlug: string,
+  userId: string,
+): Promise<CurrentDispositionRow | null> {
+  const rows = (await db.execute(sql`
+    SELECT entity_slug, user_id, disposition, decline_reason, set_at
+      FROM entity_dispositions
+     WHERE entity_slug = ${entitySlug}
+       AND user_id = ${userId}
+       AND superseded_at IS NULL
+     ORDER BY set_at DESC
+     LIMIT 1;
+  `)) as unknown as Array<{
+    entity_slug: string;
+    user_id: string;
+    disposition: EntityDispositionValue;
+    decline_reason: string | null;
+    set_at: Date;
+  }>;
+  if (!rows[0]) return null;
+  const r = rows[0];
+  const ageMs = Date.now() - r.set_at.getTime();
+  return {
+    entitySlug: r.entity_slug,
+    userId: r.user_id,
+    disposition: r.disposition,
+    declineReason: r.decline_reason,
+    setAt: r.set_at.toISOString(),
+    isStale: ageMs > STALE_DAYS * 86400 * 1000,
+  };
+}
+
+export type SetEntityDispositionInput = {
+  entitySlug: string;
+  userId: string;
+  disposition: EntityDispositionValue;
+  declineReason?: string | null;
+};
+
+/**
+ * Append a new disposition row + supersede any current one for the
+ * same (entity, user). Single round-trip via WITH-CTE supersession.
+ *
+ * Per brief §7.3: 'declined' requires a decline_reason — caller is
+ * responsible for collecting it; this helper enforces non-null but
+ * doesn't reject empty strings (UI does that).
+ */
+export async function setEntityDisposition(input: SetEntityDispositionInput): Promise<void> {
+  if (input.disposition === 'declined' && !input.declineReason) {
+    throw new Error('setEntityDisposition: declined requires declineReason');
+  }
+  await db.execute(sql`
+    WITH supersede AS (
+      UPDATE entity_dispositions
+         SET superseded_at = now()
+       WHERE entity_slug = ${input.entitySlug}
+         AND user_id = ${input.userId}
+         AND superseded_at IS NULL
+    )
+    INSERT INTO entity_dispositions (
+      entity_slug, user_id, disposition, decline_reason
+    ) VALUES (
+      ${input.entitySlug},
+      ${input.userId},
+      ${input.disposition},
+      ${input.declineReason ?? null}
+    );
+  `);
+}
+
+export type DispositionHistoryRow = {
+  disposition: EntityDispositionValue;
+  declineReason: string | null;
+  setAt: string;
+  supersededAt: string | null;
+};
+
+export async function getDispositionHistory(
+  entitySlug: string,
+  userId: string,
+  limit: number = 20,
+): Promise<DispositionHistoryRow[]> {
+  const rows = (await db.execute(sql`
+    SELECT disposition, decline_reason, set_at, superseded_at
+      FROM entity_dispositions
+     WHERE entity_slug = ${entitySlug}
+       AND user_id = ${userId}
+     ORDER BY set_at DESC
+     LIMIT ${limit};
+  `)) as unknown as Array<{
+    disposition: EntityDispositionValue;
+    decline_reason: string | null;
+    set_at: Date;
+    superseded_at: Date | null;
+  }>;
+  return rows.map((r) => ({
+    disposition: r.disposition,
+    declineReason: r.decline_reason,
+    setAt: r.set_at.toISOString(),
+    supersededAt: r.superseded_at?.toISOString() ?? null,
+  }));
+}
+
 // ─── Pattern 3 (friction logging) per feedback-ui-brief.md §6 ─────
 
 export type FrictionInput = {
