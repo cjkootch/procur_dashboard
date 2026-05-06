@@ -7,6 +7,7 @@ import {
   getDirectOwners,
   getEntityProfile,
   getEntityVesselActivity,
+  getEntityWebIntelligence,
   getFuelBuyerImportContext,
   getOwnershipChain,
   getRefineryImportContext,
@@ -22,6 +23,7 @@ import { FuelBuyerImportContextPanel } from './_components/FuelBuyerImportContex
 import { QuoteAnchorsPanel } from './_components/QuoteAnchorsPanel';
 import { RefineryImportContextPanel } from './_components/RefineryImportContextPanel';
 import { SupplierApprovalForm } from './_components/SupplierApprovalForm';
+import { WebsiteIntelligencePanel } from './_components/WebsiteIntelligencePanel';
 
 /**
  * Unified entity profile — accepts either a known_entities.slug or
@@ -67,6 +69,7 @@ export default async function EntityProfilePage({ params }: Props) {
     refineryImportCtx,
     fuelBuyerImportCtx,
     apolloCache,
+    webIntel,
   ] = await Promise.all([
     getDirectOwners(ownershipQueryName),
     getOwnershipChain(ownershipQueryName, 5),
@@ -92,6 +95,9 @@ export default async function EntityProfilePage({ params }: Props) {
       ? getFuelBuyerImportContext(profile.canonicalKey).catch(() => null)
       : Promise.resolve(null),
     getApolloEntityCache(profile.canonicalKey).catch(() => null),
+    // Website intelligence — extracted facts + section summaries
+    // from primary_domain crawl. Null when not yet crawled.
+    getEntityWebIntelligence(profile.canonicalKey).catch(() => null),
   ]);
 
   const fmtUsd = (n: number | null) =>
@@ -189,6 +195,15 @@ export default async function EntityProfilePage({ params }: Props) {
       <ApolloCorporateContext
         cache={apolloCache}
         entitySlug={profile.canonicalKey}
+      />
+
+      {/* Website intelligence — facts + section summaries extracted
+          from the entity's primary_domain crawl. Read-only for now;
+          refresh action gated on Trigger.dev v3→v4 migration since
+          a sync HTTP handler would time out on the ~60-120s crawl. */}
+      <WebsiteIntelligencePanel
+        intel={webIntel}
+        entityName={profile.name}
       />
 
       {/* Quote anchors — refiner-only. Renders the realistic CIF
