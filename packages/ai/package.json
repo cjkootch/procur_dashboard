@@ -26,6 +26,7 @@
     "drizzle-orm": "^0.38.3",
     "dotenv": "^16.4.7",
     "openai": "^4.77.0",
+    "resend": "^4.0.1",
     "robots-parser": "^3.0.1",
     "ulid": "^2.3.0",
     "unpdf": "^0.12.1",

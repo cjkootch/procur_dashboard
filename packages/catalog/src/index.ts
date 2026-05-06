@@ -12,6 +12,7 @@
 export * from './queries';
 export * from './mutations';
 export * from './agent-runtime';
+export * from './inbox';
 export {
   buildCatalogTools,
   buildFilterUrl,

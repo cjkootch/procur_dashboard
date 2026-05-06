@@ -26,3 +26,7 @@ export {
 } from './agent-runner';
 export type { AgentContext, AgentOutput, IAgent } from './types';
 export { createId, isUlid } from './id';
+export {
+  EmailReplyDraftAgent,
+  type EmailReplyDraftInput,
+} from './agents/email-reply-draft';
