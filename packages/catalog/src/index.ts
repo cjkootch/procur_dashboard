@@ -11,6 +11,11 @@
  */
 export * from './queries';
 export * from './mutations';
+export * from './agent-runtime';
+export * from './inbox';
+export * from './leads';
+export * from './sales-surfaces';
+export * from './deals';
 export {
   buildCatalogTools,
   buildFilterUrl,

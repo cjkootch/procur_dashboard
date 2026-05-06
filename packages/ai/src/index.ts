@@ -146,3 +146,90 @@ export {
   type UserAttachment,
   type AppendAssistantMessageInput,
 } from './threads';
+
+// Vex-into-procur merge Phase 2 — agent runtime + cost ledger.
+// Per docs/vex-into-procur-merge-brief.md.
+export {
+  ActionDescriptor,
+  actionRequiresApproval,
+  ApprovalTier,
+  requiresApproval,
+  ApprovalGate,
+  AgentRunner,
+  DEFAULT_DAILY_COST_LIMIT_USD,
+  createId,
+  isUlid,
+  type ActionDescriptorT,
+  type AgentContext,
+  type AgentOutput,
+  type AgentRunRecord,
+  type AgentRunnerOptions,
+  type IAgent,
+} from './agents';
+export {
+  InMemoryCostLedger,
+  PostgresCostLedger,
+  sumCostLedgerToday,
+  type CostEntry,
+  type CostLedger,
+  type CostOperation,
+} from './cost-ledger';
+// Phase 3 — email executor + reply-draft agent
+export {
+  applyEmailSend,
+  parseEmailSendPayload,
+  type EmailSendPayload,
+  type EmailSendResult,
+} from './executors/email-send';
+export {
+  EmailReplyDraftAgent,
+  type EmailReplyDraftInput,
+} from './agents/agents/email-reply-draft';
+// Phase 4 — sales executors (crm.create_*, lead.close, follow_up.schedule, …)
+export {
+  applyCloseLead,
+  applyContactOptOut,
+  applyContactTag,
+  applyCreateCompany,
+  applyCreateContact,
+  applyOrgAddProduct,
+  applyOrgLinkRelationship,
+  applyOrgSetKind,
+  applyOrgTag,
+  applyOrgUpdateFields,
+  applyScheduleFollowUp,
+  parseCloseLeadPayload,
+  parseCreateCompanyPayload,
+  parseCreateContactPayload,
+  parseScheduleFollowUpPayload,
+  type CloseLeadPayload,
+  type CreateCompanyPayload,
+  type CreateContactPayload,
+  type ScheduleFollowUpPayload,
+} from './executors/sales';
+// Phase 5 — fuel-deal executors + DealEvaluator + DealMarketContext agents
+export {
+  applyCreateDeal,
+  applyDealHumanReview,
+  applyDealMilestone,
+  applyDealSetBroker,
+  applyDealStatusChange,
+  parseCreateDealPayload,
+  parseDealMilestonePayload,
+  parseDealSetBrokerPayload,
+  parseDealStatusChangePayload,
+  type CreateDealPayload,
+  type DealMilestonePayload,
+  type DealSetBrokerPayload,
+  type DealStatusChangePayload,
+} from './executors/deals';
+export {
+  DealEvaluatorAgent,
+  type DealEvaluatorInput,
+} from './agents/agents/deal-evaluator';
+export {
+  DealMarketContextAgent,
+  type DealMarketContextDeps,
+  type DealMarketContextInput,
+  type EvaluateTargetPriceFn,
+} from './agents/agents/deal-market-context';

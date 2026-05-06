@@ -11,7 +11,11 @@ import { companies } from './companies';
  * webhook_events captures provider-driven events. They never overlap.
  */
 
-export type WebhookProvider = 'stripe' | 'clerk' | 'other';
+export type WebhookProvider =
+  | 'stripe'
+  | 'clerk'
+  | 'resend_inbound'
+  | 'other';
 
 export const webhookEvents = pgTable(
   'webhook_events',

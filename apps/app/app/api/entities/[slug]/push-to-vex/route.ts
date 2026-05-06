@@ -5,9 +5,9 @@ import {
   getEntityProfile,
   getMarketMoveBanner,
   getSupplierApproval,
+  qualifyAsLead,
 } from '@procur/catalog';
 import { getCurrentUser, requireCompany } from '@procur/auth';
-import { pushVexContact } from '@/lib/vex-client';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,16 +16,19 @@ export const dynamic = 'force-dynamic';
  * POST /api/entities/[slug]/push-to-vex
  *   { contactName?, contactEmail?, contactPhone?, userNote? }
  *
- * One-click "push to vex" from the entity profile page. Mirrors the
- * match-queue push-to-vex flow (and the assistant chat tool), but
- * keyed on the canonical slug/UUID the profile page itself resolves
- * with — so the button has all the context the page already shows.
+ * One-click "qualify as lead" from the entity profile page. Mirrors the
+ * match-queue path (and the assistant chat tool), keyed on the
+ * canonical slug/UUID the profile page itself resolves with.
  *
- * Resolves the full profile via getEntityProfile (which handles
+ * Resolves the full profile via getEntityProfile (handles
  * known_entities slug OR external_suppliers UUID), then calls
- * pushVexContact with the same commercialContext shape the assistant
- * uses. On success, returns vexRecordUrl so the client can open the
- * vex record in a new tab.
+ * qualifyAsLead — Phase 4 in-process replacement for the deleted
+ * vex HTTP push. Returns the new lead's URL so the client can
+ * navigate.
+ *
+ * NOTE: route still named `push-to-vex` for back-compat with the
+ * existing UI button + bookmarks; rename in a follow-up cleanup PR
+ * after the merge stabilizes.
  */
 const BodySchema = z.object({
   contactName: z.string().nullish(),
@@ -65,19 +68,6 @@ export async function POST(
     return NextResponse.json({ error: 'not_found' }, { status: 404 });
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.procur.app';
-  const tender = profile.publicTenderActivity;
-  const last = tender?.mostRecentAwardDate ?? null;
-  const daysSinceLastAward =
-    last != null
-      ? Math.max(
-          0,
-          Math.floor(
-            (Date.now() - new Date(last).getTime()) / (24 * 60 * 60 * 1000),
-          ),
-        )
-      : null;
-
   // Pull the per-tenant approval, market snapshot, and trading
   // defaults in parallel — vex's enrichment worker treats all three
   // as authoritative procur context, so shipping them on the push
@@ -110,62 +100,52 @@ export async function POST(
       }
     : null;
 
-  const result = await pushVexContact({
-    source: 'procur',
+  const chatSummary =
+    `Pushed from procur entity profile (${profile.primarySource === 'known_entity' ? 'curated rolodex' : 'portal-scraped'}). ` +
+    `${profile.role ?? 'counterparty'}` +
+    (profile.country ? ` based in ${profile.country}` : '') +
+    (profile.categories.length > 0 ? `, categories: ${profile.categories.join(', ')}` : '') +
+    '.';
+
+  const result = await qualifyAsLead({
     sourceRef: `entity-profile:${profile.canonicalKey}`,
+    triggeredBy: `procur-entity-profile:user:${user.id}`,
     legalName: profile.name,
     country: profile.country ?? null,
+    domain: null,
     role: profile.role,
-    contactName: parsed.data.contactName ?? null,
-    contactEmail: parsed.data.contactEmail ?? null,
-    contactPhone: parsed.data.contactPhone ?? null,
-    contactTitle: null,
-    contactLinkedinUrl: null,
-    commercialContext: {
-      categories: profile.categories,
-      awardCount: tender?.totalAwards ?? 0,
-      awardTotalUsd: tender?.totalValueUsd ?? null,
-      daysSinceLastAward,
-      distressSignals: [],
-      notes: profile.notes,
-      procurEntityProfileUrl: `${appUrl}/entities/${profile.canonicalKey}`,
+    contact:
+      parsed.data.contactName || parsed.data.contactEmail || parsed.data.contactPhone
+        ? {
+            name: parsed.data.contactName ?? null,
+            email: parsed.data.contactEmail ?? null,
+            phone: parsed.data.contactPhone ?? null,
+            title: null,
+            linkedinUrl: null,
+          }
+        : null,
+    chatSummary,
+    userNote: parsed.data.userNote ?? null,
+    procurMetadata: {
+      ...(approval
+        ? {
+            procurApproval: {
+              status: approval.status,
+              approvedAt: approval.approvedAt,
+              expiresAt: approval.expiresAt,
+              notes: approval.notes,
+            },
+          }
+        : {}),
+      ...(marketContext ? { marketContext } : {}),
+      ...(procurTradingDefaults ? { procurTradingDefaults } : {}),
     },
-    originationContext: {
-      triggeredBy: `procur-entity-profile:user:${user.id}`,
-      chatSummary:
-        `Pushed from procur entity profile (${profile.primarySource === 'known_entity' ? 'curated rolodex' : 'portal-scraped'}). ` +
-        `${profile.role ?? 'counterparty'}` +
-        (profile.country ? ` based in ${profile.country}` : '') +
-        (profile.categories.length > 0 ? `, categories: ${profile.categories.join(', ')}` : '') +
-        '.',
-      userNote: parsed.data.userNote ?? null,
-      pushedAt: new Date().toISOString(),
-    },
-    approvalContext: approval
-      ? {
-          status: approval.status,
-          approvedAt: approval.approvedAt,
-          expiresAt: approval.expiresAt,
-          notes: approval.notes,
-        }
-      : null,
-    productSpecs: [],
-    sourceDocuments: [],
-    marketContext,
-    procurTradingDefaults,
   });
-
-  if (!result.ok) {
-    return NextResponse.json(
-      { error: 'vex_push_failed', message: result.error, status: result.status },
-      { status: 502 },
-    );
-  }
 
   return NextResponse.json({
     ok: true,
-    vexContactId: result.data.vexContactId,
-    vexRecordUrl: result.data.vexRecordUrl,
-    dedupedAgainstExisting: result.data.dedupedAgainstExisting,
+    leadId: result.leadId,
+    leadUrl: result.leadUrl,
+    dedupedAgainstExisting: result.dedupedAgainstExisting,
   });
 }
