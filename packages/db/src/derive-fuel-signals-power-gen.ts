@@ -133,11 +133,12 @@ type FactorRow = {
 async function loadIntensityFactors(): Promise<
   Record<string, { min: number; mid: number; max: number }>
 > {
-  const rows = (await db.execute(sql`
+  const result = await db.execute(sql`
     SELECT slug, liters_per_unit, liters_per_unit_min, liters_per_unit_max
       FROM fuel_intensity_factors
      WHERE slug IN ('power-gen-hfo-baseload', 'power-gen-diesel-peaker');
-  `)) as unknown as FactorRow[];
+  `);
+  const rows = result.rows as unknown as FactorRow[];
   const out: Record<string, { min: number; mid: number; max: number }> = {};
   for (const r of rows) {
     const mid = Number(r.liters_per_unit);
@@ -174,7 +175,7 @@ async function loadPlants(countryFilter: string | null): Promise<PlantRow[]> {
           FROM known_entities
          WHERE role = 'power-plant';
       `);
-  return result as unknown as PlantRow[];
+  return result.rows as unknown as PlantRow[];
 }
 
 function classifyPlant(p: PlantRow): ClassifiedPlant | null {
