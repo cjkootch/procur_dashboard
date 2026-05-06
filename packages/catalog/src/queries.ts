@@ -2055,6 +2055,22 @@ export type SupplierAnalysisProfile = {
     contractValueUsd: number | null;
   }>;
   signals: Array<{ signalType: string; signalValue: unknown; observedAt: string }>;
+  /** Cached Apollo org snapshot — financial scale, headcount,
+   *  funding stage, industry, tech stack. NULL when the supplier
+   *  hasn't been Apollo-matched yet (no primary_domain set, or
+   *  Apollo doesn't index the entity). */
+  apollo: {
+    apolloOrgId: string;
+    syncedAt: string;
+    fundingStage: string | null;
+    totalFunding: number | null;
+    latestFundingAt: string | null;
+    estimatedEmployees: number | null;
+    annualRevenue: number | null;
+    industry: string | null;
+    shortDescription: string | null;
+    technologyNames: string[];
+  } | null;
 };
 
 export type SupplierAnalysisResult =
@@ -2285,6 +2301,36 @@ export async function analyzeSupplier(
       signalValue: s.signalValue,
       observedAt: s.observedAt.toISOString(),
     })),
+    apollo: await (async () => {
+      // Apollo is sidecar enrichment; failures here shouldn't block
+      // the dossier render. Try to fetch by external_suppliers.id;
+      // if the supplier has a curated known_entities overlay, the
+      // overlay's apollo_* columns may be more current — but for v1
+      // we just read whichever table the resolved id points at.
+      try {
+        const cache = await getApolloEntityCache(resolvedSupplierId);
+        if (!cache) return null;
+        return {
+          apolloOrgId: cache.apolloOrgId,
+          syncedAt: cache.syncedAt,
+          fundingStage: cache.fundingStage,
+          totalFunding: cache.totalFunding,
+          latestFundingAt: cache.latestFundingAt,
+          estimatedEmployees: cache.estimatedEmployees,
+          annualRevenue: cache.annualRevenue,
+          industry: (cache.snapshot?.industry as string | null) ?? null,
+          shortDescription:
+            (cache.snapshot?.shortDescription as string | null) ?? null,
+          technologyNames:
+            (cache.snapshot?.technologyNames as string[] | undefined)?.slice(
+              0,
+              20,
+            ) ?? [],
+        };
+      } catch {
+        return null;
+      }
+    })(),
   };
 }
 
@@ -2941,6 +2987,12 @@ export interface KnownEntityRow {
    *  funding events are known. Sortable to surface "who has fresh
    *  capital" at the top of the rolodex. */
   apolloLatestFundingAt: string | null;
+  /** Apollo's estimate of current full-time-equivalent headcount. */
+  apolloEstimatedEmployees: number | null;
+  /** Apollo's estimate of annual revenue (USD). */
+  apolloAnnualRevenue: number | null;
+  /** Cumulative funding raised across all known rounds (USD). */
+  apolloTotalFunding: number | null;
 }
 
 /** Mirrors SupplierApprovalStatus in @procur/db; duplicated here to
@@ -2982,6 +3034,8 @@ export async function lookupKnownEntities(
       ke.contact_entity, ke.aliases, ke.tags, ke.metadata,
       ke.latitude, ke.longitude,
       ke.apollo_funding_stage, ke.apollo_latest_funding_at,
+      ke.apollo_estimated_employees, ke.apollo_annual_revenue,
+      ke.apollo_total_funding,
       ${companyId ? sql`sa.status` : sql`NULL::text`} AS approval_status,
       ${companyId ? sql`sa.approved_at` : sql`NULL::timestamptz`} AS approval_approved_at,
       ${companyId ? sql`sa.expires_at` : sql`NULL::timestamptz`} AS approval_expires_at
@@ -3064,6 +3118,14 @@ export async function lookupKnownEntities(
         : r.apollo_latest_funding_at == null
           ? null
           : String(r.apollo_latest_funding_at),
+    apolloEstimatedEmployees:
+      r.apollo_estimated_employees == null
+        ? null
+        : Number(r.apollo_estimated_employees),
+    apolloAnnualRevenue:
+      r.apollo_annual_revenue == null ? null : Number(r.apollo_annual_revenue),
+    apolloTotalFunding:
+      r.apollo_total_funding == null ? null : Number(r.apollo_total_funding),
   }));
 }
 
@@ -3166,6 +3228,9 @@ export async function findEntitiesNearLocation(filters: {
     // proximity is a fast geographic narrow, not an enriched listing.
     apolloFundingStage: null,
     apolloLatestFundingAt: null,
+    apolloEstimatedEmployees: null,
+    apolloAnnualRevenue: null,
+    apolloTotalFunding: null,
   }));
 }
 
