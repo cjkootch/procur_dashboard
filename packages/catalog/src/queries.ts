@@ -11756,3 +11756,257 @@ export async function getFuelConsumptionSignals(
     rawData: r.raw_data as Record<string, unknown> | null,
   }));
 }
+
+// ─── ML Layer Phase 1, Component A — vector store queries ──────────
+// Per docs/procur-ml-layer-brief.md §4.3. ANN search wrappers around
+// pgvector cosine similarity. Embeddings populated by Component B
+// (GraphSAGE training pipeline) — until B ships these queries return
+// empty arrays for any entity_slug without a row in entity_embeddings.
+
+export type SimilarEntityRow = {
+  entitySlug: string;
+  similarity: number; // 0-1, cosine
+  embeddingKind: string;
+  modelVersion: string;
+};
+
+export type FindSimilarEntitiesOptions = {
+  /** Defaults to 'combined_v1' once Component B ships; until then any
+      kind populated in the table works. */
+  embeddingKind?: string;
+  limit?: number;
+  /** Cosine similarity floor [0-1]. Rows below this aren't returned. */
+  minSimilarity?: number;
+  /** Optional model_version pin — useful during A/B testing or
+      rollback. Latest by trained_at when omitted. */
+  modelVersion?: string;
+};
+
+/**
+ * Find entities similar to a given entity by cosine similarity over
+ * pgvector HNSW index. Returns empty array if the source entity has
+ * no embedding of the requested kind.
+ *
+ * pgvector's `<=>` operator computes cosine DISTANCE; we convert to
+ * similarity = 1 - distance.
+ */
+export async function findSimilarEntities(
+  entitySlug: string,
+  options: FindSimilarEntitiesOptions = {},
+): Promise<SimilarEntityRow[]> {
+  const kind = options.embeddingKind ?? 'combined_v1';
+  const limit = options.limit ?? 10;
+  const minSim = options.minSimilarity ?? 0;
+
+  // Fetch the source embedding first — we need its vector to seed
+  // the similarity search. Picking the latest by trained_at when
+  // multiple model_versions exist for the same kind, unless
+  // modelVersion is pinned explicitly.
+  const sourceRows = options.modelVersion
+    ? ((await db.execute(sql`
+        SELECT embedding, model_version
+          FROM entity_embeddings
+         WHERE entity_slug = ${entitySlug}
+           AND embedding_kind = ${kind}
+           AND model_version = ${options.modelVersion}
+         LIMIT 1
+      `)).rows as Array<Record<string, unknown>>)
+    : ((await db.execute(sql`
+        SELECT embedding, model_version
+          FROM entity_embeddings
+         WHERE entity_slug = ${entitySlug}
+           AND embedding_kind = ${kind}
+         ORDER BY trained_at DESC
+         LIMIT 1
+      `)).rows as Array<Record<string, unknown>>);
+
+  if (sourceRows.length === 0 || !sourceRows[0]) return [];
+  const source = sourceRows[0];
+  const sourceVector = source.embedding;
+  const sourceModelVersion = String(source.model_version);
+
+  // Now do the ANN search. Constrain to the same kind + the source's
+  // model_version so cross-version comparisons aren't accidentally
+  // mixing into ranks. Caller can override via modelVersion.
+  const versionFilter = options.modelVersion ?? sourceModelVersion;
+  const result = await db.execute(sql`
+    SELECT
+      entity_slug,
+      embedding_kind,
+      model_version,
+      1 - (embedding <=> ${sourceVector}::vector) AS similarity
+    FROM entity_embeddings
+    WHERE embedding_kind = ${kind}
+      AND model_version = ${versionFilter}
+      AND entity_slug <> ${entitySlug}
+    ORDER BY embedding <=> ${sourceVector}::vector
+    LIMIT ${limit}
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>)
+    .map((r) => ({
+      entitySlug: String(r.entity_slug),
+      similarity: Number(r.similarity),
+      embeddingKind: String(r.embedding_kind),
+      modelVersion: String(r.model_version),
+    }))
+    .filter((r) => r.similarity >= minSim);
+}
+
+export type SimilarSignalRow = {
+  signalId: string;
+  signalSource: string;
+  similarity: number;
+  embeddingKind: string;
+  modelVersion: string;
+};
+
+export type FindSimilarSignalsOptions = {
+  embeddingKind?: string;
+  limit?: number;
+  minSimilarity?: number;
+  modelVersion?: string;
+  /** Restrict the candidate pool to a specific source table — e.g.
+      to find news events similar to a given news event. Omit to
+      search across all signal sources. */
+  sourceFilter?: string;
+};
+
+export async function findSimilarSignals(
+  signalId: string,
+  signalSource: string,
+  options: FindSimilarSignalsOptions = {},
+): Promise<SimilarSignalRow[]> {
+  const kind = options.embeddingKind ?? 'text_v1';
+  const limit = options.limit ?? 10;
+  const minSim = options.minSimilarity ?? 0;
+
+  const sourceRows = options.modelVersion
+    ? ((await db.execute(sql`
+        SELECT embedding, model_version
+          FROM signal_embeddings
+         WHERE signal_id = ${signalId}
+           AND signal_source = ${signalSource}
+           AND embedding_kind = ${kind}
+           AND model_version = ${options.modelVersion}
+         LIMIT 1
+      `)).rows as Array<Record<string, unknown>>)
+    : ((await db.execute(sql`
+        SELECT embedding, model_version
+          FROM signal_embeddings
+         WHERE signal_id = ${signalId}
+           AND signal_source = ${signalSource}
+           AND embedding_kind = ${kind}
+         ORDER BY trained_at DESC
+         LIMIT 1
+      `)).rows as Array<Record<string, unknown>>);
+
+  if (sourceRows.length === 0 || !sourceRows[0]) return [];
+  const sourceVector = sourceRows[0].embedding;
+  const sourceModelVersion = String(sourceRows[0].model_version);
+  const versionFilter = options.modelVersion ?? sourceModelVersion;
+
+  const sourceClause = options.sourceFilter
+    ? sql`AND signal_source = ${options.sourceFilter}`
+    : sql``;
+  const result = await db.execute(sql`
+    SELECT
+      signal_id,
+      signal_source,
+      embedding_kind,
+      model_version,
+      1 - (embedding <=> ${sourceVector}::vector) AS similarity
+    FROM signal_embeddings
+    WHERE embedding_kind = ${kind}
+      AND model_version = ${versionFilter}
+      AND NOT (signal_id = ${signalId} AND signal_source = ${signalSource})
+      ${sourceClause}
+    ORDER BY embedding <=> ${sourceVector}::vector
+    LIMIT ${limit}
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>)
+    .map((r) => ({
+      signalId: String(r.signal_id),
+      signalSource: String(r.signal_source),
+      similarity: Number(r.similarity),
+      embeddingKind: String(r.embedding_kind),
+      modelVersion: String(r.model_version),
+    }))
+    .filter((r) => r.similarity >= minSim);
+}
+
+/**
+ * Insert / upsert an entity embedding. Used by Component B's
+ * training pipeline output and inductive inference for new entities.
+ *
+ * Re-running with the same (entity_slug, embedding_kind, model_version)
+ * tuple replaces the embedding — letting B retrain in place when
+ * model parameters move without bumping model_version.
+ */
+export async function upsertEntityEmbedding(args: {
+  entitySlug: string;
+  embeddingKind: string;
+  embedding: number[];
+  modelVersion: string;
+  trainedAt: Date;
+}): Promise<void> {
+  if (args.embedding.length !== 128) {
+    throw new Error(
+      `upsertEntityEmbedding: expected 128-dim vector, got ${args.embedding.length}`,
+    );
+  }
+  // pgvector accepts text-format '[1,2,3]'; keeps the SQL clean and
+  // avoids needing a parameterized array binding for the vector type.
+  const vec = `[${args.embedding.join(',')}]`;
+  await db.execute(sql`
+    INSERT INTO entity_embeddings (
+      entity_slug, embedding_kind, embedding, embedding_dim,
+      model_version, trained_at
+    ) VALUES (
+      ${args.entitySlug},
+      ${args.embeddingKind},
+      ${vec}::vector,
+      128,
+      ${args.modelVersion},
+      ${args.trainedAt}
+    )
+    ON CONFLICT (entity_slug, embedding_kind, model_version)
+    DO UPDATE SET
+      embedding = EXCLUDED.embedding,
+      trained_at = EXCLUDED.trained_at;
+  `);
+}
+
+export async function upsertSignalEmbedding(args: {
+  signalId: string;
+  signalSource: string;
+  embeddingKind: string;
+  embedding: number[];
+  modelVersion: string;
+  trainedAt: Date;
+}): Promise<void> {
+  if (args.embedding.length !== 128) {
+    throw new Error(
+      `upsertSignalEmbedding: expected 128-dim vector, got ${args.embedding.length}`,
+    );
+  }
+  const vec = `[${args.embedding.join(',')}]`;
+  await db.execute(sql`
+    INSERT INTO signal_embeddings (
+      signal_id, signal_source, embedding_kind, embedding,
+      model_version, trained_at
+    ) VALUES (
+      ${args.signalId},
+      ${args.signalSource},
+      ${args.embeddingKind},
+      ${vec}::vector,
+      ${args.modelVersion},
+      ${args.trainedAt}
+    )
+    ON CONFLICT (signal_id, signal_source, embedding_kind, model_version)
+    DO UPDATE SET
+      embedding = EXCLUDED.embedding,
+      trained_at = EXCLUDED.trained_at;
+  `);
+}

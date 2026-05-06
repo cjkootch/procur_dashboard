@@ -60,3 +60,4 @@ export * from './commission-structures';
 export * from './apollo';
 export * from './mcp';
 export * from './fuel-consumption-signals';
+export * from './embeddings';
