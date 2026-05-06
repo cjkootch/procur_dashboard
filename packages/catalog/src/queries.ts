@@ -11635,3 +11635,124 @@ export async function composeProposalSkeleton(args: {
     notes,
   };
 }
+
+// ─── Fuel consumption signals (per-entity volume estimates) ─────────
+
+export type FuelConsumptionSignalRow = {
+  id: string;
+  source: string;
+  volumeBblYrMin: number | null;
+  volumeBblYrMax: number | null;
+  confidence: number | null;
+  asOfDate: string;
+  coverageYear: number | null;
+  notes: string | null;
+  sourceUrl: string | null;
+  rawData: Record<string, unknown> | null;
+};
+
+/**
+ * Batch-fetch consumption signals for many entities at once. Returns
+ * a map keyed by entitySlug. Used by lookup_known_entities to avoid
+ * N+1.
+ */
+export async function getFuelConsumptionSignalsBatch(
+  entitySlugs: string[],
+): Promise<Map<string, FuelConsumptionSignalRow[]>> {
+  const out = new Map<string, FuelConsumptionSignalRow[]>();
+  if (entitySlugs.length === 0) return out;
+  const result = await db.execute(sql`
+    SELECT
+      entity_slug, id, source, volume_bbl_yr_min, volume_bbl_yr_max,
+      confidence, as_of_date, coverage_year, notes, source_url, raw_data
+    FROM fuel_consumption_signals
+    WHERE entity_slug = ANY(ARRAY[${sql.join(
+      entitySlugs.map((s) => sql`${s}`),
+      sql`, `,
+    )}]::text[])
+    ORDER BY
+      entity_slug,
+      COALESCE(confidence, 0) DESC,
+      COALESCE(coverage_year, 0) DESC,
+      as_of_date DESC
+  `);
+  for (const r of result.rows as Array<Record<string, unknown>>) {
+    const slug = String(r.entity_slug);
+    const existing = out.get(slug) ?? [];
+    existing.push({
+      id: String(r.id),
+      source: String(r.source),
+      volumeBblYrMin:
+        r.volume_bbl_yr_min == null
+          ? null
+          : Number.parseFloat(String(r.volume_bbl_yr_min)),
+      volumeBblYrMax:
+        r.volume_bbl_yr_max == null
+          ? null
+          : Number.parseFloat(String(r.volume_bbl_yr_max)),
+      confidence:
+        r.confidence == null
+          ? null
+          : Number.parseFloat(String(r.confidence)),
+      asOfDate:
+        r.as_of_date instanceof Date
+          ? r.as_of_date.toISOString().slice(0, 10)
+          : String(r.as_of_date),
+      coverageYear: r.coverage_year == null ? null : Number(r.coverage_year),
+      notes: r.notes == null ? null : String(r.notes),
+      sourceUrl: r.source_url == null ? null : String(r.source_url),
+      rawData: r.raw_data as Record<string, unknown> | null,
+    });
+    out.set(slug, existing);
+  }
+  return out;
+}
+
+/**
+ * All fuel-consumption signals for an entity, ordered by confidence
+ * (high first) then coverage year (recent first). Returns an empty
+ * array when the entity has no signals — null-mostly data is normal
+ * here; coverage rolls out per-source over time.
+ *
+ * Spec: research thread on "data sources for fuel consumption by
+ * business/industry" — first source populated via seed-fuel-
+ * consumption-signals.ts (Caribbean mining via production × diesel
+ * intensity).
+ */
+export async function getFuelConsumptionSignals(
+  entitySlug: string,
+): Promise<FuelConsumptionSignalRow[]> {
+  const result = await db.execute(sql`
+    SELECT
+      id, source, volume_bbl_yr_min, volume_bbl_yr_max, confidence,
+      as_of_date, coverage_year, notes, source_url, raw_data
+    FROM fuel_consumption_signals
+    WHERE entity_slug = ${entitySlug}
+    ORDER BY
+      COALESCE(confidence, 0) DESC,
+      COALESCE(coverage_year, 0) DESC,
+      as_of_date DESC
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    id: String(r.id),
+    source: String(r.source),
+    volumeBblYrMin:
+      r.volume_bbl_yr_min == null
+        ? null
+        : Number.parseFloat(String(r.volume_bbl_yr_min)),
+    volumeBblYrMax:
+      r.volume_bbl_yr_max == null
+        ? null
+        : Number.parseFloat(String(r.volume_bbl_yr_max)),
+    confidence:
+      r.confidence == null ? null : Number.parseFloat(String(r.confidence)),
+    asOfDate:
+      r.as_of_date instanceof Date
+        ? r.as_of_date.toISOString().slice(0, 10)
+        : String(r.as_of_date),
+    coverageYear: r.coverage_year == null ? null : Number(r.coverage_year),
+    notes: r.notes == null ? null : String(r.notes),
+    sourceUrl: r.source_url == null ? null : String(r.source_url),
+    rawData: r.raw_data as Record<string, unknown> | null,
+  }));
+}

@@ -28,6 +28,8 @@ import {
   findRefineriesForGrade,
   lookupKnownEntities,
   findCounterpartiesUnified,
+  getFuelConsumptionSignals,
+  getFuelConsumptionSignalsBatch,
   walkOwnershipChainUp,
   walkSubsidiaries,
   lookupSanctionsScreens,
@@ -1846,6 +1848,9 @@ export function buildCatalogTools(): ToolRegistry {
               approvalStatus: input.approvalStatus,
               limit: input.limit ?? 50,
             });
+            const signalsBySlug = await getFuelConsumptionSignalsBatch(
+              rows.map((r) => r.slug),
+            );
             return {
               count: rows.length,
               entities: rows.map((r) => ({
@@ -1858,6 +1863,15 @@ export function buildCatalogTools(): ToolRegistry {
                 notes: r.notes,
                 contactEntity: r.contactEntity,
                 tags: r.tags,
+                consumptionSignals: (signalsBySlug.get(r.slug) ?? []).map((s) => ({
+                  source: s.source,
+                  volumeBblYrMin: s.volumeBblYrMin,
+                  volumeBblYrMax: s.volumeBblYrMax,
+                  confidence: s.confidence,
+                  coverageYear: s.coverageYear,
+                  notes: s.notes,
+                  sourceUrl: s.sourceUrl,
+                })),
                 metadata: r.metadata,
                 approvalStatus: r.approvalStatus,
                 approvalApprovedAt: r.approvalApprovedAt,
@@ -5692,6 +5706,23 @@ export function buildCatalogTools(): ToolRegistry {
           // lookup_apollo_org call to factor capital-recency or
           // scale into a counterparty read.
           apollo: result.apollo,
+          // Fuel consumption signals — derived bbl/yr ranges per
+          // signal source (mining production × intensity, ESG
+          // self-disclosed emissions, port bunker volumes, etc.).
+          // Empty array when the entity isn't in any source's
+          // coverage yet — that's normal; coverage rolls out
+          // per-source over time.
+          consumptionSignals: (
+            await getFuelConsumptionSignals(result.supplier.id)
+          ).map((s) => ({
+            source: s.source,
+            volumeBblYrMin: s.volumeBblYrMin,
+            volumeBblYrMax: s.volumeBblYrMax,
+            confidence: s.confidence,
+            coverageYear: s.coverageYear,
+            notes: s.notes,
+            sourceUrl: s.sourceUrl,
+          })),
         };
           },
         ),
