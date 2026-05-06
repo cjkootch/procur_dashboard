@@ -35,6 +35,7 @@ const NAV: SidebarNavGroup[] = [
     heading: 'Now',
     items: [
       { href: '/suppliers/match-queue', label: 'Match queue', iconName: 'lightning' },
+      { href: '/pinned', label: 'Pinned', iconName: 'clock' },
       { href: '/alerts', label: 'Alerts', iconName: 'bell' },
     ],
   },
@@ -47,6 +48,7 @@ const NAV: SidebarNavGroup[] = [
       { href: '/contract', label: 'Contracts', iconName: 'document-text' },
       { href: '/deal-structures', label: 'Deal structures', iconName: 'map' },
       { href: '/pricer', label: 'Pricer', iconName: 'calculator' },
+      { href: '/retrospectives', label: 'Retrospectives', iconName: 'clock' },
     ],
   },
   {
@@ -54,6 +56,7 @@ const NAV: SidebarNavGroup[] = [
     heading: 'Counterparties',
     items: [
       { href: '/suppliers/known-entities', label: 'Rolodex', iconName: 'address-book' },
+      { href: '/relationships/heat-map', label: 'Heat-map', iconName: 'map' },
       { href: '/suppliers/reverse-search', label: 'Reverse search', iconName: 'search' },
       {
         href: 'https://discover.procur.app',
@@ -78,6 +81,7 @@ const NAV: SidebarNavGroup[] = [
     heading: 'Account',
     items: [
       { href: '/settings', label: 'Company profile', iconName: 'settings' },
+      { href: '/friction', label: 'Friction log', iconName: 'inbox' },
       { href: '/billing', label: 'Billing', iconName: 'credit-card' },
     ],
   },
