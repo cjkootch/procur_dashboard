@@ -134,8 +134,18 @@ export async function POST(req: Request): Promise<Response> {
 
   const providerEventId = messageId ?? data.email_id ?? svixId;
 
-  // Step 1: dedupe via raw_events (idempotent on (received_at,
-  // provider, provider_event_id) per Phase 1 schema).
+  // The Resend webhook can be subscribed to inbound (`email.received`)
+  // OR outbound delivery events (`email.sent`, `email.delivered`,
+  // `email.bounced`, `email.complained`, `email.opened`, `email.clicked`,
+  // `email.delivery_delayed`). Phase 3 only handles the inbound
+  // event end-to-end; outbound events still get an audit row in
+  // raw_events so we can wire a delivery-status handler later
+  // (Phase 6 cleanup or a follow-up PR), but they DON'T flow into
+  // messages / threads / touchpoints — those tables assume an inbound
+  // shape with from/body/in_reply_to.
+  const isInbound = envelope.type === 'email.received';
+
+  // Always record the raw payload for audit, regardless of type.
   await db
     .insert(rawEvents)
     .values({
@@ -145,7 +155,7 @@ export async function POST(req: Request): Promise<Response> {
       headers: (data.headers ?? {}) as Record<string, unknown>,
       payload: envelope as unknown as Record<string, unknown>,
       receivedAt: occurredAt,
-      status: 'pending',
+      status: isInbound ? 'pending' : 'processed',
     })
     .onConflictDoNothing({
       target: [
@@ -154,6 +164,21 @@ export async function POST(req: Request): Promise<Response> {
         rawEvents.providerEventId,
       ],
     });
+
+  if (!isInbound) {
+    await recordWebhookReceipt({
+      provider: 'resend_inbound',
+      eventId: svixId,
+      eventType: envelope.type ?? null,
+      responseStatus: 200,
+      signatureValid: true,
+      processed: true,
+      payload: envelope,
+    });
+    return new Response('ok (non-inbound event recorded for audit)', {
+      status: 200,
+    });
+  }
 
   // Step 2: dedupe via messages.message_id (unique partial index in
   // migration 0080). If the message_id already exists, return early.
