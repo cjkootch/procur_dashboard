@@ -67,6 +67,44 @@ embedding quality is validated. Re-running with the same
 `entity_embeddings` (ON CONFLICT DO UPDATE). Bumping the version
 keeps both versions live, useful for A/B comparison.
 
+## Validation
+
+Brief §5.6 — two layers of validation gate the trained model.
+
+### Held-out edge AUC (during training)
+
+`procur_ml.train` automatically holds out 10% of edges per type as
+a validation set. The model never sees these during message passing,
+so per-epoch `val_auc/macro` is real generalization. The
+best-val-AUC checkpoint lands at `checkpoints/best/` separately
+from the final-epoch checkpoint at `checkpoints/`.
+
+```sh
+python -m procur_ml.train --graph graph.json --val-fraction 0.1
+# logs each epoch:
+#   epoch=10 loss=0.4231 val_auc_macro=0.7842
+#   epoch=20 loss=0.3104 val_auc_macro=0.8156
+# logged to MLflow when MLFLOW_TRACKING_URI is set
+```
+
+### Qualitative similarity sanity-check
+
+`procur_ml.validate` runs hand-curated peer pairs through the
+trained model and verifies that known-peer pairs cluster while
+known-non-peer pairs don't. Cases are in
+`tests/qualitative_pairs.json` — analyst-curated; extend as the
+rolodex grows.
+
+```sh
+python -m procur_ml.validate \
+    --graph graph.json \
+    --checkpoint-dir checkpoints/best \
+    --pairs tests/qualitative_pairs.json
+```
+
+Exit status reflects pass/fail. Suitable for CI gating before
+shipping a new model_version to production.
+
 ## Inductive inference for new entities
 
 When a new entity lands in `known_entities` between retraining
@@ -100,5 +138,5 @@ subgraph, and upserts only the target's row.
 
 - Trigger.dev wrapper for scheduled retraining (gated on the
   v3→v4 migration that's blocking the Apollo cron)
-- Two-tower retrieval model (Component C)
-- Entity resolution layer (Component D)
+- Two-tower retrieval model (Component C — gated on match-outcome
+  data volume per brief §12.2)

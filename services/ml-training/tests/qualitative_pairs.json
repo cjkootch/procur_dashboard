@@ -1,0 +1,144 @@
+{
+  "_comment": "Hand-curated qualitative similarity pairs for sanity-checking trained GraphSAGE embeddings. Per docs/procur-ml-layer-brief.md §5.6 (Component B days 14-15). Each case is (a, b) with an expected similarity label: 'high' means the pair should cluster (cosine >= threshold-high), 'low' means they should be far apart. Pairs reference slugs seeded across the fuel-buyer Tier A work. Extend as the rolodex grows — analyst-curated peer relationships are the ground truth here.",
+  "cases": [
+    {
+      "a": "fuel-buyer:jisco-alpart",
+      "b": "fuel-buyer:jamalco",
+      "expected": "high",
+      "note": "Both are Jamaica alumina refineries — same segment, same country, same fuel mix"
+    },
+    {
+      "a": "fuel-buyer:jisco-alpart",
+      "b": "fuel-buyer:windalco",
+      "expected": "high",
+      "note": "Both Jamaica alumina refineries"
+    },
+    {
+      "a": "fuel-buyer:jamalco",
+      "b": "fuel-buyer:windalco",
+      "expected": "high",
+      "note": "Both Jamaica alumina refineries"
+    },
+    {
+      "a": "fuel-buyer:barrick-pueblo-viejo",
+      "b": "fuel-buyer:newmont-merian",
+      "expected": "high",
+      "note": "Both Caribbean basin gold mining ops — DR + Suriname"
+    },
+    {
+      "a": "fuel-buyer:newmont-merian",
+      "b": "fuel-buyer:iamgold-rosebel",
+      "expected": "high",
+      "note": "Both Suriname gold mines — same country, same segment"
+    },
+    {
+      "a": "fuel-buyer:royal-caribbean-group",
+      "b": "fuel-buyer:carnival-corporation",
+      "expected": "high",
+      "note": "Big-3 cruise lines with Caribbean exposure"
+    },
+    {
+      "a": "fuel-buyer:royal-caribbean-group",
+      "b": "fuel-buyer:norwegian-cruise-line-holdings",
+      "expected": "high",
+      "note": "Major Caribbean cruise operators"
+    },
+    {
+      "a": "fuel-buyer:carnival-corporation",
+      "b": "fuel-buyer:msc-cruises",
+      "expected": "high",
+      "note": "Major cruise operators (multi-brand parents)"
+    },
+    {
+      "a": "fuel-buyer:msc-mediterranean-shipping",
+      "b": "fuel-buyer:maersk",
+      "expected": "high",
+      "note": "Top-2 container lines globally"
+    },
+    {
+      "a": "fuel-buyer:maersk",
+      "b": "fuel-buyer:cma-cgm",
+      "expected": "high",
+      "note": "Top-3 container lines"
+    },
+    {
+      "a": "fuel-buyer:hapag-lloyd",
+      "b": "fuel-buyer:evergreen-marine",
+      "expected": "high",
+      "note": "Major container lines"
+    },
+    {
+      "a": "fuel-buyer:frontline",
+      "b": "fuel-buyer:dht-holdings",
+      "expected": "high",
+      "note": "Pure-VLCC crude tanker operators"
+    },
+    {
+      "a": "fuel-buyer:hafnia",
+      "b": "fuel-buyer:scorpio-tankers",
+      "expected": "high",
+      "note": "Largest product-tanker fleet operators"
+    },
+    {
+      "a": "fuel-buyer:hafnia",
+      "b": "fuel-buyer:torm",
+      "expected": "high",
+      "note": "Atlantic basin product tanker specialists"
+    },
+    {
+      "a": "fuel-buyer:bw-lpg",
+      "b": "fuel-buyer:dorian-lpg",
+      "expected": "high",
+      "note": "Top VLGC operators (LPG segment)"
+    },
+    {
+      "a": "fuel-buyer:crowley-maritime",
+      "b": "fuel-buyer:tropical-shipping",
+      "expected": "high",
+      "note": "Caribbean specialists — US-Caribbean feeder service"
+    },
+    {
+      "a": "fuel-buyer:crowley-maritime",
+      "b": "fuel-buyer:seaboard-marine",
+      "expected": "high",
+      "note": "Caribbean US-feeder competitors"
+    },
+    {
+      "a": "fuel-buyer:tropical-shipping",
+      "b": "fuel-buyer:seaboard-marine",
+      "expected": "high",
+      "note": "Direct competitors in Caribbean container feeder"
+    },
+
+    {
+      "a": "fuel-buyer:jisco-alpart",
+      "b": "fuel-buyer:msc-mediterranean-shipping",
+      "expected": "low",
+      "note": "Different segments — alumina mining vs container shipping"
+    },
+    {
+      "a": "fuel-buyer:royal-caribbean-group",
+      "b": "fuel-buyer:frontline",
+      "expected": "low",
+      "note": "Cruise vs crude tanker — different commercial worlds"
+    },
+    {
+      "a": "fuel-buyer:barrick-pueblo-viejo",
+      "b": "fuel-buyer:hapag-lloyd",
+      "expected": "low",
+      "note": "Gold mine vs container line"
+    },
+    {
+      "a": "fuel-buyer:bw-lpg",
+      "b": "fuel-buyer:noranda-bauxite",
+      "expected": "low",
+      "note": "LPG carrier vs bauxite miner"
+    },
+    {
+      "a": "fuel-buyer:scorpio-tankers",
+      "b": "fuel-buyer:msc-cruises",
+      "expected": "low",
+      "note": "Product tanker vs cruise — different segments"
+    }
+  ]
+}

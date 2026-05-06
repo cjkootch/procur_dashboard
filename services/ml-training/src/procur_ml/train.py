@@ -61,6 +61,122 @@ def negative_sample_edges(
     return torch.stack([src, dst])
 
 
+def split_train_val_edges(
+    graph: ProcurGraph, val_fraction: float = 0.1, seed: int = 42
+) -> dict[tuple[str, str, str], torch.Tensor]:
+    """Mask out a held-out validation set per edge type.
+
+    Mutates graph.data so message passing during training only sees
+    train edges — preserves the inductive contract (the model never
+    sees val edges, so a high val AUC is real generalization, not
+    leakage).
+
+    Returns the held-out val edges keyed by edge type. Reverse edge
+    types ('rev_*') are skipped — they're auto-added by ToUndirected
+    and would leak the masked val edges back through.
+
+    Per brief §5.6: "Validation against held-out edges". 10% is the
+    standard split for link prediction at this scale.
+    """
+    g = torch.Generator().manual_seed(seed)
+    val_edges: dict[tuple[str, str, str], torch.Tensor] = {}
+    data = graph.data
+
+    primary_types = [et for et in data.edge_types if not et[1].startswith("rev_")]
+    for edge_type in primary_types:
+        edge_index = data[edge_type].edge_index
+        n = edge_index.size(1)
+        if n < 20:
+            # Too few edges to split meaningfully — keep all for training.
+            val_edges[edge_type] = torch.zeros((2, 0), dtype=torch.long)
+            continue
+        n_val = max(1, int(n * val_fraction))
+        perm = torch.randperm(n, generator=g)
+        val_idx = perm[:n_val]
+        train_idx = perm[n_val:]
+        val_edges[edge_type] = edge_index[:, val_idx].contiguous()
+        data[edge_type].edge_index = edge_index[:, train_idx].contiguous()
+        # Also mirror to the reverse edge type so ToUndirected stays consistent.
+        rev_key = (edge_type[2], f"rev_{edge_type[1]}", edge_type[0])
+        if rev_key in data.edge_types:
+            rev_edge_index = data[rev_key].edge_index
+            # Reverse edges share the index ordering with the primary
+            # type when ToUndirected emits them — we slice by the same
+            # train_idx to keep them aligned.
+            if rev_edge_index.size(1) == n:
+                data[rev_key].edge_index = rev_edge_index[:, train_idx].contiguous()
+    return val_edges
+
+
+def _roc_auc(scores: torch.Tensor, targets: torch.Tensor) -> float:
+    """Compute binary ROC-AUC via the rank-based formula. Avoids a
+    sklearn dependency at training time."""
+    if scores.numel() == 0:
+        return 0.0
+    order = torch.argsort(scores)
+    ranks = torch.empty_like(order, dtype=torch.float)
+    ranks[order] = torch.arange(1, scores.size(0) + 1, dtype=torch.float, device=scores.device)
+    pos_mask = targets > 0.5
+    n_pos = int(pos_mask.sum().item())
+    n_neg = int((~pos_mask).sum().item())
+    if n_pos == 0 or n_neg == 0:
+        return 0.0
+    # AUC = (sum_of_pos_ranks - n_pos*(n_pos+1)/2) / (n_pos * n_neg)
+    sum_pos = float(ranks[pos_mask].sum().item())
+    return (sum_pos - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
+
+
+@torch.no_grad()
+def compute_val_metrics(
+    model: HeterogeneousGraphSAGE,
+    graph: ProcurGraph,
+    val_edges: dict[tuple[str, str, str], torch.Tensor],
+    *,
+    num_neg_per_pos: int = 5,
+) -> dict[str, float]:
+    """Held-out link-prediction AUC, per edge type + macro average.
+
+    Uses the train-only graph for message passing — val edges are
+    not visible — so a high score genuinely reflects generalization.
+    """
+    model.eval()
+    data = graph.data
+    embeddings = model(
+        {nt: data[nt].x for nt in graph.node_ids},
+        {et: data[et].edge_index for et in data.edge_types},
+    )
+
+    metrics: dict[str, float] = {}
+    aucs: list[float] = []
+    for edge_type, val_edge_index in val_edges.items():
+        if val_edge_index.size(1) == 0:
+            continue
+        src_type, rel, dst_type = edge_type
+        src_emb = embeddings[src_type]
+        dst_emb = embeddings[dst_type]
+        if src_emb.size(0) == 0 or dst_emb.size(0) == 0:
+            continue
+
+        val_edge_index = val_edge_index.to(src_emb.device)
+        pos_score = link_score(src_emb[val_edge_index[0]], dst_emb[val_edge_index[1]])
+        neg_index = negative_sample_edges(
+            val_edge_index,
+            num_src=src_emb.size(0),
+            num_dst=dst_emb.size(0),
+            num_neg_per_pos=num_neg_per_pos,
+        ).to(src_emb.device)
+        neg_score = link_score(src_emb[neg_index[0]], dst_emb[neg_index[1]])
+
+        scores = torch.cat([pos_score, neg_score])
+        targets = torch.cat([torch.ones_like(pos_score), torch.zeros_like(neg_score)])
+        auc = _roc_auc(scores, targets)
+        metrics[f"val_auc/{src_type}-{rel}-{dst_type}"] = auc
+        aucs.append(auc)
+
+    metrics["val_auc/macro"] = sum(aucs) / len(aucs) if aucs else 0.0
+    return metrics
+
+
 def train_step(
     model: HeterogeneousGraphSAGE,
     graph: ProcurGraph,
@@ -247,6 +363,12 @@ def _save_checkpoint(
 @click.option("--hidden-dim", type=int, default=128)
 @click.option("--out-dim", type=int, default=128)
 @click.option("--num-neg-per-pos", type=int, default=5, help="Negative samples per positive edge")
+@click.option(
+    "--val-fraction",
+    type=float,
+    default=0.1,
+    help="Fraction of edges held out for validation. 0 disables validation entirely.",
+)
 @click.option("--seed", type=int, default=42)
 @click.option(
     "--model-version",
@@ -264,6 +386,7 @@ def main(
     hidden_dim: int,
     out_dim: int,
     num_neg_per_pos: int,
+    val_fraction: float,
     seed: int,
     model_version: str | None,
     device: str | None,
@@ -278,9 +401,19 @@ def main(
     logger.info("device=%s", device)
 
     procur_graph = load_graph(graph, undirected=True)
+    # Hold out a validation edge set BEFORE moving to GPU; mutates
+    # graph.data so message passing sees only train edges.
+    val_edges = split_train_val_edges(procur_graph, val_fraction=val_fraction, seed=seed)
     data = procur_graph.data.to(device)
+    val_edges = {et: ei.to(device) for et, ei in val_edges.items()}
 
-    logger.info("loaded graph: nodes=%s edges=%s", procur_graph.metadata["nodeCounts"], procur_graph.metadata["edgeCounts"])
+    held_out_count = sum(int(ei.size(1)) for ei in val_edges.values())
+    logger.info(
+        "loaded graph: nodes=%s edges=%s, held_out=%d for val",
+        procur_graph.metadata["nodeCounts"],
+        procur_graph.metadata["edgeCounts"],
+        held_out_count,
+    )
 
     edge_types = list(data.edge_types)
     model = HeterogeneousGraphSAGE(
@@ -308,20 +441,66 @@ def main(
                 "hidden_dim": hidden_dim,
                 "out_dim": out_dim,
                 "num_neg_per_pos": num_neg_per_pos,
+                "val_fraction": val_fraction,
                 "seed": seed,
                 "node_counts": procur_graph.metadata["nodeCounts"],
                 "edge_counts": procur_graph.metadata["edgeCounts"],
+                "val_held_out": held_out_count,
             }
         )
 
+    # Track best-val checkpoint — saved separately at checkpoints/best/
+    # so the inductive-inference path can use the most-generalizing
+    # weights rather than the final-epoch weights (which can overfit).
+    best_val_auc = -1.0
+    best_epoch = 0
+
     for epoch in range(1, epochs + 1):
         losses = train_step(model, procur_graph, optimizer, num_neg_per_pos=num_neg_per_pos)
+        val_metrics = compute_val_metrics(
+            model,
+            procur_graph,
+            val_edges,
+            num_neg_per_pos=num_neg_per_pos,
+        )
+        macro_val_auc = val_metrics.get("val_auc/macro", 0.0)
+
         if epoch % 5 == 0 or epoch == 1:
-            logger.info("epoch=%d loss=%.4f", epoch, losses["total_loss"])
+            logger.info(
+                "epoch=%d loss=%.4f val_auc_macro=%.4f", epoch, losses["total_loss"], macro_val_auc
+            )
+
+        if macro_val_auc > best_val_auc:
+            best_val_auc = macro_val_auc
+            best_epoch = epoch
+            _save_checkpoint(
+                checkpoint_dir / "best",
+                model,
+                feature_dims(procur_graph),
+                edge_types,
+                hidden_dim=hidden_dim,
+                out_dim=out_dim,
+                model_version=model_version,
+                trained_at=trained_at,
+            )
+
         if mlflow_run is not None:
             import mlflow  # type: ignore[import-untyped]
 
-            mlflow.log_metrics({k: v for k, v in losses.items() if isinstance(v, float)}, step=epoch)
+            payload: dict[str, float] = {}
+            for k, v in losses.items():
+                if isinstance(v, float):
+                    payload[k] = v
+            payload.update({k: float(v) for k, v in val_metrics.items()})
+            payload["best_val_auc"] = best_val_auc
+            mlflow.log_metrics(payload, step=epoch)
+
+    logger.info(
+        "best val_auc_macro=%.4f at epoch %d (saved to %s/best/)",
+        best_val_auc,
+        best_epoch,
+        checkpoint_dir,
+    )
 
     embeddings = compute_final_embeddings(model, procur_graph)
     write_embeddings_json(
