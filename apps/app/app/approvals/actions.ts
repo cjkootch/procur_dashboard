@@ -25,7 +25,7 @@ const FormSchema = z.object({
  */
 
 export async function approveApprovalAction(formData: FormData): Promise<void> {
-  const { user } = await requireCompany();
+  const { user, company } = await requireCompany();
   const parsed = FormSchema.safeParse({ id: formData.get('id') });
   if (!parsed.success) return;
   const result = await recordApprovalDecision(parsed.data.id, {
@@ -40,6 +40,7 @@ export async function approveApprovalAction(formData: FormData): Promise<void> {
         proposedPayload: result.row.proposedPayload as Record<string, unknown>,
       },
       user.id,
+      { companyId: company.id },
     );
   }
   revalidatePath('/approvals');
