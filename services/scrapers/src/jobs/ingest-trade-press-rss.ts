@@ -27,7 +27,13 @@
 import { load } from 'cheerio';
 import { sql } from 'drizzle-orm';
 import { db } from '@procur/db';
-import { extractDistressSignal } from '@procur/ai';
+// Deep import (not the barrel). The `@procur/ai` index re-exports
+// agents + executors + cost-ledger that pull `@procur/pricing`,
+// `resend`, `twilio`, and `ulid` into the bundle. The scraper service
+// doesn't have those deps — Trigger.dev's esbuild bundler bails with
+// "Could not resolve …" for each. Going through the subpath keeps the
+// scraper bundle to just the Anthropic+zod surface this task needs.
+import { extractDistressSignal } from '@procur/ai/tasks/extract-distress-signal';
 
 /**
  * Some feeds (energy-voice — Cloudflare bot-protected, hellenic-

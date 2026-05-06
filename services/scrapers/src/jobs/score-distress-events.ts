@@ -30,7 +30,8 @@
  */
 import { sql } from 'drizzle-orm';
 import { db } from '@procur/db';
-import { extractDistressSignal } from '@procur/ai';
+// Deep import — see ingest-trade-press-rss.ts for rationale.
+import { extractDistressSignal } from '@procur/ai/tasks/extract-distress-signal';
 
 const SCORABLE_SOURCES = ['sec-edgar', 'recap-bankruptcy'];
 const ITEM_THROTTLE_MS = 200;
