@@ -87,7 +87,7 @@ async function loadEntities(args: {
     const rows = (await db.execute(sql`
       SELECT slug, name, country, primary_domain
         FROM known_entities WHERE slug = ${args.slug}
-    `)) as unknown as EntityRow[];
+    `)).rows as unknown as EntityRow[];
     return rows;
   }
   const limitClause = args.limit != null ? sql`LIMIT ${args.limit}` : sql``;
@@ -104,7 +104,7 @@ async function loadEntities(args: {
           FROM known_entities
          WHERE primary_domain IS NOT NULL
          ORDER BY slug ${limitClause}
-      `))) as unknown as EntityRow[];
+      `))).rows as unknown as EntityRow[];
   return rows;
 }
 
@@ -207,7 +207,7 @@ async function persistPage(
       robots_allowed = true,
       updated_at = now()
     RETURNING id;
-  `)) as unknown as Array<{ id: string }>;
+  `)).rows as unknown as Array<{ id: string }>;
   if (!result[0]) throw new Error('page upsert returned no id');
   return result[0].id;
 }
@@ -298,7 +298,7 @@ async function shouldRecrawl(
      WHERE entity_slug = ${entitySlug}
        AND generated_at > now() - INTERVAL '90 days'
      LIMIT 1;
-  `)) as unknown as Array<{ '?column?': number }>;
+  `)).rows as unknown as Array<{ '?column?': number }>;
   return recent.length === 0;
 }
 

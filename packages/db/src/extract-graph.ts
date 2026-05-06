@@ -449,7 +449,7 @@ async function main(): Promise<void> {
     const target = (await db.execute(sql`
       SELECT slug, latitude::float8 AS latitude, longitude::float8 AS longitude
         FROM known_entities WHERE slug = ${singleEntity}
-    `)) as unknown as Array<{ slug: string; latitude: number | null; longitude: number | null }>;
+    `)).rows as unknown as Array<{ slug: string; latitude: number | null; longitude: number | null }>;
     if (target.length === 0 || !target[0]) {
       console.error(`single-entity slug not found in known_entities: ${singleEntity}`);
       process.exit(1);
@@ -471,7 +471,7 @@ async function main(): Promise<void> {
                 WHERE similarity(eo.subject_name, target.name) > 0.55
                    OR similarity(eo.parent_name, target.name) > 0.55
              );
-    `)) as unknown as Array<{ slug: string }>;
+    `)).rows as unknown as Array<{ slug: string }>;
     const slugs = new Set<string>([singleEntity]);
     for (const r of ownerNeighbors) slugs.add(r.slug);
     entitySlugFilter = [...slugs];
@@ -481,7 +481,7 @@ async function main(): Promise<void> {
     if (t.latitude != null && t.longitude != null) {
       const portCoords = (await db.execute(sql`
         SELECT slug, lat::float8 AS lat, lng::float8 AS lng FROM ports
-      `)) as unknown as Array<{ slug: string; lat: number; lng: number }>;
+      `)).rows as unknown as Array<{ slug: string; lat: number; lng: number }>;
       const nearbyPorts = portCoords.filter(
         (p) => kmBetween(t.latitude as number, t.longitude as number, p.lat, p.lng) <= 5,
       );
@@ -503,15 +503,18 @@ async function main(): Promise<void> {
               sql`, `,
             )}]::text[]))
            AND inferred_at >= NOW() - INTERVAL '24 months';
-      `)) as unknown as Array<{ mmsi: string }>;
+      `)).rows as unknown as Array<{ mmsi: string }>;
       vesselMmsiFilter = vesselRows.map((v) => v.mmsi);
     } else {
       vesselMmsiFilter = [];
     }
 
     // 1-hop grades — handled by nearby ports OR carried by 1-hop vessels
-    const gradesFromPorts = (portSlugFilter.length > 0
-      ? ((await db.execute(sql`
+    const gradesFromPorts: Array<{ slug: string }> =
+      portSlugFilter.length > 0
+        ? ((
+            await db
+              .execute(sql`
           SELECT DISTINCT unnest(known_grades) AS slug
             FROM ports
            WHERE slug = ANY(ARRAY[${sql.join(
@@ -519,9 +522,11 @@ async function main(): Promise<void> {
              sql`, `,
            )}]::text[])
              AND known_grades IS NOT NULL;
-        `).catch(() => [] as Array<unknown>)) as unknown as Array<{ slug: string }>)
-      : []);
-    const gradesFromVessels =
+        `)
+              .catch(() => ({ rows: [] as unknown[] }))
+          ).rows as unknown as Array<{ slug: string }>)
+        : [];
+    const gradesFromVessels: Array<{ slug: string }> =
       vesselMmsiFilter.length > 0
         ? ((await db.execute(sql`
             SELECT DISTINCT inferred_grade_slug AS slug
@@ -531,7 +536,7 @@ async function main(): Promise<void> {
                  vesselMmsiFilter.map((m) => sql`${m}`),
                  sql`, `,
                )}]::text[]);
-          `)) as unknown as Array<{ slug: string }>)
+          `)).rows as unknown as Array<{ slug: string }>)
         : [];
     gradeSlugFilter = [
       ...new Set([
@@ -567,11 +572,11 @@ async function main(): Promise<void> {
         SELECT slug, country, role, categories, latitude::float8 AS latitude, longitude::float8 AS longitude,
                metadata, apollo_org_id, apollo_total_funding
           FROM known_entities
-      `))) as unknown as EntityRow[];
+      `))).rows as unknown as EntityRow[];
 
   const vesselRows = (await (vesselMmsiFilter
     ? vesselMmsiFilter.length === 0
-      ? Promise.resolve([] as unknown[])
+      ? Promise.resolve({ rows: [] as unknown[] })
       : db.execute(sql`
           SELECT mmsi, imo, ship_type_label, flag_country, dwt, last_seen_at
             FROM vessels
@@ -583,11 +588,11 @@ async function main(): Promise<void> {
     : db.execute(sql`
         SELECT mmsi, imo, ship_type_label, flag_country, dwt, last_seen_at
           FROM vessels
-      `))) as unknown as VesselRow[];
+      `))).rows as unknown as VesselRow[];
 
   const portRows = (await (portSlugFilter
     ? portSlugFilter.length === 0
-      ? Promise.resolve([] as unknown[])
+      ? Promise.resolve({ rows: [] as unknown[] })
       : db.execute(sql`
           SELECT slug, country, port_type FROM ports
            WHERE slug = ANY(ARRAY[${sql.join(
@@ -599,13 +604,13 @@ async function main(): Promise<void> {
     ? db.execute(sql`
         SELECT slug, country, port_type FROM ports WHERE country = ${country}
       `)
-    : db.execute(sql`SELECT slug, country, port_type FROM ports`))) as unknown as PortRow[];
+    : db.execute(sql`SELECT slug, country, port_type FROM ports`))).rows as unknown as PortRow[];
 
   // crude_grades schema may not have all the fields we'd want. Fall back
   // gracefully: pull whatever's there + null out missing.
   const crudeGradeRows = (await (gradeSlugFilter
     ? gradeSlugFilter.length === 0
-      ? Promise.resolve([] as unknown[])
+      ? Promise.resolve({ rows: [] as unknown[] })
       : db.execute(sql`
           SELECT slug,
                  NULLIF(api_gravity, NULL)::float8 AS api_gravity,
@@ -623,13 +628,15 @@ async function main(): Promise<void> {
                (gradeSlugFilter as string[]).map((g) => sql`${g}`),
                sql`, `,
              )}]::text[])
-          `)) as unknown as Array<{ slug: string }>;
-          return fallback.map((r) => ({
-            slug: r.slug,
-            api_gravity: null,
-            sulfur_pct: null,
-            source_country: null,
-          }));
+          `)).rows as unknown as Array<{ slug: string }>;
+          return {
+            rows: fallback.map((r) => ({
+              slug: r.slug,
+              api_gravity: null,
+              sulfur_pct: null,
+              source_country: null,
+            })),
+          };
         })
     : db.execute(sql`
         SELECT slug,
@@ -638,14 +645,16 @@ async function main(): Promise<void> {
                source_country
           FROM crude_grades
       `).catch(async () => {
-        const fallback = (await db.execute(sql`SELECT slug FROM crude_grades`)) as unknown as Array<{ slug: string }>;
-        return fallback.map((r) => ({
-          slug: r.slug,
-          api_gravity: null,
-          sulfur_pct: null,
-          source_country: null,
-        }));
-      }))) as unknown as CrudeGradeRow[];
+        const fallback = (await db.execute(sql`SELECT slug FROM crude_grades`)).rows as unknown as Array<{ slug: string }>;
+        return {
+          rows: fallback.map((r) => ({
+            slug: r.slug,
+            api_gravity: null,
+            sulfur_pct: null,
+            source_country: null,
+          })),
+        };
+      }))).rows as unknown as CrudeGradeRow[];
 
   console.log(
     `\n  nodes loaded: entity=${entityRows.length}, vessel=${vesselRows.length}, port=${portRows.length}, crude_grade=${crudeGradeRows.length}`,
@@ -672,7 +681,7 @@ async function main(): Promise<void> {
   // intuition without a hard binary cutoff.
   const portCoordRows = (await db.execute(sql`
     SELECT slug, lat::float8 AS lat, lng::float8 AS lng FROM ports
-  `)) as unknown as Array<{ slug: string; lat: number; lng: number }>;
+  `)).rows as unknown as Array<{ slug: string; lat: number; lng: number }>;
   for (const e of entityRows) {
     if (e.latitude == null || e.longitude == null) continue;
     const eIdx = entityIndex.get(e.slug);
@@ -694,32 +703,40 @@ async function main(): Promise<void> {
   // vessel-called-port: from cargo_trips load + discharge ports.
   // Constrain to filtered vessels when in single-entity mode so we
   // don't scan all 24mo of cargo_trips for one entity's neighborhood.
-  const cargoTripRows = (vesselMmsiFilter && vesselMmsiFilter.length === 0
-    ? ([] as unknown[])
-    : await db.execute(vesselMmsiFilter
-        ? sql`
-            SELECT mmsi, load_port_slug, discharge_port_slug, inferred_grade_slug,
-                   inferred_volume_bbl, confidence::float8 AS confidence
-              FROM cargo_trips
-             WHERE inferred_at >= NOW() - INTERVAL '24 months'
-               AND mmsi = ANY(ARRAY[${sql.join(
-                 vesselMmsiFilter.map((m) => sql`${m}`),
-                 sql`, `,
-               )}]::text[])
-          `
-        : sql`
-            SELECT mmsi, load_port_slug, discharge_port_slug, inferred_grade_slug,
-                   inferred_volume_bbl, confidence::float8 AS confidence
-              FROM cargo_trips
-             WHERE inferred_at >= NOW() - INTERVAL '24 months'
-          `)) as unknown as Array<{
+  const cargoTripRows: Array<{
     mmsi: string;
     load_port_slug: string;
     discharge_port_slug: string;
     inferred_grade_slug: string | null;
     inferred_volume_bbl: string | null;
     confidence: number;
-  }>;
+  }> =
+    vesselMmsiFilter && vesselMmsiFilter.length === 0
+      ? []
+      : ((await db.execute(vesselMmsiFilter
+          ? sql`
+              SELECT mmsi, load_port_slug, discharge_port_slug, inferred_grade_slug,
+                     inferred_volume_bbl, confidence::float8 AS confidence
+                FROM cargo_trips
+               WHERE inferred_at >= NOW() - INTERVAL '24 months'
+                 AND mmsi = ANY(ARRAY[${sql.join(
+                   vesselMmsiFilter.map((m) => sql`${m}`),
+                   sql`, `,
+                 )}]::text[])
+            `
+          : sql`
+              SELECT mmsi, load_port_slug, discharge_port_slug, inferred_grade_slug,
+                     inferred_volume_bbl, confidence::float8 AS confidence
+                FROM cargo_trips
+               WHERE inferred_at >= NOW() - INTERVAL '24 months'
+            `)).rows as unknown as Array<{
+          mmsi: string;
+          load_port_slug: string;
+          discharge_port_slug: string;
+          inferred_grade_slug: string | null;
+          inferred_volume_bbl: string | null;
+          confidence: number;
+        }>);
 
   for (const t of cargoTripRows) {
     const vIdx = vesselIndex.get(t.mmsi);
@@ -758,7 +775,7 @@ async function main(): Promise<void> {
   // port-handles-grade: from ports.known_grades array
   const portGradeRows = (await db.execute(sql`
     SELECT slug, known_grades FROM ports WHERE known_grades IS NOT NULL
-  `).catch(() => [] as Array<unknown>)) as unknown as Array<{
+  `).catch(() => ({ rows: [] as unknown[] }))).rows as unknown as Array<{
     slug: string;
     known_grades: string[] | null;
   }>;
@@ -801,7 +818,7 @@ async function main(): Promise<void> {
     : db.execute(sql`
         SELECT subject_name, parent_name, share_pct::float8 AS share_pct
           FROM entity_ownership
-      `))) as unknown as Array<{ subject_name: string; parent_name: string; share_pct: number | null }>;
+      `))).rows as unknown as Array<{ subject_name: string; parent_name: string; share_pct: number | null }>;
   for (const o of ownershipRows) {
     // pg_trgm match each side. Threshold 0.55 same as supplier-graph.
     const subjectMatch = (await db.execute(sql`
@@ -809,13 +826,13 @@ async function main(): Promise<void> {
        WHERE similarity(name, ${o.subject_name}) > 0.55
        ORDER BY similarity(name, ${o.subject_name}) DESC
        LIMIT 1
-    `)) as unknown as Array<{ slug: string }>;
+    `)).rows as unknown as Array<{ slug: string }>;
     const parentMatch = (await db.execute(sql`
       SELECT slug FROM known_entities
        WHERE similarity(name, ${o.parent_name}) > 0.55
        ORDER BY similarity(name, ${o.parent_name}) DESC
        LIMIT 1
-    `)) as unknown as Array<{ slug: string }>;
+    `)).rows as unknown as Array<{ slug: string }>;
     if (!subjectMatch[0] || !parentMatch[0]) continue;
     const sIdx = entityIndex.get(subjectMatch[0].slug);
     const pIdx = entityIndex.get(parentMatch[0].slug);

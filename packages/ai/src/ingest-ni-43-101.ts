@@ -101,7 +101,7 @@ async function matchKnownEntity(
      WHERE similarity(name, ${projectName}) > 0.45
      ORDER BY score DESC
      LIMIT 1;
-  `)) as unknown as Array<{ slug: string; name: string; score: number }>;
+  `)).rows as unknown as Array<{ slug: string; name: string; score: number }>;
   if (projectMatch.length > 0 && projectMatch[0]) {
     return { slug: projectMatch[0].slug, name: projectMatch[0].name, matchedBy: 'project' };
   }
@@ -111,7 +111,7 @@ async function matchKnownEntity(
      WHERE similarity(name, ${operatorName}) > 0.55
      ORDER BY score DESC
      LIMIT 1;
-  `)) as unknown as Array<{ slug: string; name: string; score: number }>;
+  `)).rows as unknown as Array<{ slug: string; name: string; score: number }>;
   if (operatorMatch.length > 0 && operatorMatch[0]) {
     return { slug: operatorMatch[0].slug, name: operatorMatch[0].name, matchedBy: 'operator' };
   }

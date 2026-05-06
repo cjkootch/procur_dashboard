@@ -140,7 +140,7 @@ async function loadGeocodedEntities(countryFilter: string | null): Promise<Geoco
           FROM known_entities
          WHERE latitude IS NOT NULL
            AND longitude IS NOT NULL
-      `))) as unknown as Array<{
+      `))).rows as unknown as Array<{
     slug: string;
     name: string;
     country: string;
