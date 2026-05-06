@@ -32,15 +32,25 @@ async function handleTwiml(req: Request): Promise<Response> {
   const twiml = new twilio.twiml.VoiceResponse();
 
   if (mode === 'ai') {
-    // AI talkback path — needs the voice-bridge running on Fly.
-    // Phase 7 ships rejection at the executor; this branch should
-    // never be hit until Phase 7.5 lands. Return a "transient
-    // failure" TwiML so the call hangs up cleanly.
-    twiml.say(
-      { voice: 'Polly.Joanna' },
-      'AI assistant is not yet available. Disconnecting.',
-    );
-    twiml.hangup();
+    // AI talkback path — Phase 7.5 voice-bridge running on Fly.
+    // The bridge accepts a WebSocket at /twilio-stream and shuttles
+    // audio to OpenAI Realtime. Per-call instructions ride on
+    // <Parameter> children (Twilio strips query strings from the
+    // <Stream url=> attribute).
+    const bridgeUrl =
+      process.env.VOICE_BRIDGE_WSS_URL ??
+      'wss://procur-voice-bridge.fly.dev/twilio-stream';
+    const aiInstructions = url.searchParams.get('aiInstructions');
+    const goalHint = url.searchParams.get('goal');
+    const connect = twiml.connect();
+    const stream = connect.stream({ url: bridgeUrl });
+    stream.parameter({ name: 'approvalId', value: approvalId });
+    if (aiInstructions) {
+      stream.parameter({ name: 'aiInstructions', value: aiInstructions });
+    }
+    if (goalHint) {
+      stream.parameter({ name: 'goalHint', value: goalHint });
+    }
   } else {
     // Operator-join-conference. Twilio dials the recipient, plays a
     // brief intro, then puts them in a conference room keyed on the
