@@ -50,6 +50,8 @@
     "seed-commission-structures": "tsx src/seed-commission-structures.ts",
     "seed-fuel-consumption-signals": "tsx src/seed-fuel-consumption-signals.ts",
     "derive-fuel-signals-power-gen": "tsx src/derive-fuel-signals-power-gen.ts",
+    "seed-marine-operators": "tsx src/seed-marine-operators.ts",
+    "ingest-eu-mrv": "tsx src/ingest-eu-mrv.ts",
     "ingest-crude-assays": "tsx src/ingest-crude-assays.ts",
     "infer-cargo-trips": "tsx src/infer-cargo-trips.ts",
     "backfill-crude-grade-properties": "tsx src/backfill-crude-grade-properties.ts",
