@@ -1,0 +1,290 @@
+import { applyEmailSend, parseEmailSendPayload } from '../executors/email-send';
+import {
+  applyCreateCompany,
+  applyCreateContact,
+  applyCloseLead,
+  applyScheduleFollowUp,
+  applyOrgSetKind,
+  applyOrgAddProduct,
+  applyOrgLinkRelationship,
+  applyOrgTag,
+  applyContactTag,
+  applyContactOptOut,
+  applyOrgUpdateFields,
+  parseCreateCompanyPayload,
+  parseCreateContactPayload,
+  parseCloseLeadPayload,
+  parseScheduleFollowUpPayload,
+} from '../executors/sales';
+import {
+  applyCreateDeal,
+  applyDealStatusChange,
+  applyDealMilestone,
+  applyDealSetBroker,
+  applyDealHumanReview,
+  parseCreateDealPayload,
+  parseDealStatusChangePayload,
+  parseDealMilestonePayload,
+  parseDealSetBrokerPayload,
+} from '../executors/deals';
+import {
+  applySanctionsScreen,
+  parseSanctionsScreenPayload,
+} from '../executors/sanctions';
+import {
+  applySmsSend,
+  applyWhatsAppSend,
+  applyWhatsAppSendTemplate,
+  applyOutboundCall,
+  parseSmsSendPayload,
+  parseWhatsAppSendPayload,
+  parseWhatsAppSendTemplatePayload,
+  parseOutboundCallPayload,
+} from '../executors/twilio';
+
+/**
+ * Approval row shape this dispatch table needs. Subset of the full
+ * approvals row — only the fields required to look up the right
+ * executor and run it.
+ */
+export interface ApprovalRowForExecutor {
+  id: string;
+  actionType: string;
+  proposedPayload: Record<string, unknown>;
+}
+
+/**
+ * Dispatch a recorded-approved approval row to the matching executor.
+ *
+ * Two callers today:
+ *   1. /approvals page server action (apps/app/app/approvals/actions.ts)
+ *   2. /api/approvals/[id]/approve route handler (apps/app/app/api/...)
+ *
+ * Both must dispatch identically — before this lived in only the
+ * server action, the API route silently recorded the decision but
+ * never fired the executor, so chat-card approvals did nothing
+ * (the inline-card UX in apps/app/components/assistant/ApprovalActionCard).
+ *
+ * Idempotent: every executor short-circuits on `appliedAt`, so
+ * concurrent or retried calls are safe.
+ *
+ * Un-wired action types are silently no-op — they record the
+ * decision in the approvals row but produce no side effect. This
+ * matches the pre-extraction behavior.
+ */
+export async function dispatchApprovalExecutor(
+  row: ApprovalRowForExecutor,
+  reviewerId: string,
+): Promise<void> {
+  // ---- Phase 3 ------------------------------------------------------------
+  if (row.actionType === 'email.send') {
+    const payload = parseEmailSendPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyEmailSend(row.id, payload);
+    return;
+  }
+
+  // ---- Phase 4 ------------------------------------------------------------
+  if (row.actionType === 'crm.create_company') {
+    const payload = parseCreateCompanyPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyCreateCompany(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'crm.create_contact') {
+    const payload = parseCreateContactPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyCreateContact(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'lead.close') {
+    const payload = parseCloseLeadPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyCloseLead(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'follow_up.schedule') {
+    const payload = parseScheduleFollowUpPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyScheduleFollowUp(row.id, payload, reviewerId);
+    return;
+  }
+  if (
+    row.actionType === 'org.set_kind' &&
+    typeof row.proposedPayload['orgId'] === 'string' &&
+    typeof row.proposedPayload['orgKind'] === 'string'
+  ) {
+    await applyOrgSetKind(row.id, {
+      orgId: row.proposedPayload['orgId'] as string,
+      orgKind: row.proposedPayload['orgKind'] as string,
+    });
+    return;
+  }
+  if (
+    row.actionType === 'org.add_product' &&
+    typeof row.proposedPayload['orgId'] === 'string' &&
+    typeof row.proposedPayload['product'] === 'string'
+  ) {
+    const orgId = row.proposedPayload['orgId'] as string;
+    const product = row.proposedPayload['product'] as string;
+    const notes =
+      typeof row.proposedPayload['notes'] === 'string'
+        ? (row.proposedPayload['notes'] as string)
+        : undefined;
+    await applyOrgAddProduct(
+      row.id,
+      notes !== undefined ? { orgId, product, notes } : { orgId, product },
+      reviewerId,
+    );
+    return;
+  }
+  if (
+    row.actionType === 'org.link_relationship' &&
+    typeof row.proposedPayload['fromOrgId'] === 'string' &&
+    typeof row.proposedPayload['toOrgId'] === 'string' &&
+    typeof row.proposedPayload['relationshipType'] === 'string'
+  ) {
+    const product =
+      typeof row.proposedPayload['product'] === 'string'
+        ? (row.proposedPayload['product'] as string)
+        : undefined;
+    await applyOrgLinkRelationship(
+      row.id,
+      {
+        fromOrgId: row.proposedPayload['fromOrgId'] as string,
+        toOrgId: row.proposedPayload['toOrgId'] as string,
+        relationshipType: row.proposedPayload['relationshipType'] as string,
+        ...(product !== undefined ? { product } : {}),
+      },
+      reviewerId,
+    );
+    return;
+  }
+  if (
+    (row.actionType === 'org.tag' || row.actionType === 'org.untag') &&
+    typeof row.proposedPayload['orgId'] === 'string' &&
+    typeof row.proposedPayload['tag'] === 'string'
+  ) {
+    await applyOrgTag(
+      row.id,
+      {
+        orgId: row.proposedPayload['orgId'] as string,
+        tag: row.proposedPayload['tag'] as string,
+      },
+      row.actionType === 'org.tag' ? 'add' : 'remove',
+    );
+    return;
+  }
+  if (
+    (row.actionType === 'contact.tag' || row.actionType === 'contact.untag') &&
+    typeof row.proposedPayload['contactId'] === 'string' &&
+    typeof row.proposedPayload['tag'] === 'string'
+  ) {
+    await applyContactTag(
+      row.id,
+      {
+        contactId: row.proposedPayload['contactId'] as string,
+        tag: row.proposedPayload['tag'] as string,
+      },
+      row.actionType === 'contact.tag' ? 'add' : 'remove',
+    );
+    return;
+  }
+  if (
+    row.actionType === 'contact.opt_out' &&
+    typeof row.proposedPayload['contactId'] === 'string' &&
+    typeof row.proposedPayload['reason'] === 'string'
+  ) {
+    await applyContactOptOut(row.id, {
+      contactId: row.proposedPayload['contactId'] as string,
+      reason: row.proposedPayload['reason'] as string,
+    });
+    return;
+  }
+  if (
+    row.actionType === 'org.update_fields' &&
+    typeof row.proposedPayload['orgId'] === 'string' &&
+    row.proposedPayload['patch'] &&
+    typeof row.proposedPayload['patch'] === 'object'
+  ) {
+    await applyOrgUpdateFields(row.id, {
+      orgId: row.proposedPayload['orgId'] as string,
+      patch: row.proposedPayload['patch'] as {
+        domain?: string | null;
+        industry?: string | null;
+        country?: string | null;
+      },
+    });
+    return;
+  }
+
+  // ---- Phase 5 ------------------------------------------------------------
+  if (row.actionType === 'crm.create_deal') {
+    const payload = parseCreateDealPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyCreateDeal(row.id, payload, reviewerId);
+    return;
+  }
+  if (row.actionType === 'deal.status_change') {
+    const payload = parseDealStatusChangePayload(row.proposedPayload);
+    if (!payload) return;
+    await applyDealStatusChange(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'deal.milestone') {
+    const payload = parseDealMilestonePayload(row.proposedPayload);
+    if (!payload) return;
+    await applyDealMilestone(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'deal.set_broker') {
+    const payload = parseDealSetBrokerPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyDealSetBroker(row.id, payload);
+    return;
+  }
+  if (
+    row.actionType === 'deal.human_review' &&
+    typeof row.proposedPayload['dealId'] === 'string'
+  ) {
+    await applyDealHumanReview(
+      row.id,
+      row.proposedPayload['dealId'] as string,
+    );
+    return;
+  }
+
+  // ---- Phase 6 ------------------------------------------------------------
+  if (row.actionType === 'sanctions.screen') {
+    const payload = parseSanctionsScreenPayload(row.proposedPayload);
+    if (!payload) return;
+    await applySanctionsScreen(row.id, payload);
+    return;
+  }
+
+  // ---- Phase 7 ------------------------------------------------------------
+  if (row.actionType === 'sms.send') {
+    const payload = parseSmsSendPayload(row.proposedPayload);
+    if (!payload) return;
+    await applySmsSend(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'whatsapp.send') {
+    const payload = parseWhatsAppSendPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyWhatsAppSend(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'whatsapp.send_template') {
+    const payload = parseWhatsAppSendTemplatePayload(row.proposedPayload);
+    if (!payload) return;
+    await applyWhatsAppSendTemplate(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'outbound_call') {
+    const payload = parseOutboundCallPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyOutboundCall(row.id, payload);
+    return;
+  }
+}

@@ -258,6 +258,14 @@ export {
   SanctionsScreeningAgent,
   type SanctionsScreeningInput,
 } from './agents/agents/sanctions-screening';
+// Shared dispatch table — wires action_type → matching executor.
+// Both the /approvals server action and /api/approvals/[id]/approve
+// route must call this; without it the route silently records the
+// decision but never fires the executor (Bug #1).
+export {
+  dispatchApprovalExecutor,
+  type ApprovalRowForExecutor,
+} from './agents/dispatch';
 export {
   DailyBriefAgent,
   type DailyBrief,
