@@ -67,3 +67,4 @@ export * from './entity-web-intelligence';
 export * from './feedback-events';
 export * from './friction-status';
 export * from './entity-dispositions';
+export * from './deal-retrospectives';

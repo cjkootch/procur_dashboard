@@ -12747,6 +12747,122 @@ export async function updateKnownEntityAttribute(
   return { ok: true, oldValue, newValue };
 }
 
+// ─── Pattern 5 (deal retrospectives) per feedback-ui-brief.md §8 ─
+
+export const PROCUR_INSIGHT_MATTERED_VALUES = [
+  'yes_materially',
+  'yes_marginally',
+  'no',
+  'na',
+] as const;
+export type ProcurInsightMatteredValue = (typeof PROCUR_INSIGHT_MATTERED_VALUES)[number];
+
+export type DealRetrospectiveRow = {
+  id: string;
+  dealId: string;
+  userId: string;
+  dealOutcome: 'won' | 'lost' | 'dead';
+  initialSignalSource: string | null;
+  daysSignalToClose: number | null;
+  criticalMoments: string | null;
+  procurInsightMattered: ProcurInsightMatteredValue | null;
+  whatWouldHaveHelped: string | null;
+  patternForFuture: string | null;
+  completedAt: string | null;
+  isDraft: boolean;
+};
+
+export async function getDealRetrospective(
+  dealId: string,
+  userId: string,
+): Promise<DealRetrospectiveRow | null> {
+  const rows = (await db.execute(sql`
+    SELECT id, deal_id, user_id, deal_outcome, initial_signal_source,
+           days_signal_to_close, critical_moments, procur_insight_mattered,
+           what_would_have_helped, pattern_for_future, completed_at, is_draft
+      FROM deal_retrospectives
+     WHERE deal_id = ${dealId} AND user_id = ${userId}
+     LIMIT 1;
+  `)) as unknown as Array<Record<string, unknown>>;
+  if (!rows[0]) return null;
+  const r = rows[0];
+  return {
+    id: String(r.id),
+    dealId: String(r.deal_id),
+    userId: String(r.user_id),
+    dealOutcome: String(r.deal_outcome) as DealRetrospectiveRow['dealOutcome'],
+    initialSignalSource: r.initial_signal_source == null ? null : String(r.initial_signal_source),
+    daysSignalToClose: r.days_signal_to_close == null ? null : Number(r.days_signal_to_close),
+    criticalMoments: r.critical_moments == null ? null : String(r.critical_moments),
+    procurInsightMattered:
+      r.procur_insight_mattered == null
+        ? null
+        : (String(r.procur_insight_mattered) as ProcurInsightMatteredValue),
+    whatWouldHaveHelped: r.what_would_have_helped == null ? null : String(r.what_would_have_helped),
+    patternForFuture: r.pattern_for_future == null ? null : String(r.pattern_for_future),
+    completedAt:
+      r.completed_at instanceof Date ? r.completed_at.toISOString() : (r.completed_at as string | null),
+    isDraft: Boolean(r.is_draft),
+  };
+}
+
+export type UpsertRetrospectiveInput = {
+  dealId: string;
+  userId: string;
+  dealOutcome: 'won' | 'lost' | 'dead';
+  initialSignalSource?: string | null;
+  daysSignalToClose?: number | null;
+  criticalMoments?: string | null;
+  procurInsightMattered?: ProcurInsightMatteredValue | null;
+  whatWouldHaveHelped?: string | null;
+  patternForFuture?: string | null;
+  /** Whether this save is a draft (true) or completed retrospective (false).
+      Completed sets completed_at; draft leaves it null. */
+  isDraft: boolean;
+};
+
+/**
+ * Upsert a retrospective for (deal, user). Re-saving updates in
+ * place (UNIQUE constraint). Drafts can be promoted to completed
+ * by re-submitting with isDraft=false; completed_at is set on the
+ * promotion call.
+ */
+export async function upsertDealRetrospective(input: UpsertRetrospectiveInput): Promise<string> {
+  const completedAt = input.isDraft ? null : new Date();
+  const rows = (await db.execute(sql`
+    INSERT INTO deal_retrospectives (
+      deal_id, user_id, deal_outcome,
+      initial_signal_source, days_signal_to_close, critical_moments,
+      procur_insight_mattered, what_would_have_helped, pattern_for_future,
+      completed_at, is_draft
+    ) VALUES (
+      ${input.dealId}, ${input.userId}, ${input.dealOutcome},
+      ${input.initialSignalSource ?? null},
+      ${input.daysSignalToClose ?? null},
+      ${input.criticalMoments ?? null},
+      ${input.procurInsightMattered ?? null},
+      ${input.whatWouldHaveHelped ?? null},
+      ${input.patternForFuture ?? null},
+      ${completedAt},
+      ${input.isDraft}
+    )
+    ON CONFLICT (deal_id, user_id) DO UPDATE SET
+      deal_outcome = EXCLUDED.deal_outcome,
+      initial_signal_source = EXCLUDED.initial_signal_source,
+      days_signal_to_close = EXCLUDED.days_signal_to_close,
+      critical_moments = EXCLUDED.critical_moments,
+      procur_insight_mattered = EXCLUDED.procur_insight_mattered,
+      what_would_have_helped = EXCLUDED.what_would_have_helped,
+      pattern_for_future = EXCLUDED.pattern_for_future,
+      completed_at = COALESCE(EXCLUDED.completed_at, deal_retrospectives.completed_at),
+      is_draft = EXCLUDED.is_draft,
+      updated_at = now()
+    RETURNING id;
+  `)) as unknown as Array<{ id: string }>;
+  if (!rows[0]) throw new Error('upsertDealRetrospective: insert returned no id');
+  return rows[0].id;
+}
+
 // ─── Pattern 4 (disposition tracking) per feedback-ui-brief.md §7 ─
 
 export const ENTITY_DISPOSITIONS = [
