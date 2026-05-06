@@ -13404,3 +13404,60 @@ export async function listRetrospectivesForUser(
   }));
 }
 
+// ─── buyer_consumption_estimate view (migration 0070) ─────────────
+
+export type BuyerConsumptionEstimateRow = {
+  entitySlug: string;
+  /** Confidence-weighted midpoint volume (bbl/yr) over the last
+      36 months across signals from all sources. Null when no signal
+      with both bounds present. */
+  weightedVolumeBblYr: number | null;
+  volumeBblYrMin: number | null;
+  volumeBblYrMax: number | null;
+  signalCount: number;
+  sources: string[];
+  fuelTypes: string[];
+  mostRecentSignal: string | null;
+  avgConfidence: number | null;
+};
+
+/**
+ * Read the aggregated buyer-consumption estimate for one entity.
+ * View is `buyer_consumption_estimate` from migration 0070; this
+ * helper just types the row + surfaces nulls on missing.
+ */
+export async function getBuyerConsumptionEstimate(
+  entitySlug: string,
+): Promise<BuyerConsumptionEstimateRow | null> {
+  const rows = (await db.execute(sql`
+    SELECT
+      entity_slug,
+      weighted_volume_bbl_yr::float8 AS weighted_volume_bbl_yr,
+      volume_bbl_yr_min::float8 AS volume_bbl_yr_min,
+      volume_bbl_yr_max::float8 AS volume_bbl_yr_max,
+      signal_count,
+      sources, fuel_types,
+      most_recent_signal,
+      avg_confidence::float8 AS avg_confidence
+    FROM buyer_consumption_estimate
+    WHERE entity_slug = ${entitySlug}
+    LIMIT 1;
+  `)) as unknown as Array<Record<string, unknown>>;
+  if (!rows[0]) return null;
+  const r = rows[0];
+  return {
+    entitySlug: String(r.entity_slug),
+    weightedVolumeBblYr: r.weighted_volume_bbl_yr == null ? null : Number(r.weighted_volume_bbl_yr),
+    volumeBblYrMin: r.volume_bbl_yr_min == null ? null : Number(r.volume_bbl_yr_min),
+    volumeBblYrMax: r.volume_bbl_yr_max == null ? null : Number(r.volume_bbl_yr_max),
+    signalCount: Number(r.signal_count ?? 0),
+    sources: Array.isArray(r.sources) ? (r.sources as string[]) : [],
+    fuelTypes: Array.isArray(r.fuel_types) ? (r.fuel_types as string[]) : [],
+    mostRecentSignal:
+      r.most_recent_signal instanceof Date
+        ? r.most_recent_signal.toISOString().slice(0, 10)
+        : (r.most_recent_signal as string | null),
+    avgConfidence: r.avg_confidence == null ? null : Number(r.avg_confidence),
+  };
+}
+
