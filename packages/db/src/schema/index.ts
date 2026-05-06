@@ -61,3 +61,4 @@ export * from './apollo';
 export * from './mcp';
 export * from './fuel-consumption-signals';
 export * from './embeddings';
+export * from './entity-activity-observations';

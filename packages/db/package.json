@@ -52,6 +52,7 @@
     "derive-fuel-signals-power-gen": "tsx src/derive-fuel-signals-power-gen.ts",
     "seed-marine-operators": "tsx src/seed-marine-operators.ts",
     "ingest-eu-mrv": "tsx src/ingest-eu-mrv.ts",
+    "ingest-viirs-ntl": "tsx src/ingest-viirs-ntl.ts",
     "ingest-crude-assays": "tsx src/ingest-crude-assays.ts",
     "infer-cargo-trips": "tsx src/infer-cargo-trips.ts",
     "backfill-crude-grade-properties": "tsx src/backfill-crude-grade-properties.ts",
@@ -69,6 +70,7 @@
     "csv-parse": "^5.6.0",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.38.3",
+    "geotiff": "^2.1.3",
     "postgres": "^3.4.5",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
