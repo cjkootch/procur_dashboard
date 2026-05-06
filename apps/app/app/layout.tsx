@@ -6,6 +6,7 @@ import { PostHogProvider } from '@procur/analytics/client';
 import { ImpersonationBanner } from '../components/shell/ImpersonationBanner';
 import { MarketMoveBanner } from '../components/shell/MarketMoveBanner';
 import { RightRail } from '../components/shell/RightRail';
+import { FrictionButton } from '../components/shell/FrictionButton';
 import './globals.css';
 
 // The authenticated app is 100% user-dependent — nothing should be
@@ -43,6 +44,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           >
             {children}
             <RightRail />
+            {/* Pattern 3 friction logger — global floating button +
+                `?` keyboard shortcut. Mounted at root so every page
+                gets it. Auto-captures page + referrer context. */}
+            <FrictionButton />
           </PostHogProvider>
         </body>
       </html>

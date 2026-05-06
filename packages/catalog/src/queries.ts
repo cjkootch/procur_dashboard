@@ -12747,6 +12747,49 @@ export async function updateKnownEntityAttribute(
   return { ok: true, oldValue, newValue };
 }
 
+// ─── Pattern 3 (friction logging) per feedback-ui-brief.md §6 ─────
+
+export type FrictionInput = {
+  userId: string;
+  description: string;
+  context?: Record<string, unknown> | null;
+  /** Optional scoped target — entity slug or other ID when the
+      friction is about a specific object. Null = global friction. */
+  scopedTargetType?: 'entity' | 'deal' | 'signal' | null;
+  scopedTargetId?: string | null;
+};
+
+/**
+ * Insert a friction event + open its lifecycle row in one
+ * transaction. Returns the feedback_event id so the caller can
+ * surface it back ("logged ✓").
+ *
+ * LLM auto-categorization (brief §6.3) is deferred — Trigger.dev
+ * v3→v4 is the gating factor. Until that lands, auto_category /
+ * auto_severity / auto_component fields stay null in the payload.
+ */
+export async function logFrictionEvent(input: FrictionInput): Promise<string> {
+  const id = await insertFeedbackEvent({
+    userId: input.userId,
+    feedbackKind: 'friction',
+    targetType: input.scopedTargetType ?? 'global',
+    targetId: input.scopedTargetId ?? null,
+    sentiment: 'negative',
+    payload: {
+      description: input.description.slice(0, 4000),
+    },
+    context: input.context ?? null,
+  });
+  // Open the lifecycle row immediately so analyst-status updates
+  // have a stable PK to target.
+  await db.execute(sql`
+    INSERT INTO friction_status (feedback_event_id, status)
+         VALUES (${id}, 'logged')
+    ON CONFLICT (feedback_event_id) DO NOTHING;
+  `);
+  return id;
+}
+
 export type EntityAttributeEditRow = {
   attribute: string;
   oldValue: string | string[] | null;
