@@ -6,8 +6,10 @@ requires-python = ">=3.10,<3.13"
 license = { text = "Proprietary" }
 
 dependencies = [
-    # Core ML — pin minimum versions, allow patch updates
-    "torch>=2.4,<3.0",
+    # Core ML — pin minimum versions, allow patch updates.
+    # PyTorch dropped Intel-macOS wheels at 2.3+; >=2.2 keeps the
+    # x86_64 path working alongside arm64 / Linux GPU.
+    "torch>=2.2,<3.0",
     "torch-geometric>=2.6,<3.0",
     # Postgres write-back for trained embeddings
     "psycopg[binary]>=3.2,<4.0",
