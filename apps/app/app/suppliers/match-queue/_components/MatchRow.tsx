@@ -16,6 +16,17 @@ export type MatchRowProps = {
   rationale: string;
   status: string;
   entityProfileSlug: string | null;
+  /** When parent MatchQueueList focuses this row for keyboard
+      shortcuts. Renders an outline ring. Optional — non-list usage
+      (single-row preview) treats undefined as not-focused. */
+  isFocused?: boolean;
+  /** 200ms color-flash tone when the parent records a feedback action.
+      'positive'=green, 'negative'=red, 'mute'=blue, 'pin'=amber. */
+  flash?: 'positive' | 'negative' | 'mute' | 'pin' | null;
+  /** Parent-controlled feedback dispatch — when wired, the row
+      shows the 4-button feedback strip (👍 👎 🔇 📌). */
+  onFeedback?: (tone: 'positive' | 'negative' | 'pin') => void;
+  onMute?: () => void;
 };
 
 type SignalStyle = {
@@ -166,9 +177,26 @@ export function MatchRow(props: MatchRowProps) {
     props.observedAt,
   );
 
+  // Visual states layered on the row: focused-ring, flash-overlay,
+  // hover. Flash overlay uses a brief tone-tinted background that
+  // fades via the opacity transition the parent unsets after 200ms.
+  const focusRing = props.isFocused
+    ? 'ring-1 ring-inset ring-[color:var(--color-foreground)]/40'
+    : '';
+  const flashBg =
+    props.flash === 'positive'
+      ? 'bg-emerald-500/15'
+      : props.flash === 'negative'
+      ? 'bg-red-500/15'
+      : props.flash === 'mute'
+      ? 'bg-blue-500/15'
+      : props.flash === 'pin'
+      ? 'bg-amber-500/15'
+      : '';
+
   return (
     <li
-      className={`group relative grid grid-cols-[3px_56px_88px_minmax(0,1fr)_72px_auto] items-center gap-3 border-b border-[color:var(--color-border)]/60 py-2.5 pl-0 pr-2 transition hover:bg-[color:var(--color-muted)]/30`}
+      className={`group relative grid grid-cols-[3px_56px_88px_minmax(0,1fr)_72px_auto] items-center gap-3 border-b border-[color:var(--color-border)]/60 py-2.5 pl-0 pr-2 transition hover:bg-[color:var(--color-muted)]/30 ${focusRing} ${flashBg}`}
     >
       <span className={`absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r ${style.strip}`} />
 
@@ -222,6 +250,51 @@ export function MatchRow(props: MatchRowProps) {
       </span>
 
       <div className="flex items-center gap-1">
+        {/* Pattern 1 feedback strip — shown when the parent
+            MatchQueueList is wired in. Each button corresponds to
+            the keyboard shortcut. Title attrs make the binding
+            discoverable without a help overlay. */}
+        {props.onFeedback && (
+          <>
+            <button
+              type="button"
+              onClick={() => props.onFeedback?.('positive')}
+              title="Relevant — surface more like this  [f]"
+              aria-label="Mark as relevant"
+              className="rounded-[var(--radius-sm)] border border-transparent px-1.5 py-1 text-[14px] leading-none hover:border-emerald-500/50 hover:text-emerald-700"
+            >
+              👍
+            </button>
+            <button
+              type="button"
+              onClick={() => props.onFeedback?.('negative')}
+              title="Not relevant — surface less like this  [d]"
+              aria-label="Mark as not relevant"
+              className="rounded-[var(--radius-sm)] border border-transparent px-1.5 py-1 text-[14px] leading-none hover:border-red-500/50 hover:text-red-700"
+            >
+              👎
+            </button>
+            <button
+              type="button"
+              onClick={() => props.onMute?.()}
+              title="Mute this signal type for this entity  [m]"
+              aria-label="Mute"
+              className="rounded-[var(--radius-sm)] border border-transparent px-1.5 py-1 text-[14px] leading-none hover:border-blue-500/50 hover:text-blue-700"
+            >
+              🔇
+            </button>
+            <button
+              type="button"
+              onClick={() => props.onFeedback?.('pin')}
+              title="Pin for follow-up  [p]"
+              aria-label="Pin"
+              className="rounded-[var(--radius-sm)] border border-transparent px-1.5 py-1 text-[14px] leading-none hover:border-amber-500/50 hover:text-amber-700"
+            >
+              📌
+            </button>
+            <span className="mx-1 h-4 w-px bg-[color:var(--color-border)]" />
+          </>
+        )}
         <button
           type="button"
           disabled={pending}
