@@ -67,10 +67,38 @@ embedding quality is validated. Re-running with the same
 `entity_embeddings` (ON CONFLICT DO UPDATE). Bumping the version
 keeps both versions live, useful for A/B comparison.
 
+## Inductive inference for new entities
+
+When a new entity lands in `known_entities` between retraining
+cycles (news ingestion, customs scrape, manual seed), embed it
+inductively without retraining. Sub-second per entity on CPU.
+
+```sh
+# 1. Extract the entity's 1-hop neighborhood (TS side, <1s)
+cd packages/db
+pnpm run extract-graph \
+    --single-entity=fuel-buyer:new-supplier \
+    --output ../../single.json
+
+# 2. Inductively embed + upsert
+cd ../../services/ml-training
+python -m procur_ml.embed_entity \
+    --graph ../../single.json \
+    --checkpoint-dir checkpoints \
+    --upsert
+```
+
+The `--single-entity` flag on `extract-graph` constrains the
+graph to the target + 1-hop neighborhood across all node types,
+trimming the ~5-min trgm-match cost for ownership edges down to
+~1s. The Python side reloads the trained model from
+`checkpoints/model.pt` + `checkpoints/model_meta.json` (saved
+automatically by `procur_ml.train`), forward-passes the small
+subgraph, and upserts only the target's row.
+
 ## What's NOT yet here (per brief sequencing)
 
 - Trigger.dev wrapper for scheduled retraining (gated on the
   v3→v4 migration that's blocking the Apollo cron)
-- Inductive inference for new entities (Component B days 11-13)
 - Two-tower retrieval model (Component C)
 - Entity resolution layer (Component D)

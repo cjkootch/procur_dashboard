@@ -29,6 +29,7 @@ dev = [
 [project.scripts]
 procur-ml-train = "procur_ml.train:main"
 procur-ml-upsert = "procur_ml.upsert:main"
+procur-ml-embed-entity = "procur_ml.embed_entity:main"
 
 [build-system]
 requires = ["hatchling"]
