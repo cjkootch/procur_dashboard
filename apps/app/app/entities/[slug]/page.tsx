@@ -4,6 +4,7 @@ import { requireCompany } from '@procur/auth';
 import {
   getApolloEntityCache,
   getContactEnrichmentsBySlug,
+  getCurrentDisposition,
   getDirectOwners,
   getEntityProfile,
   getEntityVesselActivity,
@@ -13,6 +14,7 @@ import {
   getRefineryImportContext,
   getSupplierApproval,
 } from '@procur/catalog';
+import { getCurrentUser } from '@procur/auth';
 import { KycBadge } from '../../../components/KycBadge';
 import { parseEntityNotes } from '../../../lib/entity-notes';
 import { PushToVexButton } from './_components/PushToVexButton';
@@ -25,6 +27,7 @@ import { RefineryImportContextPanel } from './_components/RefineryImportContextP
 import { SupplierApprovalForm } from './_components/SupplierApprovalForm';
 import { WebsiteIntelligencePanel } from './_components/WebsiteIntelligencePanel';
 import { EditableAttribute } from './_components/EditableAttribute';
+import { DispositionPanel } from './_components/DispositionPanel';
 
 /**
  * Unified entity profile — accepts either a known_entities.slug or
@@ -54,7 +57,11 @@ export default async function EntityProfilePage({ params }: Props) {
   }
 
   const { company } = await requireCompany();
-  const approval = await getSupplierApproval(company.id, profile.canonicalKey);
+  const user = await getCurrentUser();
+  const [approval, currentDisposition] = await Promise.all([
+    getSupplierApproval(company.id, profile.canonicalKey),
+    user ? getCurrentDisposition(profile.canonicalKey, user.id) : Promise.resolve(null),
+  ]);
 
   // Walk the ownership chain. Try the operator first (refineries usually
   // store operator in metadata.operator and that's the one whose parents
@@ -249,6 +256,16 @@ export default async function EntityProfilePage({ params }: Props) {
             Edits apply globally + log to feedback_events. Hover a field to reveal the ✏️ pencil; Enter saves, Esc cancels.
           </p>
         </section>
+      )}
+
+      {/* Pattern 4 (disposition tracking) per feedback-ui-brief.md §7.
+          Per-user commercial-pursuit state. Stale-after-30d indicator
+          surfaces here + inline whenever the entity is shown elsewhere
+          (a future cross-surface integration). Only shown for known_entity
+          rows since external_suppliers UUIDs aren't part of the
+          analyst's commercial pipeline yet. */}
+      {profile.primarySource === 'known_entity' && user && (
+        <DispositionPanel entitySlug={profile.canonicalKey} current={currentDisposition} />
       )}
 
       {/* Quote anchors — refiner-only. Renders the realistic CIF
