@@ -458,6 +458,48 @@ export const proposeTools = {
     },
   }),
 
+  propose_whatsapp_send_template: defineTool({
+    name: 'propose_whatsapp_send_template',
+    description:
+      'Queue an outbound WhatsApp Content Template send for operator approval. Use this when the ' +
+      'recipient is OUTSIDE the 24-hour conversation window (Twilio rejects freeform sends in ' +
+      'that case). `contentSid` must be a pre-approved Twilio Content Template id (HX + 32 hex ' +
+      'chars). `contentVariables` substitutes placeholder values in the template body — keys ' +
+      'are positional ("1", "2", …) per Twilio Content API. Always include a rationale explaining ' +
+      'which template you picked and why.',
+    kind: 'write',
+    schema: z.object({
+      to: e164Phone,
+      contentSid: z
+        .string()
+        .regex(/^HX[a-fA-F0-9]{32}$/, 'contentSid must be HX + 32 hex chars'),
+      contentVariables: z.record(z.string(), z.string()).optional(),
+      templateName: z.string().min(1).max(120).optional(),
+      contactId: ulidString.optional(),
+      rationale: z.string().min(1).max(1000),
+    }),
+    handler: async (ctx, input): Promise<ProposeResult> => {
+      const action: ActionDescriptorT = {
+        kind: 'whatsapp.send_template',
+        tier: 'T2',
+        to: input.to,
+        contentSid: input.contentSid,
+        rationale: input.rationale,
+        ...(input.contentVariables
+          ? { contentVariables: input.contentVariables }
+          : {}),
+        ...(input.templateName ? { templateName: input.templateName } : {}),
+        ...(input.contactId ? { contactId: input.contactId } : {}),
+      };
+      const row = await insertChatApproval(action, { userId: ctx.userId });
+      return chip(
+        action,
+        `WhatsApp template ${input.templateName ?? input.contentSid} to ${input.to}`,
+        row.id,
+      );
+    },
+  }),
+
   propose_outbound_call: defineTool({
     name: 'propose_outbound_call',
     description:
