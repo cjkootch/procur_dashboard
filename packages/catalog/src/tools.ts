@@ -27,6 +27,7 @@ import {
   matchCargoToFuelBuyers,
   findRefineriesForGrade,
   lookupKnownEntities,
+  findCounterpartiesUnified,
   walkOwnershipChainUp,
   walkSubsidiaries,
   lookupSanctionsScreens,
@@ -1890,6 +1891,166 @@ export function buildCatalogTools(): ToolRegistry {
                 'counterparties when ranking for a deal. The apollo field carries cached ' +
                 'funding-stage / headcount / revenue when Apollo has indexed the entity — use it ' +
                 'for capital-recency context without a separate lookup_apollo_org call.',
+            };
+          },
+        ),
+    }),
+
+    find_counterparties_for_region: defineTool({
+      name: 'find_counterparties_for_region',
+      description:
+        "Unified discovery — runs procur's curated rolodex AND Apollo's " +
+        'global org search in parallel, then merges by domain so the ' +
+        'response separates "in rolodex" hits from "new prospects ' +
+        "Apollo found that procur doesn't have yet.\" This is the " +
+        'right tool when the user asks "find [role] in [country]" or ' +
+        '"who are the [category] buyers in [region]" — it gives ' +
+        'exhaustive coverage in one call instead of forcing the ' +
+        'assistant to chain lookup_known_entities + ' +
+        'discover_orgs_by_criteria manually.\n\n' +
+        'WHEN TO CALL:\n' +
+        '  • "Find fuel buyers in Guyana" — even if procur has zero ' +
+        'curated entries, Apollo fills the gap with prospects.\n' +
+        '  • "Who are the diesel buyers in Jamaica?" — rolodex ' +
+        'returns curated entries (with cached Apollo data + KYC ' +
+        'state); Apollo prospects fill the long tail.\n' +
+        '  • Any "find counterparties" question where you want to ' +
+        'show both procur-curated and external-discovered.\n\n' +
+        'WHEN NOT TO CALL:\n' +
+        '  • The user asks about a specific named entity — that\'s ' +
+        'analyze_supplier or lookup_apollo_org.\n' +
+        '  • You only want curated rolodex (no Apollo cost) — use ' +
+        'lookup_known_entities directly.\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Lead with rolodex hits. They have analyst notes, KYC ' +
+        'state, and (when matched) Apollo enrichment inline. Surface ' +
+        "those FIRST — they're the operator's transactable " +
+        'counterparties today.\n' +
+        '  • Surface apolloProspects as a clearly-labeled second ' +
+        'group: "new prospects worth adding to the rolodex." DO NOT ' +
+        'imply Apollo prospects are vetted or transactable; they\'re ' +
+        'candidates.\n' +
+        '  • Cross-reference funding stage / employees / revenue from ' +
+        'the rolodex hits\' .apollo field when ranking — capital-' +
+        'recency is the closest thing to "intent" for commodity ' +
+        'buyers (Apollo\'s intent_signal is B2B-SaaS-tuned and not ' +
+        'used here).\n' +
+        '  • If apolloDegraded is true, the prospect list is empty ' +
+        'but rolodex hits are still valid — acknowledge the partial ' +
+        "result rather than implying Apollo found nothing.",
+      kind: 'read',
+      schema: z.object({
+        role: z
+          .string()
+          .optional()
+          .describe(
+            "known_entities.role — 'fuel-buyer-industrial', 'refiner', " +
+              "'trader', 'producer', 'utility', 'state-buyer', etc.",
+          ),
+        categoryTag: z
+          .string()
+          .optional()
+          .describe(
+            "Procur category tag — 'diesel', 'crude-oil', 'jet-fuel', " +
+              "'lpg', 'marine-bunker', etc.",
+          ),
+        country: z
+          .string()
+          .optional()
+          .describe(
+            'ISO-2 country code or full country name. Applied to ' +
+              "both rolodex (exact ISO-2 match) and Apollo discovery " +
+              "(organization headquarters location).",
+          ),
+        apolloKeywordTags: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Apollo industry-keyword tags. e.g. ['fuel distribution', " +
+              "'marine bunker']. Used only for the Apollo half of " +
+              'the search; rolodex side uses categoryTag/role.',
+          ),
+        apolloEmployeesMin: z
+          .number()
+          .int()
+          .optional()
+          .describe('Minimum headcount filter on the Apollo side.'),
+        rolodexLimit: z.number().int().min(1).max(200).optional(),
+        apolloLimit: z.number().int().min(1).max(100).optional(),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'find_counterparties_for_region',
+            args: input,
+            summarize: (out: {
+              rolodexCount: number;
+              prospectCount: number;
+              apolloDegraded: boolean;
+            }) => ({
+              resultCount: out.rolodexCount + out.prospectCount,
+              resultSummary: {
+                rolodexCount: out.rolodexCount,
+                prospectCount: out.prospectCount,
+                apolloDegraded: out.apolloDegraded,
+              },
+            }),
+          },
+          async () => {
+            const country = input.country
+              ? normalizeCountryCode(input.country)
+              : null;
+            const result = await findCounterpartiesUnified({
+              role: input.role,
+              categoryTag: input.categoryTag,
+              country: country ?? undefined,
+              apolloKeywordTags: input.apolloKeywordTags,
+              apolloEmployeesMin: input.apolloEmployeesMin,
+              companyId: ctx.companyId,
+              rolodexLimit: input.rolodexLimit,
+              apolloLimit: input.apolloLimit,
+            });
+            return {
+              rolodexCount: result.rolodexHits.length,
+              prospectCount: result.apolloProspects.length,
+              apolloDegraded: result.apolloDegraded,
+              apolloDegradeReason: result.apolloDegradeReason,
+              rolodexHits: result.rolodexHits.map((r) => ({
+                slug: r.slug,
+                name: r.name,
+                profileUrl: buildEntityProfileUrl({
+                  kind: 'known_entity',
+                  slug: r.slug,
+                }),
+                country: r.country,
+                role: r.role,
+                categories: r.categories,
+                approvalStatus: r.approvalStatus,
+                approvalExpiresAt: r.approvalExpiresAt,
+                apollo:
+                  r.apolloFundingStage ||
+                  r.apolloEstimatedEmployees != null ||
+                  r.apolloAnnualRevenue != null ||
+                  r.apolloTotalFunding != null ||
+                  r.apolloLatestFundingAt
+                    ? {
+                        fundingStage: r.apolloFundingStage,
+                        latestFundingAt: r.apolloLatestFundingAt,
+                        estimatedEmployees: r.apolloEstimatedEmployees,
+                        annualRevenue: r.apolloAnnualRevenue,
+                        totalFunding: r.apolloTotalFunding,
+                      }
+                    : null,
+              })),
+              apolloProspects: result.apolloProspects,
+              caveat:
+                'rolodexHits are CURATED counterparties (analyst notes + ' +
+                'KYC state + Apollo enrichment when matched). ' +
+                'apolloProspects are CANDIDATES Apollo found that procur ' +
+                "doesn't have yet — surface separately. Lead with " +
+                "rolodex; treat Apollo prospects as 'worth adding to " +
+                "the rolodex' rather than transactable today.",
             };
           },
         ),
