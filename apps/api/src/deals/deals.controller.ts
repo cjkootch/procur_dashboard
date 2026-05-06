@@ -1,0 +1,2747 @@
+import {
+  BadRequestException,
+  Body,
+  ConflictException,
+  Controller,
+  ForbiddenException,
+  Get,
+  HttpCode,
+  Inject,
+  Logger,
+  NotFoundException,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { z } from "zod";
+import {
+  createId,
+  type DealStatus,
+  type IncotermType,
+  type PaymentTermsType,
+  type ProductType,
+} from "@vex/domain";
+import type {
+  ApprovalRepository,
+  CounterpartyRiskRepository,
+  EventRepository,
+  FreightRateRepository,
+  FuelDealParticipantRepository,
+  FuelDealRepository,
+  FuelMarketRateRepository,
+  OrganizationRepository,
+  Port,
+  PortEvent,
+  PortRepository,
+  Vessel,
+  VesselRepository,
+} from "@vex/db";
+import {
+  calculateFuelDeal,
+  validatePortConstraints,
+  type DealWarning,
+  type FuelDealInputs,
+  type FuelDealResults,
+  type PortSpec,
+  type VesselSpec,
+} from "@vex/db";
+import { JwtAuthGuard, TenantContext } from "../auth/index.js";
+import { schema, withTenant, type Db, type Tx } from "@vex/db";
+
+/**
+ * GET /deals
+ *   List fuel deals for the current tenant, optionally filtered by
+ *   status, joined to the buyer organization so the list surface can
+ *   show a buyer label without a second round trip.
+ *
+ * GET /deals/:id
+ *   Single-row detail. Includes the latest active scenario's result
+ *   JSON blob so the detail page can render score / margin / ebitda
+ *   without recomputing.
+ *
+ * Both endpoints run inside `withTenant` so RLS isolates the query.
+ */
+
+export const DEALS_DB_CLIENT = Symbol("DEALS_DB_CLIENT");
+export const DEALS_REPO = Symbol("DEALS_REPO");
+export const DEALS_EVENT_REPO = Symbol("DEALS_EVENT_REPO");
+export const DEALS_APPROVAL_REPO = Symbol("DEALS_APPROVAL_REPO");
+export const DEALS_ORGS_REPO = Symbol("DEALS_ORGS_REPO");
+export const DEALS_MARKET_RATE_REPO = Symbol("DEALS_MARKET_RATE_REPO");
+export const DEALS_PARTICIPANT_REPO = Symbol("DEALS_PARTICIPANT_REPO");
+export const DEALS_COUNTERPARTY_REPO = Symbol("DEALS_COUNTERPARTY_REPO");
+export const DEALS_VESSEL_REPO = Symbol("DEALS_VESSEL_REPO");
+export const DEALS_FREIGHT_RATE_REPO = Symbol("DEALS_FREIGHT_RATE_REPO");
+export const DEALS_PORT_REPO = Symbol("DEALS_PORT_REPO");
+
+/**
+ * Status transitions that require a T2 approval instead of applying
+ * immediately. Promotion to `approved` starts the real-money part of
+ * the deal lifecycle (LC issuance, vessel nomination). `cancelled`
+ * destroys value. Both need a four-eyes check before they fire.
+ */
+const APPROVAL_REQUIRED_STATUSES = new Set<DealStatus>(["approved", "cancelled"]);
+
+const DEAL_STATUSES = [
+  "draft",
+  "negotiating",
+  "approved",
+  "in_transit",
+  "delivered",
+  "settled",
+  "cancelled",
+] as const satisfies readonly DealStatus[];
+
+const RequestStatusChangeBody = z.object({
+  status: z.enum(DEAL_STATUSES),
+  rationale: z.string().min(1).max(1000),
+});
+
+/**
+ * A single participant on a deal (supplier, buyer, brokers on either
+ * side, intermediaries). `display_name` is always required so an
+ * operator can type a broker name before the org exists in the CRM;
+ * `orgId` / `contactId` link up when available. Commission variance is
+ * captured by a type + value pair — the web client normalises every
+ * variant to a per-USG equivalent so the dashboard can feed them into
+ * the calculator's intermediary-fee line.
+ */
+const ParticipantBody = z
+  .object({
+    partyType: z.enum([
+      "supplier",
+      "supplier_broker",
+      "buyer",
+      "buyer_broker",
+      "intermediary",
+    ]),
+    displayName: z.string().min(1).max(200),
+    orgId: z.string().min(1).optional(),
+    contactId: z.string().min(1).optional(),
+    commissionType: z
+      .enum(["percentage", "cents_per_liter", "usd_per_mt", "flat_usd", "none"])
+      .optional(),
+    commissionValue: z.number().min(0).optional(),
+    commissionNotes: z.string().max(500).optional(),
+    notes: z.string().max(1000).optional(),
+  })
+  .refine(
+    (v) =>
+      v.commissionType === undefined ||
+      v.commissionType === "none" ||
+      v.commissionValue !== undefined,
+    {
+      message:
+        "commissionValue is required when commissionType is not 'none'",
+      path: ["commissionValue"],
+    },
+  );
+
+const CreateDealBody = z.object({
+  dealRef: z.string().min(1).max(50),
+  /**
+   * Line-of-business discriminator. When "food" the density field is
+   * optional and food-specific fields (productionLeadTimeWeeks,
+   * coldChainRequired, volumeUnit) unlock.
+   */
+  lineOfBusiness: z.enum(["fuel", "food"]).optional(),
+  product: z.enum([
+    // fuel
+    "ulsd",
+    "gasoline_87",
+    "gasoline_91",
+    "jet_a",
+    "jet_a1",
+    "avgas",
+    "lfo",
+    "hfo",
+    "lng",
+    "lpg",
+    "biodiesel_b20",
+    // food (sprint V)
+    "rice",
+    "beans",
+    "pork",
+    "chicken",
+    "cooking_oil",
+    "powdered_milk",
+  ]),
+  incoterm: z.enum(["fob", "cif", "cfr", "dap", "exw", "fas"]),
+  pricingBasis: z.enum([
+    "platts",
+    "argus",
+    "opis",
+    "nymex_wti",
+    "nymex_rbob",
+    "ice_brent",
+    "fixed",
+    "negotiated",
+  ]),
+  paymentTerms: z.enum([
+    "prepayment_100",
+    "prepayment_80_20",
+    "lc_sight",
+    "lc_60d",
+    "lc_90d",
+    "lc_120d",
+    "sblc",
+    "open_account",
+    "telegraphic_transfer",
+    "mixed",
+  ]),
+  volumeUsg: z.number().positive(),
+  /** Fuel: required. Food: omit. */
+  densityKgL: z.number().positive().max(2).optional(),
+  /** "usg" (fuel default) / "mt" / "lbs" / "kg" (food). */
+  volumeUnit: z.enum(["usg", "mt", "lbs", "kg"]).optional(),
+  productionLeadTimeWeeks: z.number().int().nonnegative().max(52).optional(),
+  coldChainRequired: z.boolean().optional(),
+  buyerOrgId: z.string().min(1),
+  sellerOrgId: z.string().optional(),
+  productGrade: z.string().optional(),
+  originPort: z.string().optional(),
+  destinationPort: z.string().optional(),
+  laycanStart: z.string().optional(),
+  laycanEnd: z.string().optional(),
+  notes: z.string().optional(),
+  dealType: z.enum(["spot", "program", "tender", "spot_with_option"]).optional(),
+  dealFrequency: z
+    .enum(["one_off", "weekly", "biweekly", "monthly", "custom"])
+    .optional(),
+  dealFrequencyIntervalDays: z.number().int().positive().optional(),
+  dealFrequencyNotes: z.string().max(500).optional(),
+  participants: z.array(ParticipantBody).max(20).optional(),
+})
+  .refine(
+    (v) => v.lineOfBusiness === "food" || v.densityKgL !== undefined,
+    {
+      message: "densityKgL is required for fuel deals",
+      path: ["densityKgL"],
+    },
+  )
+  .refine(
+    (v) =>
+      v.dealFrequency !== "custom" ||
+      (v.dealFrequencyIntervalDays !== undefined &&
+        v.dealFrequencyIntervalDays > 0),
+    {
+      message:
+        "dealFrequencyIntervalDays is required when dealFrequency is 'custom'",
+      path: ["dealFrequencyIntervalDays"],
+    },
+  );
+
+const UpdateStatusBody = z.object({
+  status: z.enum(DEAL_STATUSES),
+});
+
+/**
+ * POST /deals/calculate accepts a superset of deal-create inputs plus the
+ * optional economics fields (cost stack, freight overrides, risk scores).
+ * Every field is optional — the endpoint fills safe zero-defaults so the
+ * calculator can always produce a result while the operator is mid-form.
+ * Callers receive back the full FuelDealResults shape plus a list of
+ * fields that are still at their default zero so the UI can prompt for
+ * the ones that most affect the outcome.
+ */
+const CalculateDealBody = z
+  .object({
+    dealRef: z.string().optional(),
+    product: z
+      .enum([
+        "ulsd",
+        "gasoline_87",
+        "gasoline_91",
+        "jet_a",
+        "jet_a1",
+        "avgas",
+        "lfo",
+        "hfo",
+        "lng",
+        "lpg",
+        "biodiesel_b20",
+      ])
+      .optional(),
+    incoterm: z.enum(["fob", "cif", "cfr", "dap", "exw", "fas"]).optional(),
+    paymentTerms: z
+      .enum([
+        "prepayment_100",
+        "prepayment_80_20",
+        "lc_sight",
+        "lc_60d",
+        "lc_90d",
+        "lc_120d",
+        "sblc",
+        "open_account",
+        "telegraphic_transfer",
+        "mixed",
+      ])
+      .optional(),
+    volumeUsg: z.number().positive().optional(),
+    densityKgL: z.number().positive().max(2).optional(),
+    volumeTolerancePct: z.number().min(0).max(1).optional(),
+    sellPricePerUsg: z.number().min(0).optional(),
+    buyerCurrencyCode: z.string().length(3).optional(),
+    fxRateToUsd: z.number().positive().optional(),
+    fxHedgeInPlace: z.boolean().optional(),
+    productCostPerUsg: z.number().min(0).optional(),
+    productQualityPremiumPerUsg: z.number().min(0).optional(),
+    freightPerUsg: z.number().min(0).optional(),
+    cargoInsurancePct: z.number().min(0).max(0.5).optional(),
+    warRiskPremiumPct: z.number().min(0).max(0.5).optional(),
+    politicalRiskPremiumPct: z.number().min(0).max(0.5).optional(),
+    dischargeHandlingPerUsg: z.number().min(0).optional(),
+    compliancePerUsg: z.number().min(0).optional(),
+    tradeFinancePerUsg: z.number().min(0).optional(),
+    intermediaryFeePerUsg: z.number().min(0).optional(),
+    vtcVariableOpsPerUsg: z.number().min(0).optional(),
+    counterpartyRiskScore: z.number().min(0).max(100).optional(),
+    countryRiskScore: z.number().min(0).max(100).optional(),
+    overheadAllocationUsd: z.number().min(0).optional(),
+  })
+  .passthrough();
+
+export interface CalculateDealResponse {
+  results: FuelDealResults;
+  /** Zero-defaulted inputs that materially shape the recommendation. */
+  missingEconomicsFields: string[];
+}
+
+/**
+ * Editable fields on a fuel deal. Deliberately omits `dealRef`
+ * (immutable) and `status` (owns its own approval-gated endpoint at
+ * PATCH /deals/:id/status). Every field is optional so the caller can
+ * ship a partial patch; the controller only writes columns that made
+ * it into the validated payload.
+ */
+const UpdateDealBody = z
+  .object({
+    product: z.enum([
+      "ulsd",
+      "gasoline_87",
+      "gasoline_91",
+      "jet_a",
+      "jet_a1",
+      "avgas",
+      "lfo",
+      "hfo",
+      "lng",
+      "lpg",
+      "biodiesel_b20",
+    ]),
+    volumeUsg: z.number().positive(),
+    densityKgL: z.number().positive().max(2),
+    incoterm: z.enum(["fob", "cif", "cfr", "dap", "exw", "fas"]),
+    pricingBasis: z.enum([
+      "platts",
+      "argus",
+      "opis",
+      "nymex_wti",
+      "nymex_rbob",
+      "ice_brent",
+      "fixed",
+      "negotiated",
+    ]),
+    paymentTerms: z.enum([
+      "prepayment_100",
+      "prepayment_80_20",
+      "lc_sight",
+      "lc_60d",
+      "lc_90d",
+      "lc_120d",
+      "sblc",
+      "open_account",
+      "telegraphic_transfer",
+      "mixed",
+    ]),
+    destinationPort: z.string().nullable(),
+    originPort: z.string().nullable(),
+    laycanStart: z.string().nullable(),
+    laycanEnd: z.string().nullable(),
+    notes: z.string().nullable(),
+    buyerOrgId: z.string().min(1),
+  })
+  .partial();
+
+export interface DealListRow {
+  id: string;
+  dealRef: string;
+  status: string;
+  product: string;
+  buyerOrgId: string;
+  buyerName: string | null;
+  volumeUsg: number;
+  incoterm: string;
+  laycanStart: string | null;
+  laycanEnd: string | null;
+  complianceHold: boolean;
+  ofacStatus: string;
+  lineOfBusiness: string;
+  volumeUnit: string;
+  productionLeadTimeWeeks: number | null;
+  coldChainRequired: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DealDetail extends DealListRow {
+  sellerOrgId: string | null;
+  sellerName: string | null;
+  originPort: string | null;
+  destinationPort: string | null;
+  paymentTerms: string;
+  currency: string;
+  notes: string | null;
+  latestScenario: {
+    id: string;
+    scenarioName: string;
+    scenarioType: string;
+    isActive: boolean;
+    score: number | null;
+    recommendation: string | null;
+    resultsJson: unknown;
+  } | null;
+}
+
+const STATUS_VALUES = new Set([
+  "draft",
+  "negotiating",
+  "approved",
+  "in_transit",
+  "delivered",
+  "settled",
+  "cancelled",
+]);
+
+@Controller("deals")
+@UseGuards(JwtAuthGuard)
+export class DealsController {
+  private readonly log = new Logger(DealsController.name);
+
+  constructor(
+    @Inject(TenantContext) private readonly tenant: TenantContext,
+    @Inject(DEALS_DB_CLIENT) private readonly db: Db,
+    @Inject(DEALS_REPO) private readonly deals: FuelDealRepository,
+    @Inject(DEALS_EVENT_REPO) private readonly events: EventRepository,
+    @Inject(DEALS_APPROVAL_REPO) private readonly approvals: ApprovalRepository,
+    @Inject(DEALS_ORGS_REPO) private readonly organizations: OrganizationRepository,
+    @Inject(DEALS_MARKET_RATE_REPO)
+    private readonly marketRates: FuelMarketRateRepository,
+    @Inject(DEALS_PARTICIPANT_REPO)
+    private readonly participants: FuelDealParticipantRepository,
+    @Inject(DEALS_COUNTERPARTY_REPO)
+    private readonly counterparty: CounterpartyRiskRepository,
+    @Inject(DEALS_VESSEL_REPO)
+    private readonly vesselsRepo: VesselRepository,
+    @Inject(DEALS_FREIGHT_RATE_REPO)
+    private readonly freightRates: FreightRateRepository,
+    @Inject(DEALS_PORT_REPO)
+    private readonly portsRepo: PortRepository,
+  ) {}
+
+  /**
+   * Workspace pulse — per-deal execution status across every open
+   * deal in the tenant. Aggregates the cheap-to-query readiness
+   * signals (buyer OFAC, counterparty tier, vessel presence,
+   * compliance hold, staleness) and classifies each deal into one
+   * of four urgency groups. Powers the brief "Deals needing
+   * attention" section and the grouped view on /app/deals.
+   *
+   * Intentionally a narrower signal set than the full per-deal
+   * readiness matrix — this runs on every home-page load, so it
+   * stays on column-driven checks rather than doing doc-presence or
+   * freight-freshness queries per deal.
+   */
+  @Get("workspace-pulse")
+  async workspacePulse() {
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const openStatuses: Array<
+        "draft"
+        | "negotiating"
+        | "pending_approval"
+        | "approved"
+        | "loading"
+        | "in_transit"
+        | "delivered"
+      > = [
+        "draft",
+        "negotiating",
+        "pending_approval",
+        "approved",
+        "loading",
+        "in_transit",
+        "delivered",
+      ];
+      const deals = await tx
+        .select({
+          id: schema.fuelDeals.id,
+          dealRef: schema.fuelDeals.dealRef,
+          status: schema.fuelDeals.status,
+          product: schema.fuelDeals.product,
+          buyerOrgId: schema.fuelDeals.buyerOrgId,
+          volumeUsg: schema.fuelDeals.volumeUsg,
+          volumeUnit: schema.fuelDeals.volumeUnit,
+          vesselId: schema.fuelDeals.vesselId,
+          complianceHold: schema.fuelDeals.complianceHold,
+          updatedAt: schema.fuelDeals.updatedAt,
+        })
+        .from(schema.fuelDeals)
+        .where(inArray(schema.fuelDeals.status, openStatuses))
+        .orderBy(desc(schema.fuelDeals.updatedAt))
+        .limit(200);
+
+      if (deals.length === 0) {
+        return {
+          generatedAt: new Date().toISOString(),
+          deals: [],
+          summary: { blocked: 0, at_risk: 0, stale: 0, healthy: 0 },
+        };
+      }
+
+      const buyerIds = Array.from(new Set(deals.map((d) => d.buyerOrgId)));
+      const buyers = await tx
+        .select({
+          id: schema.organizations.id,
+          legalName: schema.organizations.legalName,
+          ofacStatus: schema.organizations.ofacStatus,
+          ofacScreenedAt: schema.organizations.ofacScreenedAt,
+        })
+        .from(schema.organizations)
+        .where(inArray(schema.organizations.id, buyerIds));
+      const buyerById = new Map(buyers.map((b) => [b.id, b]));
+
+      // Most recent counterparty score per buyer org.
+      const scores = await tx
+        .select({
+          orgId: schema.fuelDealCounterpartyScores.orgId,
+          riskTier: schema.fuelDealCounterpartyScores.riskTier,
+          scoredAt: schema.fuelDealCounterpartyScores.scoredAt,
+        })
+        .from(schema.fuelDealCounterpartyScores)
+        .where(
+          inArray(
+            schema.fuelDealCounterpartyScores.orgId,
+            buyerIds,
+          ),
+        )
+        .orderBy(desc(schema.fuelDealCounterpartyScores.scoredAt));
+      const tierByOrg = new Map<string, string>();
+      for (const s of scores) {
+        if (!tierByOrg.has(s.orgId)) tierByOrg.set(s.orgId, s.riskTier);
+      }
+
+      const now = Date.now();
+      const pulseDeals = deals.map((d) => {
+        const buyer = buyerById.get(d.buyerOrgId);
+        const tier = tierByOrg.get(d.buyerOrgId);
+        const blockers: Array<{ kind: string; detail: string }> = [];
+        const attention: Array<{ kind: string; detail: string }> = [];
+
+        if (d.complianceHold) {
+          blockers.push({
+            kind: "compliance_hold",
+            detail: "Deal is on compliance hold.",
+          });
+        }
+        if (buyer) {
+          if (buyer.ofacStatus === "confirmed_match") {
+            blockers.push({
+              kind: "ofac_match",
+              detail: `Buyer ${buyer.legalName}: confirmed OFAC match.`,
+            });
+          } else if (buyer.ofacStatus === "potential_match") {
+            blockers.push({
+              kind: "ofac_potential",
+              detail: `Buyer ${buyer.legalName}: potential OFAC match — review.`,
+            });
+          } else if (buyer.ofacStatus === "unscreened") {
+            attention.push({
+              kind: "ofac_unscreened",
+              detail: `Buyer ${buyer.legalName} has not been OFAC-screened.`,
+            });
+          } else if (buyer.ofacScreenedAt) {
+            const ageDays =
+              (now - buyer.ofacScreenedAt.getTime()) /
+              (24 * 60 * 60 * 1000);
+            if (ageDays > 30) {
+              attention.push({
+                kind: "ofac_stale",
+                detail: `Buyer OFAC screen is ${Math.floor(ageDays)}d old.`,
+              });
+            }
+          }
+        }
+        if (tier === "declined") {
+          blockers.push({
+            kind: "counterparty_declined",
+            detail: "Counterparty risk tier: Declined.",
+          });
+        } else if (tier === "watch") {
+          attention.push({
+            kind: "counterparty_watch",
+            detail: "Counterparty on Watch — review before shipping.",
+          });
+        }
+        if (
+          !d.vesselId &&
+          (d.status === "approved" ||
+            d.status === "loading" ||
+            d.status === "in_transit")
+        ) {
+          attention.push({
+            kind: "vessel_missing",
+            detail: "No vessel selected for a deal past approval.",
+          });
+        }
+
+        const ageDays = Math.floor(
+          (now - d.updatedAt.getTime()) / (24 * 60 * 60 * 1000),
+        );
+        const stale = ageDays >= 14;
+
+        let urgency: "blocked" | "at_risk" | "stale" | "healthy";
+        if (blockers.length > 0) urgency = "blocked";
+        else if (attention.length > 0) urgency = "at_risk";
+        else if (stale) urgency = "stale";
+        else urgency = "healthy";
+
+        if (stale && urgency !== "blocked" && urgency !== "at_risk") {
+          attention.push({
+            kind: "stale",
+            detail: `No updates in ${ageDays}d.`,
+          });
+        }
+
+        const nextAction = pickNextAction(d.status, blockers, attention);
+
+        return {
+          dealId: d.id,
+          dealRef: d.dealRef,
+          status: d.status,
+          product: d.product,
+          buyerName: buyer?.legalName ?? null,
+          buyerOrgId: d.buyerOrgId,
+          volumeUsg: d.volumeUsg,
+          volumeUnit: d.volumeUnit,
+          updatedAt: d.updatedAt.toISOString(),
+          ageDays,
+          urgency,
+          blockers,
+          attention,
+          nextAction,
+        };
+      });
+
+      const summary = {
+        blocked: pulseDeals.filter((d) => d.urgency === "blocked").length,
+        at_risk: pulseDeals.filter((d) => d.urgency === "at_risk").length,
+        stale: pulseDeals.filter((d) => d.urgency === "stale").length,
+        healthy: pulseDeals.filter((d) => d.urgency === "healthy").length,
+      };
+
+      return {
+        generatedAt: new Date().toISOString(),
+        deals: pulseDeals,
+        summary,
+      };
+    });
+  }
+
+  @Get()
+  async list(
+    @Query("status") statusRaw?: string,
+    @Query("line_of_business") lobRaw?: string,
+    @Query("limit") limitRaw?: string,
+  ): Promise<{ deals: DealListRow[] }> {
+    const status = statusRaw && STATUS_VALUES.has(statusRaw) ? statusRaw : null;
+    const lineOfBusiness =
+      lobRaw === "fuel" || lobRaw === "food" ? lobRaw : null;
+    const limit = clampLimit(limitRaw, 100, 500);
+
+    const deals = await withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const buyer = schema.organizations;
+      const base = tx
+        .select({
+          id: schema.fuelDeals.id,
+          dealRef: schema.fuelDeals.dealRef,
+          status: schema.fuelDeals.status,
+          product: schema.fuelDeals.product,
+          buyerOrgId: schema.fuelDeals.buyerOrgId,
+          buyerName: buyer.legalName,
+          volumeUsg: schema.fuelDeals.volumeUsg,
+          incoterm: schema.fuelDeals.incoterm,
+          laycanStart: schema.fuelDeals.laycanStart,
+          laycanEnd: schema.fuelDeals.laycanEnd,
+          complianceHold: schema.fuelDeals.complianceHold,
+          ofacStatus: schema.fuelDeals.ofacScreeningStatus,
+          lineOfBusiness: schema.fuelDeals.lineOfBusiness,
+          volumeUnit: schema.fuelDeals.volumeUnit,
+          productionLeadTimeWeeks: schema.fuelDeals.productionLeadTimeWeeks,
+          coldChainRequired: schema.fuelDeals.coldChainRequired,
+          createdAt: schema.fuelDeals.createdAt,
+          updatedAt: schema.fuelDeals.updatedAt,
+        })
+        .from(schema.fuelDeals)
+        .leftJoin(buyer, eq(schema.fuelDeals.buyerOrgId, buyer.id));
+      const clauses = [
+        status ? eq(schema.fuelDeals.status, status as DealStatus) : null,
+        lineOfBusiness
+          ? eq(schema.fuelDeals.lineOfBusiness, lineOfBusiness)
+          : null,
+      ].filter((c): c is NonNullable<typeof c> => c !== null);
+      const filtered =
+        clauses.length === 0
+          ? base
+          : clauses.length === 1
+            ? base.where(clauses[0]!)
+            : base.where(and(...clauses));
+      const rows = await filtered
+        .orderBy(desc(schema.fuelDeals.createdAt))
+        .limit(limit);
+      return rows.map(toListRow);
+    });
+
+    return { deals };
+  }
+
+  @Post()
+  @HttpCode(201)
+  async create(@Body() raw: unknown): Promise<{ deal: DealDetail }> {
+    const parsed = CreateDealBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const input = parsed.data;
+    const id = createId();
+    const { tenantId, userId } = this.tenant;
+
+    const deal = await withTenant(this.db, tenantId, async (tx) => {
+      // Verify buyer org exists under this tenant — RLS will already
+      // filter an impossible id, so an empty result here means the
+      // caller passed a bogus id or one from another tenant.
+      const [buyer] = await tx
+        .select({ id: schema.organizations.id })
+        .from(schema.organizations)
+        .where(eq(schema.organizations.id, input.buyerOrgId))
+        .limit(1);
+      if (!buyer) {
+        throw new BadRequestException(
+          `buyerOrgId ${input.buyerOrgId} does not exist in this workspace`,
+        );
+      }
+
+      try {
+        await this.deals.create(tx, tenantId, {
+          id,
+          dealRef: input.dealRef,
+          product: input.product,
+          incoterm: input.incoterm,
+          pricingBasis: input.pricingBasis,
+          paymentTerms: input.paymentTerms,
+          volumeUsg: input.volumeUsg,
+          // Fuel deals carry a density; food deals leave it null. The
+          // Zod refine above ensures densityKgL is set when
+          // lineOfBusiness !== "food".
+          densityKgL: input.densityKgL ?? null,
+          ...(input.lineOfBusiness !== undefined
+            ? { lineOfBusiness: input.lineOfBusiness }
+            : {}),
+          ...(input.volumeUnit !== undefined
+            ? { volumeUnit: input.volumeUnit }
+            : {}),
+          ...(input.productionLeadTimeWeeks !== undefined
+            ? { productionLeadTimeWeeks: input.productionLeadTimeWeeks }
+            : {}),
+          ...(input.coldChainRequired !== undefined
+            ? { coldChainRequired: input.coldChainRequired }
+            : {}),
+          buyerOrgId: input.buyerOrgId,
+          ...(input.sellerOrgId ? { sellerOrgId: input.sellerOrgId } : {}),
+          ...(input.productGrade ? { productGrade: input.productGrade } : {}),
+          ...(input.originPort ? { originPort: input.originPort } : {}),
+          ...(input.destinationPort ? { destinationPort: input.destinationPort } : {}),
+          ...(input.laycanStart ? { laycanStart: input.laycanStart } : {}),
+          ...(input.laycanEnd ? { laycanEnd: input.laycanEnd } : {}),
+          ...(input.notes ? { notes: input.notes } : {}),
+          ...(input.dealType ? { dealType: input.dealType } : {}),
+          ...(input.dealFrequency
+            ? { dealFrequency: input.dealFrequency }
+            : {}),
+          ...(input.dealFrequencyIntervalDays !== undefined
+            ? { dealFrequencyIntervalDays: input.dealFrequencyIntervalDays }
+            : {}),
+          ...(input.dealFrequencyNotes
+            ? { dealFrequencyNotes: input.dealFrequencyNotes }
+            : {}),
+          createdBy: userId,
+        });
+      } catch (err) {
+        const message = (err as Error).message;
+        if (message.includes("duplicate") || message.includes("unique")) {
+          throw new ConflictException(
+            `a deal with ref ${input.dealRef} already exists`,
+          );
+        }
+        throw err;
+      }
+
+      // Participants — optional at create. Inserted in the same tx so
+      // either the deal + all participants land or neither does.
+      if (input.participants && input.participants.length > 0) {
+        for (const p of input.participants) {
+          await this.participants.create(tx, tenantId, {
+            dealId: id,
+            partyType: p.partyType,
+            displayName: p.displayName,
+            ...(p.orgId ? { orgId: p.orgId } : {}),
+            ...(p.contactId ? { contactId: p.contactId } : {}),
+            ...(p.commissionType
+              ? { commissionType: p.commissionType }
+              : {}),
+            ...(p.commissionValue !== undefined
+              ? { commissionValue: p.commissionValue }
+              : {}),
+            ...(p.commissionNotes ? { commissionNotes: p.commissionNotes } : {}),
+            ...(p.notes ? { notes: p.notes } : {}),
+          });
+        }
+      }
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "deal.created",
+        subjectType: "fuel_deal",
+        subjectId: id,
+        actorType: "user",
+        actorId: userId,
+        objectType: "fuel_deal",
+        objectId: id,
+        occurredAt: new Date(),
+        idempotencyKey: `deal.created:${id}`,
+        metadata: {
+          deal_ref: input.dealRef,
+          product: input.product,
+          buyer_org_id: input.buyerOrgId,
+          volume_usg: input.volumeUsg,
+          created_by: userId,
+        },
+      });
+
+      const detail = await loadDealDetail(tx, id);
+      if (!detail) throw new Error(`created deal ${id} not readable`);
+      return detail;
+    });
+
+    this.log.log(`deal ${input.dealRef} (${id}) created by ${userId}`);
+    return { deal };
+  }
+
+  /**
+   * POST /deals/calculate — run the fuel-deal calculator against an
+   * ad-hoc input bundle without persisting anything. Powers the live
+   * dashboard on the deal creator: the operator enters pricing + cost
+   * inputs, the client debounces requests to this endpoint, and the
+   * right pane renders score + warnings + KPI tiles. Every input is
+   * optional because the deal can be saved before the economics are
+   * fully known; missing fields are filled with safe zero defaults.
+   */
+  @Post("calculate")
+  @HttpCode(200)
+  async calculate(@Body() raw: unknown): Promise<CalculateDealResponse> {
+    const parsed = CalculateDealBody.safeParse(raw ?? {});
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const input = parsed.data;
+    const inputs = buildCalculatorInputs(input);
+    const results = calculateFuelDeal(inputs);
+    return {
+      results,
+      missingEconomicsFields: findMissingEconomicsFields(input),
+    };
+  }
+
+  /**
+   * GET /deals/benchmarks — latest market rate for a (product, benchmark)
+   * pair. The deal creator uses this to render a spread chip next to the
+   * sell price input (e.g. "sell $2.85 vs Platts USGC ULSD $2.78").
+   * Benchmark slug follows the seed convention: `<basis>_<region>_<product>`.
+   */
+  @Get("benchmarks")
+  async benchmarks(
+    @Query("product") product?: string,
+    @Query("benchmark") benchmark?: string,
+  ): Promise<{
+    rate: {
+      rateDate: string;
+      product: string;
+      benchmark: string;
+      pricePerUsg: number;
+      pricePerBbl: number;
+      pricePerMt: number;
+      currency: string;
+      source: string;
+    } | null;
+  }> {
+    if (!product || !benchmark) {
+      throw new BadRequestException("product and benchmark query params required");
+    }
+    const rate = await withTenant(this.db, this.tenant.tenantId, async (tx) =>
+      this.marketRates.getLatest(tx, product, benchmark),
+    );
+    if (!rate) return { rate: null };
+    return {
+      rate: {
+        rateDate:
+          typeof rate.rateDate === "string"
+            ? rate.rateDate
+            : (rate.rateDate as Date).toISOString().slice(0, 10),
+        product: rate.product,
+        benchmark: rate.benchmark,
+        pricePerUsg: rate.pricePerUsg,
+        pricePerBbl: rate.pricePerBbl,
+        pricePerMt: rate.pricePerMt,
+        currency: rate.currency,
+        source: rate.source,
+      },
+    };
+  }
+
+  /**
+   * GET /deals/buyer-intel/:orgId — everything the creator's dashboard
+   * needs to qualify a buyer the moment it's picked: latest
+   * counterparty-risk row (tier, composite, recommended payment terms,
+   * recommended max exposure) + the buyer's current share of VTC's
+   * open pipeline by volume. Used to prevent silent limit breaches
+   * (exposure cap exceeded, concentration > 40%) at creation time
+   * rather than after the calculator fires post-save.
+   */
+  @Get("buyer-intel/:orgId")
+  async buyerIntel(@Param("orgId") orgId: string): Promise<{
+    counterparty: {
+      riskTier: string;
+      compositeScore: number;
+      countryRisk: number;
+      paymentHistoryRisk: number;
+      creditRisk: number;
+      sanctionsExposureRisk: number;
+      concentrationRisk: number;
+      recommendedPaymentTerms: string | null;
+      recommendedMaxExposureUsd: number | null;
+      scoredAt: string;
+    } | null;
+    concentration: {
+      /** Share of open pipeline by volume, 0..1. */
+      buyerShare: number;
+      buyerVolumeUsg: number;
+      totalOpenVolumeUsg: number;
+      openDealCount: number;
+    };
+  }> {
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const score = await this.counterparty.score(tx, orgId);
+
+      // Concentration — sum volume_usg for every non-cancelled /
+      // non-settled deal in this tenant, then compute the buyer's
+      // share. Uses volume (not revenue) because sell price isn't on
+      // the deal row; within a single product family this is a solid
+      // proxy and matches the calculator's concentration warning.
+      const openStatuses: DealStatus[] = [
+        "draft",
+        "negotiating",
+        "approved",
+        "in_transit",
+      ];
+      const openRows = await tx
+        .select({
+          buyerOrgId: schema.fuelDeals.buyerOrgId,
+          volumeUsg: schema.fuelDeals.volumeUsg,
+        })
+        .from(schema.fuelDeals)
+        .where(inArray(schema.fuelDeals.status, openStatuses));
+
+      let totalOpenVolumeUsg = 0;
+      let buyerVolumeUsg = 0;
+      let openDealCount = 0;
+      for (const row of openRows) {
+        totalOpenVolumeUsg += row.volumeUsg;
+        if (row.buyerOrgId === orgId) {
+          buyerVolumeUsg += row.volumeUsg;
+          openDealCount++;
+        }
+      }
+      const buyerShare =
+        totalOpenVolumeUsg > 0 ? buyerVolumeUsg / totalOpenVolumeUsg : 0;
+
+      return {
+        counterparty: score
+          ? {
+              riskTier: score.riskTier,
+              compositeScore: score.compositeScore,
+              countryRisk: score.countryRisk,
+              paymentHistoryRisk: score.paymentHistoryRisk,
+              creditRisk: score.creditRisk,
+              sanctionsExposureRisk: score.sanctionsExposureRisk,
+              concentrationRisk: score.concentrationRisk,
+              recommendedPaymentTerms: score.recommendedPaymentTerms,
+              recommendedMaxExposureUsd: score.recommendedMaxExposureUsd,
+              scoredAt: score.scoredAt.toISOString(),
+            }
+          : null,
+        concentration: {
+          buyerShare,
+          buyerVolumeUsg,
+          totalOpenVolumeUsg,
+          openDealCount,
+        },
+      };
+    });
+  }
+
+  @Patch(":id/status")
+  async updateStatus(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ deal: DealDetail }> {
+    const parsed = UpdateStatusBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const { status } = parsed.data;
+    if (APPROVAL_REQUIRED_STATUSES.has(status)) {
+      throw new ForbiddenException(
+        `transition to '${status}' requires an approval — POST /deals/${id}/status/request with a rationale`,
+      );
+    }
+    const { tenantId, userId } = this.tenant;
+
+    const deal = await withTenant(this.db, tenantId, async (tx) => {
+      const before = await this.deals.findById(tx, id);
+      if (!before) throw new NotFoundException(`deal ${id} not found`);
+      if (before.status === status) {
+        const detail = await loadDealDetail(tx, id);
+        if (!detail) throw new Error(`deal ${id} not readable`);
+        return detail;
+      }
+
+      await this.deals.updateStatus(tx, id, status, userId);
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "deal.status_changed",
+        subjectType: "fuel_deal",
+        subjectId: id,
+        actorType: "user",
+        actorId: userId,
+        objectType: "fuel_deal",
+        objectId: id,
+        occurredAt: new Date(),
+        idempotencyKey: `deal.status_changed:${id}:${before.status}->${status}:${Date.now()}`,
+        metadata: {
+          deal_ref: before.dealRef,
+          from_status: before.status,
+          to_status: status,
+          actor_user_id: userId,
+        },
+      });
+
+      const detail = await loadDealDetail(tx, id);
+      if (!detail) throw new Error(`deal ${id} not readable`);
+      return detail;
+    });
+
+    this.log.log(`deal ${id} status → ${status} by ${userId}`);
+    return { deal };
+  }
+
+  /**
+   * Run validatePortConstraints for a deal + its linked vessel + ports.
+   * Returns only the critical warnings — the approval-request path
+   * uses this to block the T2 gate, cautions flow through the daily
+   * agent instead. Returns [] when no port is linked (nothing to
+   * check) or when the calculator finds no critical constraints.
+   */
+  private async runPortGate(
+    tx: Tx,
+    deal: {
+      id: string;
+      product: string;
+      coldChainRequired: boolean | null;
+      vesselId: string | null;
+      originPortId: string | null;
+      destinationPortId: string | null;
+    },
+  ): Promise<DealWarning[]> {
+    const originPort = deal.originPortId
+      ? await this.portsRepo.findById(tx, deal.originPortId)
+      : null;
+    const destPort = deal.destinationPortId
+      ? await this.portsRepo.findById(tx, deal.destinationPortId)
+      : null;
+    if (!originPort && !destPort) return [];
+    const vessel = deal.vesselId
+      ? await this.vesselsRepo.findById(tx, deal.vesselId)
+      : null;
+    const warnings = validatePortConstraints({
+      product: deal.product as FuelDealInputs["product"],
+      coldChainRequired: deal.coldChainRequired ?? false,
+      vessel: vessel ? vesselToSpec(vessel) : null,
+      originPort: originPort ? portToSpec(originPort) : null,
+      destinationPort: destPort ? portToSpec(destPort) : null,
+    });
+    return warnings.filter((w) => w.severity === "critical");
+  }
+
+  @Post(":id/status/request")
+  @HttpCode(201)
+  async requestStatusChange(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ approvalId: string; status: "pending" }> {
+    const parsed = RequestStatusChangeBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const { status: targetStatus, rationale } = parsed.data;
+    const { tenantId, userId } = this.tenant;
+
+    const approvalId = await withTenant(this.db, tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+      if (deal.status === targetStatus) {
+        throw new BadRequestException(
+          `deal is already in status '${targetStatus}'`,
+        );
+      }
+
+      // Port-intelligence gate. Only fires for transitions to
+      // `approved` — that's the T2 action the deal evaluator flagged
+      // as "real money starts here". `cancelled` doesn't need a port
+      // check (nothing downstream gets blocked by bad port data).
+      // Any CRITICAL port warning refuses the approval request; the
+      // caller must re-examine vessel/port/cargo before re-requesting.
+      // Cautions are surfaced as signals via the daily agent + in the
+      // deal-creator dashboard; they don't block here.
+      if (targetStatus === "approved") {
+        const critical = await this.runPortGate(tx, deal);
+        if (critical.length > 0) {
+          throw new BadRequestException({
+            error: "port_constraints_blocking",
+            message:
+              `Deal ${deal.dealRef} has ${critical.length} critical port constraint${critical.length === 1 ? "" : "s"}. ` +
+              `Resolve before requesting approval.`,
+            criticalWarnings: critical.map((w) => ({
+              code: w.code,
+              message: w.message,
+              affectedField: w.affectedField,
+            })),
+          });
+        }
+      }
+
+      const approval = await this.approvals.create(tx, tenantId, {
+        agentRunId: null,
+        actionType: "deal.status_change",
+        proposedPayload: {
+          tier: "T2",
+          deal_id: id,
+          deal_ref: deal.dealRef,
+          from_status: deal.status,
+          to_status: targetStatus,
+          rationale,
+          requested_by: userId,
+        },
+      });
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "deal.status_change_requested",
+        subjectType: "fuel_deal",
+        subjectId: id,
+        actorType: "user",
+        actorId: userId,
+        objectType: "approval",
+        objectId: approval.id,
+        occurredAt: new Date(),
+        idempotencyKey: `deal.status_change_requested:${approval.id}`,
+        metadata: {
+          deal_ref: deal.dealRef,
+          from_status: deal.status,
+          to_status: targetStatus,
+          rationale,
+        },
+      });
+
+      return approval.id;
+    });
+
+    this.log.log(
+      `deal ${id} status→${targetStatus} approval requested (approval=${approvalId}) by ${userId}`,
+    );
+    return { approvalId, status: "pending" };
+  }
+
+  @Patch(":id")
+  async update(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ deal: DealDetail }> {
+    const parsed = UpdateDealBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const patch = parsed.data;
+    const { tenantId, userId } = this.tenant;
+
+    const deal = await withTenant(this.db, tenantId, async (tx) => {
+      const before = await loadDealDetail(tx, id);
+      if (!before) throw new NotFoundException(`deal ${id} not found`);
+
+      // Verify a new buyer (when changed) actually exists in this
+      // tenant. RLS already filters the lookup, so an empty result
+      // means the caller passed a bogus or cross-tenant id.
+      if (patch.buyerOrgId && patch.buyerOrgId !== before.buyerOrgId) {
+        const buyer = await this.organizations.findById(tx, patch.buyerOrgId);
+        if (!buyer) {
+          throw new NotFoundException(
+            `buyerOrgId ${patch.buyerOrgId} does not exist in this workspace`,
+          );
+        }
+      }
+
+      // Build a minimal update payload — only write columns that made
+      // it through Zod validation so the caller can send a partial
+      // patch without clobbering untouched fields.
+      const set: Record<string, unknown> = { updatedAt: new Date() };
+      if (patch.product !== undefined) set["product"] = patch.product;
+      if (patch.volumeUsg !== undefined) set["volumeUsg"] = patch.volumeUsg;
+      if (patch.densityKgL !== undefined) set["densityKgL"] = patch.densityKgL;
+      if (patch.incoterm !== undefined) set["incoterm"] = patch.incoterm;
+      if (patch.pricingBasis !== undefined)
+        set["pricingBasis"] = patch.pricingBasis;
+      if (patch.paymentTerms !== undefined)
+        set["paymentTerms"] = patch.paymentTerms;
+      if (patch.destinationPort !== undefined)
+        set["destinationPort"] = patch.destinationPort;
+      if (patch.originPort !== undefined) set["originPort"] = patch.originPort;
+      if (patch.laycanStart !== undefined) set["laycanStart"] = patch.laycanStart;
+      if (patch.laycanEnd !== undefined) set["laycanEnd"] = patch.laycanEnd;
+      if (patch.notes !== undefined) set["notes"] = patch.notes;
+      if (patch.buyerOrgId !== undefined) set["buyerOrgId"] = patch.buyerOrgId;
+
+      await tx
+        .update(schema.fuelDeals)
+        .set(set)
+        .where(eq(schema.fuelDeals.id, id))
+        .returning();
+
+      const after = await loadDealDetail(tx, id);
+      if (!after) throw new Error(`deal ${id} not readable after update`);
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "deal.updated",
+        subjectType: "fuel_deal",
+        subjectId: id,
+        actorType: "user",
+        actorId: userId,
+        objectType: "fuel_deal",
+        objectId: id,
+        occurredAt: new Date(),
+        // Stable key — tied to the pre-patch updatedAt so a retry of
+        // the same edit dedupes, but a second distinct edit lands a
+        // fresh row.
+        idempotencyKey: `deal.updated:${id}:${before.updatedAt}`,
+        metadata: {
+          patch,
+          before,
+          after,
+          audit_event_id: createId(),
+        },
+      });
+
+      return after;
+    });
+
+    this.log.log(`deal ${id} updated by ${userId}`);
+    return { deal };
+  }
+
+  /**
+   * GET /deals/:id/participants — list every supplier / buyer / broker
+   * / intermediary attached to a deal along with their commission
+   * structure. Powers the deal-detail page's "Participants" tab and
+   * the deal-creator's on-save confirmation.
+   */
+  @Get(":id/participants")
+  async listParticipants(@Param("id") id: string): Promise<{
+    participants: Array<{
+      id: string;
+      partyType: string;
+      displayName: string;
+      orgId: string | null;
+      contactId: string | null;
+      commissionType: string;
+      commissionValue: number | null;
+      commissionNotes: string | null;
+      notes: string | null;
+      createdAt: string;
+    }>;
+  }> {
+    const rows = await withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      return this.participants.listByDeal(tx, id);
+    });
+    return {
+      participants: rows.map((r) => ({
+        id: r.id,
+        partyType: r.partyType,
+        displayName: r.displayName,
+        orgId: r.orgId,
+        contactId: r.contactId,
+        commissionType: r.commissionType,
+        commissionValue: r.commissionValue,
+        commissionNotes: r.commissionNotes,
+        notes: r.notes,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  /**
+   * GET /deals/:id/vessel — bundles everything the deal-overview
+   * VesselPanel needs in a single call: the linked vessel record,
+   * computed utilization vs DWT, the freight rate booked on the deal,
+   * today's market rate for the inferred lane, and the % deviation.
+   * Returns nulls cleanly when no vessel is linked yet so the UI can
+   * render the empty state without a separate request.
+   */
+  @Get(":id/vessel")
+  async getVessel(@Param("id") id: string): Promise<{
+    deal: { id: string; dealRef: string; volumeUsg: number; volumeMt: number | null };
+    vessel: Vessel | null;
+    utilization: {
+      pctOfDwt: number | null;
+      pctOnDeal: number | null;
+    };
+    freightRate: {
+      bookedUsdPerMt: number | null;
+      lockedAt: string | null;
+      source: string | null;
+      marketAtLock: number | null;
+      demurrageRateUsdPerDay: number | null;
+      ballastBonusUsd: number | null;
+      charterType: string | null;
+    };
+    marketRate: {
+      currentUsdPerMt: number | null;
+      asOfDate: string | null;
+      source: string | null;
+      lane: {
+        originRegion: string;
+        destinationRegion: string;
+        productCategory: string;
+      } | null;
+    };
+    deviationPct: number | null;
+  }> {
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+
+      const vessel = deal.vesselId
+        ? await this.vesselsRepo.findById(tx, deal.vesselId)
+        : null;
+
+      // Utilization — prefer the explicit column the operator can
+      // override; fall back to volumeMt / DWT when the vessel and a
+      // computable volumeMt are both present.
+      const pctOnDeal =
+        deal.vesselUtilizationPct !== null &&
+        deal.vesselUtilizationPct !== undefined
+          ? deal.vesselUtilizationPct
+          : null;
+      const pctOfDwt =
+        vessel && vessel.dwtMt && vessel.dwtMt > 0 && deal.volumeMt
+          ? Math.min(deal.volumeMt / vessel.dwtMt, 1.05)
+          : null;
+
+      // Lane — only computable when we know origin + destination
+      // countries. Today's heuristic (US→USGC, JM/DO/TT/...→Caribs)
+      // mirrors the agents; broaden it as new lanes onboard.
+      const lane =
+        vessel && deal.originCountry && deal.destinationCountry
+          ? buildLaneForDealVessel(deal, vessel)
+          : null;
+      const marketLatest = lane
+        ? await this.freightRates.getLatest(tx, lane)
+        : null;
+
+      const deviationPct =
+        deal.freightRateUsdPerMt &&
+        deal.freightRateUsdPerMt > 0 &&
+        marketLatest &&
+        marketLatest.rateUsdPerMt > 0
+          ? (deal.freightRateUsdPerMt - marketLatest.rateUsdPerMt) /
+            marketLatest.rateUsdPerMt
+          : null;
+
+      return {
+        deal: {
+          id: deal.id,
+          dealRef: deal.dealRef,
+          volumeUsg: deal.volumeUsg,
+          volumeMt: deal.volumeMt,
+        },
+        vessel,
+        utilization: { pctOfDwt, pctOnDeal },
+        freightRate: {
+          bookedUsdPerMt: deal.freightRateUsdPerMt,
+          lockedAt: deal.freightRateLockedAt
+            ? deal.freightRateLockedAt.toISOString()
+            : null,
+          source: deal.freightRateSource,
+          marketAtLock: deal.freightMarketRateAtLock,
+          demurrageRateUsdPerDay: deal.demurrageRateUsdPerDay,
+          ballastBonusUsd: deal.ballastBonusUsd,
+          charterType: deal.charterType,
+        },
+        marketRate: {
+          currentUsdPerMt: marketLatest?.rateUsdPerMt ?? null,
+          asOfDate:
+            typeof marketLatest?.rateDate === "string"
+              ? marketLatest.rateDate
+              : (marketLatest?.rateDate as Date | undefined)?.toISOString().slice(0, 10) ?? null,
+          source: marketLatest?.source ?? null,
+          lane,
+        },
+        deviationPct,
+      };
+    });
+  }
+
+  /**
+   * PATCH /deals/:id/vessel — link / relink a vessel to the deal and
+   * record the freight terms. Stamps freight_rate_locked_at to now()
+   * when a fresh rate lands so the FreightMarketAgent has a benchmark
+   * to deviation-check against. Snapshots today's market rate into
+   * freight_market_rate_at_lock when computable.
+   */
+  @Patch(":id/vessel")
+  async patchVessel(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ ok: true; freightMarketRateAtLock: number | null }> {
+    const parsed = PatchDealVesselBody.safeParse(raw);
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    const patch = parsed.data;
+    const { tenantId, userId } = this.tenant;
+
+    return withTenant(this.db, tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+
+      // Validate the new vessel id when the caller is changing it —
+      // RLS will already filter cross-tenant ids, so an empty result
+      // means the caller passed something bogus.
+      let vesselForLane: Vessel | null = null;
+      if (patch.vesselId !== undefined && patch.vesselId !== null) {
+        vesselForLane = await this.vesselsRepo.findById(tx, patch.vesselId);
+        if (!vesselForLane) {
+          throw new NotFoundException(
+            `vessel ${patch.vesselId} not found in this workspace`,
+          );
+        }
+      } else if (patch.vesselId === undefined && deal.vesselId) {
+        vesselForLane = await this.vesselsRepo.findById(tx, deal.vesselId);
+      }
+
+      // Snapshot today's market rate when we get a fresh booked rate +
+      // can compute a lane. Drives the FreightMarketAgent's
+      // deviation-from-lock detection.
+      let marketRateAtLock: number | null = null;
+      const newBookedRate =
+        patch.freightRateUsdPerMt !== undefined
+          ? patch.freightRateUsdPerMt
+          : deal.freightRateUsdPerMt;
+      if (
+        vesselForLane &&
+        deal.originCountry &&
+        deal.destinationCountry &&
+        newBookedRate &&
+        newBookedRate > 0
+      ) {
+        const lane = buildLaneForDealVessel(deal, vesselForLane);
+        if (lane) {
+          const market = await this.freightRates.getLatest(tx, lane);
+          if (market) marketRateAtLock = market.rateUsdPerMt;
+        }
+      }
+
+      const set: Record<string, unknown> = { updatedAt: new Date() };
+      if (patch.vesselId !== undefined) set["vesselId"] = patch.vesselId;
+      if (patch.charterType !== undefined) set["charterType"] = patch.charterType;
+      if (patch.freightRateUsdPerMt !== undefined) {
+        set["freightRateUsdPerMt"] = patch.freightRateUsdPerMt;
+        set["freightRateLockedAt"] = new Date();
+        if (marketRateAtLock !== null) {
+          set["freightMarketRateAtLock"] = marketRateAtLock;
+        }
+      }
+      if (patch.vesselUtilizationPct !== undefined) {
+        set["vesselUtilizationPct"] = patch.vesselUtilizationPct;
+      }
+      if (patch.demurrageRateUsdPerDay !== undefined) {
+        set["demurrageRateUsdPerDay"] = patch.demurrageRateUsdPerDay;
+      }
+      if (patch.ballastBonusUsd !== undefined) {
+        set["ballastBonusUsd"] = patch.ballastBonusUsd;
+      }
+      if (patch.freightRateSource !== undefined) {
+        set["freightRateSource"] = patch.freightRateSource;
+      }
+
+      await tx
+        .update(schema.fuelDeals)
+        .set(set)
+        .where(eq(schema.fuelDeals.id, id));
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "deal.vessel_linked",
+        subjectType: "fuel_deal",
+        subjectId: id,
+        actorType: "user",
+        actorId: userId,
+        objectType: "vessel",
+        objectId: patch.vesselId ?? deal.vesselId ?? "unknown",
+        occurredAt: new Date(),
+        idempotencyKey: `deal.vessel_linked:${id}:${Date.now()}`,
+        metadata: {
+          deal_ref: deal.dealRef,
+          vessel_id: patch.vesselId ?? deal.vesselId ?? null,
+          freight_rate_usd_per_mt: patch.freightRateUsdPerMt ?? null,
+          charter_type: patch.charterType ?? null,
+          market_rate_at_lock: marketRateAtLock,
+        },
+      });
+
+      return { ok: true, freightMarketRateAtLock: marketRateAtLock };
+    });
+  }
+
+  /**
+   * GET /deals/:id/vessel/freight-history?days=90 — time series of
+   * market freight rates for the deal's lane over the last N days.
+   * Returns an empty `points` array when the lane can't be derived
+   * (no vessel linked, or origin/destination country can't be mapped
+   * to a region slug). Sparkline-shaped: ascending date order, one
+   * point per published rate row (no resampling).
+   */
+  @Get(":id/vessel/freight-history")
+  async freightHistory(
+    @Param("id") id: string,
+    @Query("days") daysRaw?: string,
+  ): Promise<{
+    lane: {
+      originRegion: string;
+      destinationRegion: string;
+      vesselClass: string;
+      productCategory: string;
+    } | null;
+    points: Array<{ date: string; rateUsdPerMt: number; source: string }>;
+  }> {
+    const days = clampDays(daysRaw);
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+      const vessel = deal.vesselId
+        ? await this.vesselsRepo.findById(tx, deal.vesselId)
+        : null;
+      if (
+        !vessel ||
+        !deal.originCountry ||
+        !deal.destinationCountry
+      ) {
+        return { lane: null, points: [] };
+      }
+      const lane = buildLaneForDealVessel(deal, vessel);
+      if (!lane) return { lane: null, points: [] };
+
+      const to = new Date();
+      const from = new Date(to);
+      from.setUTCDate(from.getUTCDate() - days);
+      const fromIso = from.toISOString().slice(0, 10);
+      const toIso = to.toISOString().slice(0, 10);
+
+      const rows = await this.freightRates.getRange(tx, lane, fromIso, toIso);
+      return {
+        lane: {
+          originRegion: lane.originRegion,
+          destinationRegion: lane.destinationRegion,
+          vesselClass: lane.vesselClass,
+          productCategory: lane.productCategory,
+        },
+        points: rows.map((r) => ({
+          date:
+            typeof r.rateDate === "string"
+              ? r.rateDate
+              : (r.rateDate as Date).toISOString().slice(0, 10),
+          rateUsdPerMt: r.rateUsdPerMt,
+          source: r.source,
+        })),
+      };
+    });
+  }
+
+  /**
+   * GET /deals/:id/ports — bundle for the deal-overview PortPanel.
+   * Returns both resolved ports (when *_port_id is set), any active
+   * port_events at either leg, the full constraint-warning list from
+   * validatePortConstraints, and a `resolution` hint when a legacy
+   * text port (deal.origin_port / destination_port) looks like a
+   * UNLOCODE but hasn't been linked yet. The "Resolve port" CTA on
+   * the panel uses that hint to confirm + PATCH.
+   */
+  @Get(":id/ports")
+  async getPorts(@Param("id") id: string): Promise<{
+    deal: { id: string; dealRef: string; product: string };
+    originPort: Port | null;
+    destinationPort: Port | null;
+    originEvents: PortEvent[];
+    destinationEvents: PortEvent[];
+    warnings: DealWarning[];
+    resolution: {
+      origin: { suggested: Port | null; fromText: string | null } | null;
+      destination: { suggested: Port | null; fromText: string | null } | null;
+    };
+  }> {
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+
+      const originPort = deal.originPortId
+        ? await this.portsRepo.findById(tx, deal.originPortId)
+        : null;
+      const destPort = deal.destinationPortId
+        ? await this.portsRepo.findById(tx, deal.destinationPortId)
+        : null;
+
+      const originEvents = originPort
+        ? await this.portsRepo.listActiveEvents(tx, originPort.id)
+        : [];
+      const destinationEvents = destPort
+        ? await this.portsRepo.listActiveEvents(tx, destPort.id)
+        : [];
+
+      const vessel = deal.vesselId
+        ? await this.vesselsRepo.findById(tx, deal.vesselId)
+        : null;
+
+      const warnings = validatePortConstraints({
+        product: deal.product,
+        coldChainRequired: deal.coldChainRequired ?? false,
+        vessel: vessel ? vesselToSpec(vessel) : null,
+        originPort: originPort ? portToSpec(originPort) : null,
+        destinationPort: destPort ? portToSpec(destPort) : null,
+      });
+
+      // Resolution hints — when a leg's port_id is null but the legacy
+      // text column looks like a UNLOCODE, suggest the matching port
+      // row so the UI can offer a one-click "Link this" action.
+      const origResolution = await maybeResolveText(
+        tx,
+        this.portsRepo,
+        deal.originPortId,
+        deal.originPort,
+      );
+      const destResolution = await maybeResolveText(
+        tx,
+        this.portsRepo,
+        deal.destinationPortId,
+        deal.destinationPort,
+      );
+
+      return {
+        deal: { id: deal.id, dealRef: deal.dealRef, product: deal.product },
+        originPort,
+        destinationPort: destPort,
+        originEvents,
+        destinationEvents,
+        warnings,
+        resolution: {
+          origin: origResolution,
+          destination: destResolution,
+        },
+      };
+    });
+  }
+
+  /**
+   * PATCH /deals/:id/ports — link / unlink origin or destination port.
+   * Pass null to unlink. Emits a deal.ports_updated event so the
+   * audit trail survives.
+   */
+  @Patch(":id/ports")
+  async patchPorts(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ ok: true }> {
+    const parsed = PatchDealPortsBody.safeParse(raw);
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    const patch = parsed.data;
+    const { tenantId, userId } = this.tenant;
+
+    await withTenant(this.db, tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+
+      // Validate new port IDs belong to this tenant. RLS filters
+      // cross-tenant rows, so an empty result means bogus id.
+      if (patch.originPortId) {
+        const p = await this.portsRepo.findById(tx, patch.originPortId);
+        if (!p)
+          throw new NotFoundException(
+            `originPortId ${patch.originPortId} not found in this workspace`,
+          );
+      }
+      if (patch.destinationPortId) {
+        const p = await this.portsRepo.findById(tx, patch.destinationPortId);
+        if (!p)
+          throw new NotFoundException(
+            `destinationPortId ${patch.destinationPortId} not found in this workspace`,
+          );
+      }
+
+      const set: Record<string, unknown> = { updatedAt: new Date() };
+      if (patch.originPortId !== undefined)
+        set["originPortId"] = patch.originPortId;
+      if (patch.destinationPortId !== undefined)
+        set["destinationPortId"] = patch.destinationPortId;
+
+      await tx
+        .update(schema.fuelDeals)
+        .set(set)
+        .where(eq(schema.fuelDeals.id, id));
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "deal.ports_updated",
+        subjectType: "fuel_deal",
+        subjectId: id,
+        actorType: "user",
+        actorId: userId,
+        objectType: "fuel_deal",
+        objectId: id,
+        occurredAt: new Date(),
+        idempotencyKey: `deal.ports_updated:${id}:${Date.now()}`,
+        metadata: {
+          deal_ref: deal.dealRef,
+          origin_port_id: patch.originPortId ?? deal.originPortId ?? null,
+          destination_port_id:
+            patch.destinationPortId ?? deal.destinationPortId ?? null,
+        },
+      });
+    });
+
+    return { ok: true };
+  }
+
+  @Get(":id")
+  async detail(@Param("id") id: string): Promise<{ deal: DealDetail }> {
+    const deal = await withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const row = await loadDealDetail(tx, id);
+      if (!row) return null;
+      return row;
+    });
+    if (!deal) throw new NotFoundException(`deal ${id} not found`);
+    return { deal };
+  }
+
+  /**
+   * Readiness matrix — per-deal operating checklist. Joins every
+   * table that carries a "can we actually ship this?" signal and
+   * reduces each to one of four states: complete, stale, incomplete,
+   * missing, or blocked. Powers the Readiness tab on the deal
+   * detail page so an operator sees at a glance what's stopping
+   * the deal from moving.
+   *
+   * Eight checks, all optional per deal stage — the UI never hides
+   * a row, because "missing" is itself a signal the operator needs.
+   */
+  @Get(":id/readiness")
+  async readiness(@Param("id") id: string) {
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+
+      const [
+        buyer,
+        participantRows,
+        counterpartyRows,
+        documentRows,
+        followUpRows,
+        latestFreight,
+      ] = await Promise.all([
+        this.organizations.findById(tx, deal.buyerOrgId),
+        tx
+          .select()
+          .from(schema.fuelDealParticipants)
+          .where(eq(schema.fuelDealParticipants.dealId, id)),
+        // Counterparty scores are keyed on orgId (not dealId) — the
+        // same counterparty score applies across every deal where
+        // that org sits on the buyer or supplier side. For this
+        // matrix we use the buyer's most recent score; a future
+        // enhancement can roll in supplier scores as a secondary
+        // row.
+        tx
+          .select()
+          .from(schema.fuelDealCounterpartyScores)
+          .where(eq(schema.fuelDealCounterpartyScores.orgId, deal.buyerOrgId))
+          .orderBy(desc(schema.fuelDealCounterpartyScores.scoredAt))
+          .limit(1),
+        tx
+          .select({
+            documentType: schema.fuelDealDocuments.documentType,
+            uploadedAt: schema.fuelDealDocuments.uploadedAt,
+          })
+          .from(schema.fuelDealDocuments)
+          .where(eq(schema.fuelDealDocuments.dealId, id)),
+        tx
+          .select()
+          .from(schema.followUps)
+          .where(
+            and(
+              eq(schema.followUps.subjectType, "fuel_deal"),
+              eq(schema.followUps.subjectId, id),
+              eq(schema.followUps.status, "open"),
+            ),
+          )
+          .orderBy(schema.followUps.dueAt)
+          .limit(1),
+        loadLatestFreightForDeal(tx, deal),
+      ]);
+
+      const supplierOrgIds = participantRows
+        .filter(
+          (p) => p.partyType === "supplier" || p.partyType === "supplier_broker",
+        )
+        .map((p) => p.orgId)
+        .filter((v): v is string => typeof v === "string" && v.length > 0);
+      const suppliers =
+        supplierOrgIds.length > 0
+          ? await tx
+              .select()
+              .from(schema.organizations)
+              .where(inArray(schema.organizations.id, supplierOrgIds))
+          : [];
+
+      const checks = [
+        kycCheck(documentRows),
+        ofacCheck(buyer, suppliers),
+        counterpartyCheck(counterpartyRows[0] ?? null),
+        freightCheck(latestFreight),
+        vesselCheck(deal.vesselId ?? null),
+        paymentTermsCheck(deal.paymentTerms ?? null),
+        docsCheck(documentRows, deal.status),
+        nextMilestoneCheck(followUpRows[0] ?? null),
+      ];
+
+      const summary = summariseReadiness(checks);
+
+      return {
+        dealId: deal.id,
+        dealRef: deal.dealRef,
+        status: deal.status,
+        summary,
+        checks,
+      };
+    });
+  }
+
+}
+
+/**
+ * Default thresholds mirror the DealEvaluatorAgent constants — every
+ * warning triggered in the creator dashboard uses the same cutoffs the
+ * async evaluator will use later, so there's no "passed on the form,
+ * failed after save" surprise.
+ */
+const DEFAULT_CALCULATOR_THRESHOLDS = {
+  maxPeakCashExposureUsd: 5_000_000,
+  minGrossMarginPct: 0.05,
+  minNetMarginPerUsg: 0.03,
+  maxCounterpartyRiskScore: 65,
+  maxCountryRiskScore: 70,
+  maxDemurrageDays: 2,
+} as const;
+
+const DEFAULT_CALCULATOR_MONTHLY_OVERHEAD_USD = 120_000;
+
+function buildCalculatorInputs(
+  input: z.infer<typeof CalculateDealBody>,
+): FuelDealInputs {
+  return {
+    dealRef: input.dealRef ?? "draft",
+    product: (input.product ?? "ulsd") as ProductType,
+    incoterm: (input.incoterm ?? "cfr") as IncotermType,
+    volumeUsg: input.volumeUsg ?? 0,
+    densityKgL: input.densityKgL ?? 0.84,
+    volumeTolerancePct: input.volumeTolerancePct ?? 0,
+    sellPricePerUsg: input.sellPricePerUsg ?? 0,
+    buyerCurrencyCode: input.buyerCurrencyCode ?? "usd",
+    fxRateToUsd: input.fxRateToUsd ?? 1,
+    ...(input.fxHedgeInPlace !== undefined
+      ? { fxHedgeInPlace: input.fxHedgeInPlace }
+      : {}),
+    productCostPerUsg: input.productCostPerUsg ?? 0,
+    productQualityPremiumPerUsg: input.productQualityPremiumPerUsg ?? 0,
+    freightPerUsg: input.freightPerUsg ?? 0,
+    cargoInsurancePct: input.cargoInsurancePct ?? 0,
+    warRiskPremiumPct: input.warRiskPremiumPct ?? 0,
+    politicalRiskPremiumPct: input.politicalRiskPremiumPct ?? 0,
+    dischargeHandlingPerUsg: input.dischargeHandlingPerUsg ?? 0,
+    compliancePerUsg: input.compliancePerUsg ?? 0,
+    tradeFinancePerUsg: input.tradeFinancePerUsg ?? 0,
+    intermediaryFeePerUsg: input.intermediaryFeePerUsg ?? 0,
+    vtcVariableOpsPerUsg: input.vtcVariableOpsPerUsg ?? 0,
+    overheadAllocationUsd: input.overheadAllocationUsd ?? 0,
+    tradeFinance: {
+      type: (input.paymentTerms ?? "open_account") as PaymentTermsType,
+    },
+    counterpartyRiskScore: input.counterpartyRiskScore ?? 40,
+    countryRiskScore: input.countryRiskScore ?? 40,
+    thresholds: { ...DEFAULT_CALCULATOR_THRESHOLDS },
+    monthlyFixedOverheadUsd: DEFAULT_CALCULATOR_MONTHLY_OVERHEAD_USD,
+  };
+}
+
+/**
+ * Economics fields that materially shape the recommendation. When any of
+ * these are zero/unset, the calculator still runs but the output is not
+ * really actionable — the UI surfaces these so the operator knows what
+ * to fill in next.
+ */
+function findMissingEconomicsFields(
+  input: z.infer<typeof CalculateDealBody>,
+): string[] {
+  const missing: string[] = [];
+  if (!input.sellPricePerUsg || input.sellPricePerUsg <= 0)
+    missing.push("sellPricePerUsg");
+  if (!input.productCostPerUsg || input.productCostPerUsg <= 0)
+    missing.push("productCostPerUsg");
+  if (!input.volumeUsg || input.volumeUsg <= 0) missing.push("volumeUsg");
+  if (input.freightPerUsg === undefined) missing.push("freightPerUsg");
+  return missing;
+}
+
+// ---------------------------------------------------------------------------
+// Readiness matrix helpers. Each check reduces a slice of the deal's
+// context to one of five states:
+//
+//   complete    — satisfies the rule fully
+//   stale       — satisfied once, freshness has expired
+//   incomplete  — partially satisfied (e.g. some docs present)
+//   missing     — nothing on file yet
+//   blocked     — cannot proceed (OFAC confirmed, Declined tier)
+//
+// The UI (ReadinessPanel) groups rows by state; the API just emits
+// typed payload. `ask` is a pre-written Ask Vex prompt the panel
+// links to when the operator clicks the row.
+// ---------------------------------------------------------------------------
+
+export type ReadinessState =
+  | "complete"
+  | "stale"
+  | "incomplete"
+  | "missing"
+  | "blocked";
+
+export interface ReadinessCheck {
+  id:
+    | "kyc"
+    | "ofac"
+    | "counterparty"
+    | "freight"
+    | "vessel"
+    | "payment"
+    | "docs"
+    | "milestone";
+  label: string;
+  state: ReadinessState;
+  detail: string;
+  lastVerifiedAt: string | null;
+  ask: string;
+  deepLink: string | null;
+}
+
+const OFAC_FRESH_DAYS = 30;
+const FREIGHT_FRESH_DAYS = 7;
+const FREIGHT_STALE_DAYS = 30;
+
+/**
+ * Required deal-document types per downstream stage. A deal in draft
+ * only needs a term sheet; one that's moved to loading or beyond is
+ * incomplete if it doesn't have the shipment-side docs too. Keep the
+ * required set small — false positives on this check erode trust in
+ * the whole matrix.
+ */
+function requiredDocTypes(status: string): readonly string[] {
+  // Drizzle's enum string values match the DealDocumentType constants.
+  if (
+    status === "loading" ||
+    status === "in_transit" ||
+    status === "delivered" ||
+    status === "settled"
+  ) {
+    return ["TermSheet", "Spa", "Bl", "Coa", "InsuranceCert"];
+  }
+  if (status === "approved") return ["TermSheet", "Spa"];
+  return ["TermSheet"];
+}
+
+function kycCheck(
+  docs: Array<{ documentType: string; uploadedAt: Date | null }>,
+): ReadinessCheck {
+  const signed = docs.filter(
+    (d) => d.documentType === "TermSheet" || d.documentType === "Spa",
+  );
+  if (signed.length === 0) {
+    return {
+      id: "kyc",
+      label: "KYC / term sheet",
+      state: "missing",
+      detail: "No term sheet or SPA on file.",
+      lastVerifiedAt: null,
+      ask: "What's needed to complete KYC on this deal?",
+      deepLink: null,
+    };
+  }
+  const mostRecent = signed.reduce<Date | null>((acc, d) => {
+    if (!d.uploadedAt) return acc;
+    if (!acc || d.uploadedAt > acc) return d.uploadedAt;
+    return acc;
+  }, null);
+  return {
+    id: "kyc",
+    label: "KYC / term sheet",
+    state: "complete",
+    detail: `${signed.length} signed contract doc${signed.length === 1 ? "" : "s"} on file.`,
+    lastVerifiedAt: mostRecent ? mostRecent.toISOString() : null,
+    ask: "Summarise the signed contract docs on this deal.",
+    deepLink: null,
+  };
+}
+
+type OrgRow = typeof schema.organizations.$inferSelect;
+
+function ofacCheck(
+  buyer: OrgRow | null,
+  suppliers: OrgRow[],
+): ReadinessCheck {
+  const orgs: OrgRow[] = [];
+  if (buyer) orgs.push(buyer);
+  for (const s of suppliers) orgs.push(s);
+  if (orgs.length === 0) {
+    return {
+      id: "ofac",
+      label: "OFAC clear",
+      state: "missing",
+      detail: "No counterparty orgs linked to the deal.",
+      lastVerifiedAt: null,
+      ask: "Why is there no counterparty org linked to this deal?",
+      deepLink: null,
+    };
+  }
+  const now = Date.now();
+  let worstState: ReadinessState = "complete";
+  let lastVerified: Date | null = null;
+  const notes: string[] = [];
+  for (const o of orgs) {
+    if (o.ofacStatus === "confirmed_match") {
+      worstState = "blocked";
+      notes.push(`${o.legalName}: confirmed OFAC match`);
+      continue;
+    }
+    if (o.ofacStatus === "potential_match") {
+      if (worstState !== "blocked") worstState = "blocked";
+      notes.push(`${o.legalName}: potential match — review`);
+      continue;
+    }
+    if (o.ofacStatus === "unscreened" || !o.ofacScreenedAt) {
+      if (worstState === "complete") worstState = "missing";
+      notes.push(`${o.legalName}: unscreened`);
+      continue;
+    }
+    const ageDays =
+      (now - o.ofacScreenedAt.getTime()) / (24 * 60 * 60 * 1000);
+    if (ageDays > OFAC_FRESH_DAYS) {
+      if (worstState === "complete") worstState = "stale";
+      notes.push(
+        `${o.legalName}: screened ${Math.floor(ageDays)}d ago`,
+      );
+    } else {
+      notes.push(`${o.legalName}: clear`);
+    }
+    if (!lastVerified || o.ofacScreenedAt > lastVerified) {
+      lastVerified = o.ofacScreenedAt;
+    }
+  }
+  return {
+    id: "ofac",
+    label: "OFAC clear",
+    state: worstState,
+    detail: notes.join(" · "),
+    lastVerifiedAt: lastVerified ? lastVerified.toISOString() : null,
+    ask: "Re-run OFAC screening on every counterparty on this deal.",
+    deepLink: null,
+  };
+}
+
+type CounterpartyRow =
+  typeof schema.fuelDealCounterpartyScores.$inferSelect;
+
+function counterpartyCheck(
+  row: CounterpartyRow | null,
+): ReadinessCheck {
+  if (!row) {
+    return {
+      id: "counterparty",
+      label: "Counterparty approved",
+      state: "missing",
+      detail: "No counterparty risk score on file.",
+      lastVerifiedAt: null,
+      ask: "Score the counterparty risk on this deal.",
+      deepLink: null,
+    };
+  }
+  if (row.riskTier === "declined") {
+    return {
+      id: "counterparty",
+      label: "Counterparty approved",
+      state: "blocked",
+      detail: "Risk tier: Declined.",
+      lastVerifiedAt: row.scoredAt.toISOString(),
+      ask: "Why was this counterparty declined? What would unblock it?",
+      deepLink: null,
+    };
+  }
+  if (row.riskTier === "watch") {
+    return {
+      id: "counterparty",
+      label: "Counterparty approved",
+      state: "stale",
+      detail: "Risk tier: Watch — review before shipping.",
+      lastVerifiedAt: row.scoredAt.toISOString(),
+      ask: "What specifically put this counterparty on Watch?",
+      deepLink: null,
+    };
+  }
+  return {
+    id: "counterparty",
+    label: "Counterparty approved",
+    state: "complete",
+    detail: `Risk tier: ${row.riskTier.replace(/_/g, " ")}.`,
+    lastVerifiedAt: row.scoredAt.toISOString(),
+    ask: "Summarise why this counterparty lands in its current tier.",
+    deepLink: null,
+  };
+}
+
+/**
+ * Look up the most recent freight rate on the deal's origin →
+ * destination lane. Ports table carries the region slug we match
+ * on; falls back to null when the deal doesn't have linked ports
+ * yet (legacy text-only origin/destination).
+ */
+async function loadLatestFreightForDeal(
+  tx: Tx,
+  deal: typeof schema.fuelDeals.$inferSelect,
+): Promise<{ rateDate: Date; rateUsdPerMt: number } | null> {
+  if (!deal.originPortId || !deal.destinationPortId) return null;
+  const [origin] = await tx
+    .select({ region: schema.ports.region })
+    .from(schema.ports)
+    .where(eq(schema.ports.id, deal.originPortId))
+    .limit(1);
+  const [destination] = await tx
+    .select({ region: schema.ports.region })
+    .from(schema.ports)
+    .where(eq(schema.ports.id, deal.destinationPortId))
+    .limit(1);
+  if (!origin || !destination) return null;
+  const [rate] = await tx
+    .select({
+      rateDate: schema.freightRates.rateDate,
+      rateUsdPerMt: schema.freightRates.rateUsdPerMt,
+    })
+    .from(schema.freightRates)
+    .where(
+      and(
+        eq(schema.freightRates.originRegion, origin.region),
+        eq(schema.freightRates.destinationRegion, destination.region),
+      ),
+    )
+    .orderBy(desc(schema.freightRates.rateDate))
+    .limit(1);
+  if (!rate) return null;
+  // Drizzle's `date()` returns the column as a string ("2026-04-21")
+  // from the node-postgres driver; coerce to Date on the way out so
+  // the readiness checks can do simple time math.
+  const raw: unknown = rate.rateDate;
+  const rateDate =
+    raw instanceof Date
+      ? raw
+      : typeof raw === "string"
+        ? new Date(raw)
+        : new Date();
+  return { rateDate, rateUsdPerMt: rate.rateUsdPerMt };
+}
+
+function freightCheck(
+  rate: { rateDate: Date; rateUsdPerMt: number } | null,
+): ReadinessCheck {
+  if (!rate) {
+    return {
+      id: "freight",
+      label: "Freight quote fresh",
+      state: "missing",
+      detail: "No freight rate on file for this lane.",
+      lastVerifiedAt: null,
+      ask: "Pull a fresh freight quote for this lane.",
+      deepLink: null,
+    };
+  }
+  const ageDays =
+    (Date.now() - rate.rateDate.getTime()) / (24 * 60 * 60 * 1000);
+  const age = Math.floor(ageDays);
+  const rateStr = `$${rate.rateUsdPerMt.toFixed(2)}/MT`;
+  if (ageDays <= FREIGHT_FRESH_DAYS) {
+    return {
+      id: "freight",
+      label: "Freight quote fresh",
+      state: "complete",
+      detail: `${rateStr} · ${age}d old.`,
+      lastVerifiedAt: rate.rateDate.toISOString(),
+      ask: "Compare our locked freight on this deal to the current market.",
+      deepLink: null,
+    };
+  }
+  if (ageDays <= FREIGHT_STALE_DAYS) {
+    return {
+      id: "freight",
+      label: "Freight quote fresh",
+      state: "stale",
+      detail: `${rateStr} · ${age}d old — re-quote.`,
+      lastVerifiedAt: rate.rateDate.toISOString(),
+      ask: "Pull a fresh freight quote for this lane.",
+      deepLink: null,
+    };
+  }
+  return {
+    id: "freight",
+    label: "Freight quote fresh",
+    state: "missing",
+    detail: `Last quote ${age}d old (stale).`,
+    lastVerifiedAt: rate.rateDate.toISOString(),
+    ask: "Pull a fresh freight quote for this lane.",
+    deepLink: null,
+  };
+}
+
+function vesselCheck(vesselId: string | null): ReadinessCheck {
+  if (!vesselId) {
+    return {
+      id: "vessel",
+      label: "Vessel selected",
+      state: "missing",
+      detail: "No vessel linked to the deal.",
+      lastVerifiedAt: null,
+      ask: "Propose a vessel for this deal from the available fleet.",
+      deepLink: null,
+    };
+  }
+  return {
+    id: "vessel",
+    label: "Vessel selected",
+    state: "complete",
+    detail: "Vessel selected.",
+    lastVerifiedAt: null,
+    ask: "Summarise the selected vessel's capacity, age, and flag.",
+    deepLink: null,
+  };
+}
+
+function paymentTermsCheck(
+  terms: string | null,
+): ReadinessCheck {
+  if (!terms) {
+    return {
+      id: "payment",
+      label: "Payment terms",
+      state: "missing",
+      detail: "Payment terms not set.",
+      lastVerifiedAt: null,
+      ask: "What payment terms make sense for this deal?",
+      deepLink: null,
+    };
+  }
+  const friendly = terms.replace(/_/g, " ");
+  return {
+    id: "payment",
+    label: "Payment terms",
+    state: "complete",
+    detail: friendly,
+    lastVerifiedAt: null,
+    ask: `Sanity-check our ${friendly} payment terms against the counterparty's tier.`,
+    deepLink: null,
+  };
+}
+
+function docsCheck(
+  docs: Array<{ documentType: string; uploadedAt: Date | null }>,
+  status: string,
+): ReadinessCheck {
+  const required = requiredDocTypes(status);
+  const present = new Set(docs.map((d) => d.documentType));
+  const missing = required.filter((r) => !present.has(r));
+  if (missing.length === 0) {
+    return {
+      id: "docs",
+      label: "Required docs",
+      state: "complete",
+      detail: `${required.length}/${required.length} required · ${docs.length} total on file.`,
+      lastVerifiedAt: null,
+      ask: "List every document on this deal and flag anything that looks inconsistent.",
+      deepLink: null,
+    };
+  }
+  if (missing.length === required.length) {
+    return {
+      id: "docs",
+      label: "Required docs",
+      state: "missing",
+      detail: `Missing: ${missing.join(", ")}.`,
+      lastVerifiedAt: null,
+      ask: `What do we need to collect to get the required docs (${missing.join(", ")}) on this deal?`,
+      deepLink: null,
+    };
+  }
+  return {
+    id: "docs",
+    label: "Required docs",
+    state: "incomplete",
+    detail: `Missing: ${missing.join(", ")}. Present: ${required.length - missing.length}/${required.length}.`,
+    lastVerifiedAt: null,
+    ask: `What's needed to collect ${missing.join(", ")} on this deal?`,
+    deepLink: null,
+  };
+}
+
+function nextMilestoneCheck(
+  row: typeof schema.followUps.$inferSelect | null,
+): ReadinessCheck {
+  if (!row) {
+    return {
+      id: "milestone",
+      label: "Next milestone owner",
+      state: "missing",
+      detail: "No open follow-up on this deal.",
+      lastVerifiedAt: null,
+      ask: "What's the next concrete milestone on this deal and who should own it?",
+      deepLink: null,
+    };
+  }
+  const now = Date.now();
+  const overdue = row.dueAt ? row.dueAt.getTime() < now : false;
+  const owner = row.assignedTo ?? "unassigned";
+  if (overdue) {
+    const days = Math.floor(
+      (now - (row.dueAt as Date).getTime()) / (24 * 60 * 60 * 1000),
+    );
+    return {
+      id: "milestone",
+      label: "Next milestone owner",
+      state: "stale",
+      detail: `${row.title} · ${owner} · ${days}d overdue.`,
+      lastVerifiedAt: row.dueAt ? row.dueAt.toISOString() : null,
+      ask: `Why is the milestone "${row.title}" on this deal overdue and what should unblock it?`,
+      deepLink: "/app/follow-ups",
+    };
+  }
+  return {
+    id: "milestone",
+    label: "Next milestone owner",
+    state: row.assignedTo ? "complete" : "incomplete",
+    detail: `${row.title} · ${owner}${row.dueAt ? ` · due ${row.dueAt.toDateString()}` : ""}.`,
+    lastVerifiedAt: row.dueAt ? row.dueAt.toISOString() : null,
+    ask: row.assignedTo
+      ? `Who is ${row.assignedTo} and what's the status on "${row.title}"?`
+      : `This deal's next milestone "${row.title}" has no owner — who should it be?`,
+    deepLink: "/app/follow-ups",
+  };
+}
+
+/**
+ * Given a deal's status + its current blocker/attention set, pick
+ * the single most actionable next-step hint. Blockers win over
+ * attention; if neither is set, the hint tracks the status-driven
+ * natural next milestone (e.g. approved → select vessel). Kept to
+ * one sentence, imperative voice, so the UI can render it inline
+ * without truncation juggling.
+ */
+function pickNextAction(
+  status: string,
+  blockers: Array<{ kind: string; detail: string }>,
+  attention: Array<{ kind: string; detail: string }>,
+): string | null {
+  if (blockers.length > 0) {
+    const b = blockers[0]!;
+    switch (b.kind) {
+      case "compliance_hold":
+        return "Resolve compliance hold before moving forward.";
+      case "ofac_match":
+        return "Review OFAC match on buyer — escalate or clear.";
+      case "ofac_potential":
+        return "Investigate potential OFAC match on buyer.";
+      case "counterparty_declined":
+        return "Buyer declined — decide whether to continue or close.";
+      default:
+        return "Resolve blocker before moving forward.";
+    }
+  }
+  if (attention.length > 0) {
+    const a = attention[0]!;
+    switch (a.kind) {
+      case "ofac_unscreened":
+        return "Run OFAC screening on buyer.";
+      case "ofac_stale":
+        return "Re-run OFAC screening — previous one is stale.";
+      case "counterparty_watch":
+        return "Review why counterparty is on Watch before shipping.";
+      case "vessel_missing":
+        return "Select a vessel for this deal.";
+      case "stale":
+        return "Ping buyer / supplier — no updates recently.";
+      default:
+        return "Address outstanding attention item.";
+    }
+  }
+  switch (status) {
+    case "draft":
+      return "Confirm terms and move to Negotiating.";
+    case "negotiating":
+      return "Lock terms + request approval.";
+    case "pending_approval":
+      return "Awaiting approval — nudge reviewer if stale.";
+    case "approved":
+      return "Select vessel and lock freight.";
+    case "loading":
+      return "Confirm BL issued + cargo loaded.";
+    case "in_transit":
+      return "Track vessel; prepare arrival docs.";
+    case "delivered":
+      return "Collect final payment + settle.";
+    default:
+      return null;
+  }
+}
+
+function summariseReadiness(checks: ReadinessCheck[]): {
+  total: number;
+  complete: number;
+  blocked: number;
+  attention: number;
+} {
+  let complete = 0;
+  let blocked = 0;
+  let attention = 0;
+  for (const c of checks) {
+    if (c.state === "complete") complete += 1;
+    else if (c.state === "blocked") blocked += 1;
+    else attention += 1; // stale, incomplete, missing all want eyes on them
+  }
+  return { total: checks.length, complete, blocked, attention };
+}
+
+function clampLimit(raw: string | undefined, fallback: number, max: number): number {
+  const parsed = raw ? Number.parseInt(raw, 10) : fallback;
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
+}
+
+/** Days window for the freight-history endpoint. Default 90, max 365. */
+function clampDays(raw: string | undefined): number {
+  const parsed = raw ? Number.parseInt(raw, 10) : 90;
+  if (!Number.isFinite(parsed) || parsed <= 0) return 90;
+  return Math.min(parsed, 365);
+}
+
+function toListRow(row: {
+  id: string;
+  dealRef: string;
+  status: string;
+  product: string;
+  buyerOrgId: string;
+  buyerName: string | null;
+  volumeUsg: number;
+  incoterm: string;
+  laycanStart: string | null;
+  laycanEnd: string | null;
+  complianceHold: boolean;
+  ofacStatus: string;
+  lineOfBusiness?: string | null;
+  volumeUnit?: string | null;
+  productionLeadTimeWeeks?: number | null;
+  coldChainRequired?: boolean | null;
+  createdAt: Date;
+  updatedAt: Date;
+}): DealListRow {
+  return {
+    id: row.id,
+    dealRef: row.dealRef,
+    status: row.status,
+    product: row.product,
+    buyerOrgId: row.buyerOrgId,
+    buyerName: row.buyerName,
+    volumeUsg: row.volumeUsg,
+    incoterm: row.incoterm,
+    laycanStart: row.laycanStart,
+    laycanEnd: row.laycanEnd,
+    complianceHold: row.complianceHold,
+    ofacStatus: row.ofacStatus,
+    lineOfBusiness: row.lineOfBusiness ?? "fuel",
+    volumeUnit: row.volumeUnit ?? "usg",
+    productionLeadTimeWeeks: row.productionLeadTimeWeeks ?? null,
+    coldChainRequired: row.coldChainRequired ?? false,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+async function loadDealDetail(tx: Tx, id: string): Promise<DealDetail | null> {
+  const buyer = schema.organizations;
+  const [row] = await tx
+    .select({
+      id: schema.fuelDeals.id,
+      dealRef: schema.fuelDeals.dealRef,
+      status: schema.fuelDeals.status,
+      product: schema.fuelDeals.product,
+      buyerOrgId: schema.fuelDeals.buyerOrgId,
+      buyerName: buyer.legalName,
+      volumeUsg: schema.fuelDeals.volumeUsg,
+      incoterm: schema.fuelDeals.incoterm,
+      laycanStart: schema.fuelDeals.laycanStart,
+      laycanEnd: schema.fuelDeals.laycanEnd,
+      complianceHold: schema.fuelDeals.complianceHold,
+      ofacStatus: schema.fuelDeals.ofacScreeningStatus,
+      lineOfBusiness: schema.fuelDeals.lineOfBusiness,
+      volumeUnit: schema.fuelDeals.volumeUnit,
+      productionLeadTimeWeeks: schema.fuelDeals.productionLeadTimeWeeks,
+      coldChainRequired: schema.fuelDeals.coldChainRequired,
+      createdAt: schema.fuelDeals.createdAt,
+      updatedAt: schema.fuelDeals.updatedAt,
+      sellerOrgId: schema.fuelDeals.sellerOrgId,
+      originPort: schema.fuelDeals.originPort,
+      destinationPort: schema.fuelDeals.destinationPort,
+      paymentTerms: schema.fuelDeals.paymentTerms,
+      currency: schema.fuelDeals.currency,
+      notes: schema.fuelDeals.notes,
+    })
+    .from(schema.fuelDeals)
+    .leftJoin(buyer, eq(schema.fuelDeals.buyerOrgId, buyer.id))
+    .where(eq(schema.fuelDeals.id, id))
+    .limit(1);
+  if (!row) return null;
+
+  let sellerName: string | null = null;
+  if (row.sellerOrgId) {
+    const [sellerRow] = await tx
+      .select({ legalName: buyer.legalName })
+      .from(buyer)
+      .where(eq(buyer.id, row.sellerOrgId))
+      .limit(1);
+    sellerName = sellerRow?.legalName ?? null;
+  }
+
+  const [scenario] = await tx
+    .select({
+      id: schema.fuelDealScenarios.id,
+      scenarioName: schema.fuelDealScenarios.scenarioName,
+      scenarioType: schema.fuelDealScenarios.scenarioType,
+      isActive: schema.fuelDealScenarios.isActive,
+      score: schema.fuelDealScenarios.score,
+      recommendation: schema.fuelDealScenarios.recommendation,
+      resultsJson: schema.fuelDealScenarios.resultsJson,
+    })
+    .from(schema.fuelDealScenarios)
+    .where(
+      and(
+        eq(schema.fuelDealScenarios.dealId, id),
+        sql`${schema.fuelDealScenarios.isActive} = true`,
+      ),
+    )
+    .orderBy(desc(schema.fuelDealScenarios.createdAt))
+    .limit(1);
+
+  return {
+    id: row.id,
+    dealRef: row.dealRef,
+    status: row.status,
+    product: row.product,
+    buyerOrgId: row.buyerOrgId,
+    buyerName: row.buyerName,
+    volumeUsg: row.volumeUsg,
+    incoterm: row.incoterm,
+    laycanStart: row.laycanStart,
+    laycanEnd: row.laycanEnd,
+    complianceHold: row.complianceHold,
+    ofacStatus: row.ofacStatus,
+    lineOfBusiness: row.lineOfBusiness ?? "fuel",
+    volumeUnit: row.volumeUnit ?? "usg",
+    productionLeadTimeWeeks: row.productionLeadTimeWeeks ?? null,
+    coldChainRequired: row.coldChainRequired ?? false,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    sellerOrgId: row.sellerOrgId,
+    sellerName,
+    originPort: row.originPort,
+    destinationPort: row.destinationPort,
+    paymentTerms: row.paymentTerms,
+    currency: row.currency,
+    notes: row.notes,
+    latestScenario: scenario
+      ? {
+          id: scenario.id,
+          scenarioName: scenario.scenarioName,
+          scenarioType: scenario.scenarioType,
+          isActive: scenario.isActive,
+          score: scenario.score,
+          recommendation: scenario.recommendation,
+          resultsJson: scenario.resultsJson,
+        }
+      : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Vessel patch + lane derivation
+// ---------------------------------------------------------------------------
+
+const PatchDealVesselBody = z
+  .object({
+    /** Pass null to unlink. */
+    vesselId: z.string().min(1).nullable().optional(),
+    charterType: z.enum(["voyage", "time", "spot"]).nullable().optional(),
+    freightRateUsdPerMt: z.number().nonnegative().optional(),
+    freightRateSource: z.string().max(120).nullable().optional(),
+    vesselUtilizationPct: z.number().min(0).max(1.05).optional(),
+    demurrageRateUsdPerDay: z.number().nonnegative().optional(),
+    ballastBonusUsd: z.number().nonnegative().optional(),
+  })
+  .strict();
+
+/**
+ * Coarse country-to-region heuristic mirroring the agents — keeps the
+ * lane derivation deterministic across the API + agent paths so a
+ * deal that gets a market-at-lock snapshot via PATCH lines up with
+ * the deviation detection in FreightMarketAgent.
+ */
+function buildLaneForDealVessel(
+  deal: { originCountry: string | null; destinationCountry: string | null; product: string },
+  vessel: Vessel,
+): { originRegion: string; destinationRegion: string; vesselClass: Vessel["vesselClass"]; productCategory: string } | null {
+  const origin = regionForCountry(deal.originCountry);
+  const destination = regionForCountry(deal.destinationCountry);
+  if (!origin || !destination) return null;
+  return {
+    originRegion: origin,
+    destinationRegion: destination,
+    vesselClass: vessel.vesselClass,
+    productCategory: productCategoryForProduct(deal.product),
+  };
+}
+
+function regionForCountry(country: string | null): string | null {
+  if (!country) return null;
+  const c = country.toUpperCase();
+  if (c === "US" || c === "USA") return "USGC";
+  if (
+    c === "JM" || c === "DO" || c === "TT" || c === "BB" ||
+    c === "GT" || c === "CR" || c === "PA" || c === "BS" || c === "HT"
+  ) return "Caribs";
+  if (c === "MX") return "ECCA";
+  return null;
+}
+
+function productCategoryForProduct(product: string): string {
+  if (
+    product === "ulsd" || product === "gasoline_87" || product === "gasoline_91" ||
+    product === "jet_a" || product === "jet_a1" || product === "avgas" ||
+    product === "lfo" || product === "biodiesel_b20"
+  ) return "clean_products";
+  if (product === "hfo") return "dirty";
+  if (product === "lng") return "lng";
+  if (product === "lpg") return "lpg";
+  return "clean_products";
+}
+
+// ---------------------------------------------------------------------------
+// Port patch + resolution helpers
+// ---------------------------------------------------------------------------
+
+const PatchDealPortsBody = z
+  .object({
+    /** Pass null to unlink, undefined to leave unchanged. */
+    originPortId: z.string().min(1).nullable().optional(),
+    destinationPortId: z.string().min(1).nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      v.originPortId !== undefined || v.destinationPortId !== undefined,
+    { message: "at least one of originPortId / destinationPortId required" },
+  );
+
+function vesselToSpec(v: Vessel): VesselSpec {
+  const spec: VesselSpec = {
+    class: v.vesselClass,
+    dwtMt: v.dwtMt ?? 0,
+    maxDraftM: v.maxDraftM ?? 0,
+  };
+  if (v.loaM !== null && v.loaM !== undefined) spec.loaM = v.loaM;
+  if (v.beamM !== null && v.beamM !== undefined) spec.beamM = v.beamM;
+  return spec;
+}
+
+function portToSpec(p: Port): PortSpec {
+  return {
+    unlocode: p.unlocode,
+    name: p.name,
+    maxDraftM: p.maxDraftM,
+    maxLoaM: p.maxLoaM,
+    maxBeamM: p.maxBeamM,
+    maxDwtMt: p.maxDwtMt,
+    reeferCapable: p.reeferCapable,
+    congestionFactor: p.congestionFactor ?? null,
+    restrictedCargoNotes: p.restrictedCargoNotes,
+  };
+}
+
+/**
+ * Suggest a port for a leg that's still holding the legacy text
+ * column but hasn't been linked via *_port_id. Fires only when the
+ * text parses as a UNLOCODE; returns null when the leg is already
+ * linked (no suggestion needed) or the text can't be interpreted.
+ */
+async function maybeResolveText(
+  tx: Tx,
+  ports: PortRepository,
+  portId: string | null,
+  legacyText: string | null,
+): Promise<{ suggested: Port | null; fromText: string | null } | null> {
+  if (portId) return null;
+  if (!legacyText) return null;
+  const trimmed = legacyText.trim().toUpperCase();
+  if (!/^[A-Z]{2}[A-Z0-9]{3}$/.test(trimmed)) {
+    return { suggested: null, fromText: legacyText };
+  }
+  const hit = await ports.findByUnlocode(tx, trimmed);
+  return { suggested: hit, fromText: legacyText };
+}

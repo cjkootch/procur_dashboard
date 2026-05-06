@@ -1,0 +1,219 @@
+import { z } from "zod";
+
+/**
+ * Payload schema for `POST /ingest/procur/leads`. Field naming is
+ * camelCase on the wire — procur's TypeScript client emits this shape
+ * verbatim, no per-field renaming. Mirrors the contract documented in
+ * `docs/procur-integration.md` §6.
+ *
+ * `procurOpportunityId` is the only strictly-required identifier; it
+ * doubles as the idempotency key on the lead row's `externalKeys.procur`.
+ */
+
+/**
+ * Procur PR #316 (2026-Q2): structured sidecar context attached at
+ * push time. Every sub-field is optional so old-version pushes keep
+ * validating cleanly. The whole blob lands verbatim on
+ * `leads.procur_metadata`; vex re-projects what it needs onto the
+ * lead UI and the chat agent's evidence pack.
+ */
+const ProcurApprovalSchema = z.object({
+  status: z.enum([
+    "pending",
+    "kyc_in_progress",
+    "approved_without_kyc",
+    "approved_with_kyc",
+    "rejected",
+    "expired",
+  ]),
+  approvedAt: z.string().nullable().optional(),
+  expiresAt: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
+const ProductSpecSchema = z.object({
+  property: z.string().min(1).max(200),
+  // Numbers stored verbatim as strings — spec deviations are
+  // material; we don't coerce / round / parse out empty strings.
+  astmMethod: z.string().nullable().optional(),
+  units: z.string().nullable().optional(),
+  min: z.string().nullable().optional(),
+  max: z.string().nullable().optional(),
+  typical: z.string().nullable().optional(),
+});
+
+const SourceDocumentSchema = z.object({
+  url: z.string().url(),
+  contentType: z.string().min(1).max(120),
+  filename: z.string().min(1).max(500),
+});
+
+const MarketContextSchema = z.object({
+  benchmarkAsOf: z.string().nullable().optional(),
+  brentSpotUsdPerBbl: z.number().nullable().optional(),
+  nyhDieselSpotUsdPerGal: z.number().nullable().optional(),
+  nyhGasolineSpotUsdPerGal: z.number().nullable().optional(),
+});
+
+const ProcurTradingDefaultsSchema = z.object({
+  defaultSourcingRegion: z.string().nullable().optional(),
+  targetGrossMarginPct: z.number().nullable().optional(),
+  targetNetMarginPerUsg: z.number().nullable().optional(),
+  monthlyFixedOverheadUsdDefault: z.number().nullable().optional(),
+});
+
+/**
+ * Procur work item 3 follow-up (2026-Q3) — the WHY context. Every
+ * field optional so older procur deploys without these in the push
+ * shape keep validating cleanly. See `LeadProcurMetadata` for the
+ * downstream type.
+ */
+const ProcurSignalSchema = z.object({
+  kind: z.enum([
+    "rfq",
+    "tender_award",
+    "vessel_clearance",
+    "customs_event",
+    "news",
+    "other",
+  ]),
+  occurredAt: z.string().min(1).max(40),
+  source: z.string().min(1).max(2000),
+  narrative: z.string().min(1).max(2000),
+  weight: z.number().min(0).max(1).optional(),
+});
+
+const ProcurOwnershipEdgeSchema = z.object({
+  orgKey: z.string().min(1).max(300),
+  legalName: z.string().min(1).max(500).optional(),
+  role: z.string().max(200).optional(),
+  distance: z.number().int().min(1).max(20),
+});
+
+const ProcurMatchQueueSchema = z.object({
+  score: z.number().min(0).max(1),
+  reasons: z.array(z.string().min(1).max(500)).max(20),
+  relatedOpportunities: z.array(z.string().min(1).max(200)).max(50).optional(),
+});
+
+const ProcurMetadataSchema = z
+  .object({
+    procurApproval: ProcurApprovalSchema.optional(),
+    productSpecs: z.array(ProductSpecSchema).max(200).optional(),
+    sourceDocuments: z.array(SourceDocumentSchema).max(50).optional(),
+    marketContext: MarketContextSchema.optional(),
+    procurTradingDefaults: ProcurTradingDefaultsSchema.optional(),
+    pushReason: z.string().min(1).max(4000).optional(),
+    signals: z.array(ProcurSignalSchema).max(50).optional(),
+    matchQueue: ProcurMatchQueueSchema.optional(),
+    ownership: z
+      .object({
+        parents: z.array(ProcurOwnershipEdgeSchema).max(20).optional(),
+        subsidiaries: z.array(ProcurOwnershipEdgeSchema).max(20).optional(),
+      })
+      .optional(),
+  })
+  // Procur also stamps free-form context (source, sourceRef,
+  // triggeredBy, pushedAt, awardCount, …) on the same metadata
+  // object. We accept and persist them — even if unmapped today,
+  // they end up on the persisted blob for downstream consumers.
+  .passthrough();
+
+export const ProcurLeadIngestSchema = z.object({
+  procurOpportunityId: z.string().min(1).max(200),
+  sourceUrl: z.string().url().optional(),
+  title: z.string().min(1).max(500).optional(),
+  category: z.string().max(50).optional(),
+  buyer: z.object({
+    legalName: z.string().min(1).max(500),
+    country: z.string().length(2).optional(),
+    /**
+     * Procur-side stable identifier — used as the org's
+     * `externalKeys.procur` so future enrichment calls hit the same
+     * row. Optional because procur may push a buyer it hasn't fully
+     * profiled yet; we fall back to normalized-identity dedupe.
+     */
+    entitySlug: z.string().min(1).max(200).optional(),
+    domain: z.string().max(200).optional(),
+    /**
+     * Deep-link back to the entity's procur profile. Optional;
+     * surfaced on the lead UI when present.
+     */
+    procurEntityProfileUrl: z.string().url().optional(),
+    /**
+     * Procur PR #318 — authoritative dedup/join key. Same value
+     * appears on `buyer.companyKey` and on every
+     * `contacts[].companyKey` in the same request, so the contact-to-
+     * company linkage is unambiguous on the wire. Format:
+     * `entity-profile:<slug>` | `match-queue:<id>` | `adhoc:<name>:<country>`.
+     * Stable across re-pushes — vex uses it (when present) as the
+     * `external_keys.procur` value so future pushes land on the same
+     * org row regardless of legalName drift. Falls back to
+     * `entitySlug` when absent (older procur deploys).
+     */
+    companyKey: z.string().min(1).max(300).optional(),
+  }),
+  contacts: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(200),
+        title: z.string().max(200).optional(),
+        email: z.string().email().optional(),
+        phone: z.string().max(40).optional(),
+        // Procur PR #316 — surfaced from doc-extraction; stored on
+        // the contact's `external_keys.linkedin` so the contact
+        // detail page + retrieval pack can display it.
+        linkedinUrl: z.string().url().optional(),
+        /**
+         * Procur PR #318 — same authoritative key as `buyer.companyKey`.
+         * Lets the ingest deterministically associate the contact
+         * with the right org even when the contact dedupes to an
+         * existing record. Persisted on the contact's
+         * `external_keys.procur` so re-pushes find the same contact.
+         */
+        companyKey: z.string().min(1).max(300).optional(),
+        /** Mirror of buyer.legalName — informational fallback. */
+        companyLegalName: z.string().min(1).max(500).optional(),
+        /** Domain derived from the contact email (best-effort). */
+        companyDomain: z.string().max(200).optional(),
+      }),
+    )
+    .max(50)
+    .optional(),
+  estimatedValueUsd: z.number().nonnegative().optional(),
+  /** ISO-8601 date string (YYYY-MM-DD) — kept as text to stay timezone-agnostic. */
+  deadline: z.string().max(40).optional(),
+  quantity: z
+    .object({
+      amount: z.number().positive(),
+      unit: z.string().min(1).max(20),
+    })
+    .optional(),
+  /** Free-form blob procur stamps the full tender doc into. Stored on the event. */
+  rawIntel: z.record(z.unknown()).optional(),
+  /**
+   * Procur PR #316 — structured sidecar context. Persisted on the
+   * lead's `procur_metadata` column and rendered on the org detail
+   * page's "Procur intelligence" panel.
+   */
+  metadata: ProcurMetadataSchema.optional(),
+});
+
+export type ProcurLeadIngestPayload = z.infer<typeof ProcurLeadIngestSchema>;
+
+export interface IngestedContact {
+  contactId: string;
+  /** "created" = brand new row; "duplicate" = matched an existing contact by email/phone/name+org. */
+  outcome: "created" | "duplicate";
+  matchedOn?: "email" | "phone" | "name_and_org";
+}
+
+export interface ProcurLeadIngestResult {
+  leadId: string;
+  orgId: string;
+  /** First entry (if any) is the lead's primary contact. */
+  contacts: IngestedContact[];
+  vexUrl: string | null;
+  /** True when this opportunity was already ingested previously. */
+  wasExisting: boolean;
+}

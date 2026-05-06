@@ -1,0 +1,67 @@
+import { Module, type DynamicModule } from "@nestjs/common";
+import type { Queue } from "bullmq";
+import type { AgentJobData } from "@vex/agents";
+import type {
+  Db,
+  EventRepository,
+  OfacScreenRepository,
+  OrganizationProductRepository,
+  OrganizationRelationshipRepository,
+  OrganizationRepository,
+} from "@vex/db";
+import {
+  ORGANIZATIONS_AGENTS_QUEUE,
+  ORGANIZATIONS_DB_CLIENT,
+  ORGANIZATIONS_EVENT_REPO,
+  ORGANIZATIONS_OFAC_SCREENS_REPO,
+  ORGANIZATIONS_PRODUCTS_REPO,
+  ORGANIZATIONS_RELATIONSHIPS_REPO,
+  ORGANIZATIONS_REPO,
+  OrganizationsController,
+} from "./organizations.controller.js";
+
+export interface OrganizationsModuleConfig {
+  db: Db;
+  organizations: OrganizationRepository;
+  events: EventRepository;
+  orgProducts: OrganizationProductRepository;
+  orgRelationships: OrganizationRelationshipRepository;
+  ofacScreens: OfacScreenRepository;
+  /**
+   * Agents queue — used to enqueue a single-org OFAC screen the moment
+   * a new organization lands, so the buyer-intel card is never
+   * "unscreened" for more than a few seconds.
+   */
+  agentsQueue: Queue<AgentJobData>;
+}
+
+@Module({})
+export class OrganizationsModule {
+  static register(config: OrganizationsModuleConfig): DynamicModule {
+    return {
+      module: OrganizationsModule,
+      controllers: [OrganizationsController],
+      providers: [
+        { provide: ORGANIZATIONS_DB_CLIENT, useFactory: () => config.db },
+        { provide: ORGANIZATIONS_REPO, useFactory: () => config.organizations },
+        { provide: ORGANIZATIONS_EVENT_REPO, useFactory: () => config.events },
+        {
+          provide: ORGANIZATIONS_PRODUCTS_REPO,
+          useFactory: () => config.orgProducts,
+        },
+        {
+          provide: ORGANIZATIONS_RELATIONSHIPS_REPO,
+          useFactory: () => config.orgRelationships,
+        },
+        {
+          provide: ORGANIZATIONS_AGENTS_QUEUE,
+          useFactory: () => config.agentsQueue,
+        },
+        {
+          provide: ORGANIZATIONS_OFAC_SCREENS_REPO,
+          useFactory: () => config.ofacScreens,
+        },
+      ],
+    };
+  }
+}

@@ -1,0 +1,16 @@
+export const ADMIN_DB_CLIENT = Symbol("ADMIN_DB_CLIENT");
+export const ADMIN_WORKSPACES_REPO = Symbol("ADMIN_WORKSPACES_REPO");
+export const ADMIN_EVENTS_REPO = Symbol("ADMIN_EVENTS_REPO");
+export const ADMIN_EVAL_RESULTS_PATH = Symbol("ADMIN_EVAL_RESULTS_PATH");
+export const ADMIN_INTEGRATIONS_STATUS = Symbol("ADMIN_INTEGRATIONS_STATUS");
+export const ADMIN_OFAC_SCREENS_REPO = Symbol("ADMIN_OFAC_SCREENS_REPO");
+export const ADMIN_ORGANIZATIONS_REPO = Symbol("ADMIN_ORGANIZATIONS_REPO");
+export const ADMIN_AGENTS_QUEUE = Symbol("ADMIN_AGENTS_QUEUE");
+export const ADMIN_PORTS_REPO = Symbol("ADMIN_PORTS_REPO");
+/**
+ * ProcurClient instance — used by the procur healthcheck endpoint
+ * (and future admin diagnostic tools) to probe procur's
+ * `/intelligence/*` API. Always present; isEnabled() returns false
+ * when env is unset.
+ */
+export const ADMIN_PROCUR_CLIENT = Symbol("ADMIN_PROCUR_CLIENT");

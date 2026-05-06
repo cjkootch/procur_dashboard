@@ -1,0 +1,222 @@
+[
+  {
+    "id": "eval_001",
+    "question": "Find the organization named Acme Corporation.",
+    "expected_subject_types": ["organization"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000001"],
+    "expected_answer_contains": ["Acme", "Manufacturing"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_002",
+    "question": "Which contact has the email contact2@example1.test?",
+    "expected_subject_types": ["contact"],
+    "expected_evidence_object_ids": ["01HSEEDCNT0000000000000002"],
+    "expected_answer_contains": ["Contact 2"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_003",
+    "question": "Show the touchpoint history for the email_nurture campaign.",
+    "expected_subject_types": ["campaign", "touchpoint"],
+    "expected_evidence_object_ids": [
+      "01HSEEDCMP0000000000000001",
+      "01HSEEDTCH0000000000000001",
+      "01HSEEDTCH0000000000000004"
+    ],
+    "expected_answer_contains": ["email_nurture", "touchpoint"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_004",
+    "question": "What is the status of the lead for Stark Industries?",
+    "expected_subject_types": ["lead", "organization"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000005"],
+    "expected_answer_contains": ["Stark"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_005",
+    "question": "What is the latest profile summary for Globex Industries?",
+    "expected_subject_types": ["summary", "organization"],
+    "expected_evidence_object_ids": [
+      "01HSEEDSMR0000000000000002",
+      "01HSEEDCRP0000000000000002"
+    ],
+    "expected_answer_contains": ["Globex", "energy"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_006",
+    "question": "How many contacts belong to Initech across the workspace?",
+    "expected_subject_types": ["contact", "organization"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000003"],
+    "expected_answer_contains": ["Initech"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_007",
+    "question": "Show recent email-click activity in the last 30 days.",
+    "expected_subject_types": ["event", "touchpoint"],
+    "expected_evidence_object_ids": [
+      "01HSEEDEVT0000000000000001",
+      "01HSEEDEVT0000000000000002",
+      "01HSEEDEVT0000000000000003"
+    ],
+    "expected_answer_contains": ["email.clicked"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_008",
+    "question": "Identify stale leads with no activity in the last 14 days.",
+    "expected_subject_types": ["lead", "touchpoint"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000004"],
+    "expected_answer_contains": ["stale"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_009",
+    "question": "What is the confidence of the legal_name field on the Acme organization, and what source produced it?",
+    "expected_subject_types": ["organization"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000001"],
+    "expected_answer_contains": ["internal", "1"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_010",
+    "question": "Compare paid_search_q2 spend against the volume of touchpoints it produced.",
+    "expected_subject_types": ["campaign", "touchpoint"],
+    "expected_evidence_object_ids": [
+      "01HSEEDCMP0000000000000002",
+      "01HSEEDTCH0000000000000002"
+    ],
+    "expected_answer_contains": ["paid_search_q2", "spend"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_011",
+    "question": "Run the daily brief for the demo workspace and check that it includes a KPI rail.",
+    "expected_subject_types": ["summary", "workspace"],
+    "expected_evidence_object_ids": ["01HSEEDWRK0000000000000001"],
+    "expected_answer_contains": ["kpi_rail"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_012",
+    "question": "After research runs for Acme Corporation, a research_brief summary exists for the org.",
+    "expected_subject_types": ["summary", "organization"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000001"],
+    "expected_answer_contains": ["research_brief", "Acme"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_013",
+    "question": "After follow-up runs against the seeded stale lead for Umbrella, an approval row appears in the inbox.",
+    "expected_subject_types": ["approval", "lead"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000004"],
+    "expected_answer_contains": ["approval", "follow_up"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_014",
+    "question": "When an approval is rejected, the proposed action is not executed and the audit log records the decision.",
+    "expected_subject_types": ["approval", "event"],
+    "expected_evidence_object_ids": ["01HSEEDWRK0000000000000001"],
+    "expected_answer_contains": ["rejected", "approval"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_015",
+    "question": "When workspace.kill_all_agents = true, the follow-up agent run is skipped and no approval rows are created.",
+    "expected_subject_types": ["workspace", "agent_run"],
+    "expected_evidence_object_ids": ["01HSEEDWRK0000000000000001"],
+    "expected_answer_contains": ["kill", "skipped"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_deal_001",
+    "question": "What is the net margin per gallon on deal VTC-2026-001?",
+    "expected_subject_types": ["fuel_deal"],
+    "expected_evidence_object_ids": ["01HSEEDDEA0000000000000001"],
+    "expected_answer_contains": ["VTC-2026-001", "margin"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_deal_002",
+    "question": "Which deals have vessel utilization below 50%?",
+    "expected_subject_types": ["fuel_deal"],
+    "expected_evidence_object_ids": ["01HSEEDDEA0000000000000001"],
+    "expected_answer_contains": ["VTC-2026-001", "utilization"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_deal_003",
+    "question": "Show me all deals with compliance holds or OFAC not cleared.",
+    "expected_subject_types": ["fuel_deal"],
+    "expected_evidence_object_ids": [
+      "01HSEEDDEA0000000000000001",
+      "01HSEEDDEA0000000000000003"
+    ],
+    "expected_answer_contains": ["VTC-2026-001", "VTC-2026-003"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_deal_004",
+    "question": "What is the total estimated EBITDA across all active deals?",
+    "expected_subject_types": ["fuel_deal"],
+    "expected_evidence_object_ids": [
+      "01HSEEDDEA0000000000000001",
+      "01HSEEDDEA0000000000000002"
+    ],
+    "expected_answer_contains": ["EBITDA"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_deal_005",
+    "question": "What happens to VTC-2026-002 margin if Platts moves up $0.05/USG?",
+    "expected_subject_types": ["fuel_deal"],
+    "expected_evidence_object_ids": ["01HSEEDDEA0000000000000002"],
+    "expected_answer_contains": ["VTC-2026-002", "margin"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_call_001",
+    "question": "If I ask Vex to place an outbound call to a contact who has opt_out_at set, what does Vex do?",
+    "expected_subject_types": ["contact"],
+    "expected_evidence_object_ids": ["01HSEEDCNT0000000000000001"],
+    "expected_answer_contains": ["opt", "suppress"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_marketing_001",
+    "question": "Summarise the most recent marketing anomalies the analyst agent surfaced for the paid search Q2 campaign.",
+    "expected_subject_types": ["campaign"],
+    "expected_evidence_object_ids": ["01HSEEDCMP0000000000000002"],
+    "expected_answer_contains": ["paid_search_q2", "campaign"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_voice_001",
+    "question": "When a voice call transcript surfaces a commitment as an action item, what approval tier does Vex assign before it can fire?",
+    "expected_subject_types": ["workspace"],
+    "expected_evidence_object_ids": ["01HSEEDWRK0000000000000001"],
+    "expected_answer_contains": ["approval", "T2"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_isolation_001",
+    "question": "Can a user from a different workspace tenant read Acme Corporation's contacts through the API?",
+    "expected_subject_types": ["organization"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000001"],
+    "expected_answer_contains": ["tenant", "Acme"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_cost_limit_001",
+    "question": "What happens to a T1 agent run once the workspace's daily cost limit has been reached for the day?",
+    "expected_subject_types": ["workspace"],
+    "expected_evidence_object_ids": ["01HSEEDWRK0000000000000001"],
+    "expected_answer_contains": ["limit", "skip"],
+    "retrieval_mode": "hybrid"
+  }
+]

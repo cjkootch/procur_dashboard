@@ -1,0 +1,71 @@
+# apps/worker on Fly.io — separate app from vex-api.
+# The worker has no HTTP surface: it consumes BullMQ (Redis-backed)
+# queues for webhook normalization + agent jobs, and runs Temporal
+# workers for durable orchestrations (follow-ups, research, campaign
+# enrollment). Keep it on a separate fly app so it can scale
+# independently of API traffic and doesn't share a crash blast
+# radius with the public-facing surface.
+#
+# Docker build context is the whole monorepo (packages/ + worker
+# Dockerfile copies packages/* package.jsons first for dep caching,
+# then installs with --frozen-lockfile).
+# Deploy from repo root: `fly deploy --config fly.worker.toml`
+
+app = "vex-worker"
+primary_region = "iad"
+
+[build]
+  dockerfile = "apps/worker/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  OTEL_SERVICE_NAME = "vex-worker"
+  OTEL_SERVICE_NAMESPACE = "vex"
+  LOG_LEVEL = "info"
+  # Keep V8 heap below the VM ceiling. Matches apps/api.
+  NODE_OPTIONS = "--max-old-space-size=1800"
+  # Temporal defaults — override via fly secrets once Temporal Cloud is wired.
+  TEMPORAL_ADDRESS = "localhost:7233"
+  TEMPORAL_NAMESPACE = "default"
+  TEMPORAL_TASK_QUEUE = "vex-main"
+  # S3 placeholders so Zod env validation passes. Real storage wiring
+  # happens via S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY secrets; the
+  # placeholders here only satisfy loadEnv()'s .min(1) check when a
+  # secret is genuinely absent.
+  S3_BUCKET = "vex-placeholder"
+  S3_ACCESS_KEY_ID = "placeholder"
+  S3_SECRET_ACCESS_KEY = "placeholder"
+
+# No [http_service] — this is a worker process, not an HTTP server.
+# Fly routes nothing to it; it pulls jobs from Redis + Temporal.
+#
+# ⚠️  REQUIRED ON FIRST DEPLOY (and any time machine count drops to 0):
+#
+#     fly scale count 1 -a vex-worker
+#
+# Worker counts are NOT a fly.toml directive in Fly v2 — they're a
+# runtime concern set via `fly scale`. Without this floor:
+#   - all machines stop after a deploy (auto-stop kicks in for
+#     non-HTTP apps with no traffic)
+#   - BullMQ jobs accumulate but never get consumed
+#   - approval-executor silently stalls
+#   - chat actions show "approved" but nothing applies
+#   - operators see blank org pages despite chat saying "updated"
+#
+# Hours of today's debug were exactly this. If you ever see worker
+# `fly status` showing all machines `stopped`, run the scale command
+# above OR `fly machine start <id> -a vex-worker` for each.
+#
+# When deploying from repo root, ALWAYS pass the config:
+#     fly deploy -c fly.worker.toml
+# Without -c, fly defaults to fly.toml (the API config) and rebuilds
+# the API image into the worker app — silent crash on
+# RESEND_WEBHOOK_SECRET at boot.
+
+[[vm]]
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[deploy]
+  strategy = "rolling"
