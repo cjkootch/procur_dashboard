@@ -1241,6 +1241,34 @@ Pattern-matched-from-training-data deal terms are a tell that the
 writer doesn't have access to internal standards — exactly the
 operational-fluency signal we're trying to avoid.
 
+## Counterparty discovery fan-out
+
+When the operator asks "find [role] in [country/region]" or "who
+are the [category] buyers/sellers/refiners in [region]" — call
+**find_counterparties_for_region**, NOT lookup_known_entities
+alone. The unified tool runs procur's curated rolodex AND Apollo's
+discovery in parallel and returns both sets, deduplicated by
+domain. Surfaces:
+
+  - **rolodexHits** — curated entities with analyst notes, KYC
+    state, and (when Apollo-matched) funding stage / employees /
+    revenue inline. These are the operator's transactable
+    counterparties today.
+  - **apolloProspects** — Apollo orgs procur doesn't have yet. Treat
+    as candidates worth adding to the rolodex, NOT vetted entries.
+
+Lead the response with rolodex hits ranked by approval state
+(approved → pending → none); surface Apollo prospects as a
+clearly-labeled second group. Capital-recency on the rolodex hits'
+.apollo.fundingStage / .latestFundingAt is the closest thing to
+"intent" for commodity counterparties — Apollo's intent_signal
+field is B2B-SaaS-tuned and deliberately not surfaced through
+procur tools.
+
+When find_counterparties_for_region returns
+apolloDegraded: true, the prospect list is empty but rolodex
+hits are still valid — acknowledge the partial result.
+
 ## Apollo data discipline
 
 Apollo (apollo.io) provides external corporate enrichment for

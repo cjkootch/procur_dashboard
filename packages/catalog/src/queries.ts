@@ -50,6 +50,7 @@ import {
   tradeRegionForCountry,
   type TradeRegion,
 } from './trade-regions';
+import { searchOrgs as apolloSearchOrgs } from '@procur/apollo';
 
 /**
  * Build a properly-cast Postgres array literal from a JS array.
@@ -3127,6 +3128,142 @@ export async function lookupKnownEntities(
     apolloTotalFunding:
       r.apollo_total_funding == null ? null : Number(r.apollo_total_funding),
   }));
+}
+
+// ─── Unified counterparty discovery (procur rolodex × Apollo) ──────
+
+export interface FindCounterpartiesArgs {
+  /** Free-text role filter — same vocabulary as known_entities.role. */
+  role?: string;
+  /** Procur category tag — narrows the rolodex query. */
+  categoryTag?: string;
+  /** ISO-2 country filter. Applied to both rolodex (exact) AND Apollo
+   *  discovery (organizationLocations). */
+  country?: string;
+  /** Apollo industry-keyword tags — passed to discover_orgs_by_criteria
+   *  filter. e.g. ['fuel distribution', 'marine bunker']. Optional;
+   *  when omitted, Apollo discovery falls back to country + role. */
+  apolloKeywordTags?: string[];
+  /** Tenant scope — flows into the rolodex query for approval state. */
+  companyId?: string;
+  /** Min headcount on the Apollo side. */
+  apolloEmployeesMin?: number;
+  /** Limit for each side independently. */
+  rolodexLimit?: number;
+  apolloLimit?: number;
+}
+
+export type FindCounterpartiesProspect = {
+  apolloOrgId: string;
+  name: string;
+  primaryDomain: string | null;
+  websiteUrl: string | null;
+  linkedinUrl: string | null;
+  foundedYear: number | null;
+};
+
+export interface FindCounterpartiesResult {
+  /** Rolodex entities matching the criteria — already enriched with
+   *  Apollo cache fields (funding stage, employees, revenue, etc.).
+   *  These are the highest-value results: they're known counterparties
+   *  with analyst notes, KYC state, and (when available) Apollo
+   *  enrichment. */
+  rolodexHits: KnownEntityRow[];
+  /** Apollo orgs matching the same criteria that DON'T appear in the
+   *  rolodex. Surfaces as "new prospects worth adding to the rolodex".
+   *  Domain-deduplicated against rolodex hits. */
+  apolloProspects: FindCounterpartiesProspect[];
+  /** Apollo discovery degraded gracefully (rate-limited, 403, etc.) —
+   *  rolodexHits still populated; apolloProspects is empty. */
+  apolloDegraded: boolean;
+  apolloDegradeReason: string | null;
+}
+
+/**
+ * Unified counterparty discovery — runs procur's rolodex query AND
+ * Apollo's org search in parallel, merges by domain, and returns a
+ * shape the assistant can present as "in rolodex" vs "new prospects".
+ *
+ * Use when the operator asks "find [role] in [region]" and you want
+ * exhaustive coverage. Procur's rolodex gives curated entities with
+ * analyst notes + KYC state; Apollo fills the long tail.
+ *
+ * Spec: docs/apollo-integration-brief.md §6.5 (chat tools) +
+ * §1 ("rolodex seeding is hand-curation only" — Apollo extends
+ * coverage without supplanting curation).
+ */
+export async function findCounterpartiesUnified(
+  args: FindCounterpartiesArgs,
+): Promise<FindCounterpartiesResult> {
+  const rolodexLimit = Math.min(args.rolodexLimit ?? 50, 200);
+  const apolloLimit = Math.min(args.apolloLimit ?? 25, 100);
+
+  const [rolodexHits, apolloResult] = await Promise.all([
+    lookupKnownEntities({
+      role: args.role,
+      categoryTag: args.categoryTag,
+      country: args.country,
+      companyId: args.companyId,
+      limit: rolodexLimit,
+    }),
+    apolloSearchOrgs(
+      {
+        organizationKeywordTags: args.apolloKeywordTags,
+        organizationLocations: args.country ? [args.country] : undefined,
+        organizationNumEmployeesRanges:
+          args.apolloEmployeesMin != null
+            ? [`${args.apolloEmployeesMin},1000000`]
+            : undefined,
+      },
+      { page: 1, perPage: apolloLimit },
+    ),
+  ]);
+
+  // Build a Set of domains already in the rolodex so Apollo
+  // prospects don't duplicate them. Lowercase for case-insensitive
+  // matching.
+  const rolodexDomains = new Set<string>();
+  for (const e of rolodexHits) {
+    const metadataDomain =
+      typeof e.metadata?.domain === 'string'
+        ? (e.metadata.domain as string).toLowerCase()
+        : null;
+    // Apollo cache reads from external_suppliers.primary_domain or
+    // known_entities.primary_domain — either way, the rolodex row's
+    // metadata.domain or apollo match would have used that. We dedup
+    // by what we know.
+    if (metadataDomain) rolodexDomains.add(metadataDomain);
+  }
+
+  let apolloProspects: FindCounterpartiesProspect[] = [];
+  let apolloDegraded = false;
+  let apolloDegradeReason: string | null = null;
+
+  if ('ok' in apolloResult) {
+    apolloDegraded = true;
+    apolloDegradeReason = apolloResult.reason;
+  } else {
+    apolloProspects = apolloResult.organizations
+      .filter((o) => {
+        const d = (o.primaryDomain ?? '').toLowerCase();
+        return d && !rolodexDomains.has(d);
+      })
+      .map((o) => ({
+        apolloOrgId: o.id,
+        name: o.name,
+        primaryDomain: o.primaryDomain,
+        websiteUrl: o.websiteUrl,
+        linkedinUrl: o.linkedinUrl,
+        foundedYear: o.foundedYear,
+      }));
+  }
+
+  return {
+    rolodexHits,
+    apolloProspects,
+    apolloDegraded,
+    apolloDegradeReason,
+  };
 }
 
 export interface ProximityEntityRow extends KnownEntityRow {
