@@ -15,12 +15,16 @@ export const dynamic = 'force-dynamic';
  *   contactId / orgId — touchpoint linkage
  *   goal     — operator-friendly one-liner shown on the call card
  *
- * Auth: Twilio fetches the URL with no signed body (it's a GET).
- * The URL is generated server-side by the executor and includes the
- * approval id, which is unguessable. Future hardening: HMAC-sign
- * the URL ourselves.
+ * Auth: Twilio fetches the URL with no signed body. The URL is
+ * generated server-side by the executor and includes the approval
+ * id, which is unguessable. Future hardening: HMAC-sign the URL
+ * ourselves OR validate X-Twilio-Signature.
+ *
+ * Both GET and POST are accepted — Twilio defaults to POST for
+ * TwiML fetches, but Voice TwiML Apps (browser-client calls) and
+ * the Twilio Console's "Test" tool may use GET.
  */
-export async function GET(req: Request): Promise<Response> {
+async function handleTwiml(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const mode = url.searchParams.get('mode') ?? 'conference';
   const approvalId = url.searchParams.get('approval') ?? 'unknown';
@@ -61,3 +65,6 @@ export async function GET(req: Request): Promise<Response> {
     headers: { 'Content-Type': 'text/xml' },
   });
 }
+
+export const GET = handleTwiml;
+export const POST = handleTwiml;
