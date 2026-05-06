@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { getMatchQueue } from '@procur/catalog';
-import { MatchRow } from './_components/MatchRow';
+import { getCurrentUser } from '@procur/auth';
+import { MatchQueueList } from './_components/MatchQueueList';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,12 +39,17 @@ export default async function MatchQueuePage({ searchParams }: Props) {
   const params = await searchParams;
   const days = clampDays(params.days);
   const target = params.target ?? 'counterparty';
+  // Pass userId so getMatchQueue applies signal_mute_rules per
+  // docs/feedback-ui-brief.md §4.3 (mute is structural — future
+  // matches matching the rule are filtered server-side).
+  const user = await getCurrentUser();
   const items = await getMatchQueue({
     status: 'open',
     signalType: params.signal,
     daysBack: days,
     target,
     limit: 200,
+    userId: user?.id ?? null,
   });
 
   const distressCount = items.filter((i) => i.signalType === 'distress_event').length;
@@ -153,11 +159,7 @@ export default async function MatchQueuePage({ searchParams }: Props) {
               <span className="text-right">When</span>
               <span aria-hidden="true" />
             </div>
-            <ul>
-              {items.map((it) => (
-                <MatchRow key={it.id} {...it} />
-              ))}
-            </ul>
+            <MatchQueueList rows={items} />
           </>
         )}
       </section>

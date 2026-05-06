@@ -7276,6 +7276,10 @@ export async function getMatchQueue(filters: {
   daysBack?: number;
   limit?: number;
   target?: 'counterparty' | 'macro' | 'all';
+  /** Per-user mute filter — when set, rows matching the user's
+      signal_mute_rules are filtered server-side. Per
+      docs/feedback-ui-brief.md §4.3 (mute behavior is structural). */
+  userId?: string | null;
 } = {}): Promise<MatchQueueItem[]> {
   const status = filters.status ?? 'open';
   const daysBack = filters.daysBack ?? 30;
@@ -7291,6 +7295,21 @@ export async function getMatchQueue(filters: {
       : target === 'macro'
         ? sql`AND mq.known_entity_id IS NULL AND mq.external_supplier_id IS NULL`
         : sql``;
+  // Mute filter — left join + null check pattern. signal_source is
+  // matched on equality OR null-source-rule (null source = "any source
+  // for this type"). entity_slug from known_entities is the join key
+  // since match_queue uses known_entity_id (UUID) — the rule table
+  // uses slug per the broader canonical-key convention.
+  const muteFilter = filters.userId
+    ? sql`AND NOT EXISTS (
+        SELECT 1 FROM signal_mute_rules smr
+         WHERE smr.user_id = ${filters.userId}
+           AND smr.signal_type = mq.signal_type
+           AND (smr.muted_until IS NULL OR smr.muted_until > now())
+           AND smr.entity_slug = COALESCE(ke.slug, mq.external_supplier_id::text)
+           AND (smr.signal_source IS NULL OR smr.signal_source = mq.source_table)
+      )`
+    : sql``;
 
   const result = await db.execute(sql`
     SELECT
@@ -7316,6 +7335,7 @@ export async function getMatchQueue(filters: {
       AND mq.observed_at >= CURRENT_DATE - (${daysBack}::int * INTERVAL '1 day')
       ${signalFilter}
       ${targetFilter}
+      ${muteFilter}
     ORDER BY mq.score DESC, mq.observed_at DESC, mq.matched_at DESC
     LIMIT ${limit}
   `);
@@ -12518,3 +12538,123 @@ export async function getEntityWebIntelligenceWithOverlay(
   if (!overlay[0]) return null;
   return getEntityWebIntelligence(overlay[0].slug);
 }
+
+// ─── Feedback events (Pattern 1+) per feedback-ui-brief.md ─────────
+
+export type FeedbackEventInput = {
+  userId: string | null;
+  feedbackKind: 'match_quality' | 'entity_attribute' | 'friction' | 'disposition' | 'retrospective';
+  targetType: 'match' | 'entity' | 'signal' | 'deal' | 'global' | null;
+  targetId: string | null;
+  /** For compound references — e.g. (entity_slug, signal_source). */
+  targetSecondaryId?: string | null;
+  sentiment?: 'positive' | 'negative' | 'neutral' | 'mute' | 'pin' | null;
+  /** Pattern-specific data. */
+  payload: Record<string, unknown>;
+  /** Auto-captured page / search / nav-path. */
+  context?: Record<string, unknown> | null;
+};
+
+/**
+ * Single insert path for all feedback events. Called from server
+ * actions in apps/app — typically one per user gesture (👍 click,
+ * inline edit save, friction submit, etc.).
+ *
+ * Returns the inserted row's id so the caller can correlate (e.g.
+ * for the optional dismiss-reason follow-up that arrives within the
+ * 3-second timeout window).
+ */
+export async function insertFeedbackEvent(input: FeedbackEventInput): Promise<string> {
+  const result = (await db.execute(sql`
+    INSERT INTO feedback_events (
+      user_id, feedback_kind, target_type, target_id, target_secondary_id,
+      sentiment, payload, context
+    ) VALUES (
+      ${input.userId},
+      ${input.feedbackKind},
+      ${input.targetType},
+      ${input.targetId},
+      ${input.targetSecondaryId ?? null},
+      ${input.sentiment ?? null},
+      ${JSON.stringify(input.payload)}::jsonb,
+      ${input.context ? JSON.stringify(input.context) : null}::jsonb
+    )
+    RETURNING id;
+  `)) as unknown as Array<{ id: string }>;
+  if (!result[0]) throw new Error('insertFeedbackEvent: insert returned no id');
+  return result[0].id;
+}
+
+export type InsertMuteRuleInput = {
+  userId: string;
+  entitySlug: string;
+  signalType: string;
+  signalSource?: string | null;
+  /** ISO date or null for indefinite. */
+  mutedUntil?: string | null;
+};
+
+/**
+ * Upsert a mute rule. Re-muting the same (user, entity, signal_type,
+ * source) is a noop — the unique index handles it. Brief §11
+ * deferred expiration policy; we ship indefinite.
+ */
+export async function insertSignalMuteRule(input: InsertMuteRuleInput): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO signal_mute_rules (
+      user_id, entity_slug, signal_type, signal_source, muted_until
+    ) VALUES (
+      ${input.userId},
+      ${input.entitySlug},
+      ${input.signalType},
+      ${input.signalSource ?? null},
+      ${input.mutedUntil ?? null}::timestamp
+    )
+    ON CONFLICT (user_id, entity_slug, signal_type, COALESCE(signal_source, ''))
+    DO NOTHING;
+  `);
+}
+
+export async function deleteSignalMuteRule(args: {
+  userId: string;
+  entitySlug: string;
+  signalType: string;
+  signalSource?: string | null;
+}): Promise<void> {
+  await db.execute(sql`
+    DELETE FROM signal_mute_rules
+     WHERE user_id = ${args.userId}
+       AND entity_slug = ${args.entitySlug}
+       AND signal_type = ${args.signalType}
+       AND COALESCE(signal_source, '') = COALESCE(${args.signalSource ?? null}, '');
+  `);
+}
+
+export type MutedRuleRow = {
+  entitySlug: string;
+  signalType: string;
+  signalSource: string | null;
+  mutedAt: string;
+};
+
+export async function listSignalMuteRulesForUser(userId: string): Promise<MutedRuleRow[]> {
+  const rows = (await db.execute(sql`
+    SELECT entity_slug, signal_type, signal_source, muted_at
+      FROM signal_mute_rules
+     WHERE user_id = ${userId}
+       AND (muted_until IS NULL OR muted_until > now())
+     ORDER BY muted_at DESC;
+  `)) as unknown as Array<{
+    entity_slug: string;
+    signal_type: string;
+    signal_source: string | null;
+    muted_at: Date;
+  }>;
+  return rows.map((r) => ({
+    entitySlug: r.entity_slug,
+    signalType: r.signal_type,
+    signalSource: r.signal_source,
+    mutedAt: r.muted_at.toISOString(),
+  }));
+}
+
