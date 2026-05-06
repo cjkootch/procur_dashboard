@@ -1,7 +1,8 @@
 import { Resend } from 'resend';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import {
   approvals,
+  companies,
   contacts,
   db,
   events,
@@ -107,18 +108,51 @@ export async function applyEmailSend(
     headers['References'] = payload.inReplyTo;
   }
 
+  // Pull per-company email defaults set at /settings/email. Single-user
+  // scope so we just take the first row; future multi-tenant lookup can
+  // scope by approval.company_id.
+  const companyRow = await db
+    .select({
+      displayName: companies.emailSenderDisplayName,
+      alwaysCc: companies.emailAlwaysCc,
+      signatureText: companies.emailSignatureText,
+      signatureHtml: companies.emailSignatureHtml,
+    })
+    .from(companies)
+    .orderBy(desc(companies.createdAt))
+    .limit(1);
+  const settings = companyRow[0];
+
+  // Decorate the From header with display name when configured.
+  const from = settings?.displayName
+    ? `${settings.displayName} <${stripBrackets(FROM_DEFAULT)}>`
+    : FROM_DEFAULT;
+
+  // Append signature to body if configured.
+  const bodyText = settings?.signatureText
+    ? `${payload.body}\n\n--\n${settings.signatureText}`
+    : payload.body;
+  const bodyHtml = settings?.signatureHtml
+    ? `<div>${escapeHtml(payload.body).replace(/\n/g, '<br>')}</div><br>${settings.signatureHtml}`
+    : undefined;
+
   let providerMessageId: string;
   try {
-    const result = await resend.emails.send(
-      {
-        from: FROM_DEFAULT,
-        to: payload.to,
-        subject: payload.subject,
-        text: payload.body,
-        headers: Object.keys(headers).length > 0 ? headers : undefined,
-      },
-      { idempotencyKey: `approval:${approvalId}` },
+    const sendArgs: Parameters<typeof resend.emails.send>[0] = {
+      from,
+      to: payload.to,
+      subject: payload.subject,
+      text: bodyText,
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
+    };
+    if (bodyHtml) sendArgs.html = bodyHtml;
+    const cc = (settings?.alwaysCc ?? []).filter(
+      (c): c is string => typeof c === 'string' && c.length > 0,
     );
+    if (cc.length > 0) sendArgs.cc = cc;
+    const result = await resend.emails.send(sendArgs, {
+      idempotencyKey: `approval:${approvalId}`,
+    });
     if (result.error) {
       return {
         ok: false,
@@ -244,5 +278,19 @@ export function parseEmailSendPayload(
     result.lang = proposedPayload['lang'] as string;
   }
   return result;
+}
+
+/** Strip a "Name <addr>" envelope to just `addr`. */
+function stripBrackets(addr: string): string {
+  const m = addr.match(/<([^>]+)>/);
+  return (m?.[1] ?? addr).trim();
+}
+
+/** Minimal HTML-escape for plain-text bodies appended into HTML email. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
