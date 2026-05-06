@@ -54,6 +54,7 @@
     "ingest-eu-mrv": "tsx src/ingest-eu-mrv.ts",
     "ingest-viirs-ntl": "tsx src/ingest-viirs-ntl.ts",
     "extract-graph": "tsx src/extract-graph.ts",
+    "validate-graph-embeddings": "tsx src/validate-graph-embeddings.ts",
     "ingest-crude-assays": "tsx src/ingest-crude-assays.ts",
     "infer-cargo-trips": "tsx src/infer-cargo-trips.ts",
     "backfill-crude-grade-properties": "tsx src/backfill-crude-grade-properties.ts",
