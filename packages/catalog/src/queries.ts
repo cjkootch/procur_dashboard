@@ -5606,6 +5606,24 @@ export interface DistressedSupplier {
     relevanceScore: number | null;
     sourceUrl: string | null;
   }>;
+  /** Apollo headcount-trend signals computed from the cached
+   *  employee_metrics jsonb. Null when the supplier has no Apollo
+   *  match. Per apollo-integration-brief.md §1: sales-team churn
+   *  signals market-traction loss; engineering churn signals
+   *  product-team instability; net headcount decline signals
+   *  company shrinking. */
+  apolloHeadcountSignals: {
+    /** Last 6-month sales-department churn rate (0-1).
+     *  churned / (churned + final retained). */
+    sales6moChurnPct: number | null;
+    /** Last 6-month engineering-department churn rate (0-1). */
+    engineering6moChurnPct: number | null;
+    /** Net headcount delta over the last 6 months (negative =
+     *  shrinking). */
+    netHeadcount6moPct: number | null;
+    /** Window end date in ISO yyyy-mm-dd. */
+    windowEndDate: string | null;
+  } | null;
   /** Plain-text reasons this supplier is on the list. */
   distressReasons: string[];
 }
@@ -5703,6 +5721,44 @@ export async function findDistressedSuppliers(
     }
   }
 
+  // Apollo headcount-trend signals — batch-fetch the cached
+  // employee_metrics jsonb and compute 6-month churn rates per
+  // department. Per apollo-integration-brief.md §1, sales-team
+  // churn is THE highest-leverage Apollo signal for distress
+  // detection (market-traction warning).
+  const apolloBySupplier = new Map<
+    string,
+    DistressedSupplier['apolloHeadcountSignals']
+  >();
+  const apolloRows = await db.execute(sql`
+    SELECT id, apollo_snapshot
+    FROM external_suppliers
+    WHERE id = ANY(ARRAY[${sql.join(
+      supplierIds.map((id) => sql`${id}`),
+      sql`, `,
+    )}]::uuid[])
+      AND apollo_snapshot IS NOT NULL
+  `);
+  for (const row of apolloRows.rows as Array<Record<string, unknown>>) {
+    const snapshot = row.apollo_snapshot as Record<string, unknown> | null;
+    const metrics = snapshot?.employeeMetrics as
+      | Array<{
+          startDate: string;
+          departments: Array<{
+            functions: string | null;
+            new: number;
+            retained: number;
+            churned: number;
+          }>;
+        }>
+      | undefined;
+    if (!metrics || metrics.length === 0) continue;
+    apolloBySupplier.set(
+      String(row.id),
+      computeHeadcountSignals(metrics),
+    );
+  }
+
   return rows.map((r) => {
     const last90 = Number(r.awards_last_90d);
     const prev90 = Number(r.awards_prev_90d);
@@ -5716,6 +5772,33 @@ export async function findDistressedSuppliers(
     const events = newsBySupplier.get(sid) ?? [];
     for (const e of events.slice(0, 3)) {
       reasons.push(`${e.eventType.replace(/_/g, ' ')} ${e.eventDate}`);
+    }
+    const apolloSignals = apolloBySupplier.get(sid) ?? null;
+    if (apolloSignals) {
+      if (
+        apolloSignals.sales6moChurnPct != null &&
+        apolloSignals.sales6moChurnPct >= 0.25
+      ) {
+        reasons.push(
+          `Sales team churned ${Math.round(apolloSignals.sales6moChurnPct * 100)}% in last 6 months (Apollo)`,
+        );
+      }
+      if (
+        apolloSignals.engineering6moChurnPct != null &&
+        apolloSignals.engineering6moChurnPct >= 0.2
+      ) {
+        reasons.push(
+          `Engineering churned ${Math.round(apolloSignals.engineering6moChurnPct * 100)}% in last 6 months (Apollo)`,
+        );
+      }
+      if (
+        apolloSignals.netHeadcount6moPct != null &&
+        apolloSignals.netHeadcount6moPct <= -0.05
+      ) {
+        reasons.push(
+          `Headcount down ${Math.abs(Math.round(apolloSignals.netHeadcount6moPct * 100))}% in last 6 months (Apollo)`,
+        );
+      }
     }
     return {
       supplierId: sid,
@@ -5737,9 +5820,91 @@ export async function findDistressedSuppliers(
           ? r.most_recent_award_date.toISOString().slice(0, 10)
           : String(r.most_recent_award_date),
       recentNewsEvents: events,
+      apolloHeadcountSignals: apolloSignals,
       distressReasons: reasons,
     };
   });
+}
+
+/**
+ * Compute 6-month churn signals from Apollo's per-month per-
+ * department employee metrics. Returns null when the input has
+ * fewer than 6 months of data.
+ *
+ * For each department family ("sales", "engineering"):
+ *   churn rate = sum(churned over window) /
+ *                (sum(churned over window) + final-month retained)
+ *
+ * For net headcount:
+ *   delta = (final total retained - first total retained) /
+ *           first total retained
+ *
+ * The functions field is per-month free text; we coerce via
+ * substring match to handle Apollo's casing variants
+ * (sales / sales_engineering / arts_and_design / etc.).
+ */
+function computeHeadcountSignals(
+  metrics: Array<{
+    startDate: string;
+    departments: Array<{
+      functions: string | null;
+      new: number;
+      retained: number;
+      churned: number;
+    }>;
+  }>,
+): DistressedSupplier['apolloHeadcountSignals'] {
+  if (metrics.length < 6) {
+    return {
+      sales6moChurnPct: null,
+      engineering6moChurnPct: null,
+      netHeadcount6moPct: null,
+      windowEndDate:
+        metrics.length > 0 ? metrics[metrics.length - 1]!.startDate : null,
+    };
+  }
+  const window = metrics.slice(-6);
+  const lastMonth = window[window.length - 1]!;
+  const firstMonth = window[0]!;
+
+  const churnFor = (predicate: (functions: string | null) => boolean) => {
+    let totalChurned = 0;
+    let finalRetained = 0;
+    for (const m of window) {
+      for (const d of m.departments) {
+        if (!predicate(d.functions)) continue;
+        totalChurned += d.churned;
+      }
+    }
+    for (const d of lastMonth.departments) {
+      if (!predicate(d.functions)) continue;
+      finalRetained += d.retained;
+    }
+    const denom = totalChurned + finalRetained;
+    return denom > 0 ? totalChurned / denom : null;
+  };
+
+  const isSales = (fn: string | null) =>
+    fn != null && fn.toLowerCase().includes('sales');
+  const isEng = (fn: string | null) =>
+    fn != null && fn.toLowerCase().includes('engineering');
+
+  const totalRetainedAt = (month: typeof lastMonth) => {
+    let sum = 0;
+    for (const d of month.departments) sum += d.retained;
+    return sum;
+  };
+  const firstTotal = totalRetainedAt(firstMonth);
+  const lastTotal = totalRetainedAt(lastMonth);
+  const netHeadcount6moPct =
+    firstTotal > 0 ? (lastTotal - firstTotal) / firstTotal : null;
+
+  return {
+    sales6moChurnPct: churnFor(isSales),
+    engineering6moChurnPct: churnFor(isEng),
+    netHeadcount6moPct,
+    windowEndDate: lastMonth.startDate,
+  };
 }
 
 /**
