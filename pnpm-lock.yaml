@@ -366,6 +366,9 @@ importers:
       openai:
         specifier: ^4.77.0
         version: 4.104.0(ws@8.20.0)(zod@3.25.76)
+      resend:
+        specifier: ^4.0.1
+        version: 4.8.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       robots-parser:
         specifier: ^3.0.1
         version: 3.0.1
