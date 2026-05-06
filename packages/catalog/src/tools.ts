@@ -1,6 +1,7 @@
 import 'server-only';
 import { defineTool, withToolTelemetry, type ToolRegistry } from '@procur/ai';
 import { z } from 'zod';
+import { proposeTools } from './proposal-tools';
 import {
   analyzeSupplier,
   briefOpportunity,
@@ -206,6 +207,9 @@ export function describeFilters(input: {
  */
 export function buildCatalogTools(): ToolRegistry {
   return {
+    // Vex-into-procur merge Phase 7.6 — chat propose-* tools that
+    // emit ActionDescriptor approvals. See packages/catalog/src/proposal-tools.ts.
+    ...proposeTools,
     search_opportunities: defineTool({
       name: 'search_opportunities',
       description:
