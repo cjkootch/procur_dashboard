@@ -1,4 +1,12 @@
-import { pgTable, uuid, text, timestamp, integer, numeric } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  integer,
+  numeric,
+  jsonb,
+} from 'drizzle-orm/pg-core';
 import { planTierEnum } from './enums';
 
 export const companies = pgTable('companies', {
@@ -48,6 +56,18 @@ export const companies = pgTable('companies', {
   monthlyAiBudgetCents: integer('monthly_ai_budget_cents'),
 
   onboardingCompletedAt: timestamp('onboarding_completed_at'),
+
+  /**
+   * External integration IDs for the user's own org — HubSpot id,
+   * Salesforce id, vex deal-system id, etc. Per the
+   * vex-into-procur merge brief Phase 1 (docs/vex-into-procur-merge-brief.md).
+   * Shape: `{ hubspot: "12345", vex: "01HW...", ... }`. Default `{}`
+   * so reads are safe before population.
+   */
+  externalKeys: jsonb('external_keys')
+    .notNull()
+    .default({})
+    .$type<Record<string, string>>(),
 
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),

@@ -6,6 +6,8 @@ import {
   jsonb,
   index,
   uniqueIndex,
+  doublePrecision,
+  integer,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -65,6 +67,20 @@ export const entitySanctionsScreens = pgTable(
 
     /** Provider tag — 'vex' today; reserved for future sources. */
     source: text('source').notNull().default('vex'),
+
+    /**
+     * OFAC enrichment columns ported in vex-merge Phase 1
+     * (docs/vex-into-procur-merge-brief.md). Augment the existing
+     * append-log shape with the highest-score / match-count summary
+     * and the manual-clearance audit trail. All nullable so historical
+     * rows continue to validate.
+     */
+    ofacHighestScore: doublePrecision('ofac_highest_score'),
+    ofacMatchCount: integer('ofac_match_count'),
+    ofacScreenedAt: timestamp('ofac_screened_at', { withTimezone: true }),
+    clearedBy: text('cleared_by'),
+    clearedAt: timestamp('cleared_at', { withTimezone: true }),
+    clearedReason: text('cleared_reason'),
 
     createdAt: timestamp('created_at', { withTimezone: true })
       .defaultNow()
