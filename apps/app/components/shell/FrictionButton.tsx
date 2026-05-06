@@ -80,19 +80,19 @@ export function FrictionButton() {
         onClick={() => setOpen(true)}
         title="Tell us what's not working  [? or Ctrl+/]"
         aria-label="Log friction"
-        className="fixed bottom-4 right-4 z-40 rounded-full bg-[color:var(--color-foreground)] px-3 py-2 text-xs font-medium text-[color:var(--color-background)] shadow-lg hover:opacity-90"
+        className="fixed bottom-20 right-4 z-40 rounded-full bg-[color:var(--color-foreground)] px-3 py-2 text-xs font-medium text-[color:var(--color-background)] shadow-lg hover:opacity-90"
       >
         ❓ Stuck?
       </button>
 
       {confirmation && (
-        <div className="fixed bottom-16 right-4 z-50 rounded-md border border-emerald-500/40 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-800 shadow-sm">
+        <div className="fixed bottom-32 right-4 z-50 rounded-md border border-emerald-500/40 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-800 shadow-sm">
           ✓ Friction logged
         </div>
       )}
 
       {open && (
-        <div className="fixed bottom-16 right-4 z-50 w-[360px] rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-3 shadow-xl">
+        <div className="fixed bottom-32 right-4 z-50 w-[360px] rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-3 shadow-xl">
           <div className="mb-1.5 text-sm font-medium">What did you wish the system would do?</div>
           <textarea
             ref={textareaRef}
