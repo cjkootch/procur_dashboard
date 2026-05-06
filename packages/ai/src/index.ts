@@ -174,3 +174,14 @@ export {
   type CostLedger,
   type CostOperation,
 } from './cost-ledger';
+// Phase 3 — email executor + reply-draft agent
+export {
+  applyEmailSend,
+  parseEmailSendPayload,
+  type EmailSendPayload,
+  type EmailSendResult,
+} from './executors/email-send';
+export {
+  EmailReplyDraftAgent,
+  type EmailReplyDraftInput,
+} from './agents/agents/email-reply-draft';
