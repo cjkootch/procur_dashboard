@@ -72,7 +72,9 @@ async function main(): Promise<void> {
     `seed-entity-text-embeddings — model=${EMBEDDING_MODEL}, kind=${EMBEDDING_KIND}, country=${country ?? 'ALL'}, dryRun=${dryRun}`,
   );
 
-  const rows = (await (country
+  // neon-http db.execute returns `{ rows, rowCount }`; cast the
+  // .rows accessor, not the result wrapper.
+  const result = await (country
     ? db.execute(sql`
         SELECT slug, name, country, role, categories, aliases, notes
           FROM known_entities
@@ -81,7 +83,8 @@ async function main(): Promise<void> {
     : db.execute(sql`
         SELECT slug, name, country, role, categories, aliases, notes
           FROM known_entities
-      `))) as unknown as EntityRow[];
+      `));
+  const rows = result.rows as unknown as EntityRow[];
 
   console.log(`  loaded ${rows.length} entities`);
   if (rows.length === 0) {
