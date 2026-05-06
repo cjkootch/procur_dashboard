@@ -20,8 +20,12 @@ import {
   applyOrgSetKind,
   applyOrgTag,
   applyOrgUpdateFields,
+  applyOutboundCall,
   applySanctionsScreen,
   applyScheduleFollowUp,
+  applySmsSend,
+  applyWhatsAppSend,
+  applyWhatsAppSendTemplate,
   parseCloseLeadPayload,
   parseCreateCompanyPayload,
   parseCreateContactPayload,
@@ -30,8 +34,12 @@ import {
   parseDealSetBrokerPayload,
   parseDealStatusChangePayload,
   parseEmailSendPayload,
+  parseOutboundCallPayload,
   parseSanctionsScreenPayload,
   parseScheduleFollowUpPayload,
+  parseSmsSendPayload,
+  parseWhatsAppSendPayload,
+  parseWhatsAppSendTemplatePayload,
 } from '@procur/ai';
 import { requireCompany } from '@procur/auth';
 
@@ -67,6 +75,7 @@ export async function approveApprovalAction(formData: FormData): Promise<void> {
   revalidatePath('/follow-ups');
   revalidatePath('/deals');
   revalidatePath('/signals');
+  revalidatePath('/calls');
 }
 
 interface ApprovalRowForExecutor {
@@ -269,7 +278,32 @@ async function dispatchExecutor(
     return;
   }
 
-  // Phase 7 (voice) → outbound_call
+  // ---- Phase 7 ------------------------------------------------------------
+  if (row.actionType === 'sms.send') {
+    const payload = parseSmsSendPayload(row.proposedPayload);
+    if (!payload) return;
+    await applySmsSend(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'whatsapp.send') {
+    const payload = parseWhatsAppSendPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyWhatsAppSend(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'whatsapp.send_template') {
+    const payload = parseWhatsAppSendTemplatePayload(row.proposedPayload);
+    if (!payload) return;
+    await applyWhatsAppSendTemplate(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'outbound_call') {
+    const payload = parseOutboundCallPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyOutboundCall(row.id, payload);
+    return;
+  }
+
   void getApproval; // helper retained for follow-up phases
 }
 

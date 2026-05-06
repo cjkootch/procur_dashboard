@@ -18,6 +18,7 @@ export * from './sales-surfaces';
 export * from './deals';
 export * from './signals';
 export * from './brief';
+export * from './calls';
 export {
   buildCatalogTools,
   buildFilterUrl,
