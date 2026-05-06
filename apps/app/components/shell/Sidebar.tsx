@@ -179,7 +179,7 @@ export function Sidebar({
 }) {
   return (
     <aside
-      className="hidden shrink-0 flex-col border-r border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40 md:flex"
+      className="sticky top-0 hidden h-screen shrink-0 flex-col self-start overflow-y-auto border-r border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40 md:flex"
       style={{ width: 'var(--shell-sidebar-width)' }}
     >
       <SidebarContent nav={nav} company={company} />
