@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
 import {
   getApolloEntityCache,
+  getBuyerConsumptionEstimate,
   getContactEnrichmentsBySlug,
   getCurrentDisposition,
   getDirectOwners,
@@ -10,6 +11,7 @@ import {
   getEntityVesselActivity,
   getEntityWebIntelligence,
   getFuelBuyerImportContext,
+  getFuelConsumptionSignals,
   getOwnershipChain,
   getRefineryImportContext,
   getSupplierApproval,
@@ -28,6 +30,7 @@ import { SupplierApprovalForm } from './_components/SupplierApprovalForm';
 import { WebsiteIntelligencePanel } from './_components/WebsiteIntelligencePanel';
 import { EditableAttribute } from './_components/EditableAttribute';
 import { DispositionPanel } from './_components/DispositionPanel';
+import { ConsumptionSignalsPanel } from './_components/ConsumptionSignalsPanel';
 
 /**
  * Unified entity profile — accepts either a known_entities.slug or
@@ -78,6 +81,8 @@ export default async function EntityProfilePage({ params }: Props) {
     fuelBuyerImportCtx,
     apolloCache,
     webIntel,
+    consumptionEstimate,
+    consumptionSignals,
   ] = await Promise.all([
     getDirectOwners(ownershipQueryName),
     getOwnershipChain(ownershipQueryName, 5),
@@ -106,6 +111,11 @@ export default async function EntityProfilePage({ params }: Props) {
     // Website intelligence — extracted facts + section summaries
     // from primary_domain crawl. Null when not yet crawled.
     getEntityWebIntelligence(profile.canonicalKey).catch(() => null),
+    // Fuel-consumption signals — aggregated estimate + per-source
+    // detail from PR #414 + Tier A sources. Both empty when no
+    // signals have been ingested for this entity yet.
+    getBuyerConsumptionEstimate(profile.canonicalKey).catch(() => null),
+    getFuelConsumptionSignals(profile.canonicalKey).catch(() => []),
   ]);
 
   const fmtUsd = (n: number | null) =>
@@ -212,6 +222,15 @@ export default async function EntityProfilePage({ params }: Props) {
       <WebsiteIntelligencePanel
         intel={webIntel}
         entityName={profile.name}
+      />
+
+      {/* Fuel-consumption signals (PR #414 + Tier A: EU MRV /
+          NI 43-101 / bond prospectus / EITI / VIIRS). Aggregated
+          estimate from buyer_consumption_estimate view + per-source
+          rows. Renders nothing when no signals exist. */}
+      <ConsumptionSignalsPanel
+        estimate={consumptionEstimate}
+        signals={consumptionSignals}
       />
 
       {/* Editable attributes (Pattern 2 per feedback-ui-brief.md §5).
