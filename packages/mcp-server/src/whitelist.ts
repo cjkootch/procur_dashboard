@@ -26,6 +26,13 @@ export const MCP_TOOL_WHITELIST: readonly string[] = [
   'find_caribbean_fuel_buyers',
   'analyze_supplier',
 
+  // Free-text entity-mention resolution (Component D §7.1, PR #426).
+  // High-value for chat hosts processing news / customs / document
+  // text; safely returns no-match when text-embeddings haven't been
+  // populated yet. predict_entity_attributes deliberately not
+  // exposed — narrower flow without a clear external-host need yet.
+  'resolve_entity_mention',
+
   // Market intelligence
   'lookup_customs_flows',
   'get_market_snapshot',

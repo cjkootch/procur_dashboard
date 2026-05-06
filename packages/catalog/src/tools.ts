@@ -32,7 +32,7 @@ import {
   getFuelConsumptionSignalsBatch,
   predictEntityAttributes,
   resolveEntityMention,
-  getEntityWebIntelligence,
+  getEntityWebIntelligenceWithOverlay,
   walkOwnershipChainUp,
   walkSubsidiaries,
   lookupSanctionsScreens,
@@ -5737,12 +5737,15 @@ export function buildCatalogTools(): ToolRegistry {
           // the entity hasn't been crawled yet (run pnpm crawl-
           // entity-website --slug=<slug>).
           //
-          // TODO (Codex P2 on #428): when result.supplier.id is an
-          // external_suppliers UUID with a known_entities overlay,
-          // the curated slug holds the crawled data — fall back to
-          // resolving overlay before lookup. Edge case for v1; most
-          // analyze_supplier calls go straight to known_entities.
-          webIntelligence: await getEntityWebIntelligence(result.supplier.id),
+          // Uses the WithOverlay variant per Codex P2 on #428: when
+          // result.supplier.id is an external_suppliers UUID, the
+          // curated known_entities overlay (matched by name) holds
+          // the crawled data. Direct lookup first; overlay fallback
+          // only fires when direct returns null.
+          webIntelligence: await getEntityWebIntelligenceWithOverlay(
+            result.supplier.id,
+            result.supplier.canonicalName,
+          ),
         };
           },
         ),
