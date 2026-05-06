@@ -9,6 +9,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "ingest-ni-43-101": "tsx src/ingest-ni-43-101.ts",
     "type-check": "tsc --noEmit",
     "test": "node --import tsx --test 'src/**/*.test.ts'",
     "clean": "rm -rf dist .turbo node_modules"
@@ -17,7 +18,9 @@
     "@anthropic-ai/sdk": "^0.88.0",
     "@procur/db": "workspace:*",
     "drizzle-orm": "^0.38.3",
+    "dotenv": "^16.4.7",
     "openai": "^4.77.0",
+    "unpdf": "^0.12.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {

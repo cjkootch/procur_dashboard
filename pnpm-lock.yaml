@@ -351,12 +351,18 @@ importers:
       '@procur/db':
         specifier: workspace:*
         version: link:../db
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
       drizzle-orm:
         specifier: ^0.38.3
         version: 0.38.4(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.0)(@types/pg@8.11.6)(@types/react@19.2.14)(postgres@3.4.9)(react@19.2.5)
       openai:
         specifier: ^4.77.0
         version: 4.104.0(ws@8.20.0)(zod@3.25.76)
+      unpdf:
+        specifier: ^0.12.1
+        version: 0.12.2
       zod:
         specifier: ^3.24.1
         version: 3.25.76
