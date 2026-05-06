@@ -9,6 +9,11 @@ import {
   applyContactTag,
   applyCreateCompany,
   applyCreateContact,
+  applyCreateDeal,
+  applyDealHumanReview,
+  applyDealMilestone,
+  applyDealSetBroker,
+  applyDealStatusChange,
   applyEmailSend,
   applyOrgAddProduct,
   applyOrgLinkRelationship,
@@ -19,6 +24,10 @@ import {
   parseCloseLeadPayload,
   parseCreateCompanyPayload,
   parseCreateContactPayload,
+  parseCreateDealPayload,
+  parseDealMilestonePayload,
+  parseDealSetBrokerPayload,
+  parseDealStatusChangePayload,
   parseEmailSendPayload,
   parseScheduleFollowUpPayload,
 } from '@procur/ai';
@@ -54,6 +63,7 @@ export async function approveApprovalAction(formData: FormData): Promise<void> {
   revalidatePath('/inbox');
   revalidatePath('/leads');
   revalidatePath('/follow-ups');
+  revalidatePath('/deals');
 }
 
 interface ApprovalRowForExecutor {
@@ -212,7 +222,42 @@ async function dispatchExecutor(
     return;
   }
 
-  // Phase 5 (deals) → crm.create_deal, deal.status_change, deal.set_broker, …
+  // ---- Phase 5 ------------------------------------------------------------
+  if (row.actionType === 'crm.create_deal') {
+    const payload = parseCreateDealPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyCreateDeal(row.id, payload, reviewerId);
+    return;
+  }
+  if (row.actionType === 'deal.status_change') {
+    const payload = parseDealStatusChangePayload(row.proposedPayload);
+    if (!payload) return;
+    await applyDealStatusChange(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'deal.milestone') {
+    const payload = parseDealMilestonePayload(row.proposedPayload);
+    if (!payload) return;
+    await applyDealMilestone(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'deal.set_broker') {
+    const payload = parseDealSetBrokerPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyDealSetBroker(row.id, payload);
+    return;
+  }
+  if (
+    row.actionType === 'deal.human_review' &&
+    typeof row.proposedPayload['dealId'] === 'string'
+  ) {
+    await applyDealHumanReview(
+      row.id,
+      row.proposedPayload['dealId'] as string,
+    );
+    return;
+  }
+
   // Phase 6 (sanctions) → sanctions.screen
   // Phase 7 (voice) → outbound_call
   void getApproval; // helper retained for follow-up phases

@@ -207,3 +207,29 @@ export {
   type CreateContactPayload,
   type ScheduleFollowUpPayload,
 } from './executors/sales';
+// Phase 5 — fuel-deal executors + DealEvaluator + DealMarketContext agents
+export {
+  applyCreateDeal,
+  applyDealHumanReview,
+  applyDealMilestone,
+  applyDealSetBroker,
+  applyDealStatusChange,
+  parseCreateDealPayload,
+  parseDealMilestonePayload,
+  parseDealSetBrokerPayload,
+  parseDealStatusChangePayload,
+  type CreateDealPayload,
+  type DealMilestonePayload,
+  type DealSetBrokerPayload,
+  type DealStatusChangePayload,
+} from './executors/deals';
+export {
+  DealEvaluatorAgent,
+  type DealEvaluatorInput,
+} from './agents/agents/deal-evaluator';
+export {
+  DealMarketContextAgent,
+  type DealMarketContextDeps,
+  type DealMarketContextInput,
+  type EvaluateTargetPriceFn,
+} from './agents/agents/deal-market-context';

@@ -21,6 +21,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
     "@procur/db": "workspace:*",
+    "@procur/pricing": "workspace:*",
     "@vercel/blob": "^0.27.0",
     "cheerio": "^1.0.0",
     "drizzle-orm": "^0.38.3",

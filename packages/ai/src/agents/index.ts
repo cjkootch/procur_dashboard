@@ -30,3 +30,13 @@ export {
   EmailReplyDraftAgent,
   type EmailReplyDraftInput,
 } from './agents/email-reply-draft';
+export {
+  DealEvaluatorAgent,
+  type DealEvaluatorInput,
+} from './agents/deal-evaluator';
+export {
+  DealMarketContextAgent,
+  type DealMarketContextDeps,
+  type DealMarketContextInput,
+  type EvaluateTargetPriceFn,
+} from './agents/deal-market-context';

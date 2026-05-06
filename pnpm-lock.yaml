@@ -351,6 +351,9 @@ importers:
       '@procur/db':
         specifier: workspace:*
         version: link:../db
+      '@procur/pricing':
+        specifier: workspace:*
+        version: link:../pricing
       '@vercel/blob':
         specifier: ^0.27.0
         version: 0.27.3
