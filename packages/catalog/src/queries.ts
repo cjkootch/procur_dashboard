@@ -13093,6 +13093,10 @@ export type PinnedMatchRow = {
   feedbackEventId: string;
   matchQueueId: string;
   pinnedAt: string;
+  /** When this pin ages out. Brief §4.3: "Pins age out after 30 days
+      unless explicitly extended." Implicit 30d from pinnedAt for
+      pre-extend rows; explicit when extendPinnedMatch was called. */
+  expiresAt: string;
   /** Hydrated from match_queue when still extant; null when the
       source row has been hard-deleted. The pin still surfaces so the
       user knows they pinned it; just without context. */
@@ -13110,11 +13114,20 @@ export async function getPinnedMatches(
   userId: string,
   limit: number = 100,
 ): Promise<PinnedMatchRow[]> {
+  // Brief §4.3: "Pins age out after 30 days unless explicitly
+  // extended." We model this with payload.expires_at — the pin
+  // surfaces while expires_at > now(). Pins without an explicit
+  // expires_at (from before this filter shipped) get an implicit
+  // 30d window from created_at via COALESCE.
   const rows = (await db.execute(sql`
     SELECT
       fe.id AS feedback_event_id,
       fe.target_id AS match_queue_id,
       fe.created_at AS pinned_at,
+      COALESCE(
+        (fe.payload->>'expires_at')::timestamp,
+        fe.created_at + INTERVAL '30 days'
+      ) AS expires_at,
       mq.signal_type, mq.signal_kind,
       mq.source_entity_name, mq.source_entity_country,
       mq.rationale, mq.score::float8 AS score, mq.observed_at,
@@ -13126,6 +13139,10 @@ export async function getPinnedMatches(
       AND fe.feedback_kind = 'match_quality'
       AND fe.sentiment = 'pin'
       AND fe.revoked_at IS NULL
+      AND COALESCE(
+        (fe.payload->>'expires_at')::timestamp,
+        fe.created_at + INTERVAL '30 days'
+      ) > now()
     ORDER BY fe.created_at DESC
     LIMIT ${limit};
   `)) as unknown as Array<Record<string, unknown>>;
@@ -13133,6 +13150,7 @@ export async function getPinnedMatches(
     feedbackEventId: String(r.feedback_event_id),
     matchQueueId: String(r.match_queue_id ?? ''),
     pinnedAt: (r.pinned_at as Date).toISOString(),
+    expiresAt: (r.expires_at as Date).toISOString(),
     signalType: r.signal_type == null ? null : String(r.signal_type),
     signalKind: r.signal_kind == null ? null : String(r.signal_kind),
     sourceEntityName: r.source_entity_name == null ? null : String(r.source_entity_name),
@@ -13147,6 +13165,94 @@ export async function getPinnedMatches(
         : String(r.observed_at),
     entityProfileSlug: r.entity_slug == null ? null : String(r.entity_slug),
   }));
+}
+
+/**
+ * Bump a pinned match's expiry by N days (default 30) per brief §4.3.
+ * Idempotent — repeated calls keep stacking. The first call computes
+ * the new expiry off the implicit (created_at + 30d) when no explicit
+ * expires_at is present yet.
+ */
+export async function extendPinnedMatch(args: {
+  feedbackEventId: string;
+  userId: string;
+  days?: number;
+}): Promise<void> {
+  const days = args.days ?? 30;
+  await db.execute(sql`
+    UPDATE feedback_events
+       SET payload = jsonb_set(
+         payload,
+         '{expires_at}',
+         to_jsonb(
+           (
+             COALESCE(
+               (payload->>'expires_at')::timestamp,
+               created_at + INTERVAL '30 days'
+             )
+             + (${days}::int * INTERVAL '1 day')
+           )::text
+         )
+       )
+     WHERE id = ${args.feedbackEventId}
+       AND user_id = ${args.userId}
+       AND feedback_kind = 'match_quality'
+       AND sentiment = 'pin';
+  `);
+}
+
+/**
+ * Soft-delete a pin via the standard revoked_at column. Used by the
+ * "Unpin" UI action on /pinned. Different from age-out (which just
+ * updates expires_at) — explicit unpin is the user saying "I'm done
+ * with this," and we keep the row for audit.
+ */
+export async function revokePinnedMatch(args: {
+  feedbackEventId: string;
+  userId: string;
+}): Promise<void> {
+  await db.execute(sql`
+    UPDATE feedback_events
+       SET revoked_at = now()
+     WHERE id = ${args.feedbackEventId}
+       AND user_id = ${args.userId}
+       AND feedback_kind = 'match_quality'
+       AND sentiment = 'pin';
+  `);
+}
+
+/**
+ * Attach a dismiss reason to a previously-dismissed match per brief
+ * §4.3 — "If the user clicks a reason within 3 seconds, the reason
+ * is logged." Updates payload.dismiss_reason on the existing
+ * negative-sentiment feedback event without creating a new row.
+ *
+ * Authorization on user_id prevents one user from labeling another's
+ * dismiss. No-op when the row doesn't match (silently fails — the
+ * 3-second timeout is best-effort).
+ */
+export async function addDismissReason(args: {
+  feedbackEventId: string;
+  userId: string;
+  reason: string;
+  freeText?: string | null;
+}): Promise<void> {
+  await db.execute(sql`
+    UPDATE feedback_events
+       SET payload = jsonb_set(
+         jsonb_set(
+           payload,
+           '{dismiss_reason}',
+           to_jsonb(${args.reason}::text)
+         ),
+         '{dismiss_reason_text}',
+         to_jsonb(${args.freeText ?? null}::text)
+       )
+     WHERE id = ${args.feedbackEventId}
+       AND user_id = ${args.userId}
+       AND feedback_kind = 'match_quality'
+       AND sentiment = 'negative';
+  `);
 }
 
 export type FrictionQueueRow = {
