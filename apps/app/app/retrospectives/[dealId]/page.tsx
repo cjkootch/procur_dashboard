@@ -54,7 +54,7 @@ export default async function RetrospectivePage({ params, searchParams }: Props)
             {decodedDealId}
           </code>
           . 5-7 minutes; lessons get surfaced during similar future
-          deals (once the ML similarity layer's embeddings are
+          deals (once the ML similarity layer&apos;s embeddings are
           populated).
         </p>
         {existing?.isDraft && (
