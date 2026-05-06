@@ -12487,3 +12487,34 @@ export async function getEntityWebIntelligence(
     summaries,
   };
 }
+
+/**
+ * Resolve website intelligence for an entity that may exist in
+ * external_suppliers (UUID id) but whose website crawl lives under
+ * a known_entities slug overlay. Per Codex P2 follow-up on PR #428.
+ *
+ * Tries (1) direct lookup by supplied key, then (2) fuzzy-name
+ * fallback to a known_entities slug. The fallback only fires when
+ * the direct lookup returns null AND a name is supplied — keeps
+ * the common path (curated rolodex slugs) fast.
+ */
+export async function getEntityWebIntelligenceWithOverlay(
+  primaryKey: string,
+  supplierName: string | null,
+): Promise<EntityWebIntelligenceRow | null> {
+  const direct = await getEntityWebIntelligence(primaryKey);
+  if (direct) return direct;
+  if (!supplierName || supplierName.length < 3) return null;
+
+  // pg_trgm fuzzy-match the supplier name against known_entities to
+  // surface the curated overlay's slug. Threshold 0.55 mirrors the
+  // supplier-graph alias matcher.
+  const overlay = (await db.execute(sql`
+    SELECT slug FROM known_entities
+     WHERE similarity(name, ${supplierName}) > 0.55
+     ORDER BY similarity(name, ${supplierName}) DESC
+     LIMIT 1
+  `)) as unknown as Array<{ slug: string }>;
+  if (!overlay[0]) return null;
+  return getEntityWebIntelligence(overlay[0].slug);
+}
