@@ -30,25 +30,46 @@ const NAV: SidebarNavGroup[] = [
       { href: '/assistant', label: 'Assistant', iconName: 'chat-bubble' },
     ],
   },
+  // Watch — things demanding attention. Approvals/signals/inbox land
+  // first (vex execution-layer surfaces), then the legacy procur
+  // surfaces (match queue / alerts / pinned) sit below.
   {
-    id: 'now',
-    heading: 'Now',
+    id: 'watch',
+    heading: 'Watch',
     items: [
+      { href: '/approvals', label: 'Approvals', iconName: 'check-shield' },
+      { href: '/signals', label: 'Signals', iconName: 'lightning' },
+      { href: '/inbox', label: 'Inbox', iconName: 'inbox' },
       { href: '/suppliers/match-queue', label: 'Match queue', iconName: 'lightning' },
+      { href: '/follow-ups', label: 'Follow-ups', iconName: 'clock' },
       { href: '/pinned', label: 'Pinned', iconName: 'clock' },
       { href: '/alerts', label: 'Alerts', iconName: 'bell' },
     ],
   },
+  // Pipeline — active work. Leads + Deals are the new vex-execution
+  // entries; the rest is procur's pre-existing pursuit surface.
   {
     id: 'pipeline',
     heading: 'Pipeline',
     items: [
       { href: '/insights', label: 'My pipeline', iconName: 'kanban' },
+      { href: '/leads', label: 'Leads', iconName: 'people' },
+      { href: '/deals', label: 'Deals', iconName: 'document-text' },
       { href: '/capture', label: 'Capture', iconName: 'kanban' },
       { href: '/contract', label: 'Contracts', iconName: 'document-text' },
       { href: '/deal-structures', label: 'Deal structures', iconName: 'map' },
       { href: '/pricer', label: 'Pricer', iconName: 'calculator' },
       { href: '/retrospectives', label: 'Retrospectives', iconName: 'clock' },
+    ],
+  },
+  // Outreach — outbound execution + agent visibility (vex-merged).
+  {
+    id: 'outreach',
+    heading: 'Outreach',
+    items: [
+      { href: '/campaigns', label: 'Campaigns', iconName: 'megaphone' },
+      { href: '/calls', label: 'Calls & messaging', iconName: 'phone' },
+      { href: '/agent-runs', label: 'Agent runs', iconName: 'sparkles' },
     ],
   },
   {
@@ -76,11 +97,18 @@ const NAV: SidebarNavGroup[] = [
       { href: '/suppliers/vessels', label: 'Vessels', iconName: 'anchor' },
     ],
   },
+  // Settings — company profile + email defaults + integrations + the
+  // friction log + billing. Previously buried under "Account"; now
+  // a top-level group because /settings/email +
+  // /settings/integrations/mcp are higher-traffic post-merge.
   {
-    id: 'account',
-    heading: 'Account',
+    id: 'settings',
+    heading: 'Settings',
     items: [
       { href: '/settings', label: 'Company profile', iconName: 'settings' },
+      { href: '/settings/email', label: 'Email defaults', iconName: 'inbox' },
+      { href: '/settings/notifications', label: 'Notifications', iconName: 'bell' },
+      { href: '/settings/integrations/mcp', label: 'Integrations', iconName: 'shield-check' },
       { href: '/friction', label: 'Friction log', iconName: 'inbox' },
       { href: '/billing', label: 'Billing', iconName: 'credit-card' },
     ],
