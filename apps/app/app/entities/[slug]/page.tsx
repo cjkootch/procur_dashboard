@@ -24,6 +24,7 @@ import { QuoteAnchorsPanel } from './_components/QuoteAnchorsPanel';
 import { RefineryImportContextPanel } from './_components/RefineryImportContextPanel';
 import { SupplierApprovalForm } from './_components/SupplierApprovalForm';
 import { WebsiteIntelligencePanel } from './_components/WebsiteIntelligencePanel';
+import { EditableAttribute } from './_components/EditableAttribute';
 
 /**
  * Unified entity profile — accepts either a known_entities.slug or
@@ -205,6 +206,50 @@ export default async function EntityProfilePage({ params }: Props) {
         intel={webIntel}
         entityName={profile.name}
       />
+
+      {/* Editable attributes (Pattern 2 per feedback-ui-brief.md §5).
+          Inline-edit of high-leverage fields. Edits affect the entity
+          globally and are logged to feedback_events as training labels
+          for ML Component D attribute prediction. Only shown for
+          known_entity-sourced rows — external_suppliers UUIDs don't
+          map to the editable shape. */}
+      {profile.primarySource === 'known_entity' && (
+        <section className="mb-6 rounded-md border border-[color:var(--color-border)]/60 bg-[color:var(--color-muted)]/30 p-3">
+          <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Editable attributes
+          </h2>
+          <div className="space-y-1.5">
+            <EditableAttribute
+              entitySlug={profile.canonicalKey}
+              attribute="role"
+              label="Role"
+              value={profile.role}
+            />
+            <EditableAttribute
+              entitySlug={profile.canonicalKey}
+              attribute="country"
+              label="Country (ISO-2)"
+              value={profile.country}
+            />
+            <EditableAttribute
+              entitySlug={profile.canonicalKey}
+              attribute="categories"
+              label="Categories"
+              value={profile.categories ?? []}
+              multi
+            />
+            <EditableAttribute
+              entitySlug={profile.canonicalKey}
+              attribute="notes"
+              label="Notes"
+              value={profile.notes ?? null}
+            />
+          </div>
+          <p className="mt-2 text-[10px] text-[color:var(--color-muted-foreground)]">
+            Edits apply globally + log to feedback_events. Hover a field to reveal the ✏️ pencil; Enter saves, Esc cancels.
+          </p>
+        </section>
+      )}
 
       {/* Quote anchors — refiner-only. Renders the realistic CIF
           mid for a default product into the desk's most-active dest
