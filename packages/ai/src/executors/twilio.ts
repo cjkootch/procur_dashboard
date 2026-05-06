@@ -16,10 +16,15 @@ import { PostgresCostLedger } from '../cost-ledger';
  * Closes the Phase 2 approval-queue loop for SMS, WhatsApp, and
  * outbound voice calls.
  *
- * Operator-join-conference is the v1 voice mode (`aiMode=false` in
- * the action payload). The AI talkback bridge (`aiMode=true`) needs
- * a long-lived WebSocket service that Vercel can't host —
- * scaffolding ships in a Phase 7.5 follow-up as a separate Fly app.
+ * Two voice modes per the `aiMode` flag on the action payload:
+ *   aiMode=false (default) — Twilio dials, plays a brief intro, joins
+ *     the recipient + operator in a conference room.
+ *   aiMode=true — Twilio dials and connects to procur's voice-bridge
+ *     (Phase 7.5 Fly app at procur-voice-bridge.fly.dev) which
+ *     shuttles audio to OpenAI Realtime for full AI talkback.
+ *
+ * Both modes run through this same executor — the TwiML route picks
+ * the right verb based on `?mode=ai|conference`.
  *
  * Phase 0 / 2 decisions applied: inline dispatch, idempotent on
  * approval.applied_at, fail-loud on Twilio API errors so the
@@ -387,25 +392,21 @@ export async function applyOutboundCall(
   if (!FROM_PHONE) {
     return { ok: false, error: 'TWILIO_PHONE_NUMBER not configured' };
   }
-  // v1: only operator-join-conference. AI mode requires a Phase 7.5
-  // voice-bridge running on Fly (Vercel Functions can't host the
-  // long-lived WebSocket Twilio Media Streams needs). Reject early
-  // so the operator sees why the call didn't fire.
-  if (payload.aiMode) {
-    return {
-      ok: false,
-      error:
-        'aiMode=true is not yet supported (voice-bridge ships in Phase 7.5)',
-    };
-  }
-  // Build a TwiML URL that returns a `<Dial><Conference>` for
-  // operator join. The route handler at /api/webhooks/twilio/twiml
-  // serves the TwiML when Twilio fetches it on call answer.
+  // Phase 7.5: aiMode=true returns <Connect><Stream> pointing at
+  // the voice-bridge Fly app. aiMode=false returns <Dial><Conference>
+  // for operator-join. The TwiML route at /api/webhooks/twilio/twiml
+  // serves the right verb based on `?mode=`.
   const twimlUrl = new URL(`${APP_URL}/api/webhooks/twilio/twiml`);
   twimlUrl.searchParams.set('approval', approvalId);
-  twimlUrl.searchParams.set('mode', 'conference');
+  twimlUrl.searchParams.set('mode', payload.aiMode ? 'ai' : 'conference');
   twimlUrl.searchParams.set('contactId', payload.contactId);
   twimlUrl.searchParams.set('orgId', payload.orgId);
+  if (payload.aiInstructions) {
+    twimlUrl.searchParams.set(
+      'aiInstructions',
+      payload.aiInstructions.slice(0, 4000),
+    );
+  }
   if (payload.goalHint) {
     twimlUrl.searchParams.set('goal', payload.goalHint.slice(0, 280));
   }
