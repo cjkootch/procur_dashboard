@@ -69,6 +69,19 @@ export const companies = pgTable('companies', {
     .default({})
     .$type<Record<string, string>>(),
 
+  /**
+   * Per-company email defaults applied to every approved email.send.
+   * Migration 0081. Read by `applyEmailSend` at dispatch; managed
+   * at /settings/email.
+   */
+  emailSenderDisplayName: text('email_sender_display_name'),
+  emailAlwaysCc: jsonb('email_always_cc')
+    .notNull()
+    .default([])
+    .$type<string[]>(),
+  emailSignatureHtml: text('email_signature_html'),
+  emailSignatureText: text('email_signature_text'),
+
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

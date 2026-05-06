@@ -32,21 +32,36 @@ const e164Phone = z
   .string()
   .regex(/^\+[1-9]\d{7,14}$/, 'phone must be E.164 (e.g. +18324927169)');
 
+/**
+ * Tool result shape — read by the chat UI's `<ApprovalActionCard>`
+ * to render an inline preview with Approve / Reject buttons (vex's
+ * UX pattern). The full ActionDescriptor payload rides through so
+ * the card can show a domain-specific preview (email body, deal
+ * shape, call goal, etc.) without round-tripping to /approvals.
+ */
 interface ProposeResult {
   ok: true;
+  /** Marker so the chat UI's type guard catches every propose-* tool. */
+  kind: 'approval_action';
   approvalId: string;
   actionType: string;
+  tier: 'T0' | 'T1' | 'T2' | 'T3';
   reviewUrl: string;
   summary: string;
+  /** Full validated ActionDescriptor — the card renders from this. */
+  payload: ActionDescriptorT;
 }
 
-function chip(actionType: string, summary: string, approvalId: string): ProposeResult {
+function chip(action: ActionDescriptorT, summary: string, approvalId: string): ProposeResult {
   return {
     ok: true,
+    kind: 'approval_action',
     approvalId,
-    actionType,
+    actionType: action.kind,
+    tier: action.tier as 'T0' | 'T1' | 'T2' | 'T3',
     reviewUrl: `/approvals/${approvalId}`,
     summary,
+    payload: action,
   };
 }
 
@@ -86,7 +101,7 @@ export const proposeTools = {
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
       return chip(
-        'email.send',
+        action,
         `Email to ${input.to.join(', ')}: ${input.subject}`,
         row.id,
       );
@@ -120,7 +135,7 @@ export const proposeTools = {
         ...(input.industry ? { industry: input.industry } : {}),
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
-      return chip('crm.create_company', `Create company: ${input.legalName}`, row.id);
+      return chip(action, `Create company: ${input.legalName}`, row.id);
     },
   }),
 
@@ -160,7 +175,7 @@ export const proposeTools = {
         ...(input.phones ? { phones: input.phones } : {}),
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
-      return chip('crm.create_contact', `Create contact: ${input.fullName}`, row.id);
+      return chip(action, `Create contact: ${input.fullName}`, row.id);
     },
   }),
 
@@ -184,7 +199,7 @@ export const proposeTools = {
         reason: input.reason,
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
-      return chip('lead.close', `Close lead as ${input.outcome}`, row.id);
+      return chip(action, `Close lead as ${input.outcome}`, row.id);
     },
   }),
 
@@ -224,7 +239,7 @@ export const proposeTools = {
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
       return chip(
-        'follow_up.schedule',
+        action,
         `Follow-up: ${input.title} (due ${input.dueAt})`,
         row.id,
       );
@@ -277,7 +292,7 @@ export const proposeTools = {
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
       return chip(
-        'crm.create_deal',
+        action,
         `Deal ${input.dealRef}: ${input.product} ${input.volumeUsg.toLocaleString()} ${input.volumeUnit} ${input.incoterm.toUpperCase()}`,
         row.id,
       );
@@ -310,7 +325,7 @@ export const proposeTools = {
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
       return chip(
-        'deal.status_change',
+        action,
         `Deal ${input.deal_id.slice(0, 8)} → ${input.to_status}`,
         row.id,
       );
@@ -349,7 +364,7 @@ export const proposeTools = {
         ...(input.rationale ? { rationale: input.rationale } : {}),
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
-      return chip('deal.milestone', `Milestone: ${input.milestone}`, row.id);
+      return chip(action, `Milestone: ${input.milestone}`, row.id);
     },
   }),
 
@@ -376,7 +391,7 @@ export const proposeTools = {
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
       return chip(
-        'sanctions.screen',
+        action,
         `Sanctions screen org ${input.organizationId.slice(0, 8)}`,
         row.id,
       );
@@ -410,7 +425,7 @@ export const proposeTools = {
         ...(input.templateName ? { templateName: input.templateName } : {}),
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
-      return chip('sms.send', `SMS to ${input.to}`, row.id);
+      return chip(action, `SMS to ${input.to}`, row.id);
     },
   }),
 
@@ -439,7 +454,7 @@ export const proposeTools = {
         ...(input.templateName ? { templateName: input.templateName } : {}),
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
-      return chip('whatsapp.send', `WhatsApp to ${input.to}`, row.id);
+      return chip(action, `WhatsApp to ${input.to}`, row.id);
     },
   }),
 
@@ -477,7 +492,7 @@ export const proposeTools = {
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
       return chip(
-        'outbound_call',
+        action,
         `Call ${input.toNumber}${input.aiMode ? ' (AI)' : ''}: ${input.goalHint ?? input.rationale.slice(0, 80)}`,
         row.id,
       );

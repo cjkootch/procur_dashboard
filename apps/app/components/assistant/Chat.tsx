@@ -12,6 +12,10 @@ import type {
 } from './types';
 import { DealEconomicsCard, isDealEconomicsOutput } from './DealEconomicsCard';
 import { CrudeGradeCard, isCrudeGradeDetailOutput } from './CrudeGradeCard';
+import {
+  ApprovalActionCard,
+  isApprovalActionOutput,
+} from './ApprovalActionCard';
 
 /**
  * Allowed for chat upload: PDF + the four image MIME types Anthropic's
@@ -558,6 +562,11 @@ function MessageView({
         <div className="flex flex-col gap-2">
           {message.toolUses.map((t) => {
             if (t.result && !t.result.isError) {
+              if (isApprovalActionOutput(t.result.output)) {
+                return (
+                  <ApprovalActionCard key={t.id} output={t.result.output} />
+                );
+              }
               if (isDealEconomicsOutput(t.result.output)) {
                 return <DealEconomicsCard key={t.id} output={t.result.output} />;
               }
