@@ -305,13 +305,23 @@ async function main(): Promise<void> {
          AND source = 'power_capacity'
          AND coverage_year = ${COVERAGE_YEAR};
     `);
+    const fuelType =
+      c.classification === 'hfo_baseload'
+        ? 'hfo'
+        : c.classification === 'diesel_peaker'
+          ? 'diesel'
+          : 'mixed';
+
     await db.execute(sql`
       INSERT INTO fuel_consumption_signals (
-        entity_slug, source, volume_bbl_yr_min, volume_bbl_yr_max,
+        entity_slug, source, signal_kind, fuel_type,
+        volume_bbl_yr_min, volume_bbl_yr_max,
         confidence, coverage_year, notes, source_url, raw_data
       ) VALUES (
         ${c.entitySlug},
         'power_capacity',
+        'capacity_signal',
+        ${fuelType},
         ${band.min.toFixed(2)},
         ${band.max.toFixed(2)},
         ${CONFIDENCE},

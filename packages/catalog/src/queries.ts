@@ -11641,6 +11641,8 @@ export async function composeProposalSkeleton(args: {
 export type FuelConsumptionSignalRow = {
   id: string;
   source: string;
+  signalKind: string | null;
+  fuelType: string | null;
   volumeBblYrMin: number | null;
   volumeBblYrMax: number | null;
   confidence: number | null;
@@ -11663,7 +11665,8 @@ export async function getFuelConsumptionSignalsBatch(
   if (entitySlugs.length === 0) return out;
   const result = await db.execute(sql`
     SELECT
-      entity_slug, id, source, volume_bbl_yr_min, volume_bbl_yr_max,
+      entity_slug, id, source, signal_kind, fuel_type,
+      volume_bbl_yr_min, volume_bbl_yr_max,
       confidence, as_of_date, coverage_year, notes, source_url, raw_data
     FROM fuel_consumption_signals
     WHERE entity_slug = ANY(ARRAY[${sql.join(
@@ -11682,6 +11685,8 @@ export async function getFuelConsumptionSignalsBatch(
     existing.push({
       id: String(r.id),
       source: String(r.source),
+      signalKind: r.signal_kind == null ? null : String(r.signal_kind),
+      fuelType: r.fuel_type == null ? null : String(r.fuel_type),
       volumeBblYrMin:
         r.volume_bbl_yr_min == null
           ? null
@@ -11724,7 +11729,8 @@ export async function getFuelConsumptionSignals(
 ): Promise<FuelConsumptionSignalRow[]> {
   const result = await db.execute(sql`
     SELECT
-      id, source, volume_bbl_yr_min, volume_bbl_yr_max, confidence,
+      id, source, signal_kind, fuel_type,
+      volume_bbl_yr_min, volume_bbl_yr_max, confidence,
       as_of_date, coverage_year, notes, source_url, raw_data
     FROM fuel_consumption_signals
     WHERE entity_slug = ${entitySlug}
@@ -11736,6 +11742,8 @@ export async function getFuelConsumptionSignals(
   return (result.rows as Array<Record<string, unknown>>).map((r) => ({
     id: String(r.id),
     source: String(r.source),
+    signalKind: r.signal_kind == null ? null : String(r.signal_kind),
+    fuelType: r.fuel_type == null ? null : String(r.fuel_type),
     volumeBblYrMin:
       r.volume_bbl_yr_min == null
         ? null

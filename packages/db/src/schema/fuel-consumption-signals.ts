@@ -40,6 +40,23 @@ export const fuelConsumptionSignals = pgTable(
      *  application code — no enum constraint. */
     source: text('source').notNull(),
 
+    /** What kind of evidence this signal carries — added per
+     *  buyer-intelligence-v2-free-sources-brief.md §3.1:
+     *    'volume_estimate'      — direct or derived bbl/yr figure
+     *    'capacity_signal'      — MW × utilization → derived bbl/yr
+     *    'expenditure_signal'   — $ spend ÷ benchmark price → bbl/yr
+     *    'activity_signal'      — proxy (e.g. nighttime lights,
+     *                             port-call days) without bbl/yr math
+     *  Free text — no enum so new kinds slot in without migration. */
+    signalKind: text('signal_kind'),
+
+    /** Which refined-product family the signal applies to:
+     *    'diesel' | 'hfo' | 'mgo' | 'jet' | 'gasoline' | 'mixed'
+     *  NULL when the source doesn't disaggregate (mining
+     *  production-derived signals are usually mixed
+     *  diesel + HFO). */
+    fuelType: text('fuel_type'),
+
     /** Annual fuel volume range in barrels. min == max for point
      *  estimates; both null for qualitative-only signals. */
     volumeBblYrMin: numeric('volume_bbl_yr_min', { precision: 20, scale: 2 }),
@@ -71,6 +88,7 @@ export const fuelConsumptionSignals = pgTable(
     coverageYearIdx: index('fuel_consumption_signals_coverage_year_idx').on(
       table.coverageYear,
     ),
+    fuelTypeIdx: index('fuel_consumption_signals_fuel_type_idx').on(table.fuelType),
   }),
 );
 

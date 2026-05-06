@@ -1865,6 +1865,8 @@ export function buildCatalogTools(): ToolRegistry {
                 tags: r.tags,
                 consumptionSignals: (signalsBySlug.get(r.slug) ?? []).map((s) => ({
                   source: s.source,
+                  signalKind: s.signalKind,
+                  fuelType: s.fuelType,
                   volumeBblYrMin: s.volumeBblYrMin,
                   volumeBblYrMax: s.volumeBblYrMax,
                   confidence: s.confidence,
@@ -5716,6 +5718,8 @@ export function buildCatalogTools(): ToolRegistry {
             await getFuelConsumptionSignals(result.supplier.id)
           ).map((s) => ({
             source: s.source,
+            signalKind: s.signalKind,
+            fuelType: s.fuelType,
             volumeBblYrMin: s.volumeBblYrMin,
             volumeBblYrMax: s.volumeBblYrMax,
             confidence: s.confidence,

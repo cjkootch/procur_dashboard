@@ -145,6 +145,8 @@ const FACTORS: IntensitySeed[] = [
 type SignalSeed = {
   entitySlug: string;
   source: string;
+  signalKind: 'volume_estimate' | 'capacity_signal' | 'expenditure_signal' | 'activity_signal';
+  fuelType: 'diesel' | 'hfo' | 'mgo' | 'jet' | 'gasoline' | 'mixed' | null;
   volumeBblYrMin: number;
   volumeBblYrMax: number;
   confidence: number;
@@ -175,6 +177,8 @@ const SIGNALS: SignalSeed[] = [
   {
     entitySlug: 'fuel-buyer:jisco-alpart',
     source: 'mining_production',
+    signalKind: 'volume_estimate',
+    fuelType: 'mixed',
     volumeBblYrMin: bblFromLiters(1_650_000 * 1100),
     volumeBblYrMax: bblFromLiters(1_650_000 * 1900),
     confidence: 0.7,
@@ -193,6 +197,8 @@ const SIGNALS: SignalSeed[] = [
   {
     entitySlug: 'fuel-buyer:jamalco',
     source: 'mining_production',
+    signalKind: 'volume_estimate',
+    fuelType: 'mixed',
     volumeBblYrMin: bblFromLiters(1_400_000 * 1100),
     volumeBblYrMax: bblFromLiters(1_400_000 * 1900),
     confidence: 0.7,
@@ -211,6 +217,8 @@ const SIGNALS: SignalSeed[] = [
   {
     entitySlug: 'fuel-buyer:windalco',
     source: 'mining_production',
+    signalKind: 'volume_estimate',
+    fuelType: 'mixed',
     volumeBblYrMin: bblFromLiters(1_200_000 * 1100),
     volumeBblYrMax: bblFromLiters(1_200_000 * 1900),
     confidence: 0.65,
@@ -230,6 +238,8 @@ const SIGNALS: SignalSeed[] = [
   {
     entitySlug: 'fuel-buyer:noranda-bauxite',
     source: 'mining_production',
+    signalKind: 'volume_estimate',
+    fuelType: 'diesel',
     volumeBblYrMin: bblFromLiters(5_000_000 * 1.5),
     volumeBblYrMax: bblFromLiters(5_000_000 * 3.0),
     confidence: 0.6,
@@ -250,6 +260,8 @@ const SIGNALS: SignalSeed[] = [
   {
     entitySlug: 'fuel-buyer:barrick-pueblo-viejo',
     source: 'mining_production',
+    signalKind: 'volume_estimate',
+    fuelType: 'diesel',
     volumeBblYrMin: bblFromLiters(800_000 * 0.35),
     volumeBblYrMax: bblFromLiters(800_000 * 0.85),
     confidence: 0.7,
@@ -269,6 +281,8 @@ const SIGNALS: SignalSeed[] = [
   {
     entitySlug: 'fuel-buyer:newmont-merian',
     source: 'mining_production',
+    signalKind: 'volume_estimate',
+    fuelType: 'diesel',
     volumeBblYrMin: bblFromLiters(450_000 * 0.4),
     volumeBblYrMax: bblFromLiters(450_000 * 0.85),
     confidence: 0.65,
@@ -289,6 +303,8 @@ const SIGNALS: SignalSeed[] = [
   {
     entitySlug: 'fuel-buyer:iamgold-rosebel',
     source: 'mining_production',
+    signalKind: 'volume_estimate',
+    fuelType: 'diesel',
     volumeBblYrMin: bblFromLiters(220_000 * 0.45),
     volumeBblYrMax: bblFromLiters(220_000 * 0.95),
     confidence: 0.6,
@@ -357,10 +373,12 @@ async function main() {
       `);
       await db.execute(sql`
         INSERT INTO fuel_consumption_signals (
-          entity_slug, source, volume_bbl_yr_min, volume_bbl_yr_max,
+          entity_slug, source, signal_kind, fuel_type,
+          volume_bbl_yr_min, volume_bbl_yr_max,
           confidence, coverage_year, notes, source_url, raw_data
         ) VALUES (
-          ${s.entitySlug}, ${s.source}, ${s.volumeBblYrMin}, ${s.volumeBblYrMax},
+          ${s.entitySlug}, ${s.source}, ${s.signalKind}, ${s.fuelType},
+          ${s.volumeBblYrMin}, ${s.volumeBblYrMax},
           ${s.confidence}, ${s.coverageYear}, ${s.notes}, ${s.sourceUrl},
           ${JSON.stringify(s.rawData)}::jsonb
         );
