@@ -202,9 +202,46 @@ def _maybe_setup_mlflow(run_name: str) -> object | None:
     return mlflow.start_run(run_name=run_name)
 
 
+def _save_checkpoint(
+    checkpoint_dir: Path,
+    model: HeterogeneousGraphSAGE,
+    feat_dims: dict[str, int],
+    edge_types: list[tuple[str, str, str]],
+    *,
+    hidden_dim: int,
+    out_dim: int,
+    model_version: str,
+    trained_at: dt.datetime,
+) -> None:
+    """Persist the trained model + meta for inductive inference.
+
+    Inductive flow (procur_ml.embed_entity) reloads the same module
+    architecture from feature_dims + edge_types, then calls
+    load_state_dict on model.pt. Keep both files together; bump both
+    when retraining changes shape.
+    """
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), checkpoint_dir / "model.pt")
+    meta = {
+        "modelVersion": model_version,
+        "trainedAt": trained_at.isoformat(),
+        "featureDims": feat_dims,
+        "edgeTypes": [list(et) for et in edge_types],
+        "hiddenDim": hidden_dim,
+        "outDim": out_dim,
+    }
+    (checkpoint_dir / "model_meta.json").write_text(json.dumps(meta))
+
+
 @click.command()
 @click.option("--graph", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True)
 @click.option("--output", type=click.Path(dir_okay=False, path_type=Path), default="embeddings.json")
+@click.option(
+    "--checkpoint-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default="checkpoints",
+    help="Where to save model.pt + model_meta.json for later inductive inference (procur_ml.embed_entity).",
+)
 @click.option("--epochs", type=int, default=50)
 @click.option("--lr", type=float, default=0.005)
 @click.option("--hidden-dim", type=int, default=128)
@@ -221,6 +258,7 @@ def _maybe_setup_mlflow(run_name: str) -> object | None:
 def main(
     graph: Path,
     output: Path,
+    checkpoint_dir: Path,
     epochs: int,
     lr: float,
     hidden_dim: int,
@@ -294,10 +332,28 @@ def main(
         trained_at=trained_at,
     )
     logger.info("wrote %s", output)
+
+    # Save checkpoint + meta for procur_ml.embed_entity (inductive
+    # inference, brief days 11-13). Without these files, new entities
+    # entering known_entities can't be embedded without a full retrain.
+    _save_checkpoint(
+        checkpoint_dir,
+        model,
+        feature_dims(procur_graph),
+        edge_types,
+        hidden_dim=hidden_dim,
+        out_dim=out_dim,
+        model_version=model_version,
+        trained_at=trained_at,
+    )
+    logger.info("saved checkpoint to %s/", checkpoint_dir)
+
     if mlflow_run is not None:
         import mlflow  # type: ignore[import-untyped]
 
         mlflow.log_artifact(str(output))
+        mlflow.log_artifact(str(checkpoint_dir / "model.pt"))
+        mlflow.log_artifact(str(checkpoint_dir / "model_meta.json"))
         mlflow.end_run()
 
 

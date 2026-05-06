@@ -59,6 +59,7 @@ type GraphOutput = {
     extractedAt: string;
     procurCommit: string | null;
     countryFilter: string | null;
+    targetEntitySlug: string | null;
     featureDims: Record<NodeType, number>;
     featureNames: Record<NodeType, string[]>;
     edgeTypes: EdgeType[];
@@ -423,14 +424,139 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const outputArg = args.find((a) => a.startsWith('--output='));
   const countryArg = args.find((a) => a.startsWith('--country='));
+  const singleEntityArg = args.find((a) => a.startsWith('--single-entity='));
   const statsOnly = args.includes('--stats-only');
   const output = outputArg ? outputArg.split('=')[1] ?? '' : 'graph.json';
   const country = countryArg ? (countryArg.split('=')[1] ?? '').toUpperCase() || null : null;
+  const singleEntity = singleEntityArg ? (singleEntityArg.split('=')[1] ?? '') || null : null;
 
-  console.log(`extract-graph — output=${output}, country=${country ?? 'ALL'}, statsOnly=${statsOnly}`);
+  console.log(
+    `extract-graph — output=${output}, country=${country ?? 'ALL'}, ` +
+      `singleEntity=${singleEntity ?? 'none'}, statsOnly=${statsOnly}`,
+  );
+
+  // ─── Single-entity neighborhood resolution ────────────────────
+  // For inductive inference (Component B days 11-13 per brief §5.4):
+  // restrict the graph to the target entity + its 1-hop neighborhood
+  // across all node types. Drops the 5-min trgm-match cost for the
+  // ownership edges down to <1s.
+  let entitySlugFilter: string[] | null = null;
+  let portSlugFilter: string[] | null = null;
+  let vesselMmsiFilter: string[] | null = null;
+  let gradeSlugFilter: string[] | null = null;
+
+  if (singleEntity) {
+    const target = (await db.execute(sql`
+      SELECT slug, latitude::float8 AS latitude, longitude::float8 AS longitude
+        FROM known_entities WHERE slug = ${singleEntity}
+    `)) as unknown as Array<{ slug: string; latitude: number | null; longitude: number | null }>;
+    if (target.length === 0 || !target[0]) {
+      console.error(`single-entity slug not found in known_entities: ${singleEntity}`);
+      process.exit(1);
+    }
+    const t = target[0];
+
+    // 1-hop entities — target + ownership-connected (fuzzy-matched
+    // via the name → slug link). One join query covers the whole
+    // walk so we avoid the per-row trgm overhead of the full extract.
+    const ownerNeighbors = (await db.execute(sql`
+      WITH target AS (SELECT name FROM known_entities WHERE slug = ${singleEntity})
+      SELECT DISTINCT ke.slug
+        FROM entity_ownership eo
+        JOIN known_entities ke
+          ON similarity(ke.name, eo.subject_name) > 0.55
+          OR similarity(ke.name, eo.parent_name) > 0.55
+       WHERE EXISTS (
+               SELECT 1 FROM target
+                WHERE similarity(eo.subject_name, target.name) > 0.55
+                   OR similarity(eo.parent_name, target.name) > 0.55
+             );
+    `)) as unknown as Array<{ slug: string }>;
+    const slugs = new Set<string>([singleEntity]);
+    for (const r of ownerNeighbors) slugs.add(r.slug);
+    entitySlugFilter = [...slugs];
+
+    // 1-hop ports — within 5km of target's lat/long. If target has
+    // no coords, port filter is empty (no port edges anyway).
+    if (t.latitude != null && t.longitude != null) {
+      const portCoords = (await db.execute(sql`
+        SELECT slug, lat::float8 AS lat, lng::float8 AS lng FROM ports
+      `)) as unknown as Array<{ slug: string; lat: number; lng: number }>;
+      const nearbyPorts = portCoords.filter(
+        (p) => kmBetween(t.latitude as number, t.longitude as number, p.lat, p.lng) <= 5,
+      );
+      portSlugFilter = nearbyPorts.map((p) => p.slug);
+    } else {
+      portSlugFilter = [];
+    }
+
+    // 1-hop vessels — those that called any nearby port in last 24mo
+    if (portSlugFilter.length > 0) {
+      const vesselRows = (await db.execute(sql`
+        SELECT DISTINCT mmsi FROM cargo_trips
+         WHERE (load_port_slug = ANY(ARRAY[${sql.join(
+           portSlugFilter.map((p) => sql`${p}`),
+           sql`, `,
+         )}]::text[])
+            OR discharge_port_slug = ANY(ARRAY[${sql.join(
+              portSlugFilter.map((p) => sql`${p}`),
+              sql`, `,
+            )}]::text[]))
+           AND inferred_at >= NOW() - INTERVAL '24 months';
+      `)) as unknown as Array<{ mmsi: string }>;
+      vesselMmsiFilter = vesselRows.map((v) => v.mmsi);
+    } else {
+      vesselMmsiFilter = [];
+    }
+
+    // 1-hop grades — handled by nearby ports OR carried by 1-hop vessels
+    const gradesFromPorts = (portSlugFilter.length > 0
+      ? ((await db.execute(sql`
+          SELECT DISTINCT unnest(known_grades) AS slug
+            FROM ports
+           WHERE slug = ANY(ARRAY[${sql.join(
+             portSlugFilter.map((p) => sql`${p}`),
+             sql`, `,
+           )}]::text[])
+             AND known_grades IS NOT NULL;
+        `).catch(() => [] as Array<unknown>)) as unknown as Array<{ slug: string }>)
+      : []);
+    const gradesFromVessels =
+      vesselMmsiFilter.length > 0
+        ? ((await db.execute(sql`
+            SELECT DISTINCT inferred_grade_slug AS slug
+              FROM cargo_trips
+             WHERE inferred_grade_slug IS NOT NULL
+               AND mmsi = ANY(ARRAY[${sql.join(
+                 vesselMmsiFilter.map((m) => sql`${m}`),
+                 sql`, `,
+               )}]::text[]);
+          `)) as unknown as Array<{ slug: string }>)
+        : [];
+    gradeSlugFilter = [
+      ...new Set([
+        ...gradesFromPorts.map((g) => g.slug),
+        ...gradesFromVessels.map((g) => g.slug),
+      ]),
+    ];
+
+    console.log(
+      `  neighborhood: entities=${entitySlugFilter.length}, ports=${portSlugFilter.length}, vessels=${vesselMmsiFilter.length}, grades=${gradeSlugFilter.length}`,
+    );
+  }
 
   // ─── Nodes ────────────────────────────────────────────────────
-  const entityRows = (await (country
+  const entityRows = (await (entitySlugFilter
+    ? db.execute(sql`
+        SELECT slug, country, role, categories, latitude::float8 AS latitude, longitude::float8 AS longitude,
+               metadata, apollo_org_id, apollo_total_funding
+          FROM known_entities
+         WHERE slug = ANY(ARRAY[${sql.join(
+           entitySlugFilter.map((s) => sql`${s}`),
+           sql`, `,
+         )}]::text[])
+      `)
+    : country
     ? db.execute(sql`
         SELECT slug, country, role, categories, latitude::float8 AS latitude, longitude::float8 AS longitude,
                metadata, apollo_org_id, apollo_total_funding
@@ -443,12 +569,33 @@ async function main(): Promise<void> {
           FROM known_entities
       `))) as unknown as EntityRow[];
 
-  const vesselRows = (await db.execute(sql`
-    SELECT mmsi, imo, ship_type_label, flag_country, dwt, last_seen_at
-      FROM vessels
-  `)) as unknown as VesselRow[];
+  const vesselRows = (await (vesselMmsiFilter
+    ? vesselMmsiFilter.length === 0
+      ? Promise.resolve([] as unknown[])
+      : db.execute(sql`
+          SELECT mmsi, imo, ship_type_label, flag_country, dwt, last_seen_at
+            FROM vessels
+           WHERE mmsi = ANY(ARRAY[${sql.join(
+             vesselMmsiFilter.map((m) => sql`${m}`),
+             sql`, `,
+           )}]::text[])
+        `)
+    : db.execute(sql`
+        SELECT mmsi, imo, ship_type_label, flag_country, dwt, last_seen_at
+          FROM vessels
+      `))) as unknown as VesselRow[];
 
-  const portRows = (await (country
+  const portRows = (await (portSlugFilter
+    ? portSlugFilter.length === 0
+      ? Promise.resolve([] as unknown[])
+      : db.execute(sql`
+          SELECT slug, country, port_type FROM ports
+           WHERE slug = ANY(ARRAY[${sql.join(
+             portSlugFilter.map((p) => sql`${p}`),
+             sql`, `,
+           )}]::text[])
+        `)
+    : country
     ? db.execute(sql`
         SELECT slug, country, port_type FROM ports WHERE country = ${country}
       `)
@@ -456,17 +603,49 @@ async function main(): Promise<void> {
 
   // crude_grades schema may not have all the fields we'd want. Fall back
   // gracefully: pull whatever's there + null out missing.
-  const crudeGradeRows = (await db.execute(sql`
-    SELECT slug,
-           NULLIF(api_gravity, NULL)::float8 AS api_gravity,
-           NULLIF(sulfur_pct, NULL)::float8 AS sulfur_pct,
-           source_country
-      FROM crude_grades
-  `).catch(async () => {
-    // If schema differs, fall back to slug-only.
-    const fallback = (await db.execute(sql`SELECT slug FROM crude_grades`)) as unknown as Array<{ slug: string }>;
-    return fallback.map((r) => ({ slug: r.slug, api_gravity: null, sulfur_pct: null, source_country: null }));
-  })) as unknown as CrudeGradeRow[];
+  const crudeGradeRows = (await (gradeSlugFilter
+    ? gradeSlugFilter.length === 0
+      ? Promise.resolve([] as unknown[])
+      : db.execute(sql`
+          SELECT slug,
+                 NULLIF(api_gravity, NULL)::float8 AS api_gravity,
+                 NULLIF(sulfur_pct, NULL)::float8 AS sulfur_pct,
+                 source_country
+            FROM crude_grades
+           WHERE slug = ANY(ARRAY[${sql.join(
+             gradeSlugFilter.map((g) => sql`${g}`),
+             sql`, `,
+           )}]::text[])
+        `).catch(async () => {
+          const fallback = (await db.execute(sql`
+            SELECT slug FROM crude_grades
+             WHERE slug = ANY(ARRAY[${sql.join(
+               (gradeSlugFilter as string[]).map((g) => sql`${g}`),
+               sql`, `,
+             )}]::text[])
+          `)) as unknown as Array<{ slug: string }>;
+          return fallback.map((r) => ({
+            slug: r.slug,
+            api_gravity: null,
+            sulfur_pct: null,
+            source_country: null,
+          }));
+        })
+    : db.execute(sql`
+        SELECT slug,
+               NULLIF(api_gravity, NULL)::float8 AS api_gravity,
+               NULLIF(sulfur_pct, NULL)::float8 AS sulfur_pct,
+               source_country
+          FROM crude_grades
+      `).catch(async () => {
+        const fallback = (await db.execute(sql`SELECT slug FROM crude_grades`)) as unknown as Array<{ slug: string }>;
+        return fallback.map((r) => ({
+          slug: r.slug,
+          api_gravity: null,
+          sulfur_pct: null,
+          source_country: null,
+        }));
+      }))) as unknown as CrudeGradeRow[];
 
   console.log(
     `\n  nodes loaded: entity=${entityRows.length}, vessel=${vesselRows.length}, port=${portRows.length}, crude_grade=${crudeGradeRows.length}`,
@@ -512,13 +691,28 @@ async function main(): Promise<void> {
     }
   }
 
-  // vessel-called-port: from cargo_trips load + discharge ports
-  const cargoTripRows = (await db.execute(sql`
-    SELECT mmsi, load_port_slug, discharge_port_slug, inferred_grade_slug,
-           inferred_volume_bbl, confidence::float8 AS confidence
-      FROM cargo_trips
-     WHERE inferred_at >= NOW() - INTERVAL '24 months'
-  `)) as unknown as Array<{
+  // vessel-called-port: from cargo_trips load + discharge ports.
+  // Constrain to filtered vessels when in single-entity mode so we
+  // don't scan all 24mo of cargo_trips for one entity's neighborhood.
+  const cargoTripRows = (vesselMmsiFilter && vesselMmsiFilter.length === 0
+    ? ([] as unknown[])
+    : await db.execute(vesselMmsiFilter
+        ? sql`
+            SELECT mmsi, load_port_slug, discharge_port_slug, inferred_grade_slug,
+                   inferred_volume_bbl, confidence::float8 AS confidence
+              FROM cargo_trips
+             WHERE inferred_at >= NOW() - INTERVAL '24 months'
+               AND mmsi = ANY(ARRAY[${sql.join(
+                 vesselMmsiFilter.map((m) => sql`${m}`),
+                 sql`, `,
+               )}]::text[])
+          `
+        : sql`
+            SELECT mmsi, load_port_slug, discharge_port_slug, inferred_grade_slug,
+                   inferred_volume_bbl, confidence::float8 AS confidence
+              FROM cargo_trips
+             WHERE inferred_at >= NOW() - INTERVAL '24 months'
+          `)) as unknown as Array<{
     mmsi: string;
     load_port_slug: string;
     discharge_port_slug: string;
@@ -579,11 +773,35 @@ async function main(): Promise<void> {
     }
   }
 
-  // entity-owns-entity: fuzzy-match subject_name + parent_name to known_entities slugs
-  const ownershipRows = (await db.execute(sql`
-    SELECT subject_name, parent_name, share_pct::float8 AS share_pct
-      FROM entity_ownership
-  `)) as unknown as Array<{ subject_name: string; parent_name: string; share_pct: number | null }>;
+  // entity-owns-entity: fuzzy-match subject_name + parent_name to
+  // known_entities slugs. In single-entity mode constrain to ownership
+  // rows that touch the neighborhood — avoids scanning all 26K rows
+  // for one entity's local graph.
+  const targetEntityNames =
+    entitySlugFilter && entitySlugFilter.length > 0
+      ? entityRows.map((e) => e.slug) // re-use the loaded entity rows for fuzzy match
+      : null;
+  const ownershipRows = (await (targetEntityNames
+    ? db.execute(sql`
+        WITH neighborhood AS (
+          SELECT name FROM known_entities
+           WHERE slug = ANY(ARRAY[${sql.join(
+             targetEntityNames.map((s) => sql`${s}`),
+             sql`, `,
+           )}]::text[])
+        )
+        SELECT eo.subject_name, eo.parent_name, eo.share_pct::float8 AS share_pct
+          FROM entity_ownership eo
+         WHERE EXISTS (
+                 SELECT 1 FROM neighborhood n
+                  WHERE similarity(eo.subject_name, n.name) > 0.55
+                     OR similarity(eo.parent_name, n.name) > 0.55
+               );
+      `)
+    : db.execute(sql`
+        SELECT subject_name, parent_name, share_pct::float8 AS share_pct
+          FROM entity_ownership
+      `))) as unknown as Array<{ subject_name: string; parent_name: string; share_pct: number | null }>;
   for (const o of ownershipRows) {
     // pg_trgm match each side. Threshold 0.55 same as supplier-graph.
     const subjectMatch = (await db.execute(sql`
@@ -624,6 +842,7 @@ async function main(): Promise<void> {
       extractedAt: new Date().toISOString(),
       procurCommit: process.env.PROCUR_COMMIT ?? null,
       countryFilter: country,
+      targetEntitySlug: singleEntity,
       featureDims: {
         entity: featureNames.entity.length,
         vessel: featureNames.vessel.length,
