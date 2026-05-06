@@ -15,6 +15,7 @@ import {
   getSupplierApproval,
 } from '@procur/catalog';
 import { getCurrentUser } from '@procur/auth';
+import { EntityAvatar } from '../../../components/EntityAvatar';
 import { KycBadge } from '../../../components/KycBadge';
 import { parseEntityNotes } from '../../../lib/entity-notes';
 import { PushToVexButton } from './_components/PushToVexButton';
@@ -133,65 +134,96 @@ export default async function EntityProfilePage({ params }: Props) {
         </Link>
       </nav>
 
-      <header className="mb-6">
-        <div className="flex items-baseline justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-semibold tracking-tight">{profile.name}</h1>
-            <KycBadge
-              status={approval?.status ?? null}
-              size="lg"
-              expiresAt={approval?.expiresAt ?? null}
+      <header className="mb-6 overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] shadow-sm">
+        <div className="h-32 bg-gradient-to-r from-sky-200 via-indigo-200 to-violet-200 sm:h-40" />
+        <div className="px-6 pb-5">
+          <div className="-mt-12 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
+            <div className="flex items-end gap-4">
+              <div className="rounded-full bg-[color:var(--color-background)] p-1 shadow-sm ring-1 ring-[color:var(--color-border)]">
+                <EntityAvatar name={profile.name} size="xl" />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 sm:pb-1">
+              <span className="rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2.5 py-1 text-xs text-[color:var(--color-muted-foreground)]">
+                {profile.primarySource === 'known_entity'
+                  ? 'curated rolodex'
+                  : 'portal-scraped'}
+              </span>
+              <PushToVexButton slug={profile.canonicalKey} />
+            </div>
+          </div>
+          <div className="mt-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-2xl font-semibold tracking-tight">{profile.name}</h1>
+              <KycBadge
+                status={approval?.status ?? null}
+                size="lg"
+                expiresAt={approval?.expiresAt ?? null}
+              />
+            </div>
+            <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
+              {[profile.role, profile.country].filter(Boolean).join(' · ') ||
+                'Unknown'}
+              {profile.aliases.length > 1 && (
+                <>
+                  {' · '}
+                  <span title={profile.aliases.join(' • ')}>
+                    aka {profile.aliases.filter((a) => a !== profile.name).slice(0, 2).join(', ')}
+                    {profile.aliases.length > 3 ? ` (+${profile.aliases.length - 3})` : ''}
+                  </span>
+                </>
+              )}
+            </p>
+            {profile.categories.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {profile.categories.slice(0, 6).map((cat) => (
+                  <span
+                    key={cat}
+                    className="rounded-full bg-[color:var(--color-muted)]/50 px-2 py-0.5 text-[11px] text-[color:var(--color-muted-foreground)]"
+                  >
+                    {cat}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="mt-4 border-t border-[color:var(--color-border)] pt-4">
+            <SupplierApprovalForm
+              entitySlug={profile.canonicalKey}
+              entityName={profile.name}
+              initialStatus={approval?.status ?? null}
+              initialExpiresAt={approval?.expiresAt ?? null}
+              initialNotes={approval?.notes ?? null}
+              entityTags={profile.tags}
             />
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-              {profile.primarySource === 'known_entity'
-                ? 'curated rolodex'
-                : 'portal-scraped'}
-            </span>
-            <PushToVexButton slug={profile.canonicalKey} />
-          </div>
         </div>
-        <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
-          {profile.country ?? 'Unknown country'}
-          {profile.role && ` · ${profile.role}`}
-          {profile.aliases.length > 1 && (
-            <>
-              {' · '}
-              <span title={profile.aliases.join(' • ')}>
-                aka {profile.aliases.filter((a) => a !== profile.name).slice(0, 2).join(', ')}
-                {profile.aliases.length > 3 ? ` (+${profile.aliases.length - 3})` : ''}
-              </span>
-            </>
-          )}
-        </p>
-        <SupplierApprovalForm
-          entitySlug={profile.canonicalKey}
-          entityName={profile.name}
-          initialStatus={approval?.status ?? null}
-          initialExpiresAt={approval?.expiresAt ?? null}
-          initialNotes={approval?.notes ?? null}
-          entityTags={profile.tags}
-        />
       </header>
 
       {(cap.capacityBpd != null ||
         cap.operator ||
         cap.owner ||
         cap.inceptionYear != null) && (
-        <section className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-          {cap.capacityBpd != null && (
-            <Stat
-              label="Capacity"
-              value={`${(cap.capacityBpd / 1000).toFixed(0)}k bpd`}
-            />
-          )}
-          {cap.operator && <Stat label="Operator" value={cap.operator} />}
-          {cap.owner && cap.owner !== cap.operator && <Stat label="Owner" value={cap.owner} />}
-          {cap.inceptionYear != null && (
-            <Stat label="Started" value={String(cap.inceptionYear)} />
-          )}
-          {cap.status && <Stat label="Status" value={cap.status} />}
+        <section className="mb-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-5 shadow-sm">
+          <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            At a glance
+          </h2>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-4">
+            {cap.capacityBpd != null && (
+              <InlineStat
+                label="Capacity"
+                value={`${(cap.capacityBpd / 1000).toFixed(0)}k bpd`}
+              />
+            )}
+            {cap.operator && <InlineStat label="Operator" value={cap.operator} />}
+            {cap.owner && cap.owner !== cap.operator && (
+              <InlineStat label="Owner" value={cap.owner} />
+            )}
+            {cap.inceptionYear != null && (
+              <InlineStat label="Started" value={String(cap.inceptionYear)} />
+            )}
+            {cap.status && <InlineStat label="Status" value={cap.status} />}
+          </dl>
         </section>
       )}
 
@@ -304,11 +336,11 @@ export default async function EntityProfilePage({ params }: Props) {
 
 
       {vesselActivity && (
-        <section className="mb-6">
-          <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+        <section className="mb-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-5 shadow-sm">
+          <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Vessel activity
           </h2>
-          <div className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-4 shadow-sm">
+          <div>
             {vesselActivity.callsLast30d === 0 && vesselActivity.nearbyPorts.length === 0 ? (
               <p className="text-xs text-[color:var(--color-muted-foreground)]">
                 No tanker calls within 50 nm of this location in the last 30 days. Either the AISStream
@@ -436,15 +468,15 @@ export default async function EntityProfilePage({ params }: Props) {
       )}
 
       {profile.categories.length > 0 && (
-        <section className="mb-6">
-          <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+        <section className="mb-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-5 shadow-sm">
+          <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Categories
           </h2>
           <div className="flex flex-wrap gap-2">
             {profile.categories.map((c) => (
               <span
                 key={c}
-                className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-xs"
+                className="rounded-full bg-[color:var(--color-muted)]/50 px-3 py-1 text-xs"
               >
                 {c}
               </span>
@@ -454,8 +486,8 @@ export default async function EntityProfilePage({ params }: Props) {
       )}
 
       {profile.tags.length > 0 && (
-        <section className="mb-6">
-          <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+        <section className="mb-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-5 shadow-sm">
+          <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Tags
           </h2>
           <div className="flex flex-wrap gap-2 text-xs">
@@ -463,7 +495,7 @@ export default async function EntityProfilePage({ params }: Props) {
               <Link
                 key={t}
                 href={`/suppliers/known-entities?tag=${encodeURIComponent(t)}`}
-                className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 hover:border-[color:var(--color-foreground)]"
+                className="rounded-full border border-[color:var(--color-border)] px-3 py-1 text-[color:var(--color-muted-foreground)] hover:border-[color:var(--color-foreground)] hover:text-[color:var(--color-foreground)]"
               >
                 {t}
               </Link>
@@ -642,8 +674,8 @@ export default async function EntityProfilePage({ params }: Props) {
       })()}
 
       {(directOwners.length > 0 || ownershipChain.length > 1) && (
-        <section className="mb-6">
-          <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+        <section className="mb-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-5 shadow-sm">
+          <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
             Ownership
             {cap.operator && cap.operator !== profile.name && (
               <span className="ml-2 font-normal normal-case tracking-normal text-[color:var(--color-muted-foreground)]">
@@ -707,8 +739,8 @@ export default async function EntityProfilePage({ params }: Props) {
         </section>
       )}
 
-      <section className="mb-6">
-        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+      <section className="mb-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-5 shadow-sm">
+        <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
           Public-tender activity
         </h2>
         {!tender ? (
@@ -841,6 +873,17 @@ function Stat({
       {sub && (
         <div className="mt-0.5 text-[10px] text-[color:var(--color-muted-foreground)]">{sub}</div>
       )}
+    </div>
+  );
+}
+
+function InlineStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+        {label}
+      </dt>
+      <dd className="mt-0.5 text-sm font-medium tabular-nums">{value}</dd>
     </div>
   );
 }
