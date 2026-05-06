@@ -13083,3 +13083,218 @@ export async function getEntityAttributeEditHistory(
   }));
 }
 
+// ─── Feedback dashboard surfaces (close-the-loop reads) ───────────
+// Per docs/feedback-ui-brief.md §9 ("show the impact of feedback
+// eventually"). Four list helpers for pinned-matches, friction-queue,
+// disposition-heat-map, and retrospective-queue pages. Each per-user,
+// ordered for at-a-glance scan.
+
+export type PinnedMatchRow = {
+  feedbackEventId: string;
+  matchQueueId: string;
+  pinnedAt: string;
+  /** Hydrated from match_queue when still extant; null when the
+      source row has been hard-deleted. The pin still surfaces so the
+      user knows they pinned it; just without context. */
+  signalType: string | null;
+  signalKind: string | null;
+  sourceEntityName: string | null;
+  sourceEntityCountry: string | null;
+  rationale: string | null;
+  score: number | null;
+  observedAt: string | null;
+  entityProfileSlug: string | null;
+};
+
+export async function getPinnedMatches(
+  userId: string,
+  limit: number = 100,
+): Promise<PinnedMatchRow[]> {
+  const rows = (await db.execute(sql`
+    SELECT
+      fe.id AS feedback_event_id,
+      fe.target_id AS match_queue_id,
+      fe.created_at AS pinned_at,
+      mq.signal_type, mq.signal_kind,
+      mq.source_entity_name, mq.source_entity_country,
+      mq.rationale, mq.score::float8 AS score, mq.observed_at,
+      ke.slug AS entity_slug
+    FROM feedback_events fe
+    LEFT JOIN match_queue mq ON mq.id::text = fe.target_id
+    LEFT JOIN known_entities ke ON ke.id = mq.known_entity_id
+    WHERE fe.user_id = ${userId}
+      AND fe.feedback_kind = 'match_quality'
+      AND fe.sentiment = 'pin'
+      AND fe.revoked_at IS NULL
+    ORDER BY fe.created_at DESC
+    LIMIT ${limit};
+  `)) as unknown as Array<Record<string, unknown>>;
+  return rows.map((r) => ({
+    feedbackEventId: String(r.feedback_event_id),
+    matchQueueId: String(r.match_queue_id ?? ''),
+    pinnedAt: (r.pinned_at as Date).toISOString(),
+    signalType: r.signal_type == null ? null : String(r.signal_type),
+    signalKind: r.signal_kind == null ? null : String(r.signal_kind),
+    sourceEntityName: r.source_entity_name == null ? null : String(r.source_entity_name),
+    sourceEntityCountry: r.source_entity_country == null ? null : String(r.source_entity_country),
+    rationale: r.rationale == null ? null : String(r.rationale),
+    score: r.score == null ? null : Number(r.score),
+    observedAt:
+      r.observed_at instanceof Date
+        ? r.observed_at.toISOString().slice(0, 10)
+        : r.observed_at == null
+        ? null
+        : String(r.observed_at),
+    entityProfileSlug: r.entity_slug == null ? null : String(r.entity_slug),
+  }));
+}
+
+export type FrictionQueueRow = {
+  feedbackEventId: string;
+  description: string;
+  status: 'logged' | 'reviewing' | 'in_progress' | 'shipped' | 'wontfix';
+  resolutionNote: string | null;
+  resolvedAt: string | null;
+  relatedPrUrl: string | null;
+  page: string | null;
+  loggedAt: string;
+};
+
+export async function getFrictionQueueForUser(
+  userId: string,
+  limit: number = 100,
+): Promise<FrictionQueueRow[]> {
+  const rows = (await db.execute(sql`
+    SELECT
+      fe.id AS feedback_event_id,
+      fe.payload->>'description' AS description,
+      fe.context->>'page' AS page,
+      fe.created_at AS logged_at,
+      fs.status, fs.resolution_note, fs.resolved_at, fs.related_pr_url
+    FROM feedback_events fe
+    LEFT JOIN friction_status fs ON fs.feedback_event_id = fe.id
+    WHERE fe.user_id = ${userId}
+      AND fe.feedback_kind = 'friction'
+      AND fe.revoked_at IS NULL
+    ORDER BY fe.created_at DESC
+    LIMIT ${limit};
+  `)) as unknown as Array<Record<string, unknown>>;
+  return rows.map((r) => ({
+    feedbackEventId: String(r.feedback_event_id),
+    description: String(r.description ?? ''),
+    status: (String(r.status ?? 'logged') as FrictionQueueRow['status']),
+    resolutionNote: r.resolution_note == null ? null : String(r.resolution_note),
+    resolvedAt:
+      r.resolved_at instanceof Date ? r.resolved_at.toISOString() : (r.resolved_at as string | null),
+    relatedPrUrl: r.related_pr_url == null ? null : String(r.related_pr_url),
+    page: r.page == null ? null : String(r.page),
+    loggedAt: (r.logged_at as Date).toISOString(),
+  }));
+}
+
+export type FrictionStatusUpdate = {
+  feedbackEventId: string;
+  status: FrictionQueueRow['status'];
+  resolutionNote?: string | null;
+  relatedPrUrl?: string | null;
+};
+
+export async function updateFrictionStatus(input: FrictionStatusUpdate): Promise<void> {
+  const resolvedAt =
+    input.status === 'shipped' || input.status === 'wontfix' ? new Date() : null;
+  await db.execute(sql`
+    UPDATE friction_status
+       SET status = ${input.status},
+           resolution_note = ${input.resolutionNote ?? null},
+           related_pr_url = ${input.relatedPrUrl ?? null},
+           resolved_at = ${resolvedAt},
+           updated_at = now()
+     WHERE feedback_event_id = ${input.feedbackEventId};
+  `);
+}
+
+export type DispositionHeatMapRow = {
+  entitySlug: string;
+  entityName: string;
+  entityCountry: string;
+  disposition: EntityDispositionValue;
+  declineReason: string | null;
+  setAt: string;
+  isStale: boolean;
+};
+
+/**
+ * Per-user disposition heat-map per docs/feedback-ui-brief.md §7.3.
+ * Joins current_dispositions to known_entities for display name +
+ * country. Stale flag (>30 days since set) drives the ⚠️ amber
+ * indicator.
+ */
+export async function getDispositionHeatMap(
+  userId: string,
+  limit: number = 500,
+): Promise<DispositionHeatMapRow[]> {
+  const staleDays = 30;
+  const rows = (await db.execute(sql`
+    SELECT
+      cd.entity_slug, cd.disposition, cd.decline_reason, cd.set_at,
+      ke.name AS entity_name, ke.country AS entity_country,
+      (now() - cd.set_at) > (${staleDays}::int * INTERVAL '1 day') AS is_stale
+    FROM current_dispositions cd
+    JOIN known_entities ke ON ke.slug = cd.entity_slug
+    WHERE cd.user_id = ${userId}
+    ORDER BY cd.disposition, cd.set_at DESC
+    LIMIT ${limit};
+  `)) as unknown as Array<Record<string, unknown>>;
+  return rows.map((r) => ({
+    entitySlug: String(r.entity_slug),
+    entityName: String(r.entity_name),
+    entityCountry: String(r.entity_country ?? ''),
+    disposition: String(r.disposition) as EntityDispositionValue,
+    declineReason: r.decline_reason == null ? null : String(r.decline_reason),
+    setAt: (r.set_at as Date).toISOString(),
+    isStale: Boolean(r.is_stale),
+  }));
+}
+
+export type RetrospectiveQueueRow = {
+  id: string;
+  dealId: string;
+  dealOutcome: 'won' | 'lost' | 'dead';
+  isDraft: boolean;
+  completedAt: string | null;
+  /** procurInsightMattered surfaced for at-a-glance scan. */
+  procurInsightMattered: ProcurInsightMatteredValue | null;
+  patternForFuture: string | null;
+  updatedAt: string;
+};
+
+export async function listRetrospectivesForUser(
+  userId: string,
+  limit: number = 100,
+): Promise<RetrospectiveQueueRow[]> {
+  const rows = (await db.execute(sql`
+    SELECT id, deal_id, deal_outcome, is_draft, completed_at,
+           procur_insight_mattered, pattern_for_future, updated_at
+      FROM deal_retrospectives
+     WHERE user_id = ${userId}
+     ORDER BY is_draft DESC, COALESCE(completed_at, updated_at) DESC
+     LIMIT ${limit};
+  `)) as unknown as Array<Record<string, unknown>>;
+  return rows.map((r) => ({
+    id: String(r.id),
+    dealId: String(r.deal_id),
+    dealOutcome: String(r.deal_outcome) as 'won' | 'lost' | 'dead',
+    isDraft: Boolean(r.is_draft),
+    completedAt:
+      r.completed_at instanceof Date
+        ? r.completed_at.toISOString()
+        : (r.completed_at as string | null),
+    procurInsightMattered:
+      r.procur_insight_mattered == null
+        ? null
+        : (String(r.procur_insight_mattered) as ProcurInsightMatteredValue),
+    patternForFuture: r.pattern_for_future == null ? null : String(r.pattern_for_future),
+    updatedAt: (r.updated_at as Date).toISOString(),
+  }));
+}
+
