@@ -1,9 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useActionState, useEffect, useState } from 'react';
+import { useFormStatus } from 'react-dom';
+import {
+  initialSaveEmailSettingsState,
+  type SaveEmailSettingsState,
+} from './actions';
 
 interface EmailSettingsFormProps {
-  action: (formData: FormData) => void | Promise<void>;
+  action: (
+    prev: SaveEmailSettingsState,
+    formData: FormData,
+  ) => Promise<SaveEmailSettingsState>;
   initial: {
     displayName: string;
     alwaysCc: string;
@@ -25,8 +33,15 @@ export function EmailSettingsForm({ action, initial }: EmailSettingsFormProps) {
   const [signatureHtml, setSignatureHtml] = useState(initial.signatureHtml);
   const [signatureText, setSignatureText] = useState(initial.signatureText);
 
+  const [state, formAction] = useActionState(
+    action,
+    initialSaveEmailSettingsState,
+  );
+
   return (
-    <form action={action} className="space-y-8">
+    <form action={formAction} className="space-y-8">
+      <SaveBanner state={state} />
+
       <section>
         <h2 className="text-base font-semibold">Sender display name</h2>
         <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
@@ -128,14 +143,87 @@ export function EmailSettingsForm({ action, initial }: EmailSettingsFormProps) {
         )}
       </section>
 
-      <div className="flex justify-end">
-        <button
-          type="submit"
-          className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)]"
-        >
-          Save email settings
-        </button>
+      <div className="flex items-center justify-end gap-3">
+        <InlineStatus state={state} />
+        <SubmitButton />
       </div>
     </form>
+  );
+}
+
+function SubmitButton() {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)] disabled:opacity-60"
+    >
+      {pending ? 'Saving…' : 'Save email settings'}
+    </button>
+  );
+}
+
+/**
+ * Inline status next to the submit button — fades the success
+ * confirmation after 4s so it doesn't linger past the moment the
+ * user moved on. Errors stay visible until the next save attempt.
+ */
+function InlineStatus({ state }: { state: SaveEmailSettingsState }) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (state.status === 'success') {
+      setVisible(true);
+      const t = setTimeout(() => setVisible(false), 4000);
+      return () => clearTimeout(t);
+    }
+    if (state.status === 'error') {
+      setVisible(true);
+    }
+  }, [state]);
+
+  if (!visible || state.status === 'idle') return null;
+
+  return (
+    <span
+      className={
+        state.status === 'success'
+          ? 'text-xs font-medium text-emerald-600'
+          : 'text-xs font-medium text-red-600'
+      }
+    >
+      {state.status === 'success' ? '✓ Saved' : `✗ ${state.message}`}
+    </span>
+  );
+}
+
+/**
+ * Top-of-form banner — louder confirmation that survives even when
+ * the user's cursor is on the submit button when the action resolves
+ * (the save button at the bottom can be the only thing in viewport
+ * on tall forms).
+ */
+function SaveBanner({ state }: { state: SaveEmailSettingsState }) {
+  if (state.status === 'idle') return null;
+  if (state.status === 'success') {
+    return (
+      <div
+        role="status"
+        className="rounded-[var(--radius-md)] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+      >
+        <strong className="font-semibold">Saved.</strong> {state.message} New
+        defaults apply to the next approved <code>email.send</code>.
+      </div>
+    );
+  }
+  return (
+    <div
+      role="alert"
+      className="rounded-[var(--radius-md)] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+    >
+      <strong className="font-semibold">Couldn&apos;t save:</strong>{' '}
+      {state.message}
+    </div>
   );
 }
