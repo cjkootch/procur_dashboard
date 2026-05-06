@@ -40,7 +40,7 @@ import type { AgentContext, AgentOutput, IAgent } from '../types';
  * decides whether to block the deal.
  */
 
-const CSL_API_BASE = 'https://api.trade.gov/static/consolidated_screening_list';
+const CSL_API_BASE = 'https://data.trade.gov/consolidated_screening_list/v1';
 const CSL_API_KEY = process.env.TRADE_GOV_CSL_API_KEY;
 // Fuzzy match thresholds — matches vex's defaults.
 const HIGH_CONFIDENCE_THRESHOLD = 0.95;
@@ -264,11 +264,17 @@ export class SanctionsScreeningAgent implements IAgent {
 }
 
 async function searchTradeGovCSL(name: string): Promise<ScreenMatch[]> {
-  const url = `${CSL_API_BASE}/search?api_key=${encodeURIComponent(
-    CSL_API_KEY!,
-  )}&name=${encodeURIComponent(name)}&fuzzy_name=true&size=20`;
+  // The trade.gov developer portal (Azure API Management) authenticates
+  // via the Ocp-Apim-Subscription-Key header, NOT the legacy ?api_key=
+  // query string. Endpoint moved to data.trade.gov /v1/search.
+  const url = `${CSL_API_BASE}/search?name=${encodeURIComponent(
+    name,
+  )}&fuzzy_name=true&size=20`;
   const res = await fetch(url, {
-    headers: { Accept: 'application/json' },
+    headers: {
+      Accept: 'application/json',
+      'Ocp-Apim-Subscription-Key': CSL_API_KEY!,
+    },
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) {
