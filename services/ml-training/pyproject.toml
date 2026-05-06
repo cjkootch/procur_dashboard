@@ -16,7 +16,11 @@ dependencies = [
     # Misc
     "click>=8.1,<9.0",
     "python-dotenv>=1.0,<2.0",
-    "numpy>=1.26,<3.0",
+    # torch 2.2.x was compiled against NumPy 1.x ABI; loading it
+    # under NumPy 2.x prints `_ARRAY_API not found` warnings and
+    # risks tensor-numpy crashes on edge cases. Pin <2 until torch
+    # ≥2.3 ships Intel-macOS wheels (currently it doesn't, see #443).
+    "numpy>=1.26,<2.0",
 ]
 
 [project.optional-dependencies]
