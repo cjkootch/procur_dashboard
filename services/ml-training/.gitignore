@@ -1,0 +1,29 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# MLflow tracking + checkpoints
+mlruns/
+checkpoints/
+lightning_logs/
+
+# Cached graph extracts + embeddings the training pipeline produces
+graph.json
+embeddings.json
+*.pt
+*.pth
+
+# IDE
+.idea/
+.vscode/
+.ruff_cache/
+.pytest_cache/
+.pyright/
