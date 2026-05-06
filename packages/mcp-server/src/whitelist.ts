@@ -20,6 +20,7 @@
 export const MCP_TOOL_WHITELIST: readonly string[] = [
   // Catalog discovery (rolodex)
   'lookup_known_entities',
+  'find_counterparties_for_region',
   'find_buyers_for_offer',
   'find_competing_sellers',
   'find_caribbean_fuel_buyers',
