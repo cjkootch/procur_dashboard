@@ -172,3 +172,293 @@ When iterating on the assistant:
    contract.
 3. PR commits should reference what the trace showed (helps the
    next session understand the rationale).
+
+## Fuel-consumption signals (PR #414 + Tier A sources)
+
+Per `docs/buyer-intelligence-v2-free-sources-brief.md`. Per-entity
+annual bbl/yr ranges from external sources, with confidence + audit.
+
+Schema: `fuel_consumption_signals` (entity_slug text, source,
+signal_kind, fuel_type, volume_bbl_yr_min/max, confidence,
+coverage_year, raw_data jsonb). `entity_slug` is text — accepts
+both `known_entities.slug` and `external_suppliers.id`.
+
+`buyer_consumption_estimate` view computes confidence-weighted
+midpoint volume per entity over the last 36 months.
+
+Tier A sources shipped (5 of 5 — brief Tier A complete):
+- `seed-fuel-consumption-signals` — Caribbean mining hand-curated
+- `derive-fuel-signals-power-gen` — joins GEM power plants × intensity
+- `ingest-eu-mrv` — vessel-level fuel from EU MRV (file-arg-driven)
+- `ingest-ni-43-101` — Sonnet-extracts SEDAR+ technical reports
+- `ingest-bond-prospectus` — Sonnet-extracts Luxembourg/EMMA/EDGAR
+- `ingest-eiti-report` — Sonnet-extracts T&T / Suriname EITI reports
+- `ingest-viirs-ntl` — VIIRS DNB GeoTIFF activity proxy
+
+PDF + LLM ingestion lives in `@procur/ai` (has `unpdf` + Anthropic
+SDK + `dotenv`). DB-only ingests live in `@procur/db`.
+
+Confidence framing: regulatory disclosure (EITI, NI 43-101, customs)
+sits at 0.85+; analyst-curated mining 0.7; website-extracted
+marketing data caps at 0.85 but typically 0.4-0.6.
+
+`lookup_known_entities` + `analyze_supplier` chat tools surface
+`consumptionSignals` per entity.
+
+## ML embedding layer (PR #419 / #422-#427)
+
+Per `docs/procur-ml-layer-brief.md`. Component A (vector store) +
+B (GraphSAGE training) + D (attribute prediction + mention
+resolution) shipped. C (two-tower) deferred per brief §12.2 —
+gated on ≥10K match-outcome labels.
+
+**Two distinct embedding spaces** (separate tables, never mix
+similarity calcs):
+- `entity_embeddings` (vector(128)) — graph-structural, populated
+  by GraphSAGE training in `services/ml-training/` (Python project)
+- `entity_text_embeddings` (vector(1536)) — text similarity for
+  mention resolution, populated by `seed-entity-text-embeddings`
+  via OpenAI `text-embedding-3-small`
+
+`signal_embeddings` (vector(128)) for signal-side similarity.
+
+Catalog query helpers: `findSimilarEntities`, `findSimilarSignals`,
+`findEntitiesByText`, `resolveEntityMention`, `predictEntityAttributes`.
+`getEntityWebIntelligenceWithOverlay` falls back to fuzzy-name
+match when the supplier.id is an external_suppliers UUID without
+a direct embedding (Codex P2 follow-up on #428).
+
+Python ML pipeline lives outside pnpm/turbo at
+`services/ml-training/` — own pyproject.toml + uv venv. Workflow:
+```sh
+pnpm extract-graph --output graph.json
+python -m procur_ml.train --graph graph.json   # trains + saves checkpoints/best/
+python -m procur_ml.upsert --embeddings embeddings.json
+# inductive (single new entity, sub-second on CPU):
+pnpm extract-graph --single-entity=<slug> --output single.json
+python -m procur_ml.embed_entity --graph single.json --upsert
+```
+
+## Website intelligence (PR #428)
+
+Per chat agreed-scope thread — frames as "company intelligence
+enrichment", NOT an ML feature layer. Outreach + chat dossier
+lift; graph-extraction edge contributions deferred to v2.
+
+Three tables: `entity_web_pages` (page text in Vercel Blob, hash
++ `skip_reason`), `entity_web_facts` (fact_type / value / evidence
+/ confidence), `entity_web_summaries` (7 narrative section_kinds:
+company_overview, products_services, operations, fuel_relevance,
+crude_relevance, logistics_relevance, contact_path).
+
+Crawler: `crawl-entity-website` in `@procur/ai`. Path: fetch
+homepage → `classifyPage` whitelist (home/about/products/services/
+operations/assets/investors/sustainability/contact/terminals/
+refineries/fleet/projects) → robots.txt cache → 1-sec polite
+delay → Vercel Blob upload (optional) → single Sonnet pass over
+concatenated text. 90-day re-crawl skip unless `--refresh`.
+Re-crawl gate checks `entity_web_summaries` (extracted output),
+NOT `entity_web_pages` — skip rows would otherwise lock entity
+out for 90 days (Codex P2 fix).
+
+Surfaced via `analyze_supplier`'s `webIntelligence` field. UI
+panel on `/entities/[slug]` (read-only; refresh button gated on
+Trigger.dev v3→v4 since sync HTTP would time out).
+
+## Feedback events (PRs #430-#435)
+
+Per `docs/feedback-ui-brief.md`. Single `feedback_events` table for
+all five patterns (kind: match_quality / entity_attribute /
+friction / disposition / retrospective). JSONB payload + context;
+sentiment column extracted to indexable text. Soft-delete via
+`revoked_at`.
+
+Coexists with vex's `match_outcome_events` (PR #309) — feedback
+UI writes to BOTH for backward compat per brief §3.2.
+
+Per-pattern ancillaries:
+- `signal_mute_rules` (Pattern 1) — structural (user, entity,
+  signal_type, source) suppression. `getMatchQueue({ userId })`
+  filters via NOT EXISTS subquery.
+- `friction_status` (Pattern 3) — lifecycle (logged/reviewing/
+  in_progress/shipped/wontfix), 1:1 FK to feedback_events.id.
+- `entity_dispositions` (Pattern 4) — append-only history; latest
+  non-superseded row = current. `current_dispositions` view
+  materializes per (entity, user). `setEntityDisposition`
+  supersedes via WITH-CTE in one round-trip.
+- `deal_retrospectives` (Pattern 5) — UNIQUE (deal_id, user_id);
+  draft + completed states; `completed_at` set on first transition.
+
+UI surfaces:
+- Match queue: `MatchQueueList` wraps rows, owns focused-row +
+  global keyboard handlers (j/k navigate, f favorite, d dismiss,
+  m mute, p pin), 200ms color-flash, auto-advance on f/d/m. Brief
+  §4.3: "auto-advance typically doubles capture rate."
+- Entity profile: `<EditableAttribute>` inline edits (whitelist
+  `EDITABLE_ENTITY_ATTRIBUTES`) + `<DispositionPanel>` + global
+  `<FrictionButton>` (mounted in app root layout).
+- `/pinned`, `/friction`, `/relationships/heat-map`,
+  `/retrospectives` — list surfaces that close brief §9
+  ("show the impact of feedback"). Without these, capture rate
+  decays per brief discipline §13.
+
+Brief discipline §13: Pattern 1 ships first; resist scope creep
+per pattern; audit 50 events at 30 days to validate UI calibration.
+
+## Trigger.dev v3→v4 migration (still gated)
+
+Multiple deferred items wait on this one upstream blocker:
+- Apollo nightly cron (already broken — see `services/ai-pipeline`)
+- ML Component B days 8-10 (scheduled GraphSAGE retraining)
+- Website intelligence "refresh" admin button on entity profile
+- Friction logging LLM auto-categorization (brief §6.3)
+- Deal retrospective 7-day delayed notification (brief §8.2)
+
+Don't try to unblock these one at a time. Migrate Trigger.dev
+v3→v4 in a dedicated PR; the five follow-ups slot in cleanly
+afterward.
+
+## Fuel-consumption signals (PR #414 + Tier A sources)
+
+Per `docs/buyer-intelligence-v2-free-sources-brief.md`. Per-entity
+annual bbl/yr ranges from external sources, with confidence + audit.
+
+Schema: `fuel_consumption_signals` (entity_slug text, source,
+signal_kind, fuel_type, volume_bbl_yr_min/max, confidence,
+coverage_year, raw_data jsonb). `entity_slug` is text — accepts
+both `known_entities.slug` and `external_suppliers.id`.
+
+`buyer_consumption_estimate` view computes confidence-weighted
+midpoint volume per entity over the last 36 months.
+
+Tier A sources shipped (5 of 5 — brief Tier A complete):
+- `seed-fuel-consumption-signals` — Caribbean mining hand-curated
+- `derive-fuel-signals-power-gen` — joins GEM power plants × intensity
+- `ingest-eu-mrv` — vessel-level fuel from EU MRV (file-arg-driven)
+- `ingest-ni-43-101` — Sonnet-extracts SEDAR+ technical reports
+- `ingest-bond-prospectus` — Sonnet-extracts Luxembourg/EMMA/EDGAR
+- `ingest-eiti-report` — Sonnet-extracts T&T / Suriname EITI reports
+- `ingest-viirs-ntl` — VIIRS DNB GeoTIFF activity proxy
+
+PDF + LLM ingestion lives in `@procur/ai` (has `unpdf` + Anthropic
+SDK + `dotenv`). DB-only ingests live in `@procur/db`.
+
+Confidence framing: regulatory disclosure (EITI, NI 43-101, customs)
+sits at 0.85+; analyst-curated mining 0.7; website-extracted
+marketing data caps at 0.85 but typically 0.4-0.6.
+
+`lookup_known_entities` + `analyze_supplier` chat tools surface
+`consumptionSignals` per entity.
+
+## ML embedding layer (PR #419 / #422-#427)
+
+Per `docs/procur-ml-layer-brief.md`. Component A (vector store) +
+B (GraphSAGE training) + D (attribute prediction + mention
+resolution) shipped. C (two-tower) deferred per brief §12.2 —
+gated on ≥10K match-outcome labels.
+
+**Two distinct embedding spaces** (separate tables, never mix
+similarity calcs):
+- `entity_embeddings` (vector(128)) — graph-structural, populated
+  by GraphSAGE training in `services/ml-training/` (Python project)
+- `entity_text_embeddings` (vector(1536)) — text similarity for
+  mention resolution, populated by `seed-entity-text-embeddings`
+  via OpenAI `text-embedding-3-small`
+
+`signal_embeddings` (vector(128)) for signal-side similarity.
+
+Catalog query helpers: `findSimilarEntities`, `findSimilarSignals`,
+`findEntitiesByText`, `resolveEntityMention`, `predictEntityAttributes`.
+`getEntityWebIntelligenceWithOverlay` falls back to fuzzy-name
+match when the supplier.id is an external_suppliers UUID without
+a direct embedding (Codex P2 follow-up on #428).
+
+Python ML pipeline lives outside pnpm/turbo at
+`services/ml-training/` — own pyproject.toml + uv venv. Workflow:
+```sh
+pnpm extract-graph --output graph.json
+python -m procur_ml.train --graph graph.json   # trains + saves checkpoints/best/
+python -m procur_ml.upsert --embeddings embeddings.json
+# inductive (single new entity, sub-second on CPU):
+pnpm extract-graph --single-entity=<slug> --output single.json
+python -m procur_ml.embed_entity --graph single.json --upsert
+```
+
+## Website intelligence (PR #428)
+
+Per chat `agreed-scope` thread — frames as "company intelligence
+enrichment", NOT an ML feature layer. Outreach + chat dossier
+lift; graph-extraction edge contributions deferred to v2.
+
+Three tables: `entity_web_pages` (page text in Vercel Blob, hash
++ `skip_reason`), `entity_web_facts` (fact_type / value / evidence
+/ confidence), `entity_web_summaries` (7 narrative section_kinds:
+company_overview, products_services, operations, fuel_relevance,
+crude_relevance, logistics_relevance, contact_path).
+
+Crawler: `crawl-entity-website` in `@procur/ai`. Path: fetch
+homepage → `classifyPage` whitelist (home/about/products/services/
+operations/assets/investors/sustainability/contact/terminals/
+refineries/fleet/projects) → robots.txt cache → 1-sec polite
+delay → Vercel Blob upload (optional) → single Sonnet pass over
+concatenated text. 90-day re-crawl skip unless `--refresh`.
+Re-crawl gate checks `entity_web_summaries` (extracted output),
+NOT `entity_web_pages` — skip rows would otherwise lock entity
+out for 90 days (Codex P2 fix).
+
+Surfaced via `analyze_supplier`'s `webIntelligence` field. UI
+panel on `/entities/[slug]` (read-only; refresh button gated on
+Trigger.dev v3→v4 since sync HTTP would time out).
+
+## Feedback events (PRs #430-#435)
+
+Per `docs/feedback-ui-brief.md`. Single `feedback_events` table for
+all five patterns (kind: match_quality / entity_attribute /
+friction / disposition / retrospective). JSONB payload + context;
+sentiment column extracted to indexable text. Soft-delete via
+`revoked_at`.
+
+Coexists with vex's `match_outcome_events` (PR #309) — feedback
+UI writes to BOTH for backward compat per brief §3.2.
+
+Per-pattern ancillaries:
+- `signal_mute_rules` (Pattern 1) — structural (user, entity,
+  signal_type, source) suppression. `getMatchQueue({ userId })`
+  filters via NOT EXISTS subquery.
+- `friction_status` (Pattern 3) — lifecycle (logged/reviewing/
+  in_progress/shipped/wontfix), 1:1 FK to feedback_events.id.
+- `entity_dispositions` (Pattern 4) — append-only history; latest
+  non-superseded row = current. `current_dispositions` view
+  materializes per (entity, user). `setEntityDisposition`
+  supersedes via WITH-CTE in one round-trip.
+- `deal_retrospectives` (Pattern 5) — UNIQUE (deal_id, user_id);
+  draft + completed states; `completed_at` set on first transition.
+
+UI surfaces:
+- Match queue: `MatchQueueList` wraps rows, owns focused-row +
+  global keyboard handlers (j/k navigate, f favorite, d dismiss,
+  m mute, p pin), 200ms color-flash, auto-advance on f/d/m. Brief
+  §4.3: "auto-advance typically doubles capture rate."
+- Entity profile: `<EditableAttribute>` inline edits (whitelist
+  `EDITABLE_ENTITY_ATTRIBUTES`) + `<DispositionPanel>` + global
+  `<FrictionButton>` (mounted in app root layout).
+- `/pinned`, `/friction`, `/relationships/heat-map`,
+  `/retrospectives` — list surfaces that close brief §9
+  ("show the impact of feedback"). Without these, capture rate
+  decays per brief discipline §13.
+
+Brief discipline §13: Pattern 1 ships first; resist scope creep
+per pattern; audit 50 events at 30 days to validate UI calibration.
+
+## Trigger.dev v3→v4 migration (still gated)
+
+Multiple deferred items wait on this one upstream blocker:
+- Apollo nightly cron (already broken — see `services/ai-pipeline`)
+- ML Component B days 8-10 (scheduled GraphSAGE retraining)
+- Website intelligence "refresh" admin button on entity profile
+- Friction logging LLM auto-categorization (brief §6.3)
+- Deal retrospective 7-day delayed notification (brief §8.2)
+
+Don't try to unblock these one at a time. Migrate Trigger.dev
+v3→v4 in a dedicated PR; the five follow-ups slot in cleanly
+afterward.
