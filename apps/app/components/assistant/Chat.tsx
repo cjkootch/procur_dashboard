@@ -14,7 +14,9 @@ import { DealEconomicsCard, isDealEconomicsOutput } from './DealEconomicsCard';
 import { CrudeGradeCard, isCrudeGradeDetailOutput } from './CrudeGradeCard';
 import {
   ApprovalActionCard,
+  ApprovalActionCardStack,
   isApprovalActionOutput,
+  type ApprovalActionOutput,
 } from './ApprovalActionCard';
 
 /**
@@ -560,27 +562,7 @@ function MessageView({
     <div className="flex flex-col gap-2">
       {message.toolUses.length > 0 && (
         <div className="flex flex-col gap-2">
-          {message.toolUses.map((t) => {
-            if (t.result && !t.result.isError) {
-              if (isApprovalActionOutput(t.result.output)) {
-                return (
-                  <ApprovalActionCard key={t.id} output={t.result.output} />
-                );
-              }
-              if (isDealEconomicsOutput(t.result.output)) {
-                return <DealEconomicsCard key={t.id} output={t.result.output} />;
-              }
-              if (isCrudeGradeDetailOutput(t.result.output)) {
-                return <CrudeGradeCard key={t.id} output={t.result.output} />;
-              }
-              if (isProposalOutput(t.result.output)) {
-                return (
-                  <ProposalCard key={t.id} proposal={t.result.output} threadId={threadId} />
-                );
-              }
-            }
-            return <ToolCard key={t.id} toolUse={t} />;
-          })}
+          {renderToolUseGroups(message.toolUses, threadId)}
         </div>
       )}
       {message.text && (
@@ -593,6 +575,72 @@ function MessageView({
       )}
     </div>
   );
+}
+
+/**
+ * Render an assistant message's tool uses, coalescing adjacent
+ * approval-action outputs into a single `<ApprovalActionCardStack>`
+ * so the operator can approve/reject a multi-channel batch (e.g.
+ * call+text+email to N people = N+ approvals) with one click instead
+ * of N. Non-approval tool outputs flush whatever stack is in flight
+ * and render their own card.
+ */
+function renderToolUseGroups(
+  toolUses: RenderedToolUse[],
+  threadId: string | undefined,
+): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  let approvalRun: { ids: string[]; outputs: ApprovalActionOutput[] } = {
+    ids: [],
+    outputs: [],
+  };
+
+  const flush = () => {
+    if (approvalRun.outputs.length === 0) return;
+    if (approvalRun.outputs.length === 1) {
+      const only = approvalRun.outputs[0]!;
+      nodes.push(<ApprovalActionCard key={approvalRun.ids[0]} output={only} />);
+    } else {
+      nodes.push(
+        <ApprovalActionCardStack
+          key={`stack-${approvalRun.ids[0]}`}
+          outputs={approvalRun.outputs}
+        />,
+      );
+    }
+    approvalRun = { ids: [], outputs: [] };
+  };
+
+  for (const t of toolUses) {
+    if (t.result && !t.result.isError && isApprovalActionOutput(t.result.output)) {
+      approvalRun.ids.push(t.id);
+      approvalRun.outputs.push(t.result.output);
+      continue;
+    }
+
+    flush();
+
+    if (t.result && !t.result.isError) {
+      if (isDealEconomicsOutput(t.result.output)) {
+        nodes.push(<DealEconomicsCard key={t.id} output={t.result.output} />);
+        continue;
+      }
+      if (isCrudeGradeDetailOutput(t.result.output)) {
+        nodes.push(<CrudeGradeCard key={t.id} output={t.result.output} />);
+        continue;
+      }
+      if (isProposalOutput(t.result.output)) {
+        nodes.push(
+          <ProposalCard key={t.id} proposal={t.result.output} threadId={threadId} />,
+        );
+        continue;
+      }
+    }
+    nodes.push(<ToolCard key={t.id} toolUse={t} />);
+  }
+
+  flush();
+  return nodes;
 }
 
 type ApplyState =

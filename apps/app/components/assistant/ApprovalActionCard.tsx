@@ -1,6 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import Link from 'next/link';
 
 /**
@@ -10,6 +17,14 @@ import Link from 'next/link';
  * chat to decide. Behind the scenes the buttons hit the same
  * /api/approvals/[id]/approve|reject endpoints the /approvals page
  * uses, so the audit trail and executor dispatch are identical.
+ *
+ * `<ApprovalActionCardStack>` wraps adjacent cards with a single
+ * "Approve all" / "Reject all" header so multi-channel outreach
+ * (call+text+email to N people = N+ approvals) doesn't degenerate
+ * into N click-throughs the operator might forget. Each card still
+ * shows individual state and can be approved/rejected on its own;
+ * the bulk buttons just broadcast a signal that pending cards pick
+ * up via React context.
  */
 
 export interface ApprovalActionOutput {
@@ -49,8 +64,23 @@ const TIER_TONE: Record<string, string> = {
   T3: 'bg-red-100 text-red-900',
 };
 
+/**
+ * Bulk-action signal broadcast by an enclosing
+ * `<ApprovalActionCardStack>`. Each pending card watches `tick` and
+ * when it changes, fires its own decide(decision) — keeping each
+ * card's individual state machine intact. Cards that have already
+ * resolved (approved / rejected / errored) ignore the signal.
+ */
+interface BulkActionSignal {
+  decision: 'approve' | 'reject';
+  tick: number;
+}
+const BulkActionContext = createContext<BulkActionSignal | null>(null);
+
 export function ApprovalActionCard({ output }: { output: ApprovalActionOutput }) {
   const [state, setState] = useState<DecisionState>({ status: 'pending' });
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   const decide = async (decision: 'approve' | 'reject') => {
     setState({ status: 'submitting' });
@@ -80,6 +110,18 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
       });
     }
   };
+
+  const bulk = useContext(BulkActionContext);
+  useEffect(() => {
+    if (!bulk) return;
+    if (stateRef.current.status !== 'pending') return;
+    void decide(bulk.decision);
+    // decide is stable (defined inline but doesn't read closure state
+    // that would change). React 19 dependency lint is happy without
+    // wrapping in useCallback because this effect only re-runs on
+    // bulk.tick/decision change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bulk?.tick, bulk?.decision]);
 
   return (
     <div className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-4">
@@ -147,6 +189,64 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
           </Link>
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * Wraps two or more adjacent `<ApprovalActionCard>`s with a header
+ * that carries "Approve all (N)" / "Reject all (N)" buttons. Each
+ * card retains its own state and approve/reject path; the bulk
+ * buttons broadcast a signal via context that pending cards pick up.
+ *
+ * Use case: chat asks the assistant to "call+text+email Alice, Bob,
+ * and Carol about Q2 pricing" — that produces 1 email + 3 SMS + 3
+ * calls = 7 separate approvals. Without the stack the operator
+ * eyeballs a long list and can easily forget to approve some, leaving
+ * outreach partially executed.
+ */
+export function ApprovalActionCardStack({
+  outputs,
+}: {
+  outputs: ApprovalActionOutput[];
+}) {
+  const [signal, setSignal] = useState<BulkActionSignal | null>(null);
+  const value = useMemo(() => signal, [signal]);
+  const trigger = (decision: 'approve' | 'reject') => {
+    setSignal((prev) => ({
+      decision,
+      tick: (prev?.tick ?? 0) + 1,
+    }));
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-muted)]/40 px-3 py-2 text-xs">
+        <span className="font-medium">
+          {outputs.length} actions to review
+        </span>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => trigger('approve')}
+            className="rounded-[var(--radius-sm)] bg-emerald-500 px-2.5 py-1 font-semibold text-white hover:bg-emerald-600"
+          >
+            Approve all ({outputs.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => trigger('reject')}
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2.5 py-1 font-medium hover:border-[color:var(--color-foreground)]"
+          >
+            Reject all
+          </button>
+        </div>
+      </div>
+      <BulkActionContext.Provider value={value}>
+        {outputs.map((o) => (
+          <ApprovalActionCard key={o.approvalId} output={o} />
+        ))}
+      </BulkActionContext.Provider>
     </div>
   );
 }
