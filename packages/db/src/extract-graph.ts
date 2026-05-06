@@ -328,13 +328,16 @@ type VesselRow = {
   ship_type_label: string | null;
   flag_country: string | null;
   dwt: number | null;
-  last_seen_at: Date | null;
+  // neon-http hands back timestamps as ISO strings, not Date objects.
+  last_seen_at: string | Date | null;
 };
 
 function vesselFeatures(v: VesselRow): number[] {
-  const recentSeen = v.last_seen_at
-    ? Date.now() - v.last_seen_at.getTime() < 90 * 86400 * 1000
-    : false;
+  const lastSeenMs = v.last_seen_at ? new Date(v.last_seen_at).getTime() : null;
+  const recentSeen =
+    lastSeenMs != null && Number.isFinite(lastSeenMs)
+      ? Date.now() - lastSeenMs < 90 * 86400 * 1000
+      : false;
   return [
     ...oneHot(
       VESSEL_TYPE_VOCAB,
