@@ -239,6 +239,21 @@ export {
   parseSanctionsScreenPayload,
   type SanctionsScreenPayload,
 } from './executors/sanctions';
+// Phase 7 — Twilio executors (SMS, WhatsApp, outbound voice)
+export {
+  applySmsSend,
+  applyWhatsAppSend,
+  applyWhatsAppSendTemplate,
+  applyOutboundCall,
+  parseSmsSendPayload,
+  parseWhatsAppSendPayload,
+  parseWhatsAppSendTemplatePayload,
+  parseOutboundCallPayload,
+  type SmsSendPayload,
+  type WhatsAppSendPayload,
+  type WhatsAppSendTemplatePayload,
+  type OutboundCallPayload,
+} from './executors/twilio';
 export {
   SanctionsScreeningAgent,
   type SanctionsScreeningInput,
