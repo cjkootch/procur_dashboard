@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getPinnedMatches } from '@procur/catalog';
 import { getCurrentUser } from '@procur/auth';
+import { PinActions } from './_components/PinActions';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,11 +11,10 @@ export const dynamic = 'force-dynamic';
  * follow-up queue. Pinned matches go to /app/pinned."
  *
  * Reads feedback_events rows where sentiment='pin' for the current
- * user, hydrates against match_queue + known_entities. Pins age out
- * after 30 days per brief — surfaced via amber "stale" badge here;
- * automatic age-out happens in a follow-up cron.
+ * user, hydrates against match_queue + known_entities. Server-side
+ * filter excludes expired pins (age out after 30 days per brief).
+ * Each row gets Extend (+30d) and Unpin (soft-delete) actions.
  */
-const STALE_DAYS = 30;
 
 export default async function PinnedMatchesPage() {
   const user = await getCurrentUser();
@@ -32,7 +32,7 @@ export default async function PinnedMatchesPage() {
           <Link href="/suppliers/match-queue" className="underline">
             /suppliers/match-queue
           </Link>
-          . Pins age out after {STALE_DAYS} days.
+          . Pins age out after 30 days; <code className="rounded bg-[color:var(--color-muted)] px-1 text-[10px]">+30d</code> extends, <code className="rounded bg-[color:var(--color-muted)] px-1 text-[10px]">×</code> unpins.
         </p>
       </header>
 
@@ -43,11 +43,18 @@ export default async function PinnedMatchesPage() {
       ) : (
         <ul className="divide-y divide-[color:var(--color-border)]/60">
           {rows.map((r) => {
-            const ageMs = Date.now() - new Date(r.pinnedAt).getTime();
-            const ageDays = Math.floor(ageMs / 86400000);
-            const isStale = ageDays >= STALE_DAYS;
+            const daysUntilExpiry = Math.max(
+              0,
+              Math.ceil(
+                (new Date(r.expiresAt).getTime() - Date.now()) / 86400000,
+              ),
+            );
+            const expiringSoon = daysUntilExpiry <= 7;
             return (
-              <li key={r.feedbackEventId} className="grid grid-cols-[88px_minmax(0,1fr)_72px_72px] items-center gap-3 py-2.5">
+              <li
+                key={r.feedbackEventId}
+                className="grid grid-cols-[88px_minmax(0,1fr)_72px_84px_88px] items-center gap-3 py-2.5"
+              >
                 <span className={pillClass(r.signalType)}>
                   {pillLabel(r.signalType)}
                 </span>
@@ -80,9 +87,15 @@ export default async function PinnedMatchesPage() {
                 <span className="text-right text-xs tabular-nums text-[color:var(--color-muted-foreground)]">
                   {r.score != null ? r.score.toFixed(1) : '—'}
                 </span>
-                <span className={`text-right text-xs ${isStale ? 'text-amber-700' : 'text-[color:var(--color-muted-foreground)]'}`}>
-                  {ageDays === 0 ? 'today' : `${ageDays}d`}{isStale ? ' ⚠️' : ''}
+                <span
+                  className={`text-right text-xs tabular-nums ${expiringSoon ? 'text-amber-700' : 'text-[color:var(--color-muted-foreground)]'}`}
+                >
+                  expires {daysUntilExpiry}d{expiringSoon ? ' ⚠️' : ''}
                 </span>
+                <PinActions
+                  feedbackEventId={r.feedbackEventId}
+                  daysUntilExpiry={daysUntilExpiry}
+                />
               </li>
             );
           })}
