@@ -5736,6 +5736,12 @@ export function buildCatalogTools(): ToolRegistry {
           // presentation), so don't over-state in chat. Null when
           // the entity hasn't been crawled yet (run pnpm crawl-
           // entity-website --slug=<slug>).
+          //
+          // TODO (Codex P2 on #428): when result.supplier.id is an
+          // external_suppliers UUID with a known_entities overlay,
+          // the curated slug holds the crawled data — fall back to
+          // resolving overlay before lookup. Edge case for v1; most
+          // analyze_supplier calls go straight to known_entities.
           webIntelligence: await getEntityWebIntelligence(result.supplier.id),
         };
           },

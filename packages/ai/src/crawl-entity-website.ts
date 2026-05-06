@@ -288,11 +288,15 @@ async function shouldRecrawl(
   refresh: boolean,
 ): Promise<boolean> {
   if (refresh) return true;
-  // Heuristic: if any page row exists newer than 90 days, skip.
+  // Skip only when a recent crawl produced extracted output. Skip-only
+  // rows (robots-blocked, too-short, mime-mismatch) get persisted to
+  // entity_web_pages too, but they don't constitute usable intelligence
+  // — without this filter, a failed crawl would lock the entity out for
+  // 90 days. Source: Codex review on PR #428.
   const recent = (await db.execute(sql`
-    SELECT 1 FROM entity_web_pages
+    SELECT 1 FROM entity_web_summaries
      WHERE entity_slug = ${entitySlug}
-       AND fetched_at > now() - INTERVAL '90 days'
+       AND generated_at > now() - INTERVAL '90 days'
      LIMIT 1;
   `)) as unknown as Array<{ '?column?': number }>;
   return recent.length === 0;
