@@ -233,3 +233,18 @@ export {
   type DealMarketContextInput,
   type EvaluateTargetPriceFn,
 } from './agents/agents/deal-market-context';
+// Phase 6 — sanctions screening + daily brief
+export {
+  applySanctionsScreen,
+  parseSanctionsScreenPayload,
+  type SanctionsScreenPayload,
+} from './executors/sanctions';
+export {
+  SanctionsScreeningAgent,
+  type SanctionsScreeningInput,
+} from './agents/agents/sanctions-screening';
+export {
+  DailyBriefAgent,
+  type DailyBrief,
+  type DailyBriefInput,
+} from './agents/agents/daily-brief';

@@ -20,6 +20,7 @@ import {
   applyOrgSetKind,
   applyOrgTag,
   applyOrgUpdateFields,
+  applySanctionsScreen,
   applyScheduleFollowUp,
   parseCloseLeadPayload,
   parseCreateCompanyPayload,
@@ -29,6 +30,7 @@ import {
   parseDealSetBrokerPayload,
   parseDealStatusChangePayload,
   parseEmailSendPayload,
+  parseSanctionsScreenPayload,
   parseScheduleFollowUpPayload,
 } from '@procur/ai';
 import { requireCompany } from '@procur/auth';
@@ -64,6 +66,7 @@ export async function approveApprovalAction(formData: FormData): Promise<void> {
   revalidatePath('/leads');
   revalidatePath('/follow-ups');
   revalidatePath('/deals');
+  revalidatePath('/signals');
 }
 
 interface ApprovalRowForExecutor {
@@ -258,7 +261,14 @@ async function dispatchExecutor(
     return;
   }
 
-  // Phase 6 (sanctions) → sanctions.screen
+  // ---- Phase 6 ------------------------------------------------------------
+  if (row.actionType === 'sanctions.screen') {
+    const payload = parseSanctionsScreenPayload(row.proposedPayload);
+    if (!payload) return;
+    await applySanctionsScreen(row.id, payload);
+    return;
+  }
+
   // Phase 7 (voice) → outbound_call
   void getApproval; // helper retained for follow-up phases
 }

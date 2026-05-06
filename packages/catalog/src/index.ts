@@ -16,6 +16,8 @@ export * from './inbox';
 export * from './leads';
 export * from './sales-surfaces';
 export * from './deals';
+export * from './signals';
+export * from './brief';
 export {
   buildCatalogTools,
   buildFilterUrl,
