@@ -438,49 +438,55 @@ const pushToVexSchema = z.object({
 
 const pushToVex: ApplyHandler = async (ctx, rawPayload) => {
   const payload = pushToVexSchema.parse(rawPayload);
-  const { pushVexContact } = await import('../vex-client');
+  const { qualifyAsLead } = await import('@procur/catalog');
   const richContext = await resolveRichVexContext(ctx, payload);
 
-  const result = await pushVexContact({
-    source: 'procur',
+  const result = await qualifyAsLead({
     sourceRef: payload.sourceRef,
+    triggeredBy: `procur-assistant:user:${ctx.userId}`,
     legalName: payload.legalName,
     country: payload.country,
+    domain: null,
     role: payload.role,
-    contactName: payload.contactName,
-    contactEmail: payload.contactEmail,
-    contactPhone: payload.contactPhone,
-    contactTitle: payload.contactTitle ?? null,
-    contactLinkedinUrl: payload.contactLinkedinUrl ?? null,
-    commercialContext: payload.commercialContext,
-    originationContext: {
-      triggeredBy: `procur-assistant:user:${ctx.userId}`,
-      chatSummary: payload.originationContext.chatSummary,
-      userNote: payload.originationContext.userNote,
-      pushedAt: new Date().toISOString(),
+    contact:
+      payload.contactName || payload.contactEmail || payload.contactPhone
+        ? {
+            name: payload.contactName,
+            email: payload.contactEmail,
+            phone: payload.contactPhone,
+            title: payload.contactTitle ?? null,
+            linkedinUrl: payload.contactLinkedinUrl ?? null,
+          }
+        : null,
+    chatSummary: payload.originationContext.chatSummary,
+    userNote: payload.originationContext.userNote,
+    procurMetadata: {
+      ...(payload.approvalContext
+        ? { procurApproval: payload.approvalContext }
+        : richContext.approvalContext
+          ? { procurApproval: richContext.approvalContext }
+          : {}),
+      ...(payload.productSpecs && payload.productSpecs.length > 0
+        ? { productSpecs: payload.productSpecs }
+        : {}),
+      ...(payload.sourceDocuments && payload.sourceDocuments.length > 0
+        ? { sourceDocuments: payload.sourceDocuments }
+        : {}),
+      ...(richContext.marketContext
+        ? { marketContext: richContext.marketContext }
+        : {}),
+      ...(richContext.procurTradingDefaults
+        ? { procurTradingDefaults: richContext.procurTradingDefaults }
+        : {}),
     },
-    approvalContext:
-      payload.approvalContext ?? richContext.approvalContext,
-    productSpecs: payload.productSpecs ?? [],
-    sourceDocuments: payload.sourceDocuments ?? [],
-    marketContext: richContext.marketContext,
-    procurTradingDefaults: richContext.procurTradingDefaults,
   });
-
-  if (!result.ok) {
-    return {
-      ok: false,
-      error: 'vex_push_failed',
-      message: result.error,
-    };
-  }
 
   return {
     ok: true,
     result: {
-      vexContactId: result.data.vexContactId,
-      dedupedAgainstExisting: result.data.dedupedAgainstExisting,
-      redirectTo: result.data.vexRecordUrl,
+      leadId: result.leadId,
+      dedupedAgainstExisting: result.dedupedAgainstExisting,
+      redirectTo: result.leadUrl,
     },
   };
 };
@@ -560,11 +566,12 @@ async function resolveRichVexContext(
   };
 }
 
-// Local type aliases — the canonical shapes live in vex-client.ts
-// but apply.ts can't import from there without a circular `import`
-// graph since vex-client itself dynamically imports apply via
-// nothing today, so this is just to avoid pulling the runtime
-// module into a sync import path.
+// Local type aliases for the rich-context resolver. Phase 4
+// vex-into-procur merge: the canonical shapes are defined inline on
+// LeadProcurMetadata in @procur/db. These narrow lite versions stay
+// here because the resolver predates the merge and treats every field
+// as nullable; LeadProcurMetadata uses optional fields with similar
+// values. The resolver result feeds qualifyAsLead's procurMetadata.
 type VexApprovalContextLite = {
   status:
     | 'pending'
@@ -639,18 +646,17 @@ const pushManyToVexSchema = z.object({
  */
 const pushManyToVex: ApplyHandler = async (ctx, rawPayload) => {
   const payload = pushManyToVexSchema.parse(rawPayload);
-  const { pushVexContact } = await import('../vex-client');
+  const { qualifyAsLead, getSupplierApproval } = await import('@procur/catalog');
 
   type PerResult = {
     legalName: string;
     ok: boolean;
-    vexContactId?: string;
-    vexRecordUrl?: string;
+    leadId?: string;
+    leadUrl?: string;
     dedupedAgainstExisting?: boolean;
     error?: string;
   };
 
-  const pushedAt = new Date().toISOString();
   // Resolve the company-level rich context once — market snapshot
   // and trading defaults don't vary per push within a single bulk
   // request. Per-entity approval still resolves inside the loop.
@@ -658,64 +664,69 @@ const pushManyToVex: ApplyHandler = async (ctx, rawPayload) => {
   const results: PerResult[] = [];
   for (const push of payload.pushes) {
     const perEntityApproval = push.entitySlug
-      ? await (
-          await import('@procur/catalog')
+      ? await getSupplierApproval(ctx.companyId, push.entitySlug).catch(
+          () => null,
         )
-          .getSupplierApproval(ctx.companyId, push.entitySlug)
-          .catch(() => null)
       : null;
 
-    const r = await pushVexContact({
-      source: 'procur',
-      sourceRef: push.sourceRef,
-      legalName: push.legalName,
-      country: push.country,
-      role: push.role,
-      contactName: push.contactName,
-      contactEmail: push.contactEmail,
-      contactPhone: push.contactPhone,
-      contactTitle: null,
-      contactLinkedinUrl: null,
-      commercialContext: push.commercialContext,
-      originationContext: {
+    try {
+      const r = await qualifyAsLead({
+        sourceRef: push.sourceRef,
         triggeredBy: `procur-assistant-bulk:user:${ctx.userId}`,
+        legalName: push.legalName,
+        country: push.country,
+        domain: null,
+        role: push.role,
+        contact:
+          push.contactName || push.contactEmail || push.contactPhone
+            ? {
+                name: push.contactName,
+                email: push.contactEmail,
+                phone: push.contactPhone,
+                title: null,
+                linkedinUrl: null,
+              }
+            : null,
         chatSummary: push.originationContext.chatSummary,
         userNote: push.originationContext.userNote,
-        pushedAt,
-      },
-      approvalContext: perEntityApproval
-        ? {
-            status: perEntityApproval.status,
-            approvedAt: perEntityApproval.approvedAt,
-            expiresAt: perEntityApproval.expiresAt,
-            notes: perEntityApproval.notes,
-          }
-        : null,
-      productSpecs: [],
-      sourceDocuments: [],
-      marketContext: sharedRich.marketContext,
-      procurTradingDefaults: sharedRich.procurTradingDefaults,
-    });
-    if (r.ok) {
+        procurMetadata: {
+          ...(perEntityApproval
+            ? {
+                procurApproval: {
+                  status: perEntityApproval.status,
+                  approvedAt: perEntityApproval.approvedAt,
+                  expiresAt: perEntityApproval.expiresAt,
+                  notes: perEntityApproval.notes,
+                },
+              }
+            : {}),
+          ...(sharedRich.marketContext
+            ? { marketContext: sharedRich.marketContext }
+            : {}),
+          ...(sharedRich.procurTradingDefaults
+            ? { procurTradingDefaults: sharedRich.procurTradingDefaults }
+            : {}),
+        },
+      });
       results.push({
         legalName: push.legalName,
         ok: true,
-        vexContactId: r.data.vexContactId,
-        vexRecordUrl: r.data.vexRecordUrl,
-        dedupedAgainstExisting: r.data.dedupedAgainstExisting,
+        leadId: r.leadId,
+        leadUrl: r.leadUrl,
+        dedupedAgainstExisting: r.dedupedAgainstExisting,
       });
-    } else {
+    } catch (err) {
       results.push({
         legalName: push.legalName,
         ok: false,
-        error: r.error,
+        error: err instanceof Error ? err.message : String(err),
       });
     }
   }
 
   const succeeded = results.filter((r) => r.ok);
   const failed = results.filter((r) => !r.ok);
-  const firstUrl = succeeded[0]?.vexRecordUrl ?? null;
+  const firstUrl = succeeded[0]?.leadUrl ?? null;
 
   return {
     ok: true,

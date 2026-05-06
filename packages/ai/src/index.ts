@@ -185,3 +185,25 @@ export {
   EmailReplyDraftAgent,
   type EmailReplyDraftInput,
 } from './agents/agents/email-reply-draft';
+// Phase 4 — sales executors (crm.create_*, lead.close, follow_up.schedule, …)
+export {
+  applyCloseLead,
+  applyContactOptOut,
+  applyContactTag,
+  applyCreateCompany,
+  applyCreateContact,
+  applyOrgAddProduct,
+  applyOrgLinkRelationship,
+  applyOrgSetKind,
+  applyOrgTag,
+  applyOrgUpdateFields,
+  applyScheduleFollowUp,
+  parseCloseLeadPayload,
+  parseCreateCompanyPayload,
+  parseCreateContactPayload,
+  parseScheduleFollowUpPayload,
+  type CloseLeadPayload,
+  type CreateCompanyPayload,
+  type CreateContactPayload,
+  type ScheduleFollowUpPayload,
+} from './executors/sales';

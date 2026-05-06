@@ -158,9 +158,9 @@ export function MatchRow(props: MatchRowProps) {
         setPushError(body.message ?? body.error ?? `push failed (${res.status})`);
         return;
       }
-      const body = (await res.json()) as { vexRecordUrl?: string };
-      if (body.vexRecordUrl && typeof window !== 'undefined') {
-        window.open(body.vexRecordUrl, '_blank', 'noopener,noreferrer');
+      const body = (await res.json()) as { leadUrl?: string };
+      if (body.leadUrl && typeof window !== 'undefined') {
+        window.open(body.leadUrl, '_blank', 'noopener,noreferrer');
       }
       router.refresh();
     });

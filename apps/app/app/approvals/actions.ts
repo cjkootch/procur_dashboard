@@ -3,7 +3,25 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { getApproval, recordApprovalDecision } from '@procur/catalog';
-import { applyEmailSend, parseEmailSendPayload } from '@procur/ai';
+import {
+  applyCloseLead,
+  applyContactOptOut,
+  applyContactTag,
+  applyCreateCompany,
+  applyCreateContact,
+  applyEmailSend,
+  applyOrgAddProduct,
+  applyOrgLinkRelationship,
+  applyOrgSetKind,
+  applyOrgTag,
+  applyOrgUpdateFields,
+  applyScheduleFollowUp,
+  parseCloseLeadPayload,
+  parseCreateCompanyPayload,
+  parseCreateContactPayload,
+  parseEmailSendPayload,
+  parseScheduleFollowUpPayload,
+} from '@procur/ai';
 import { requireCompany } from '@procur/auth';
 
 const FormSchema = z.object({
@@ -29,11 +47,13 @@ export async function approveApprovalAction(formData: FormData): Promise<void> {
     reviewerId: user.id,
   });
   if (result.row) {
-    await dispatchExecutor(result.row);
+    await dispatchExecutor(result.row, user.id);
   }
   revalidatePath('/approvals');
   revalidatePath(`/approvals/${parsed.data.id}`);
   revalidatePath('/inbox');
+  revalidatePath('/leads');
+  revalidatePath('/follow-ups');
 }
 
 interface ApprovalRowForExecutor {
@@ -43,24 +63,159 @@ interface ApprovalRowForExecutor {
 }
 
 /**
- * Dispatch known per-action executors. Phase 3 wires `email.send`;
- * other action types remain pending side-effects until their
- * respective phases land their executors.
+ * Dispatch known per-action executors. Each phase adds its handlers
+ * here; un-wired action types record the decision but stay un-executed.
  */
-async function dispatchExecutor(row: ApprovalRowForExecutor): Promise<void> {
+async function dispatchExecutor(
+  row: ApprovalRowForExecutor,
+  reviewerId: string,
+): Promise<void> {
+  // ---- Phase 3 ------------------------------------------------------------
   if (row.actionType === 'email.send') {
     const payload = parseEmailSendPayload(row.proposedPayload);
     if (!payload) return;
     await applyEmailSend(row.id, payload);
+    return;
   }
-  // Phase 4 (sales) → crm.create_*, contact.update, contact.merge, …
+
+  // ---- Phase 4 ------------------------------------------------------------
+  if (row.actionType === 'crm.create_company') {
+    const payload = parseCreateCompanyPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyCreateCompany(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'crm.create_contact') {
+    const payload = parseCreateContactPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyCreateContact(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'lead.close') {
+    const payload = parseCloseLeadPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyCloseLead(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'follow_up.schedule') {
+    const payload = parseScheduleFollowUpPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyScheduleFollowUp(row.id, payload, reviewerId);
+    return;
+  }
+  if (
+    row.actionType === 'org.set_kind' &&
+    typeof row.proposedPayload['orgId'] === 'string' &&
+    typeof row.proposedPayload['orgKind'] === 'string'
+  ) {
+    await applyOrgSetKind(row.id, {
+      orgId: row.proposedPayload['orgId'] as string,
+      orgKind: row.proposedPayload['orgKind'] as string,
+    });
+    return;
+  }
+  if (
+    row.actionType === 'org.add_product' &&
+    typeof row.proposedPayload['orgId'] === 'string' &&
+    typeof row.proposedPayload['product'] === 'string'
+  ) {
+    const orgId = row.proposedPayload['orgId'] as string;
+    const product = row.proposedPayload['product'] as string;
+    const notes =
+      typeof row.proposedPayload['notes'] === 'string'
+        ? (row.proposedPayload['notes'] as string)
+        : undefined;
+    await applyOrgAddProduct(
+      row.id,
+      notes !== undefined ? { orgId, product, notes } : { orgId, product },
+      reviewerId,
+    );
+    return;
+  }
+  if (
+    row.actionType === 'org.link_relationship' &&
+    typeof row.proposedPayload['fromOrgId'] === 'string' &&
+    typeof row.proposedPayload['toOrgId'] === 'string' &&
+    typeof row.proposedPayload['relationshipType'] === 'string'
+  ) {
+    const product =
+      typeof row.proposedPayload['product'] === 'string'
+        ? (row.proposedPayload['product'] as string)
+        : undefined;
+    await applyOrgLinkRelationship(
+      row.id,
+      {
+        fromOrgId: row.proposedPayload['fromOrgId'] as string,
+        toOrgId: row.proposedPayload['toOrgId'] as string,
+        relationshipType: row.proposedPayload['relationshipType'] as string,
+        ...(product !== undefined ? { product } : {}),
+      },
+      reviewerId,
+    );
+    return;
+  }
+  if (
+    (row.actionType === 'org.tag' || row.actionType === 'org.untag') &&
+    typeof row.proposedPayload['orgId'] === 'string' &&
+    typeof row.proposedPayload['tag'] === 'string'
+  ) {
+    await applyOrgTag(
+      row.id,
+      {
+        orgId: row.proposedPayload['orgId'] as string,
+        tag: row.proposedPayload['tag'] as string,
+      },
+      row.actionType === 'org.tag' ? 'add' : 'remove',
+    );
+    return;
+  }
+  if (
+    (row.actionType === 'contact.tag' || row.actionType === 'contact.untag') &&
+    typeof row.proposedPayload['contactId'] === 'string' &&
+    typeof row.proposedPayload['tag'] === 'string'
+  ) {
+    await applyContactTag(
+      row.id,
+      {
+        contactId: row.proposedPayload['contactId'] as string,
+        tag: row.proposedPayload['tag'] as string,
+      },
+      row.actionType === 'contact.tag' ? 'add' : 'remove',
+    );
+    return;
+  }
+  if (
+    row.actionType === 'contact.opt_out' &&
+    typeof row.proposedPayload['contactId'] === 'string' &&
+    typeof row.proposedPayload['reason'] === 'string'
+  ) {
+    await applyContactOptOut(row.id, {
+      contactId: row.proposedPayload['contactId'] as string,
+      reason: row.proposedPayload['reason'] as string,
+    });
+    return;
+  }
+  if (
+    row.actionType === 'org.update_fields' &&
+    typeof row.proposedPayload['orgId'] === 'string' &&
+    row.proposedPayload['patch'] &&
+    typeof row.proposedPayload['patch'] === 'object'
+  ) {
+    await applyOrgUpdateFields(row.id, {
+      orgId: row.proposedPayload['orgId'] as string,
+      patch: row.proposedPayload['patch'] as {
+        domain?: string | null;
+        industry?: string | null;
+        country?: string | null;
+      },
+    });
+    return;
+  }
+
   // Phase 5 (deals) → crm.create_deal, deal.status_change, deal.set_broker, …
   // Phase 6 (sanctions) → sanctions.screen
   // Phase 7 (voice) → outbound_call
-  // The action types currently without executors stay pending; the
-  // approve button still records the decision so the audit trail is
-  // consistent.
-  void getApproval; // re-export helper kept for follow-up phases
+  void getApproval; // helper retained for follow-up phases
 }
 
 export async function rejectApprovalAction(formData: FormData): Promise<void> {
