@@ -3669,18 +3669,31 @@ export function buildCatalogTools(): ToolRegistry {
         'Find suppliers showing distress signals — sharp drops in award ' +
         'velocity (last 90d vs prior 90d), plus any associated public news ' +
         'events (bankruptcy filings, leadership changes, force-majeure ' +
-        "press, sanctions actions). Use when the user asks \"who's slowing " +
+        "press, sanctions actions), plus Apollo headcount-trend signals " +
+        '(sales-team churn, engineering churn, net-headcount decline over ' +
+        'last 6 months). Use when the user asks "who\'s slowing ' +
         'down", "who has open inventory", "who needs to deal", or any ' +
         'origination-side question about counterparty motivation. Returns ' +
-        'velocityChangePct (negative = distress), recent news events ' +
-        '(empty until ingest workers ship; entity_news_events table exists ' +
-        'as of 0048), and a plain-text reasons array. Filter by ' +
-        'categoryTag, countries (ISO-2 array), or velocityChangeMax (e.g. ' +
-        '-0.7 for "down 70%+"). minPrevAwards (default 3) filters out ' +
-        'suppliers who never won much — drops from 1 to 0 are noise. ' +
-        'Surface this alongside find_buyers_for_offer when composing a ' +
-        'back-to-back deal: a distressed supplier paired with an aligned ' +
-        "buyer is the highest-leverage origination move you can make.",
+        'velocityChangePct (negative = distress), recent news events, ' +
+        'Apollo headcount signals (apolloHeadcountSignals object — null ' +
+        "when the supplier isn't Apollo-matched), and a plain-text reasons " +
+        'array. Filter by categoryTag, countries (ISO-2 array), or ' +
+        'velocityChangeMax (e.g. -0.7 for "down 70%+"). minPrevAwards ' +
+        '(default 3) filters out suppliers who never won much — drops ' +
+        'from 1 to 0 are noise. Surface this alongside find_buyers_for_offer ' +
+        'when composing a back-to-back deal: a distressed supplier paired ' +
+        'with an aligned buyer is the highest-leverage origination move ' +
+        "you can make.\n\n" +
+        'INTERPRETATION DISCIPLINE for Apollo headcount signals:\n' +
+        "  • Sales churn >25% in 6 months — strong market-traction warning. " +
+        'Lead with this in distress reads.\n' +
+        '  • Engineering churn >20% — product-team instability. Tertiary ' +
+        'signal but worth surfacing.\n' +
+        '  • Net headcount decline >5% — company shrinking. Combined with ' +
+        'velocity drop, this is the classic distressed-supplier shape.\n' +
+        '  • Apollo employee_metrics needs at least 6 months of data to ' +
+        'compute. Earlier-stage matches return null signals; do not infer ' +
+        'distress from missing Apollo data.',
       kind: 'read',
       schema: z.object({
         categoryTag: z
