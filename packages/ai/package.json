@@ -6,7 +6,8 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./cost-ledger": "./src/cost-ledger/index.ts"
   },
   "scripts": {
     "ingest-ni-43-101": "tsx src/ingest-ni-43-101.ts",

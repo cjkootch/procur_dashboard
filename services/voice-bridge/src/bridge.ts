@@ -1,6 +1,11 @@
 import WebSocket from 'ws';
 import type { FastifyBaseLogger } from 'fastify';
-import { PostgresCostLedger } from '@procur/ai';
+// Subpath import (not the barrel). The `@procur/ai` index re-exports
+// `threads.ts`, which `import 's "server-only"` — a Next.js sentinel
+// package that throws at import time outside an RSC bundler. The
+// voice-bridge runs as plain Node on Fly, so pulling the barrel
+// crashes the process at startup with ERR_MODULE_NOT_FOUND.
+import { PostgresCostLedger } from '@procur/ai/cost-ledger';
 
 /**
  * Per-call bridge between Twilio Media Streams (G.711 μ-law @ 8kHz)
