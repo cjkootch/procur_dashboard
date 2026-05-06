@@ -1,4 +1,5 @@
 import 'server-only';
+import { embedText } from '@procur/ai';
 import {
   and,
   asc,
@@ -12199,5 +12200,200 @@ export async function predictEntityAttributes(
     categories,
     country,
     neighbors: hydrated,
+  };
+}
+
+// ─── Component D §7.1 — entity-mention resolution via text embeddings ─
+// Maps free-text mentions ("JBC Bauxite", "the Jamaican bauxite producer")
+// to known_entities rows. Uses the entity_text_embeddings table
+// (1536d via text-embedding-3-small) populated by
+// seed-entity-text-embeddings. The `embedText` import lives at the top
+// of this file alongside other top-level imports.
+
+export type EntityMentionMatchRow = {
+  entitySlug: string;
+  name: string;
+  country: string;
+  role: string;
+  similarity: number; // cosine 0-1
+};
+
+export type FindEntitiesByTextOptions = {
+  embeddingKind?: string;
+  modelVersion?: string;
+  limit?: number;
+  minSimilarity?: number;
+  /** Optional ISO-2 country hint — when present, results matching the
+      country bubble up via a small re-rank boost. */
+  countryHint?: string | null;
+};
+
+/**
+ * Find entities whose text-embedding is closest to a free-text query.
+ * Used directly for "search by free text" and as the first step of
+ * resolveEntityMention.
+ *
+ * Returns empty array when no entity_text_embeddings rows exist (run
+ * seed-entity-text-embeddings to populate).
+ */
+export async function findEntitiesByText(
+  queryText: string,
+  options: FindEntitiesByTextOptions = {},
+): Promise<EntityMentionMatchRow[]> {
+  const kind = options.embeddingKind ?? 'combined_v1';
+  const limit = options.limit ?? 10;
+  const minSim = options.minSimilarity ?? 0;
+  const trimmed = queryText.trim();
+  if (!trimmed) return [];
+
+  const queryVec = await embedText(trimmed);
+  const vecLiteral = `[${queryVec.map((v) => v.toFixed(8)).join(',')}]`;
+
+  // Constrain to a single model_version so cross-version comparisons
+  // don't mix into ranks. Pick latest by created_at when not pinned.
+  const modelClause = options.modelVersion
+    ? sql`AND model_version = ${options.modelVersion}`
+    : sql`AND model_version = (
+            SELECT model_version FROM entity_text_embeddings
+             WHERE embedding_kind = ${kind}
+             ORDER BY created_at DESC
+             LIMIT 1
+          )`;
+
+  const result = await db.execute(sql`
+    SELECT
+      ete.entity_slug,
+      ke.name,
+      ke.country,
+      ke.role,
+      1 - (ete.embedding <=> ${vecLiteral}::vector) AS similarity
+    FROM entity_text_embeddings ete
+    JOIN known_entities ke ON ke.slug = ete.entity_slug
+    WHERE ete.embedding_kind = ${kind}
+      ${modelClause}
+    ORDER BY ete.embedding <=> ${vecLiteral}::vector
+    LIMIT ${limit}
+  `);
+
+  let rows = (result.rows as Array<Record<string, unknown>>)
+    .map((r) => ({
+      entitySlug: String(r.entity_slug),
+      name: String(r.name),
+      country: String(r.country),
+      role: String(r.role),
+      similarity: Number(r.similarity),
+    }))
+    .filter((r) => r.similarity >= minSim);
+
+  // Country-hint re-rank: nudge same-country matches up by 0.05.
+  // Enough to break ties between e.g. "Cementos Argos Colombia" and
+  // "Cementos Argos USA" when the mention came from a Colombian news
+  // article. Not so big that wrong-country matches dominate over a
+  // genuinely better text match.
+  if (options.countryHint) {
+    const cc = options.countryHint.toUpperCase();
+    rows = rows
+      .map((r) => ({
+        ...r,
+        similarity: r.country.toUpperCase() === cc ? r.similarity + 0.05 : r.similarity,
+      }))
+      .sort((a, b) => b.similarity - a.similarity);
+  }
+
+  return rows;
+}
+
+export type EntityMentionResolution = {
+  /** The mention text that was resolved. */
+  mention: string;
+  /** Top-K candidates ranked by similarity (after re-rank). */
+  candidates: EntityMentionMatchRow[];
+  /** True when the top candidate's similarity > resolveThreshold AND
+      the gap to the runner-up > ambiguityGap. */
+  resolved: boolean;
+  /** When resolved, the picked entity slug; else null. */
+  resolvedSlug: string | null;
+  /** Why we did or didn't resolve — useful for debugging + chat surfacing. */
+  reason: string;
+};
+
+export type ResolveEntityMentionOptions = FindEntitiesByTextOptions & {
+  /** Min similarity for the top candidate to count as resolved. Default 0.6. */
+  resolveThreshold?: number;
+  /** Min gap between top and runner-up to count as unambiguous. Default 0.05. */
+  ambiguityGap?: number;
+  /** How many candidates to surface even when not resolved. Default 5. */
+  candidateLimit?: number;
+};
+
+/**
+ * Resolve a free-text entity mention to a single known_entities row,
+ * with a structured "did/didn't resolve + why" payload. Brief §7.1.
+ *
+ * Resolution logic:
+ *   - Fetch top-K matches via findEntitiesByText (with country-hint
+ *     re-rank if supplied)
+ *   - Resolve when:
+ *       top.similarity >= resolveThreshold (default 0.6)
+ *       AND (top.similarity - runnerup.similarity) >= ambiguityGap (default 0.05)
+ *   - Else surface candidates for analyst disambiguation
+ *
+ * The two thresholds avoid:
+ *   - false positives on wrong matches just barely above the floor
+ *   - silently picking when two strong candidates are both plausible
+ */
+export async function resolveEntityMention(
+  mention: string,
+  options: ResolveEntityMentionOptions = {},
+): Promise<EntityMentionResolution> {
+  const candidateLimit = options.candidateLimit ?? 5;
+  const resolveThreshold = options.resolveThreshold ?? 0.6;
+  const ambiguityGap = options.ambiguityGap ?? 0.05;
+
+  const candidates = await findEntitiesByText(mention, {
+    ...options,
+    limit: Math.max(candidateLimit, 5),
+  });
+
+  if (candidates.length === 0) {
+    return {
+      mention,
+      candidates: [],
+      resolved: false,
+      resolvedSlug: null,
+      reason:
+        'no candidates above min-similarity. Either entity_text_embeddings is empty (run seed-entity-text-embeddings) or no entity in the rolodex matches this text.',
+    };
+  }
+
+  const top = candidates[0]!;
+  const runnerUp = candidates[1];
+
+  if (top.similarity < resolveThreshold) {
+    return {
+      mention,
+      candidates: candidates.slice(0, candidateLimit),
+      resolved: false,
+      resolvedSlug: null,
+      reason: `top candidate similarity ${top.similarity.toFixed(3)} below resolve threshold ${resolveThreshold} — surface candidates for analyst review`,
+    };
+  }
+
+  if (runnerUp && top.similarity - runnerUp.similarity < ambiguityGap) {
+    return {
+      mention,
+      candidates: candidates.slice(0, candidateLimit),
+      resolved: false,
+      resolvedSlug: null,
+      reason: `top two candidates within ${ambiguityGap} (${top.similarity.toFixed(3)} vs ${runnerUp.similarity.toFixed(3)}) — ambiguous, surface for analyst review`,
+    };
+  }
+
+  return {
+    mention,
+    candidates: candidates.slice(0, candidateLimit),
+    resolved: true,
+    resolvedSlug: top.entitySlug,
+    reason: `top candidate similarity ${top.similarity.toFixed(3)}, gap to runner-up ${runnerUp ? (top.similarity - runnerUp.similarity).toFixed(3) : 'n/a (only candidate)'}`,
   };
 }

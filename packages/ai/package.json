@@ -12,6 +12,7 @@
     "ingest-ni-43-101": "tsx src/ingest-ni-43-101.ts",
     "ingest-bond-prospectus": "tsx src/ingest-bond-prospectus.ts",
     "ingest-eiti-report": "tsx src/ingest-eiti-report.ts",
+    "seed-entity-text-embeddings": "tsx src/seed-entity-text-embeddings.ts",
     "type-check": "tsc --noEmit",
     "test": "node --import tsx --test 'src/**/*.test.ts'",
     "clean": "rm -rf dist .turbo node_modules"
