@@ -55,9 +55,17 @@ at v1 scale per brief §5.5 estimate.
 
 ## MLflow
 
-Optional. Set `MLFLOW_TRACKING_URI` to log run metrics +
-hyperparameters + artifacts. Without it, training runs are
-ephemeral — only the embeddings.json file persists.
+Optional, opt-in extra:
+
+```sh
+pip install -e ".[mlflow]"
+```
+
+Then set `MLFLOW_TRACKING_URI` to log run metrics + hyperparameters
++ artifacts. Without it, training runs are ephemeral — only the
+embeddings.json file persists. mlflow drags in pyarrow + sqlalchemy
+which need a C++ toolchain to build on macOS, so it's not part of
+the base install.
 
 ## Retraining cadence
 

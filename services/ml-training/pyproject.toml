@@ -13,8 +13,6 @@ dependencies = [
     "torch-geometric>=2.6,<3.0",
     # Postgres write-back for trained embeddings
     "psycopg[binary]>=3.2,<4.0",
-    # Experiment tracking — optional but brief recommends
-    "mlflow>=2.16,<3.0",
     # Misc
     "click>=8.1,<9.0",
     "python-dotenv>=1.0,<2.0",
@@ -22,6 +20,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Experiment tracking — opt-in via `pip install -e .[mlflow]` since
+# mlflow drags in pyarrow + sqlalchemy/greenlet, which need a working
+# C++ toolchain to build on macOS. train.py imports it lazily and
+# falls back to no-op tracking when absent.
+mlflow = ["mlflow>=2.16,<3.0"]
 dev = [
     "ruff>=0.6",
     "pytest>=8.0",
