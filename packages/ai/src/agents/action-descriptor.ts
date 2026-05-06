@@ -537,6 +537,37 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
     paymentTerms: z.string().max(500).optional(),
     rationale: z.string().max(500).optional(),
   }),
+  /**
+   * `deal.human_review` is emitted by DealEvaluatorAgent when the
+   * calculator's scorecard recommends `do_not_proceed`. Routes through
+   * ApprovalGate at T2 so a human acknowledges before any downstream
+   * status change. The executor doesn't apply a side-effect itself —
+   * the operator approves as a sign-off, then triggers a follow-up
+   * `deal.status_change` if appropriate.
+   */
+  z.object({
+    kind: z.literal('deal.human_review'),
+    tier: z.literal(ApprovalTier.T2),
+    dealId: zUlid,
+    dealRef: z.string().min(1).max(120),
+    score: z.number(),
+    recommendation: z.enum([
+      'strong',
+      'acceptable',
+      'marginal',
+      'do_not_proceed',
+    ]),
+    reason: z.string().min(1).max(2000),
+    criticalWarnings: z
+      .array(
+        z.object({
+          code: z.string().max(120),
+          message: z.string().max(500),
+        }),
+      )
+      .max(20),
+    rationale: z.string().min(1).max(1000),
+  }),
   z.object({
     kind: z.literal('lead.reactivate_draft'),
     tier: z.literal(ApprovalTier.T2),
