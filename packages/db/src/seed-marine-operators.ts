@@ -40,8 +40,20 @@
  */
 import 'dotenv/config';
 import { config as loadEnv } from 'dotenv';
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import { db } from './client';
+
+// Drizzle's neon-http driver treats a raw JS array param as a record,
+// which produces `cannot cast type record to text[]`. Build a real
+// `ARRAY[...]::text[]` (or `'{}'::text[]` when empty) so each element
+// flows in as its own bound parameter.
+function textArray(values: string[]): SQL {
+  if (values.length === 0) return sql`'{}'::text[]`;
+  return sql`ARRAY[${sql.join(
+    values.map((v) => sql`${v}`),
+    sql`, `,
+  )}]::text[]`;
+}
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -416,8 +428,8 @@ async function main(): Promise<void> {
           primary_domain, metadata
         ) VALUES (
           ${op.slug}, ${op.name}, ${op.country}, 'marine-operator',
-          ${categories}::text[], ${op.notes},
-          ${aliases}::text[], ${tags}::text[],
+          ${textArray(categories)}, ${op.notes},
+          ${textArray(aliases)}, ${textArray(tags)},
           ${op.primaryDomain},
           ${JSON.stringify(metadata)}::jsonb
         )
