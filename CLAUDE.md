@@ -318,6 +318,45 @@ Don't try to unblock these one at a time. Migrate Trigger.dev
 v3→v4 in a dedicated PR; the five follow-ups slot in cleanly
 afterward.
 
+## Vex-into-Procur merge (Phase 0 locked, 2026-05-06)
+
+Cole owns two repos that were originally designed to integrate over
+HTTP: this one (intelligence + match queue + chat) and `cjkootch/vex`
+(sales execution: leads, campaigns, fuel deals, agent runtime,
+communications, voice). The merge folds vex's execution capabilities
+into procur as one unified deployment. Vex stays as a separate repo
+for code reference; the runtime disappears at the end of Phase 6.
+
+**Source of truth:**
+- `docs/vex-into-procur-merge-brief.md` — strategic frame, capability
+  mapping, phase definitions
+- `docs/vex-into-procur-merge-decisions.md` — Phase 0 lock-ins (voice
+  IN v1, single-user scoping, fresh-start data, Tavily + Slack ported,
+  phase-by-phase PRs, schema reconciliation)
+
+**7 phases** (~7–10 weeks total including voice):
+1. Schema additions (~30 new tables; ALTERs on `companies` external_keys
+   + `entity_sanctions_screens` rich columns; new `contacts` table)
+2. Agent runtime (ActionDescriptor + AgentRunner + ApprovalGate +
+   `cost_ledger`/`agent_runs`/`approvals` — NEW pattern atop procur's
+   existing `runAgentTurn` budget gate; Phase 2 introduces approvals)
+3. Communications (Resend inbound webhook + inbox UI +
+   EmailReplyDraftAgent)
+4. Sales (leads/campaigns/follow-ups; refactor push-to-vex routes →
+   qualify-as-lead in-process; delete `vex-client.ts`)
+5. Deal execution (fuel deal modeling — highest-value capability vex
+   brings; deal calculator + DealEvaluator + DealMarketContext agents)
+6. Sanctions + signals + cutover (multi-list screening, signals layer,
+   DailyBrief; vex deployment offline; delete ingest routes + env vars)
+7. Voice (Twilio + voice-bridge + calls/voice UI — IN v1 per Cole)
+
+**Disciplines:**
+- Vex code that ports into procur becomes procur code in procur's
+  package namespaces. NEVER create `@vex/*` namespaces.
+- Vex repo is code reference, not a runtime dependency.
+- Each phase is a separate PR; no long-running merge branch.
+- Resist scope creep within phases; each ships bounded value.
+
 ## Fuel-consumption signals (PR #414 + Tier A sources)
 
 Per `docs/buyer-intelligence-v2-free-sources-brief.md`. Per-entity
