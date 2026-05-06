@@ -64,6 +64,18 @@ export interface EmailSendResult {
   error?: string;
 }
 
+export interface EmailSendOptions {
+  /**
+   * Explicit company id whose `/settings/email` defaults should
+   * decorate this send. The dispatcher resolves this from the
+   * approver's `users.companyId`. When omitted (e.g. legacy callers
+   * or background jobs without a user context), the executor falls
+   * back to the most-recently-created company row — single-tenant
+   * compatible but a leak the moment a second tenant exists.
+   */
+  companyId?: string;
+}
+
 const costLedger = new PostgresCostLedger();
 
 /**
@@ -74,6 +86,7 @@ const costLedger = new PostgresCostLedger();
 export async function applyEmailSend(
   approvalId: string,
   payload: EmailSendPayload,
+  options: EmailSendOptions = {},
 ): Promise<EmailSendResult> {
   if (!Array.isArray(payload.to) || payload.to.length === 0) {
     return { ok: false, error: 'email.send payload missing recipients' };
@@ -108,19 +121,30 @@ export async function applyEmailSend(
     headers['References'] = payload.inReplyTo;
   }
 
-  // Pull per-company email defaults set at /settings/email. Single-user
-  // scope so we just take the first row; future multi-tenant lookup can
-  // scope by approval.company_id.
-  const companyRow = await db
-    .select({
-      displayName: companies.emailSenderDisplayName,
-      alwaysCc: companies.emailAlwaysCc,
-      signatureText: companies.emailSignatureText,
-      signatureHtml: companies.emailSignatureHtml,
-    })
-    .from(companies)
-    .orderBy(desc(companies.createdAt))
-    .limit(1);
+  // Pull per-company email defaults set at /settings/email. Prefer
+  // the explicit companyId from the dispatcher (resolved from the
+  // approver's users.companyId); fall back to most-recently-created
+  // company only when no id is threaded through (legacy / background
+  // dispatch paths). The fallback is safe single-tenant but leaks the
+  // moment a second company exists, which is why the dispatcher
+  // always passes the explicit id today.
+  const companySelect = {
+    displayName: companies.emailSenderDisplayName,
+    alwaysCc: companies.emailAlwaysCc,
+    signatureText: companies.emailSignatureText,
+    signatureHtml: companies.emailSignatureHtml,
+  };
+  const companyRow = options.companyId
+    ? await db
+        .select(companySelect)
+        .from(companies)
+        .where(eq(companies.id, options.companyId))
+        .limit(1)
+    : await db
+        .select(companySelect)
+        .from(companies)
+        .orderBy(desc(companies.createdAt))
+        .limit(1);
   const settings = companyRow[0];
 
   // Decorate the From header with display name when configured.

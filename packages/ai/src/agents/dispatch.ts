@@ -53,6 +53,18 @@ export interface ApprovalRowForExecutor {
   proposedPayload: Record<string, unknown>;
 }
 
+export interface DispatchOptions {
+  /**
+   * Company id of the approver — propagated to executors that need
+   * tenant-scoped configuration (currently only the email executor,
+   * which reads /settings/email defaults). Without this, the email
+   * executor falls back to the most-recently-created company row,
+   * which leaks settings across tenants the moment a second tenant
+   * exists.
+   */
+  companyId?: string;
+}
+
 /**
  * Dispatch a recorded-approved approval row to the matching executor.
  *
@@ -75,12 +87,17 @@ export interface ApprovalRowForExecutor {
 export async function dispatchApprovalExecutor(
   row: ApprovalRowForExecutor,
   reviewerId: string,
+  options: DispatchOptions = {},
 ): Promise<void> {
   // ---- Phase 3 ------------------------------------------------------------
   if (row.actionType === 'email.send') {
     const payload = parseEmailSendPayload(row.proposedPayload);
     if (!payload) return;
-    await applyEmailSend(row.id, payload);
+    await applyEmailSend(
+      row.id,
+      payload,
+      options.companyId ? { companyId: options.companyId } : {},
+    );
     return;
   }
 

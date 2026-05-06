@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { recordApprovalDecision } from '@procur/catalog';
 import { dispatchApprovalExecutor } from '@procur/ai';
-import { getCurrentUser } from '@procur/auth';
+import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +30,7 @@ export async function POST(
   if (!user) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
+  const company = await getCurrentCompany();
 
   const { id } = await context.params;
   const result = await recordApprovalDecision(id, {
@@ -46,6 +47,7 @@ export async function POST(
       proposedPayload: result.row.proposedPayload as Record<string, unknown>,
     },
     user.id,
+    company ? { companyId: company.id } : {},
   );
   return NextResponse.json({ ok: true, updated: result.updated, row: result.row });
 }
