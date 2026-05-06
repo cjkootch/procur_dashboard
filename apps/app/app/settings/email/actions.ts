@@ -13,12 +13,30 @@ const FormSchema = z.object({
   signatureText: z.string().max(8_000).optional(),
 });
 
+export type SaveEmailSettingsState = {
+  status: 'idle' | 'success' | 'error';
+  message: string;
+  savedAt?: string;
+};
+
+export const initialSaveEmailSettingsState: SaveEmailSettingsState = {
+  status: 'idle',
+  message: '',
+};
+
 /**
  * Save per-company email defaults (display name, always-CC, signatures).
  * Read by `applyEmailSend` at dispatch time to decorate every approved
  * email.send action.
+ *
+ * Returns SaveEmailSettingsState so the client form can render a
+ * success/error banner via useActionState — without it, a successful
+ * save was silent (no toast, only the page-header timestamp ticked).
  */
-export async function saveEmailSettingsAction(formData: FormData): Promise<void> {
+export async function saveEmailSettingsAction(
+  _prev: SaveEmailSettingsState,
+  formData: FormData,
+): Promise<SaveEmailSettingsState> {
   const { company } = await requireCompany();
   const parsed = FormSchema.safeParse({
     displayName: formData.get('displayName')?.toString() ?? '',
@@ -26,7 +44,12 @@ export async function saveEmailSettingsAction(formData: FormData): Promise<void>
     signatureHtml: formData.get('signatureHtml')?.toString() ?? '',
     signatureText: formData.get('signatureText')?.toString() ?? '',
   });
-  if (!parsed.success) return;
+  if (!parsed.success) {
+    return {
+      status: 'error',
+      message: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
+  }
 
   const ccArray = (parsed.data.alwaysCc ?? '')
     .split(/\r?\n/)
@@ -34,16 +57,29 @@ export async function saveEmailSettingsAction(formData: FormData): Promise<void>
     .filter((s) => s.length > 0)
     .slice(0, 5);
 
-  await db
-    .update(companies)
-    .set({
-      emailSenderDisplayName: parsed.data.displayName?.trim() || null,
-      emailAlwaysCc: ccArray,
-      emailSignatureHtml: parsed.data.signatureHtml?.trim() || null,
-      emailSignatureText: parsed.data.signatureText?.trim() || null,
-      updatedAt: new Date(),
-    })
-    .where(eq(companies.id, company.id));
+  try {
+    await db
+      .update(companies)
+      .set({
+        emailSenderDisplayName: parsed.data.displayName?.trim() || null,
+        emailAlwaysCc: ccArray,
+        emailSignatureHtml: parsed.data.signatureHtml?.trim() || null,
+        emailSignatureText: parsed.data.signatureText?.trim() || null,
+        updatedAt: new Date(),
+      })
+      .where(eq(companies.id, company.id));
+  } catch (err) {
+    return {
+      status: 'error',
+      message: err instanceof Error ? err.message : 'Failed to save.',
+    };
+  }
 
   revalidatePath('/settings/email');
+
+  return {
+    status: 'success',
+    message: 'Email settings saved.',
+    savedAt: new Date().toISOString(),
+  };
 }
