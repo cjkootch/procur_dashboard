@@ -59,3 +59,4 @@ export * from './deal-structure-templates';
 export * from './commission-structures';
 export * from './apollo';
 export * from './mcp';
+export * from './fuel-consumption-signals';
