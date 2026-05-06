@@ -12122,7 +12122,7 @@ export async function predictEntityAttributes(
        slugs.map((s) => sql`${s}`),
        sql`, `,
      )}]::text[])
-  `)) as unknown as Array<{
+  `)).rows as unknown as Array<{
     slug: string;
     name: string;
     country: string;
@@ -12455,7 +12455,7 @@ export async function getEntityWebIntelligence(
       COUNT(*) FILTER (WHERE text_length >= 200) AS pages_crawled
     FROM entity_web_pages
     WHERE entity_slug = ${entitySlug};
-  `)) as unknown as Array<{ last_crawled: Date | null; pages_crawled: number }>;
+  `)).rows as unknown as Array<{ last_crawled: Date | null; pages_crawled: number }>;
 
   if (!stats[0] || stats[0].pages_crawled === 0) return null;
 
@@ -12465,7 +12465,7 @@ export async function getEntityWebIntelligence(
      WHERE entity_slug = ${entitySlug}
      ORDER BY COALESCE(confidence, 0) DESC, fact_type
      LIMIT ${factsLimit};
-  `)) as unknown as Array<{
+  `)).rows as unknown as Array<{
     fact_type: string;
     value: string;
     confidence: string | null;
@@ -12474,7 +12474,7 @@ export async function getEntityWebIntelligence(
 
   const factsCountRow = (await db.execute(sql`
     SELECT COUNT(*)::int AS n FROM entity_web_facts WHERE entity_slug = ${entitySlug};
-  `)) as unknown as Array<{ n: number }>;
+  `)).rows as unknown as Array<{ n: number }>;
 
   // Latest summary per section_kind (handle multiple model_versions).
   const summaryRows = (await db.execute(sql`
@@ -12482,7 +12482,7 @@ export async function getEntityWebIntelligence(
       FROM entity_web_summaries
      WHERE entity_slug = ${entitySlug}
      ORDER BY section_kind, generated_at DESC;
-  `)) as unknown as Array<{ section_kind: string; content: string }>;
+  `)).rows as unknown as Array<{ section_kind: string; content: string }>;
 
   const summaries: Record<string, string> = {};
   for (const r of summaryRows) summaries[r.section_kind] = r.content;
@@ -12534,7 +12534,7 @@ export async function getEntityWebIntelligenceWithOverlay(
      WHERE similarity(name, ${supplierName}) > 0.55
      ORDER BY similarity(name, ${supplierName}) DESC
      LIMIT 1
-  `)) as unknown as Array<{ slug: string }>;
+  `)).rows as unknown as Array<{ slug: string }>;
   if (!overlay[0]) return null;
   return getEntityWebIntelligence(overlay[0].slug);
 }
@@ -12580,7 +12580,7 @@ export async function insertFeedbackEvent(input: FeedbackEventInput): Promise<st
       ${input.context ? JSON.stringify(input.context) : null}::jsonb
     )
     RETURNING id;
-  `)) as unknown as Array<{ id: string }>;
+  `)).rows as unknown as Array<{ id: string }>;
   if (!result[0]) throw new Error('insertFeedbackEvent: insert returned no id');
   return result[0].id;
 }
@@ -12644,7 +12644,7 @@ export async function listSignalMuteRulesForUser(userId: string): Promise<MutedR
      WHERE user_id = ${userId}
        AND (muted_until IS NULL OR muted_until > now())
      ORDER BY muted_at DESC;
-  `)) as unknown as Array<{
+  `)).rows as unknown as Array<{
     entity_slug: string;
     signal_type: string;
     signal_source: string | null;
@@ -12705,7 +12705,7 @@ export async function updateKnownEntityAttribute(
   const beforeRows = (await db.execute(sql`
     SELECT name, country, role, categories, notes, primary_domain
       FROM known_entities WHERE slug = ${slug}
-  `)) as unknown as Array<Record<string, unknown>>;
+  `)).rows as unknown as Array<Record<string, unknown>>;
   if (!beforeRows[0]) throw new Error(`updateKnownEntityAttribute: no entity with slug=${slug}`);
   const oldRaw = beforeRows[0][attribute];
   const oldValue: string | string[] | null = Array.isArray(oldRaw)
@@ -12783,7 +12783,7 @@ export async function getDealRetrospective(
       FROM deal_retrospectives
      WHERE deal_id = ${dealId} AND user_id = ${userId}
      LIMIT 1;
-  `)) as unknown as Array<Record<string, unknown>>;
+  `)).rows as unknown as Array<Record<string, unknown>>;
   if (!rows[0]) return null;
   const r = rows[0];
   return {
@@ -12858,7 +12858,7 @@ export async function upsertDealRetrospective(input: UpsertRetrospectiveInput): 
       is_draft = EXCLUDED.is_draft,
       updated_at = now()
     RETURNING id;
-  `)) as unknown as Array<{ id: string }>;
+  `)).rows as unknown as Array<{ id: string }>;
   if (!rows[0]) throw new Error('upsertDealRetrospective: insert returned no id');
   return rows[0].id;
 }
@@ -12898,7 +12898,7 @@ export async function getCurrentDisposition(
        AND superseded_at IS NULL
      ORDER BY set_at DESC
      LIMIT 1;
-  `)) as unknown as Array<{
+  `)).rows as unknown as Array<{
     entity_slug: string;
     user_id: string;
     disposition: EntityDispositionValue;
@@ -12975,7 +12975,7 @@ export async function getDispositionHistory(
        AND user_id = ${userId}
      ORDER BY set_at DESC
      LIMIT ${limit};
-  `)) as unknown as Array<{
+  `)).rows as unknown as Array<{
     disposition: EntityDispositionValue;
     decline_reason: string | null;
     set_at: Date;
@@ -13067,7 +13067,7 @@ export async function getEntityAttributeEditHistory(
       ${attrFilter}
     ORDER BY created_at DESC
     LIMIT ${limit};
-  `)) as unknown as Array<{
+  `)).rows as unknown as Array<{
     attribute: string;
     old_value: unknown;
     new_value: unknown;
@@ -13145,7 +13145,7 @@ export async function getPinnedMatches(
       ) > now()
     ORDER BY fe.created_at DESC
     LIMIT ${limit};
-  `)) as unknown as Array<Record<string, unknown>>;
+  `)).rows as unknown as Array<Record<string, unknown>>;
   return rows.map((r) => ({
     feedbackEventId: String(r.feedback_event_id),
     matchQueueId: String(r.match_queue_id ?? ''),
@@ -13284,7 +13284,7 @@ export async function getFrictionQueueForUser(
       AND fe.revoked_at IS NULL
     ORDER BY fe.created_at DESC
     LIMIT ${limit};
-  `)) as unknown as Array<Record<string, unknown>>;
+  `)).rows as unknown as Array<Record<string, unknown>>;
   return rows.map((r) => ({
     feedbackEventId: String(r.feedback_event_id),
     description: String(r.description ?? ''),
@@ -13350,7 +13350,7 @@ export async function getDispositionHeatMap(
     WHERE cd.user_id = ${userId}
     ORDER BY cd.disposition, cd.set_at DESC
     LIMIT ${limit};
-  `)) as unknown as Array<Record<string, unknown>>;
+  `)).rows as unknown as Array<Record<string, unknown>>;
   return rows.map((r) => ({
     entitySlug: String(r.entity_slug),
     entityName: String(r.entity_name),
@@ -13385,7 +13385,7 @@ export async function listRetrospectivesForUser(
      WHERE user_id = ${userId}
      ORDER BY is_draft DESC, COALESCE(completed_at, updated_at) DESC
      LIMIT ${limit};
-  `)) as unknown as Array<Record<string, unknown>>;
+  `)).rows as unknown as Array<Record<string, unknown>>;
   return rows.map((r) => ({
     id: String(r.id),
     dealId: String(r.deal_id),

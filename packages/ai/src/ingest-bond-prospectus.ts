@@ -111,7 +111,7 @@ async function matchKnownEntity(
      WHERE similarity(name, ${issuerName}) > 0.50
      ORDER BY score DESC
      LIMIT 1;
-  `)) as unknown as Array<{ slug: string; name: string; score: number }>;
+  `)).rows as unknown as Array<{ slug: string; name: string; score: number }>;
   if (rows.length === 0 || !rows[0]) return null;
   return { slug: rows[0].slug, name: rows[0].name };
 }

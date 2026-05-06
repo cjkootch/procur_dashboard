@@ -147,7 +147,7 @@ async function loadOperatorFleetMap(): Promise<OperatorMap> {
      WHERE role = 'marine-operator'
        AND metadata ? 'fleet_imos'
        AND jsonb_array_length(metadata->'fleet_imos') > 0;
-  `)) as unknown as Array<{
+  `)).rows as unknown as Array<{
     slug: string;
     name: string;
     metadata: { fleet_imos?: string[] };
