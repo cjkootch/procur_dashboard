@@ -136,38 +136,8 @@ export async function applyEmailSend(
     ? `<div>${escapeHtml(payload.body).replace(/\n/g, '<br>')}</div><br>${settings.signatureHtml}`
     : undefined;
 
-  let providerMessageId: string;
-  try {
-    const sendArgs: Parameters<typeof resend.emails.send>[0] = {
-      from,
-      to: payload.to,
-      subject: payload.subject,
-      text: bodyText,
-      headers: Object.keys(headers).length > 0 ? headers : undefined,
-    };
-    if (bodyHtml) sendArgs.html = bodyHtml;
-    const cc = (settings?.alwaysCc ?? []).filter(
-      (c): c is string => typeof c === 'string' && c.length > 0,
-    );
-    if (cc.length > 0) sendArgs.cc = cc;
-    const result = await resend.emails.send(sendArgs, {
-      idempotencyKey: `approval:${approvalId}`,
-    });
-    if (result.error) {
-      return {
-        ok: false,
-        error: `Resend ${result.error.name ?? 'error'}: ${result.error.message ?? 'unknown'}`,
-      };
-    }
-    if (!result.data?.id) {
-      return { ok: false, error: 'Resend returned no message id' };
-    }
-    providerMessageId = result.data.id;
-  } catch (err) {
-    return { ok: false, error: (err as Error).message };
-  }
-
-  // Resolve the contact's primary org for the touchpoint org_id link.
+  // Resolve the contact's primary org once so each per-recipient
+  // touchpoint can carry the org link.
   let orgIdForTouchpoint: string | null = null;
   if (payload.contactId) {
     const contactRow = await db
@@ -178,31 +148,79 @@ export async function applyEmailSend(
     orgIdForTouchpoint = contactRow[0]?.orgId ?? null;
   }
 
-  const touchpointId = createId();
+  // Fan out one Resend send per recipient. Sending all addresses in
+  // a single Resend `to: [...]` would expose every recipient's address
+  // to every other recipient via the To: header — for outreach to
+  // counterparties this is a privacy leak (and looks unprofessional).
+  // Per-recipient idempotency keys mean a retry after a partial
+  // failure won't re-send to addresses that already succeeded.
+  const cc = (settings?.alwaysCc ?? []).filter(
+    (c): c is string => typeof c === 'string' && c.length > 0,
+  );
+  const costPerSendMicros = 100; // 0.0001 USD stub
   const occurredAt = new Date();
-  await db.insert(touchpoints).values({
-    id: touchpointId,
-    channel: 'email.sent',
-    actor: `approval:${approvalId}`,
-    occurredAt,
-    contactId: payload.contactId ?? null,
-    orgId: orgIdForTouchpoint,
-    metadata: {
-      provider_message_id: providerMessageId,
-      to: payload.to,
-      subject: payload.subject,
-      in_reply_to: payload.inReplyTo ?? null,
-      template_name: payload.templateName ?? null,
-      lang: payload.lang ?? null,
-    },
-  });
+  const providerMessageIds: string[] = [];
+  let firstTouchpointId: string | undefined;
 
-  // Cost ledger — one entry per recipient (Resend bills per email).
-  // Stub price 0.0001 USD per send; real provider invoicing reconciles
-  // on the rollup. Idempotency key per (approval, recipient) so retries
-  // don't double-charge.
-  const costPerSendMicros = 100; // 0.0001 USD
   for (const recipient of payload.to) {
+    const sendArgs: Parameters<typeof resend.emails.send>[0] = {
+      from,
+      to: [recipient],
+      subject: payload.subject,
+      text: bodyText,
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
+    };
+    if (bodyHtml) sendArgs.html = bodyHtml;
+    if (cc.length > 0) sendArgs.cc = cc;
+
+    let providerMessageId: string;
+    try {
+      const result = await resend.emails.send(sendArgs, {
+        idempotencyKey: `approval:${approvalId}:${recipient}`,
+      });
+      if (result.error) {
+        return {
+          ok: false,
+          error: `Resend ${result.error.name ?? 'error'} for ${recipient}: ${result.error.message ?? 'unknown'}`,
+          providerMessageId: providerMessageIds[0],
+        };
+      }
+      if (!result.data?.id) {
+        return {
+          ok: false,
+          error: `Resend returned no message id for ${recipient}`,
+          providerMessageId: providerMessageIds[0],
+        };
+      }
+      providerMessageId = result.data.id;
+    } catch (err) {
+      return {
+        ok: false,
+        error: `${recipient}: ${(err as Error).message}`,
+        providerMessageId: providerMessageIds[0],
+      };
+    }
+    providerMessageIds.push(providerMessageId);
+
+    const touchpointId = createId();
+    if (!firstTouchpointId) firstTouchpointId = touchpointId;
+    await db.insert(touchpoints).values({
+      id: touchpointId,
+      channel: 'email.sent',
+      actor: `approval:${approvalId}`,
+      occurredAt,
+      contactId: payload.contactId ?? null,
+      orgId: orgIdForTouchpoint,
+      metadata: {
+        provider_message_id: providerMessageId,
+        to: recipient,
+        subject: payload.subject,
+        in_reply_to: payload.inReplyTo ?? null,
+        template_name: payload.templateName ?? null,
+        lang: payload.lang ?? null,
+      },
+    });
+
     await costLedger.record({
       idempotencyKey: `email.send:${approvalId}:${recipient}`,
       operation: 'email.send',
@@ -214,7 +232,9 @@ export async function applyEmailSend(
     });
   }
 
-  // Audit event.
+  // Single audit event covering the whole approval. Object id is the
+  // first message id (back-compat with single-recipient consumers);
+  // metadata carries the full set so audit history is complete.
   await db
     .insert(events)
     .values({
@@ -225,11 +245,11 @@ export async function applyEmailSend(
       actorType: 'system',
       actorId: 'email-send-executor',
       objectType: 'message',
-      objectId: providerMessageId,
+      objectId: providerMessageIds[0] ?? approvalId,
       occurredAt,
       idempotencyKey: `email.sent:${approvalId}`,
       metadata: {
-        provider_message_id: providerMessageId,
+        provider_message_ids: providerMessageIds,
         recipient_count: payload.to.length,
       },
     })
@@ -237,16 +257,19 @@ export async function applyEmailSend(
       target: [events.occurredAt, events.idempotencyKey],
     });
 
-  // Stamp applied_object_id + applied_at on the approval.
   await db
     .update(approvals)
     .set({
-      appliedObjectId: touchpointId,
+      appliedObjectId: firstTouchpointId ?? null,
       appliedAt: occurredAt,
     })
     .where(eq(approvals.id, approvalId));
 
-  return { ok: true, providerMessageId, touchpointId };
+  return {
+    ok: true,
+    providerMessageId: providerMessageIds[0],
+    touchpointId: firstTouchpointId,
+  };
 }
 
 /**
