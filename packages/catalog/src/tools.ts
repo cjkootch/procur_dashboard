@@ -30,6 +30,7 @@ import {
   findCounterpartiesUnified,
   getFuelConsumptionSignals,
   getFuelConsumptionSignalsBatch,
+  predictEntityAttributes,
   walkOwnershipChainUp,
   walkSubsidiaries,
   lookupSanctionsScreens,
@@ -5728,6 +5729,101 @@ export function buildCatalogTools(): ToolRegistry {
             sourceUrl: s.sourceUrl,
           })),
         };
+          },
+        ),
+    }),
+
+    // ─── ML attribute prediction (Component D) ───────────────────
+
+    predict_entity_attributes: defineTool({
+      name: 'predict_entity_attributes',
+      description:
+        'Predict missing attributes (categories, role, country) for ' +
+        'an entity by aggregating across the K nearest entities in ' +
+        "graph-embedding space. Spec: docs/procur-ml-layer-brief.md §7.2.\n\n" +
+        'WHEN TO CALL:\n' +
+        '  • The operator is curating a partial-information entity ' +
+        'and wants procur to suggest categories / role / country to ' +
+        'pre-fill before they save.\n' +
+        '  • An entity was auto-created from a news mention or customs ' +
+        'record and lacks proper classification.\n' +
+        '  • The operator asks "what kind of entity is this" or ' +
+        '"what should I tag this as".\n\n' +
+        'INTERPRETATION DISCIPLINE:\n' +
+        '  • Predictions are only as good as graph embeddings. If the ' +
+        'tool returns null, embeddings are not yet populated for this ' +
+        'entity (training pipeline has not run, or this entity is ' +
+        'not yet inductively embedded). Tell the operator that ' +
+        'plainly — do not fabricate predictions.\n' +
+        '  • Confidence < 0.5 = treat as a weak hint, not a recommendation.\n' +
+        '  • Country prediction is null when neighbors span multiple ' +
+        "regions (no signal). Don't invent one.\n" +
+        '  • Always surface the neighbors that drove the prediction so ' +
+        'the operator can sanity-check.',
+      kind: 'read',
+      schema: z.object({
+        entitySlug: z
+          .string()
+          .describe(
+            'known_entities.slug — same canonical key shape used by ' +
+              'lookup_known_entities and analyze_supplier.',
+          ),
+        k: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .describe('Number of neighbors to aggregate over. Default 10.'),
+        minSimilarity: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe('Cosine similarity floor; neighbors below skip. Default 0.3.'),
+      }),
+      handler: async (ctx, input) =>
+        withToolTelemetry(
+          {
+            ctx,
+            toolName: 'predict_entity_attributes',
+            args: input,
+            summarize: (out: { matched: boolean }) => ({
+              resultCount: out.matched ? 1 : 0,
+              resultSummary: { matched: out.matched },
+            }),
+          },
+          async () => {
+            const result = await predictEntityAttributes(input.entitySlug, {
+              k: input.k,
+              minSimilarity: input.minSimilarity,
+            });
+            if (!result) {
+              return {
+                matched: false,
+                message:
+                  'No graph embedding for this entity. Either ' +
+                  'Component B training has not run yet, or this ' +
+                  'entity has not been inductively embedded. Run ' +
+                  '`pnpm extract-graph --single-entity=<slug>` then ' +
+                  '`python -m procur_ml.embed_entity` to add it.',
+              };
+            }
+            return {
+              matched: true,
+              entitySlug: result.entitySlug,
+              k: result.k,
+              role: result.role,
+              categories: result.categories.slice(0, 8), // top-8 keeps response compact
+              country: result.country,
+              neighbors: result.neighbors.map((n) => ({
+                slug: n.slug,
+                name: n.name,
+                similarity: n.similarity,
+                role: n.role,
+                country: n.country,
+              })),
+            };
           },
         ),
     }),

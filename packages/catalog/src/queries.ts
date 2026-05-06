@@ -12018,3 +12018,186 @@ export async function upsertSignalEmbedding(args: {
       trained_at = EXCLUDED.trained_at;
   `);
 }
+
+// ─── ML Layer Phase 4, Component D — attribute prediction ──────────
+// Per docs/procur-ml-layer-brief.md §7.2. Uses graph embeddings to
+// predict missing attributes (categories, role, country) for a
+// partial-information entity by aggregating over its K nearest
+// embedding neighbors. Returns null if the entity has no embedding
+// yet (likely true until Component B's training pipeline runs to
+// populate entity_embeddings).
+//
+// Entity-mention resolution (§7.1) is deferred — it needs a text
+// encoder for the candidate-mention → vector step, which is gated on
+// Component A's findEntitiesByText (also deferred).
+
+export type PredictedAttribute<T> = {
+  value: T;
+  /** Vote share among the K neighbors weighted by similarity, 0-1. */
+  confidence: number;
+  /** How many neighbors voted for this value. */
+  support: number;
+};
+
+export type AttributePredictionRow = {
+  entitySlug: string;
+  /** Number of neighbors used in the aggregation. */
+  k: number;
+  /** Predicted role with confidence. Null when no neighbors had a role. */
+  role: PredictedAttribute<string> | null;
+  /** Predicted categories. Each category that appears in any neighbor
+      is scored independently — multi-label, not single-label. Sorted
+      by confidence DESC. */
+  categories: PredictedAttribute<string>[];
+  /** Predicted country, where neighbors agree. Null when neighbors
+      span >2 countries (geographic dispersion = no signal). */
+  country: PredictedAttribute<string> | null;
+  /** The neighbors used in the prediction, for audit / explainability. */
+  neighbors: Array<{
+    slug: string;
+    name: string;
+    similarity: number;
+    role: string;
+    categories: string[];
+    country: string;
+  }>;
+};
+
+export type PredictEntityAttributesOptions = {
+  embeddingKind?: string;
+  /** How many neighbors to aggregate over. */
+  k?: number;
+  /** Minimum cosine similarity for a neighbor to count. */
+  minSimilarity?: number;
+  modelVersion?: string;
+};
+
+/**
+ * Predict missing attributes for an entity by majority-voting over
+ * its K nearest graph-embedding neighbors. Brief §7.2.
+ *
+ * Returns null when the entity has no embedding (training pipeline
+ * hasn't run yet, or this entity hasn't been inductively embedded).
+ */
+export async function predictEntityAttributes(
+  entitySlug: string,
+  options: PredictEntityAttributesOptions = {},
+): Promise<AttributePredictionRow | null> {
+  const k = options.k ?? 10;
+  const neighbors = await findSimilarEntities(entitySlug, {
+    embeddingKind: options.embeddingKind,
+    limit: k,
+    minSimilarity: options.minSimilarity ?? 0.3,
+    modelVersion: options.modelVersion,
+  });
+  if (neighbors.length === 0) return null;
+
+  // Hydrate neighbor metadata in one query.
+  const slugs = neighbors.map((n) => n.entitySlug);
+  const meta = (await db.execute(sql`
+    SELECT slug, name, country, role, categories
+      FROM known_entities
+     WHERE slug = ANY(ARRAY[${sql.join(
+       slugs.map((s) => sql`${s}`),
+       sql`, `,
+     )}]::text[])
+  `)) as unknown as Array<{
+    slug: string;
+    name: string;
+    country: string;
+    role: string;
+    categories: string[] | null;
+  }>;
+  const metaBySlug = new Map(meta.map((m) => [m.slug, m]));
+
+  type Hydrated = {
+    slug: string;
+    name: string;
+    similarity: number;
+    role: string;
+    categories: string[];
+    country: string;
+  };
+  const hydrated: Hydrated[] = [];
+  for (const n of neighbors) {
+    const m = metaBySlug.get(n.entitySlug);
+    if (!m) continue;
+    hydrated.push({
+      slug: m.slug,
+      name: m.name,
+      similarity: n.similarity,
+      role: m.role,
+      categories: m.categories ?? [],
+      country: m.country,
+    });
+  }
+  if (hydrated.length === 0) return null;
+
+  // Weighted vote — each neighbor contributes `similarity` to the
+  // tally for its values. Normalize by sum-of-weights so confidence
+  // is on 0-1.
+  const totalWeight = hydrated.reduce((s, h) => s + h.similarity, 0);
+  const safeNorm = (x: number) => (totalWeight > 0 ? x / totalWeight : 0);
+
+  // Role prediction — single value, max-vote
+  const roleVotes = new Map<string, { weight: number; support: number }>();
+  for (const h of hydrated) {
+    const v = roleVotes.get(h.role) ?? { weight: 0, support: 0 };
+    v.weight += h.similarity;
+    v.support += 1;
+    roleVotes.set(h.role, v);
+  }
+  const topRole = [...roleVotes.entries()].sort((a, b) => b[1].weight - a[1].weight)[0];
+  const role: PredictedAttribute<string> | null = topRole
+    ? { value: topRole[0], confidence: safeNorm(topRole[1].weight), support: topRole[1].support }
+    : null;
+
+  // Categories — multi-label, per-category vote share
+  const catVotes = new Map<string, { weight: number; support: number }>();
+  for (const h of hydrated) {
+    for (const c of h.categories) {
+      const v = catVotes.get(c) ?? { weight: 0, support: 0 };
+      v.weight += h.similarity;
+      v.support += 1;
+      catVotes.set(c, v);
+    }
+  }
+  const categories: PredictedAttribute<string>[] = [...catVotes.entries()]
+    .map(([value, { weight, support }]) => ({
+      value,
+      confidence: safeNorm(weight),
+      support,
+    }))
+    .sort((a, b) => b.confidence - a.confidence);
+
+  // Country — only predict when neighbors agree (top vote share >= 0.5)
+  const countryVotes = new Map<string, { weight: number; support: number }>();
+  for (const h of hydrated) {
+    const v = countryVotes.get(h.country) ?? { weight: 0, support: 0 };
+    v.weight += h.similarity;
+    v.support += 1;
+    countryVotes.set(h.country, v);
+  }
+  const sortedCountries = [...countryVotes.entries()].sort(
+    (a, b) => b[1].weight - a[1].weight,
+  );
+  // Geographic dispersion check: if the top country has < 50% vote
+  // share, neighbors are spread and predicting one would be misleading.
+  const country: PredictedAttribute<string> | null =
+    sortedCountries[0] && safeNorm(sortedCountries[0][1].weight) >= 0.5
+      ? {
+          value: sortedCountries[0][0],
+          confidence: safeNorm(sortedCountries[0][1].weight),
+          support: sortedCountries[0][1].support,
+        }
+      : null;
+
+  return {
+    entitySlug,
+    k: hydrated.length,
+    role,
+    categories,
+    country,
+    neighbors: hydrated,
+  };
+}
