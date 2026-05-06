@@ -63,3 +63,4 @@ export * from './fuel-consumption-signals';
 export * from './embeddings';
 export * from './entity-activity-observations';
 export * from './entity-text-embeddings';
+export * from './entity-web-intelligence';
