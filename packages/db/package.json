@@ -49,6 +49,7 @@
     "seed-deal-structure-templates": "tsx src/seed-deal-structure-templates.ts",
     "seed-commission-structures": "tsx src/seed-commission-structures.ts",
     "seed-fuel-consumption-signals": "tsx src/seed-fuel-consumption-signals.ts",
+    "derive-fuel-signals-power-gen": "tsx src/derive-fuel-signals-power-gen.ts",
     "ingest-crude-assays": "tsx src/ingest-crude-assays.ts",
     "infer-cargo-trips": "tsx src/infer-cargo-trips.ts",
     "backfill-crude-grade-properties": "tsx src/backfill-crude-grade-properties.ts",
