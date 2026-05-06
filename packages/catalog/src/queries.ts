@@ -12397,3 +12397,93 @@ export async function resolveEntityMention(
     reason: `top candidate similarity ${top.similarity.toFixed(3)}, gap to runner-up ${runnerUp ? (top.similarity - runnerUp.similarity).toFixed(3) : 'n/a (only candidate)'}`,
   };
 }
+
+// ─── Website intelligence (entity_web_pages / facts / summaries) ──
+// Per the website-metadata-layer agreed-scope. Surfaces extracted
+// facts + summaries for inclusion in analyze_supplier dossier.
+
+export type EntityWebIntelligenceRow = {
+  entitySlug: string;
+  /** Most recent page fetch timestamp across this entity's pages.
+      Null when entity has never been crawled. */
+  lastCrawledAt: string | null;
+  /** Number of pages successfully extracted (text_length >= MIN). */
+  pagesCrawled: number;
+  /** Number of facts extracted across all pages. */
+  factsCount: number;
+  /** Top-N facts with highest confidence, capped for chat-tool size. */
+  topFacts: Array<{
+    factType: string;
+    value: string;
+    confidence: number | null;
+    sourceUrl: string | null;
+  }>;
+  /** Section summaries keyed by section_kind. Latest model_version
+      per section; older versions ignored. */
+  summaries: Record<string, string>;
+};
+
+export async function getEntityWebIntelligence(
+  entitySlug: string,
+  options: { topFactsLimit?: number } = {},
+): Promise<EntityWebIntelligenceRow | null> {
+  const factsLimit = options.topFactsLimit ?? 30;
+
+  const stats = (await db.execute(sql`
+    SELECT
+      MAX(fetched_at) AS last_crawled,
+      COUNT(*) FILTER (WHERE text_length >= 200) AS pages_crawled
+    FROM entity_web_pages
+    WHERE entity_slug = ${entitySlug};
+  `)) as unknown as Array<{ last_crawled: Date | null; pages_crawled: number }>;
+
+  if (!stats[0] || stats[0].pages_crawled === 0) return null;
+
+  const factRows = (await db.execute(sql`
+    SELECT fact_type, value, confidence, source_url
+      FROM entity_web_facts
+     WHERE entity_slug = ${entitySlug}
+     ORDER BY COALESCE(confidence, 0) DESC, fact_type
+     LIMIT ${factsLimit};
+  `)) as unknown as Array<{
+    fact_type: string;
+    value: string;
+    confidence: string | null;
+    source_url: string | null;
+  }>;
+
+  const factsCountRow = (await db.execute(sql`
+    SELECT COUNT(*)::int AS n FROM entity_web_facts WHERE entity_slug = ${entitySlug};
+  `)) as unknown as Array<{ n: number }>;
+
+  // Latest summary per section_kind (handle multiple model_versions).
+  const summaryRows = (await db.execute(sql`
+    SELECT DISTINCT ON (section_kind) section_kind, content
+      FROM entity_web_summaries
+     WHERE entity_slug = ${entitySlug}
+     ORDER BY section_kind, generated_at DESC;
+  `)) as unknown as Array<{ section_kind: string; content: string }>;
+
+  const summaries: Record<string, string> = {};
+  for (const r of summaryRows) summaries[r.section_kind] = r.content;
+
+  const lastCrawled = stats[0].last_crawled;
+  return {
+    entitySlug,
+    lastCrawledAt:
+      lastCrawled instanceof Date
+        ? lastCrawled.toISOString()
+        : lastCrawled
+        ? String(lastCrawled)
+        : null,
+    pagesCrawled: Number(stats[0].pages_crawled),
+    factsCount: factsCountRow[0]?.n ?? 0,
+    topFacts: factRows.map((r) => ({
+      factType: r.fact_type,
+      value: r.value,
+      confidence: r.confidence == null ? null : Number.parseFloat(r.confidence),
+      sourceUrl: r.source_url,
+    })),
+    summaries,
+  };
+}
