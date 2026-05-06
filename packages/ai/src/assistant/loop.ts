@@ -2,6 +2,13 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { getClient, MODELS } from '../client';
 import { BudgetExceededError, getBudgetStatus, recordUsage } from './budget';
 import { costUsdCentsForTurn } from './pricing';
+import { PostgresCostLedger } from '../cost-ledger';
+
+// Vex-into-procur merge Phase 2 — every Anthropic call dual-writes to
+// cost_ledger AND the existing ai_usage rollup. cost_ledger is the
+// per-call audit / source of truth; ai_usage stays the fast daily
+// aggregate consulted by the budget gate.
+const costLedger = new PostgresCostLedger();
 import { buildAssistantSystem } from './system-prompt';
 import { buildToolsParam } from './tools/registry';
 import { getAnthropicServerTools } from './server-tools';
@@ -93,6 +100,25 @@ export async function runAgentTurn(input: TurnInput): Promise<TurnResult> {
       cacheCreationTokens: response.usage.cache_creation_input_tokens ?? 0,
       cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
       costUsdCents: costCents,
+    });
+
+    // cost_ledger dual-write — idempotent on response.id so retries +
+    // partial-failure replays collapse to one row. Total tokens + total
+    // cost in micros; per-token-class breakdown stays in ai_usage.
+    const totalTokens =
+      response.usage.input_tokens +
+      response.usage.output_tokens +
+      (response.usage.cache_creation_input_tokens ?? 0) +
+      (response.usage.cache_read_input_tokens ?? 0);
+    await costLedger.record({
+      idempotencyKey: `assistant:${response.id}`,
+      operation: 'llm.completion',
+      provider: 'anthropic',
+      model: MODELS.sonnet,
+      units: totalTokens,
+      unitKind: 'tokens',
+      costUsdMicros: costCents * 10_000,
+      occurredAt: new Date(),
     });
 
     steps.push({
