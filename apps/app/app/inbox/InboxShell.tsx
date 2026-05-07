@@ -29,11 +29,26 @@ export async function InboxShell({ activeThreadId }: InboxShellProps) {
   const threads = await listInboxThreads({ limit: 100 });
   const detail = activeThreadId ? await getThreadDetail(activeThreadId) : null;
 
+  // Mobile two-pane: when a thread is selected, hide the list and
+  // show only the detail (with a back button); when no thread is
+  // selected, show only the list. Desktop (lg+) shows both side-by-
+  // side regardless.
+  const showListOnMobile = !activeThreadId;
+  const showDetailOnMobile = !!activeThreadId;
+
   return (
     <div className="grid h-[calc(100vh-var(--shell-topbar-height)-1px)] grid-cols-1 lg:grid-cols-[360px_1fr]">
-      <ThreadList threads={threads} activeThreadId={activeThreadId} />
+      <ThreadList
+        threads={threads}
+        activeThreadId={activeThreadId}
+        mobileVisible={showListOnMobile}
+      />
 
-      <main className="overflow-y-auto bg-[color:var(--color-background)]">
+      <main
+        className={`overflow-y-auto bg-[color:var(--color-background)] ${
+          showDetailOnMobile ? 'block' : 'hidden lg:block'
+        }`}
+      >
         {detail ? (
           <ThreadDetail
             threadId={detail.thread.id}
@@ -72,12 +87,18 @@ export async function InboxShell({ activeThreadId }: InboxShellProps) {
 function ThreadList({
   threads,
   activeThreadId,
+  mobileVisible,
 }: {
   threads: ThreadListRow[];
   activeThreadId: string | null;
+  mobileVisible: boolean;
 }) {
   return (
-    <aside className="hidden flex-col border-r border-[color:var(--color-border)] lg:flex">
+    <aside
+      className={`flex-col border-r border-[color:var(--color-border)] lg:flex ${
+        mobileVisible ? 'flex' : 'hidden'
+      }`}
+    >
       <header className="flex items-center justify-between border-b border-[color:var(--color-border)] px-4 py-3">
         <div>
           <h1 className="text-base font-semibold tracking-tight">Inbox</h1>

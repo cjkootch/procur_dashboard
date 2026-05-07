@@ -56,11 +56,26 @@ export async function MessagesShell({ activePhone }: MessagesShellProps) {
     );
   }
 
+  // Mobile two-pane: when a conversation is selected, hide the list
+  // and show only the detail (with a back button); when nothing
+  // selected, show only the list. Desktop (lg+) shows both side-by-
+  // side regardless.
+  const showListOnMobile = !activePhone;
+  const showDetailOnMobile = !!activePhone;
+
   return (
     <div className="grid h-[calc(100vh-var(--shell-topbar-height)-1px)] grid-cols-1 lg:grid-cols-[360px_1fr]">
-      <ConversationList conversations={conversations} activePhone={activePhone} />
+      <ConversationList
+        conversations={conversations}
+        activePhone={activePhone}
+        mobileVisible={showListOnMobile}
+      />
 
-      <main className="flex flex-col overflow-hidden bg-[color:var(--color-background)]">
+      <main
+        className={`flex-col overflow-hidden bg-[color:var(--color-background)] lg:flex ${
+          showDetailOnMobile ? 'flex' : 'hidden'
+        }`}
+      >
         {detail ? (
           <ConversationDetail
             phone={detail.phone}
@@ -104,12 +119,18 @@ const CHANNEL_TONE: Record<string, string> = {
 function ConversationList({
   conversations,
   activePhone,
+  mobileVisible,
 }: {
   conversations: MessagingConversation[];
   activePhone: string | null;
+  mobileVisible: boolean;
 }) {
   return (
-    <aside className="hidden flex-col border-r border-[color:var(--color-border)] lg:flex">
+    <aside
+      className={`flex-col border-r border-[color:var(--color-border)] lg:flex ${
+        mobileVisible ? 'flex' : 'hidden'
+      }`}
+    >
       <header className="flex items-center justify-between border-b border-[color:var(--color-border)] px-4 py-3">
         <div>
           <h1 className="text-base font-semibold tracking-tight">Messages</h1>

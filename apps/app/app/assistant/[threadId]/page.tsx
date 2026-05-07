@@ -35,8 +35,8 @@ export default async function AssistantThreadPage({ params, searchParams }: Prop
   const pageContext = parsePageContext(ctxKind, ctxId);
 
   return (
-    <div className="flex h-full">
-      <aside className="w-64 shrink-0 overflow-y-auto border-r border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-3">
+    <div className="flex h-full flex-col lg:flex-row">
+      <aside className="hidden shrink-0 overflow-y-auto border-r border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-3 lg:flex lg:w-64 lg:flex-col">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-medium">Conversations</div>
           <Link
@@ -58,12 +58,20 @@ export default async function AssistantThreadPage({ params, searchParams }: Prop
           ))}
         </ul>
       </aside>
-      <div className="flex flex-1 flex-col">
-        <header className="border-b border-[color:var(--color-border)] px-6 py-3">
-          <h1 className="text-lg font-semibold tracking-tight">{thread.title}</h1>
-          <p className="text-xs text-[color:var(--color-muted-foreground)]">
-            Started {formatDate(thread.createdAt)}
-          </p>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <header className="flex items-baseline gap-3 border-b border-[color:var(--color-border)] px-4 py-3 md:px-6">
+          <Link
+            href="/assistant"
+            className="text-xs text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] lg:hidden"
+          >
+            ←
+          </Link>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-lg font-semibold tracking-tight">{thread.title}</h1>
+            <p className="text-xs text-[color:var(--color-muted-foreground)]">
+              Started {formatDate(thread.createdAt)}
+            </p>
+          </div>
         </header>
         <div className="flex-1 overflow-hidden">
           <Chat
