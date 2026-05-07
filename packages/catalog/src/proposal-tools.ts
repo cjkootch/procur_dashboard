@@ -323,38 +323,60 @@ export const proposeTools = {
   propose_create_deal: defineTool({
     name: 'propose_create_deal',
     description:
-      'Queue a new fuel/food deal for operator approval. Required: dealRef, product, incoterm, ' +
-      'pricing basis, payment terms, volume, buyer org. Use when the user describes a fresh deal ' +
-      'opportunity in concrete terms. ALWAYS pull buyerOrgId from a prior lookup_known_entities or ' +
-      'lookup_known_entities call — never invent it.',
+      'Queue a new fuel/food deal for operator approval. Required: dealRef, product, ' +
+      'incoterm, pricing basis, payment terms, and the buyer (either an existing CRM org ' +
+      'ULID via `buyerOrgId`, OR a rolodex entity via `buyerKnownEntitySlug` — same shape ' +
+      'propose_create_contact uses; the executor resolves the slug to a CRM org at apply ' +
+      'time, creating one if needed). Volume is optional — pass `volumeUsg: 0` (or omit) ' +
+      'when the lead is at the qualification stage and a firm number is not yet quoted; ' +
+      'the operator updates it via the deal-edit UI after pricing comes back.',
     kind: 'write',
-    schema: z.object({
-      dealRef: z.string().min(1).max(50),
-      lineOfBusiness: z.enum(['fuel', 'food']).default('fuel'),
-      product: z.enum([
-        'ulsd', 'gasoline_87', 'gasoline_91', 'jet_a', 'jet_a1', 'avgas', 'lfo',
-        'hfo', 'lng', 'lpg', 'biodiesel_b20', 'rice', 'beans', 'pork', 'chicken',
-        'cooking_oil', 'powdered_milk',
-      ]),
-      incoterm: z.enum(['fob', 'cif', 'cfr', 'dap', 'exw', 'fas']),
-      pricingBasis: z.enum([
-        'platts', 'argus', 'opis', 'nymex_wti', 'nymex_rbob', 'ice_brent',
-        'fixed', 'negotiated',
-      ]),
-      paymentTerms: z.enum([
-        'prepayment_100', 'prepayment_80_20', 'lc_sight', 'lc_60d', 'lc_90d',
-        'lc_120d', 'sblc', 'open_account', 'telegraphic_transfer', 'mixed',
-      ]),
-      volumeUsg: z.number().positive(),
-      volumeUnit: z.enum(['usg', 'mt', 'kg', 'lbs', 'containers']).default('usg'),
-      densityKgL: z.number().positive().max(2).optional(),
-      buyerOrgId: ulidString,
-      destinationPort: z.string().optional(),
-      laycanStart: z.string().optional(),
-      laycanEnd: z.string().optional(),
-      notes: z.string().optional(),
-      rationale: z.string().min(1).max(1000),
-    }),
+    schema: z
+      .object({
+        dealRef: z.string().min(1).max(50),
+        lineOfBusiness: z.enum(['fuel', 'food']).default('fuel'),
+        product: z.enum([
+          'ulsd', 'gasoline_87', 'gasoline_91', 'jet_a', 'jet_a1', 'avgas', 'lfo',
+          'hfo', 'lng', 'lpg', 'biodiesel_b20', 'rice', 'beans', 'pork', 'chicken',
+          'cooking_oil', 'powdered_milk',
+        ]),
+        incoterm: z.enum(['fob', 'cif', 'cfr', 'dap', 'exw', 'fas']),
+        pricingBasis: z.enum([
+          'platts', 'argus', 'opis', 'nymex_wti', 'nymex_rbob', 'ice_brent',
+          'fixed', 'negotiated',
+        ]),
+        paymentTerms: z.enum([
+          'prepayment_100', 'prepayment_80_20', 'lc_sight', 'lc_60d', 'lc_90d',
+          'lc_120d', 'sblc', 'open_account', 'telegraphic_transfer', 'mixed',
+        ]),
+        // Allow 0 as a "TBD pending qualification" sentinel; the executor
+        // stores it as-is and the operator updates the figure after the
+        // first round of pricing comes back. Strictly-positive validation
+        // killed legitimate early-stage trade-lead writeups in chat.
+        volumeUsg: z.number().nonnegative().default(0),
+        volumeUnit: z.enum(['usg', 'mt', 'kg', 'lbs', 'containers']).default('usg'),
+        densityKgL: z.number().positive().max(2).optional(),
+        // Either an existing CRM org ULID, OR a rolodex entity slug. Same
+        // dual-input shape as propose_create_contact's orgs[]. The
+        // executor resolves slug → CRM org via
+        // resolveOrCreateOrgFromKnownEntity at apply time.
+        buyerOrgId: ulidString.optional(),
+        buyerKnownEntitySlug: z.string().min(1).max(200).optional(),
+        destinationPort: z.string().optional(),
+        laycanStart: z.string().optional(),
+        laycanEnd: z.string().optional(),
+        notes: z.string().optional(),
+        rationale: z.string().min(1).max(1000),
+      })
+      .refine(
+        (v) => Boolean(v.buyerOrgId) || Boolean(v.buyerKnownEntitySlug),
+        {
+          message:
+            'buyer is required: pass buyerOrgId (existing CRM org ULID) ' +
+            'or buyerKnownEntitySlug (rolodex slug)',
+          path: ['buyerOrgId'],
+        },
+      ),
     handler: async (ctx, input): Promise<ProposeResult> => {
       const action: ActionDescriptorT = {
         kind: 'crm.create_deal',
@@ -362,9 +384,13 @@ export const proposeTools = {
         ...input,
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
+      const volumeChip =
+        input.volumeUsg > 0
+          ? `${input.volumeUsg.toLocaleString()} ${input.volumeUnit}`
+          : 'TBD volume';
       return chip(
         action,
-        `Deal ${input.dealRef}: ${input.product} ${input.volumeUsg.toLocaleString()} ${input.volumeUnit} ${input.incoterm.toUpperCase()}`,
+        `Deal ${input.dealRef}: ${input.product} ${volumeChip} ${input.incoterm.toUpperCase()}`,
         row.id,
       );
     },

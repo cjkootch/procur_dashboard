@@ -14,6 +14,7 @@ import { createId } from '../agents/id';
 import { AgentRunner } from '../agents/agent-runner';
 import { DealEvaluatorAgent } from '../agents/agents/deal-evaluator';
 import { PostgresCostLedger } from '../cost-ledger';
+import { resolveOrCreateOrgFromKnownEntity } from './sales';
 import {
   emitOutreachOutcome,
   findRecentOutreachApprovalsByOrg,
@@ -139,7 +140,12 @@ export interface CreateDealPayload {
   densityKgL?: number;
   productionLeadTimeWeeks?: number;
   coldChainRequired?: boolean;
-  buyerOrgId: string;
+  /** Either an existing CRM org ULID OR a known_entities slug. The
+   *  apply path resolves the slug via resolveOrCreateOrgFromKnownEntity
+   *  and stores the resulting ULID on fuel_deals.buyer_org_id. At least
+   *  one must be set; tool-layer + executor enforce the invariant. */
+  buyerOrgId?: string;
+  buyerKnownEntitySlug?: string;
   destinationPort?: string;
   laycanStart?: string;
   laycanEnd?: string;
@@ -156,9 +162,24 @@ export function parseCreateDealPayload(
   const incoterm = proposedPayload['incoterm'];
   const pricingBasis = proposedPayload['pricingBasis'];
   const paymentTerms = proposedPayload['paymentTerms'];
-  const volumeUsg = proposedPayload['volumeUsg'];
-  const buyerOrgId = proposedPayload['buyerOrgId'];
+  const volumeUsgRaw = proposedPayload['volumeUsg'];
+  const buyerOrgIdRaw = proposedPayload['buyerOrgId'];
+  const buyerSlugRaw = proposedPayload['buyerKnownEntitySlug'];
   const rationale = proposedPayload['rationale'];
+  // Volume defaults to 0 (TBD-pending-qualification) when omitted —
+  // matches the tool schema's nonneg-with-default(0) shape.
+  const volumeUsg = typeof volumeUsgRaw === 'number' ? volumeUsgRaw : 0;
+  // Either an org ULID or a rolodex slug is acceptable; one must be
+  // present. Coerce to string and trim so empty/whitespace strings
+  // don't slip through the truthy check below.
+  const buyerOrgId =
+    typeof buyerOrgIdRaw === 'string' && buyerOrgIdRaw.trim().length > 0
+      ? buyerOrgIdRaw.trim()
+      : undefined;
+  const buyerKnownEntitySlug =
+    typeof buyerSlugRaw === 'string' && buyerSlugRaw.trim().length > 0
+      ? buyerSlugRaw.trim()
+      : undefined;
   if (
     typeof dealRef !== 'string' ||
     typeof product !== 'string' ||
@@ -169,8 +190,8 @@ export function parseCreateDealPayload(
     !PRICING_BASES.has(pricingBasis) ||
     typeof paymentTerms !== 'string' ||
     !PAYMENT_TERMS.has(paymentTerms) ||
-    typeof volumeUsg !== 'number' ||
-    typeof buyerOrgId !== 'string' ||
+    volumeUsg < 0 ||
+    (!buyerOrgId && !buyerKnownEntitySlug) ||
     typeof rationale !== 'string'
   ) {
     return null;
@@ -188,9 +209,10 @@ export function parseCreateDealPayload(
       typeof proposedPayload['volumeUnit'] === 'string'
         ? (proposedPayload['volumeUnit'] as string)
         : 'usg',
-    buyerOrgId,
     rationale,
   };
+  if (buyerOrgId) out.buyerOrgId = buyerOrgId;
+  if (buyerKnownEntitySlug) out.buyerKnownEntitySlug = buyerKnownEntitySlug;
   if (typeof proposedPayload['densityKgL'] === 'number') {
     out.densityKgL = proposedPayload['densityKgL'] as number;
   }
@@ -232,6 +254,32 @@ export async function applyCreateDeal(
   if (await alreadyApplied(approvalId)) return { ok: true };
   const dealId = createId();
 
+  // Resolve buyer org ULID. Caller may have passed an existing CRM
+  // org ULID directly (buyerOrgId) OR a rolodex slug
+  // (buyerKnownEntitySlug). The slug path resolves to an existing
+  // shadow CRM org or creates one from the rolodex entity. If
+  // neither is present or the slug doesn't resolve, fail the apply
+  // with a clear error rather than inserting a deal with a null
+  // buyer.
+  let buyerOrgId = payload.buyerOrgId ?? null;
+  if (!buyerOrgId && payload.buyerKnownEntitySlug) {
+    buyerOrgId = await resolveOrCreateOrgFromKnownEntity(
+      payload.buyerKnownEntitySlug,
+    );
+    if (!buyerOrgId) {
+      return {
+        ok: false,
+        error: `buyerKnownEntitySlug "${payload.buyerKnownEntitySlug}" did not resolve to a known_entities row`,
+      };
+    }
+  }
+  if (!buyerOrgId) {
+    return {
+      ok: false,
+      error: 'crm.create_deal payload missing both buyerOrgId and buyerKnownEntitySlug',
+    };
+  }
+
   await db.insert(fuelDeals).values({
     id: dealId,
     dealRef: payload.dealRef,
@@ -247,7 +295,7 @@ export async function applyCreateDeal(
     volumeUnit: payload.volumeUnit,
     productionLeadTimeWeeks: payload.productionLeadTimeWeeks ?? null,
     coldChainRequired: payload.coldChainRequired ?? false,
-    buyerOrgId: payload.buyerOrgId,
+    buyerOrgId,
     destinationPort: payload.destinationPort ?? null,
     laycanStart: payload.laycanStart ?? null,
     laycanEnd: payload.laycanEnd ?? null,
@@ -287,7 +335,7 @@ export async function applyCreateDeal(
   // model_version + evidence_item_ids to compute true conversion
   // rates per pipeline rev. Idempotent on (originatingApproval, verb)
   // via emitOutreachOutcome.
-  const recent = await findRecentOutreachApprovalsByOrg(payload.buyerOrgId);
+  const recent = await findRecentOutreachApprovalsByOrg(buyerOrgId);
   for (const originatingApproval of recent) {
     await emitOutreachOutcome({
       approvalId: originatingApproval,
@@ -299,7 +347,7 @@ export async function applyCreateDeal(
         deal_ref: payload.dealRef,
         product: payload.product,
         line_of_business: payload.lineOfBusiness,
-        buyer_org_id: payload.buyerOrgId,
+        buyer_org_id: buyerOrgId,
         triggered_by_approval: approvalId,
       },
     });
