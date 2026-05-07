@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation';
 import { UserButton } from '@clerk/nextjs';
 import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 import { NotificationsBell } from './NotificationsBell';
+import { NotificationsLiveLayer } from './NotificationsLiveLayer';
+import { getNotificationPollState } from '../../lib/notification-queries';
 import { PageHeader } from './PageHeader';
 import { Sidebar, MobileSidebar, type SidebarNavGroup } from './Sidebar';
 
@@ -142,6 +144,11 @@ export async function AppShell({
   const sidebarCompany = company
     ? { name: company.name, planTier: company.planTier }
     : null;
+  // Seed the live polling layer with the most recent notification's
+  // createdAt so the first poll only surfaces things that arrived
+  // after this page render (avoids spamming a toast for every unread
+  // row from days ago).
+  const pollState = await getNotificationPollState(user.id);
 
   return (
     <div className="flex min-h-screen">
@@ -171,6 +178,7 @@ export async function AppShell({
           {children}
         </main>
       </div>
+      <NotificationsLiveLayer initialLatest={pollState.latestCreatedAt} />
     </div>
   );
 }

@@ -11,6 +11,7 @@ import {
 } from '@procur/db';
 import { createId, emitOutreachOutcome } from '@procur/ai';
 import { recordWebhookReceipt } from '../../../../lib/webhook-events';
+import { notifyAllOperators } from '../../../../lib/notification-queries';
 
 export const runtime = 'nodejs';
 
@@ -313,6 +314,20 @@ export async function POST(req: Request): Promise<Response> {
   // Manual operator-driven sends without an approvalId can't be
   // attributed and silently no-op here.
   await emitRepliedForThread({ threadId, occurredAt, messageDbId: newMessageId });
+
+  // Operator notification — bell + (client-side) toast. Single-user
+  // deployment fans out to every user; multi-tenant should narrow by
+  // inferred company. Failure is silent so a notification write
+  // never breaks the inbound webhook (notifyAllOperators swallows
+  // its own errors per its contract).
+  await notifyAllOperators({
+    type: 'comm.email_received',
+    title: `New email from ${fromEmail ?? 'unknown sender'}`,
+    body: subject ?? bodyText?.slice(0, 200) ?? null,
+    link: `/inbox/${threadId}`,
+    entityType: 'thread',
+    entityId: null,
+  });
 
   await db
     .update(rawEvents)
