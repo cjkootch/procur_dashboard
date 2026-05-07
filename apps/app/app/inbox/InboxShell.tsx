@@ -1,11 +1,13 @@
 import Link from 'next/link';
 import {
+  getOrInitConversationSettings,
   getThreadDetail,
   listInboxThreads,
   type ThreadListRow,
   type ThreadMessageRow,
 } from '@procur/catalog';
 import { draftReplyAction } from './actions';
+import { ConversationSettingsPanel } from '../../components/conversation/ConversationSettingsPanel';
 
 /**
  * Outlook-style two-pane inbox shell. Reused by /inbox (no thread
@@ -32,12 +34,20 @@ export async function InboxShell({ activeThreadId }: InboxShellProps) {
   // Mobile two-pane: when a thread is selected, hide the list and
   // show only the detail (with a back button); when no thread is
   // selected, show only the list. Desktop (lg+) shows both side-by-
-  // side regardless.
+  // side regardless. The settings panel (third column on lg+)
+  // renders only when a thread is selected.
   const showListOnMobile = !activeThreadId;
   const showDetailOnMobile = !!activeThreadId;
 
+  const settings = activeThreadId
+    ? await getOrInitConversationSettings({
+        channel: 'email',
+        conversationKey: activeThreadId,
+      })
+    : null;
+
   return (
-    <div className="grid h-[calc(100vh-var(--shell-topbar-height)-1px)] grid-cols-1 lg:grid-cols-[360px_1fr]">
+    <div className="grid h-[calc(100vh-var(--shell-topbar-height)-1px)] grid-cols-1 lg:grid-cols-[360px_1fr_320px]">
       <ThreadList
         threads={threads}
         activeThreadId={activeThreadId}
@@ -76,6 +86,14 @@ export async function InboxShell({ activeThreadId }: InboxShellProps) {
           </EmptyState>
         )}
       </main>
+
+      {settings && activeThreadId && (
+        <ConversationSettingsPanel
+          initialSettings={settings}
+          channel="email"
+          conversationKey={activeThreadId}
+        />
+      )}
     </div>
   );
 }
