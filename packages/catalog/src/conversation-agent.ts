@@ -1,11 +1,14 @@
 import 'server-only';
-import { and, desc, eq, gte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, isNotNull, sql } from 'drizzle-orm';
 import {
+  approvals,
   conversationSettings,
   db,
   messages,
+  notifications,
   threads,
   touchpoints,
+  users,
   type ConversationSettings,
 } from '@procur/db';
 import { getClient, MODELS } from '@procur/ai';
@@ -74,9 +77,14 @@ interface QueueAiReplyResult {
     | 'skipped_budget'
     | 'skipped_session_window'
     | 'skipped_draft_failed'
-    | 'queued';
+    | 'queued'
+    | 'auto_executed';
   approvalId?: string;
   reason?: string;
+  /** When status === 'queued' or 'auto_executed', the classifier's
+   *  verdict on the draft body — 'commitment' triggers the approval
+   *  gate; 'safe' allows auto-send when approvalMode === 'tiered'. */
+  riskKind?: 'safe' | 'commitment';
 }
 
 /**
@@ -194,32 +202,53 @@ async function runMaybeQueueAiReply(
     return { status: 'skipped_draft_failed', reason: 'empty_draft' };
   }
 
-  // Queue the approval. Slice 2 always uses full_approval — the
-  // tiered + business-hours-only modes are deferred. The chat
-  // assistant's existing propose_*_send tools live in
-  // packages/catalog/src/proposal-tools.ts; we replicate the
-  // approval insertion via the agent runtime here.
+  // Classify the draft. 'commitment' = anything that touches price /
+  // volume / delivery / payment / meeting time / explicit yes — must
+  // route through human approval. 'safe' = acks, qualifying questions,
+  // generic info — auto-sendable when approvalMode === 'tiered'.
+  const riskKind = classifyDraftRisk(draft.body);
+  const channel = settings.channel as 'sms' | 'whatsapp';
+
+  // Tiered + safe → auto-execute. Insert an approval row stamped
+  // 'auto_approved' for audit, then dispatch the executor inline.
+  if (settings.approvalMode === 'tiered' && riskKind === 'safe') {
+    const approvalId = await autoExecuteReply({
+      channel,
+      toPhone: input.fromPhone,
+      body: draft.body,
+      rationale: `AI auto-sent (tiered mode, classifier: safe) for ${channel} reply (conversation_settings ${settings.id}). Inbound: "${input.inboundBody.slice(0, 200)}". Authority: ${settings.authority}.`,
+      settingsId: settings.id,
+    });
+    await incrementConversationCounters(settings.id, 1000);
+    return { status: 'auto_executed', approvalId, riskKind };
+  }
+
+  // Otherwise queue an approval. Includes:
+  //   - approvalMode === 'full_approval' (default)
+  //   - approvalMode === 'tiered' AND riskKind === 'commitment'
+  //   - approvalMode === 'business_hours_only' (deferred semantics —
+  //     same as full_approval until business-hours rules ship)
   const approvalId = await queueProposalApproval({
-    channel: settings.channel as 'sms' | 'whatsapp',
+    channel,
     toPhone: input.fromPhone,
     body: draft.body,
-    rationale: `AI auto-draft for ${settings.channel} reply (conversation_settings ${settings.id}). Inbound: "${input.inboundBody.slice(0, 200)}". Authority: ${settings.authority}. Pending operator approval.`,
+    rationale: `AI auto-draft for ${channel} reply (conversation_settings ${settings.id}). Inbound: "${input.inboundBody.slice(0, 200)}". Authority: ${settings.authority}. Risk: ${riskKind}. Pending operator approval.`,
     settingsId: settings.id,
   });
 
-  // Increment counters. Cost is rough — Anthropic tokens not
-  // available without the response object; estimate at $0.001 per
-  // turn for Haiku. Gets refined when we hook up real cost tracking.
-  await db
-    .update(conversationSettings)
-    .set({
-      totalTurns: sql`${conversationSettings.totalTurns} + 1`,
-      totalCostUsdMicros: sql`${conversationSettings.totalCostUsdMicros} + 1000`,
-      updatedAt: new Date(),
-    })
-    .where(eq(conversationSettings.id, settings.id));
+  // Notify operators so the approval doesn't sit silently. Without
+  // this an operator can flip aiEnabled on, the agent queues drafts,
+  // and nothing surfaces in the bell — they'd only notice on a
+  // manual visit to /approvals.
+  await notifyOperatorsOfPendingApproval({
+    approvalId,
+    channel,
+    conversationKey: input.fromPhone,
+    draftPreview: draft.body,
+  });
 
-  return { status: 'queued', approvalId };
+  await incrementConversationCounters(settings.id, 1000);
+  return { status: 'queued', approvalId, riskKind };
 }
 
 interface ConversationTurn {
@@ -601,29 +630,47 @@ async function runMaybeQueueAiEmailReply(
     return { status: 'skipped_draft_failed', reason: 'empty_draft' };
   }
 
-  // Queue the email.send approval. Threading via inReplyTo (the
-  // RFC Message-ID of the latest message in the thread).
+  // Classify the draft body — same regex pass as SMS. Email drafts
+  // are typically longer so the classifier sees more surface area
+  // and tends to err toward 'commitment'; that's the safer side.
+  const riskKind = classifyDraftRisk(draft.body);
+  const inReplyTo = replyTarget?.latestMessageId ?? null;
+
+  // Tiered + safe → auto-execute via applyEmailSend.
+  if (settings.approvalMode === 'tiered' && riskKind === 'safe') {
+    const approvalId = await autoExecuteEmailReply({
+      to: recipients,
+      subject,
+      body: draft.body,
+      inReplyTo,
+      rationale: `AI auto-sent (tiered mode, classifier: safe) for email reply (conversation_settings ${settings.id}, thread ${input.threadId}). Authority: ${settings.authority}.`,
+      settingsId: settings.id,
+    });
+    await incrementConversationCounters(settings.id, 3000);
+    return { status: 'auto_executed', approvalId, riskKind };
+  }
+
+  // Otherwise queue the email.send approval.
   const approvalId = await queueEmailProposalApproval({
     to: recipients,
     subject,
     body: draft.body,
-    inReplyTo: replyTarget?.latestMessageId ?? null,
-    rationale: `AI auto-draft for email reply (conversation_settings ${settings.id}, thread ${input.threadId}). Authority: ${settings.authority}. Pending operator approval.`,
+    inReplyTo,
+    rationale: `AI auto-draft for email reply (conversation_settings ${settings.id}, thread ${input.threadId}). Authority: ${settings.authority}. Risk: ${riskKind}. Pending operator approval.`,
     settingsId: settings.id,
   });
 
-  // Increment counters. ~$0.003/turn estimate for Haiku on email-
-  // length context (longer than SMS).
-  await db
-    .update(conversationSettings)
-    .set({
-      totalTurns: sql`${conversationSettings.totalTurns} + 1`,
-      totalCostUsdMicros: sql`${conversationSettings.totalCostUsdMicros} + 3000`,
-      updatedAt: new Date(),
-    })
-    .where(eq(conversationSettings.id, settings.id));
+  // Same notification fan-out as SMS so email drafts surface in
+  // the bell + toast without operators having to babysit /approvals.
+  await notifyOperatorsOfPendingApproval({
+    approvalId,
+    channel: 'email',
+    conversationKey: input.threadId,
+    draftPreview: draft.body,
+  });
 
-  return { status: 'queued', approvalId };
+  await incrementConversationCounters(settings.id, 3000);
+  return { status: 'queued', approvalId, riskKind };
 }
 
 interface EmailTurn {
@@ -830,7 +877,6 @@ async function queueEmailProposalApproval(input: {
   rationale: string;
   settingsId: string;
 }): Promise<string> {
-  const { approvals } = await import('@procur/db');
   const { createId } = await import('@procur/ai');
 
   const id = createId();
@@ -873,12 +919,10 @@ async function queueProposalApproval(input: {
   rationale: string;
   settingsId: string;
 }): Promise<string> {
-  // Lazy import avoids the circular @procur/ai → @procur/catalog
-  // dependency that would otherwise form here. The action descriptor
-  // type lives in @procur/ai; the approval row goes via a direct
-  // SQL insert instead of insertChatApproval (which writes an
-  // approval.created event with `source: 'chat'` we don't want).
-  const { approvals } = await import('@procur/db');
+  // Lazy import for @procur/ai avoids the circular
+  // @procur/ai → @procur/catalog dependency that would otherwise
+  // form here. Approvals are imported at module scope — the schema
+  // table reference doesn't pull in @procur/ai's runtime.
   const { createId } = await import('@procur/ai');
 
   const id = createId();
@@ -902,4 +946,253 @@ async function queueProposalApproval(input: {
     decision: 'pending',
   });
   return id;
+}
+
+// ============================================================================
+// tiered approval — classifier + auto-execute paths
+// ============================================================================
+
+/**
+ * Lightweight regex classifier on the draft body. The principle:
+ * surface anything that smells like a commercial commitment to the
+ * operator. Acknowledgments, qualifying questions, and scheduling
+ * pleasantries pass through.
+ *
+ * Errs toward 'commitment' on purpose — false positives just mean
+ * the operator approves a benign draft, which is cheap. False
+ * negatives would auto-send a price/volume/payment commitment
+ * the operator never saw, which is expensive.
+ *
+ * Layered to a Haiku second-pass classifier later if false-positive
+ * rate becomes painful (per CLAUDE.md option "regex first, LLM only
+ * if regex says safe"). Today: regex only.
+ */
+export function classifyDraftRisk(body: string): 'safe' | 'commitment' {
+  const norm = body.toLowerCase();
+
+  // Currency / pricing — `$50`, `$0.85`, `2.45/bbl`, `0.85/usg`, USD,
+  // crack spread, premium, discount, differential, FOB+, CIF+
+  if (/\$\s*\d|\d[\d,.]*\s*(usd|cents?)\b|\/\s*(bbl|mt|ton|usg|gallon|liter|kg|m3|cbm)\b/i.test(norm)) {
+    return 'commitment';
+  }
+  if (/\b(crack\s+spread|premium|discount|differential|spot\s+price|firm\s+price|firm\s+offer|firm\s+bid|indicative\s+price|target\s+price)\b/i.test(norm)) {
+    return 'commitment';
+  }
+
+  // Volumes — `10,000 bbl`, `5 cargoes`, `2 lifts`
+  if (/\d[\d,.]*\s*(bbl|barrel|barrels|mt|ton|tons|tonne|tonnes|cbm|m3|cargo|cargoes|parcel|parcels|lots?|lifts?|liftings?)\b/i.test(norm)) {
+    return 'commitment';
+  }
+
+  // Incoterms / delivery terms
+  if (/\b(fob|cif|cfr|dap|ddp|fas|exw|incoterm|fca|cpt|cip)\b/i.test(norm)) {
+    return 'commitment';
+  }
+
+  // Payment instruments / terms
+  if (/\b(letter\s+of\s+credit|sblc|standby\s+lc|wire\s+transfer|payment\s+terms|net\s+\d+\s*days?|prepay|prepaid|cad\b|cash\s+against\s+documents|t\/?t\b|bank\s+transfer)\b/i.test(norm)) {
+    return 'commitment';
+  }
+
+  // Affirmative commits — "agreed", "confirmed", "we'll do", etc.
+  if (/\b(agreed|confirmed|will\s+do|book\s+it|done\s+deal|locked\s+in|locked|deal\s+done|count\s+us\s+in|count\s+me\s+in|deal\b|we['']ll\s+take|i['']ll\s+commit)\b/i.test(norm)) {
+    return 'commitment';
+  }
+
+  // Meeting / time commitments — explicit times, days, scheduling intent
+  if (/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/i.test(norm)) {
+    return 'commitment';
+  }
+  if (/\b(today|tomorrow|tonight|this\s+evening|next\s+week|this\s+week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(norm)) {
+    return 'commitment';
+  }
+  if (/\b(let['']s\s+meet|meeting\s+at|call\s+at|schedule\s+a\s+call|schedule\s+a\s+meeting|book\s+a\s+slot|zoom|google\s+meet|teams\s+call|webex)\b/i.test(norm)) {
+    return 'commitment';
+  }
+
+  // Logistics / lifecycle commitments
+  if (/\b(loading\s+window|laycan|laydays|arrival|eta|etd|nominate|nomination|fixture|berthing|discharge\s+window)\b/i.test(norm)) {
+    return 'commitment';
+  }
+
+  return 'safe';
+}
+
+/**
+ * Auto-send path for SMS / WhatsApp drafts when the conversation is
+ * in `tiered` mode and the classifier returned 'safe'. Inserts an
+ * approval row stamped `decision: 'auto_approved'` (full audit
+ * preserved, just no human in the loop), then dispatches the
+ * channel executor inline.
+ *
+ * The executor itself short-circuits via alreadyApplied(), so
+ * accidental double-fire from a retry would be a no-op.
+ */
+async function autoExecuteReply(input: {
+  channel: 'sms' | 'whatsapp';
+  toPhone: string;
+  body: string;
+  rationale: string;
+  settingsId: string;
+}): Promise<string> {
+  const { createId, applySmsSend, applyWhatsAppSend } = await import('@procur/ai');
+
+  const id = createId();
+  const actionKind =
+    input.channel === 'whatsapp' ? 'whatsapp.send' : 'sms.send';
+  await db.insert(approvals).values({
+    id,
+    agentRunId: null,
+    actionType: actionKind,
+    proposedPayload: {
+      kind: actionKind,
+      tier: 'T2',
+      to: input.toPhone,
+      body: input.body,
+      rationale: input.rationale,
+      actor_source: 'conversation_agent_auto',
+      conversation_settings_id: input.settingsId,
+    },
+    decision: 'auto_approved',
+  });
+
+  const executor =
+    input.channel === 'whatsapp' ? applyWhatsAppSend : applySmsSend;
+  const result = await executor(id, {
+    to: input.toPhone,
+    body: input.body,
+    rationale: input.rationale,
+  });
+  if (!result.ok) {
+    console.error(
+      '[conversation-agent] auto-execute failed',
+      input.channel,
+      result.error,
+    );
+  }
+  return id;
+}
+
+/**
+ * Auto-send path for email drafts. Mirrors autoExecuteReply but
+ * targets applyEmailSend, which threads via inReplyTo when set.
+ */
+async function autoExecuteEmailReply(input: {
+  to: string[];
+  subject: string;
+  body: string;
+  inReplyTo: string | null;
+  rationale: string;
+  settingsId: string;
+}): Promise<string> {
+  const { createId, applyEmailSend } = await import('@procur/ai');
+
+  const id = createId();
+  const payload: Record<string, unknown> = {
+    kind: 'email.send',
+    tier: 'T2',
+    to: input.to,
+    subject: input.subject,
+    body: input.body,
+    rationale: input.rationale,
+    actor_source: 'conversation_agent_auto',
+    conversation_settings_id: input.settingsId,
+  };
+  if (input.inReplyTo) payload['inReplyTo'] = input.inReplyTo;
+  await db.insert(approvals).values({
+    id,
+    agentRunId: null,
+    actionType: 'email.send',
+    proposedPayload: payload,
+    decision: 'auto_approved',
+  });
+  const executorPayload: {
+    to: string[];
+    subject: string;
+    body: string;
+    inReplyTo?: string;
+    rationale?: string;
+  } = {
+    to: input.to,
+    subject: input.subject,
+    body: input.body,
+    rationale: input.rationale,
+  };
+  if (input.inReplyTo) executorPayload.inReplyTo = input.inReplyTo;
+  const result = await applyEmailSend(id, executorPayload);
+  if (!result.ok) {
+    console.error(
+      '[conversation-agent] auto-execute email failed',
+      result.error,
+    );
+  }
+  return id;
+}
+
+/**
+ * Counter-bump shared by the queued and auto-executed paths so a
+ * single-row update keeps both totalTurns and totalCostUsdMicros
+ * consistent. Cost units are micro-USD ($0.001 = 1000 micros);
+ * Haiku-on-SMS is ~$0.001/turn, Haiku-on-email-thread ~$0.003/turn.
+ */
+async function incrementConversationCounters(
+  settingsId: string,
+  costMicrosDelta: number,
+): Promise<void> {
+  await db
+    .update(conversationSettings)
+    .set({
+      totalTurns: sql`${conversationSettings.totalTurns} + 1`,
+      totalCostUsdMicros: sql`${conversationSettings.totalCostUsdMicros} + ${costMicrosDelta}`,
+      updatedAt: new Date(),
+    })
+    .where(eq(conversationSettings.id, settingsId));
+}
+
+/**
+ * Fan out a notification row per active operator when an AI draft
+ * needs review. Inline implementation (rather than calling the
+ * existing `notifyAllOperators` helper in apps/app/lib) because
+ * catalog packages can't import from app code. Preference filtering
+ * (per-user mute) is deliberately skipped here; if it becomes
+ * painful, lift the helper into @procur/catalog/notifications and
+ * call from both sites.
+ */
+async function notifyOperatorsOfPendingApproval(input: {
+  approvalId: string;
+  channel: 'sms' | 'whatsapp' | 'email';
+  conversationKey: string;
+  draftPreview: string;
+}): Promise<void> {
+  try {
+    const operators = await db
+      .select({ id: users.id, companyId: users.companyId })
+      .from(users)
+      .where(isNotNull(users.companyId));
+    if (operators.length === 0) return;
+    const channelLabel =
+      input.channel === 'whatsapp'
+        ? 'WhatsApp'
+        : input.channel === 'email'
+          ? 'Email'
+          : 'SMS';
+    const rows = operators
+      .filter((o) => o.companyId)
+      .map((o) => ({
+        userId: o.id,
+        companyId: o.companyId as string,
+        type: 'approval.pending',
+        title: `AI ${channelLabel} draft awaiting approval`,
+        body: input.draftPreview.slice(0, 240),
+        link: '/approvals',
+        entityType: 'approval',
+        entityId: input.approvalId,
+      }));
+    if (rows.length === 0) return;
+    await db.insert(notifications).values(rows);
+  } catch (err) {
+    console.error('[conversation-agent] notify failed', err, {
+      approvalId: input.approvalId,
+    });
+  }
 }
