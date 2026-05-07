@@ -85,8 +85,12 @@ export function FrictionButton() {
         // text-sm) so the two stacked launchers feel like a paired
         // affordance instead of two unrelated chips. `transition` +
         // `-translate-y-px` give a subtle hover-lift; the dark fill
-        // distinguishes it from Ask's light pill below.
-        className="fixed bottom-20 right-4 z-40 flex items-center gap-2 rounded-full bg-[color:var(--color-foreground)] px-4 py-2.5 text-sm font-medium text-[color:var(--color-background)] shadow-lg transition hover:-translate-y-px hover:shadow-xl"
+        // distinguishes it from Ask's light pill below. `hidden md:flex`
+        // hides on mobile — the floating chips eat real estate on small
+        // viewports and the `?` keyboard shortcut isn't useful there
+        // anyway. Friction log is still reachable via the sidebar
+        // (Watch → Friction log).
+        className="fixed bottom-20 right-4 z-40 hidden items-center gap-2 rounded-full bg-[color:var(--color-foreground)] px-4 py-2.5 text-sm font-medium text-[color:var(--color-background)] shadow-lg transition hover:-translate-y-px hover:shadow-xl md:flex"
       >
         <span className="text-rose-400" aria-hidden>
           ?
