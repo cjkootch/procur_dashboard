@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { Button } from '@procur/ui';
 
 /**
  * "Qualify as lead" button for the entity profile page header.
@@ -57,15 +58,15 @@ export function QualifyAsLeadButton({ slug }: { slug: string }) {
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <button
-        type="button"
+      <Button
+        variant="primary"
+        size="sm"
         disabled={pending}
         onClick={onClick}
         title="Qualify this counterparty as a lead with full procur commercial context"
-        className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-[color:var(--color-foreground)] bg-[color:var(--color-foreground)] px-3 py-1 text-xs font-medium text-[color:var(--color-background)] hover:opacity-90 disabled:opacity-40"
       >
         {pending ? 'Qualifying…' : 'Qualify as lead'}
-      </button>
+      </Button>
       {error && <span className="text-[10px] text-red-700">{error}</span>}
     </div>
   );

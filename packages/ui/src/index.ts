@@ -11,3 +11,9 @@ export { Card, CardHeader, CardTitle } from './card';
 export type { CardProps, CardHeaderProps, CardTitleProps } from './card';
 export { Label } from './label';
 export type { LabelProps } from './label';
+export { StatusDot } from './status-dot';
+export type {
+  StatusDotProps,
+  StatusDotTone,
+  StatusDotSize,
+} from './status-dot';
