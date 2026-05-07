@@ -36,7 +36,7 @@ export default async function RetrospectivesIndexPage() {
   const completed = rows.filter((r) => !r.isDraft);
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-10">
+    <div className="mx-auto max-w-5xl px-4 py-6 md:px-6 md:py-10">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">📓 Deal retrospectives</h1>
         <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
@@ -90,7 +90,7 @@ export default async function RetrospectivesIndexPage() {
 
 function RetrospectiveRow({ row }: { row: RetrospectiveQueueRow }) {
   return (
-    <li className="grid grid-cols-[80px_minmax(0,1fr)_120px_120px] items-baseline gap-3 py-3">
+    <li className="flex flex-col gap-1.5 border-b border-[color:var(--color-border)]/40 py-3 last:border-b-0 md:grid md:grid-cols-[80px_minmax(0,1fr)_120px_120px] md:items-baseline md:gap-3 md:border-b-0">
       <span className={`inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide ${OUTCOME_PILL[row.dealOutcome]}`}>
         {row.dealOutcome}
       </span>

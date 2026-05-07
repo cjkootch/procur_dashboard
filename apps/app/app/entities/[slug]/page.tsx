@@ -83,7 +83,7 @@ export default async function EntityProfilePage({ params }: Props) {
     : [];
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-10">
+    <div className="mx-auto max-w-6xl px-4 py-6 md:px-6 md:py-10">
       <nav className="mb-4 text-sm text-[color:var(--color-muted-foreground)]">
         <Link
           href="/suppliers/known-entities"
@@ -102,7 +102,7 @@ export default async function EntityProfilePage({ params }: Props) {
 
       <header className="mb-6 overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] shadow-sm">
         <div className="h-32 bg-gradient-to-r from-sky-200 via-indigo-200 to-violet-200 sm:h-40" />
-        <div className="px-6 pb-5">
+        <div className="px-4 pb-5 md:px-6">
           <div className="-mt-12 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
             <div className="flex items-end gap-4">
               <div className="rounded-full bg-[color:var(--color-background)] p-1 shadow-sm ring-1 ring-[color:var(--color-border)]">
