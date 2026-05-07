@@ -30,7 +30,7 @@ import { PostgresCostLedger } from '@procur/ai/cost-ledger';
 
 const REALTIME_URL =
   process.env.OPENAI_REALTIME_URL ??
-  'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01';
+  'wss://api.openai.com/v1/realtime?model=gpt-realtime';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 const DEFAULT_SYSTEM_PROMPT = `You are a polite, concise voice assistant
@@ -239,7 +239,7 @@ export async function handleTwilioStream(
           idempotencyKey: `voice_bridge:${streamSid}`,
           operation: 'llm.voice',
           provider: 'openai.realtime',
-          model: 'gpt-4o-realtime-preview',
+          model: 'gpt-realtime',
           units: durationSec,
           unitKind: 'seconds',
           costUsdMicros,
