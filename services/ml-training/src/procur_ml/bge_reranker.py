@@ -112,10 +112,10 @@ def rerank(
 ) -> None:
     """Score every (query, passage) pair from --input."""
     try:
-        from FlagEmbedding import FlagReranker
+        from sentence_transformers import CrossEncoder
     except ImportError as exc:
         raise click.ClickException(
-            "FlagEmbedding not installed. Install with `uv pip install -e .[bge]`."
+            "sentence-transformers not installed. Install with `pip install -e '.[bge]'`."
         ) from exc
 
     records = _load(input_path)
@@ -126,32 +126,40 @@ def rerank(
         output_path.write_text("[]", encoding="utf-8")
         return
 
-    use_fp16 = device is None or device.startswith(("cuda", "mps"))
     click.echo(
-        f"loading BAAI/bge-reranker-v2-m3 (device={device or 'auto'}, fp16={use_fp16})",
+        f"loading BAAI/bge-reranker-v2-m3 (device={device or 'auto'})",
         err=True,
     )
-    model = FlagReranker(
+    model = CrossEncoder(
         "BAAI/bge-reranker-v2-m3",
-        use_fp16=use_fp16,
         device=device,
+        max_length=max_length,
     )
 
-    pairs = [[r["query"], r["passage"]] for r in records]
-    out_records: list[dict[str, Any]] = []
+    pairs = [(r["query"], r["passage"]) for r in records]
     total = len(pairs)
     click.echo(f"scoring {total} pairs (batch_size={batch_size})", err=True)
 
-    scores = model.compute_score(
+    # CrossEncoder.predict returns logits in (-inf, +inf). Apply
+    # sigmoid via activation_fct so callers see a normalized [0, 1]
+    # relevance score, matching what FlagReranker(normalize=True)
+    # would have returned.
+    import torch
+
+    raw_scores = model.predict(
         pairs,
         batch_size=batch_size,
-        max_length=max_length,
-        normalize=True,
+        activation_fct=torch.nn.Sigmoid(),
+        show_progress_bar=False,
     )
-    if not isinstance(scores, list):
-        scores = [scores]
+    scores_list = (
+        raw_scores.tolist() if hasattr(raw_scores, "tolist") else list(raw_scores)
+    )
+    if not isinstance(scores_list, list):
+        scores_list = [scores_list]
 
-    for i, score in enumerate(scores):
+    out_records: list[dict[str, Any]] = []
+    for i, score in enumerate(scores_list):
         out_records.append(
             {
                 **records[i],
@@ -175,24 +183,24 @@ def rerank(
 def score(query: str, passages: str, device: str | None) -> None:
     """One-shot score: print a JSON array of {passage, score} sorted desc."""
     try:
-        from FlagEmbedding import FlagReranker
+        from sentence_transformers import CrossEncoder
     except ImportError as exc:
         raise click.ClickException(
-            "FlagEmbedding not installed. Install with `uv pip install -e .[bge]`."
+            "sentence-transformers not installed. Install with `pip install -e '.[bge]'`."
         ) from exc
 
     parsed = json.loads(passages)
     if not isinstance(parsed, list) or not all(isinstance(p, str) for p in parsed):
         raise click.BadParameter("--passages must be a JSON array of strings")
-    use_fp16 = device is None or device.startswith(("cuda", "mps"))
-    model = FlagReranker(
-        "BAAI/bge-reranker-v2-m3",
-        use_fp16=use_fp16,
-        device=device,
+    model = CrossEncoder("BAAI/bge-reranker-v2-m3", device=device)
+    import torch
+
+    raw = model.predict(
+        [(query, p) for p in parsed],
+        activation_fct=torch.nn.Sigmoid(),
+        show_progress_bar=False,
     )
-    scores = model.compute_score(
-        [[query, p] for p in parsed], normalize=True
-    )
+    scores = raw.tolist() if hasattr(raw, "tolist") else list(raw)
     if not isinstance(scores, list):
         scores = [scores]
     out = [
