@@ -22,6 +22,7 @@ export * from './calls';
 export * from './messaging';
 export * from './communication-templates';
 export * from './bge-embeddings';
+export * from './bge-reranker';
 export {
   buildCatalogTools,
   buildFilterUrl,

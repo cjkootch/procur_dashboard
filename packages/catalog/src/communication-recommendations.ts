@@ -14,6 +14,7 @@ import {
   type SimilarEntityRow,
 } from './queries';
 import { listRecentTouchpoints } from './inbox';
+import { rerankPassages } from './bge-reranker';
 
 /**
  * ML-aware communication recommendations.
@@ -463,6 +464,14 @@ export async function buildCommunicationContextPack(input: {
   entitySlug: string;
   contactId?: string;
   companyId?: string;
+  /** Operator intent passed downstream by `draftOutreachFromContext`.
+   *  When supplied, web summaries are reranked against the intent
+   *  via BGE-reranker so the LLM drafter sees the most relevant
+   *  sections first. Reranker scores stay internal — they're never
+   *  surfaced in the pack. */
+  intent?: string;
+  /** Caller-stamped context for the retrieval_runs audit row. */
+  retrievalContext?: Record<string, unknown>;
 }): Promise<CommunicationContextPack | null> {
   const entityRows = await lookupKnownEntities({
     name: input.entitySlug,
@@ -496,7 +505,7 @@ export async function buildCommunicationContextPack(input: {
 
   // Web summaries: shape is Record<sectionKind, text>. Convert to the
   // ordered array the drafter wants.
-  const webSummaries = web?.summaries
+  let webSummaries = web?.summaries
     ? Object.entries(web.summaries)
         .slice(0, 5)
         .map(([section, text]) => ({
@@ -504,6 +513,38 @@ export async function buildCommunicationContextPack(input: {
           text: typeof text === 'string' ? text.slice(0, 1500) : '',
         }))
     : [];
+
+  // Rerank web summaries against the operator intent when supplied.
+  // BGE-reranker-v2-m3 cross-encoder is sharper than the bi-encoder
+  // similarity ordering we got from upstream retrieval; the LLM
+  // drafter only sees a few hundred tokens of summary, so picking
+  // the most-relevant sections matters. Reranker scores stay
+  // internal — we sort by them, then drop them from the pack.
+  if (input.intent && webSummaries.length > 1) {
+    const candidates = webSummaries
+      .filter((s) => s.text && s.text.trim().length > 0)
+      .map((s) => ({ id: s.section, text: s.text }));
+    if (candidates.length > 1) {
+      const reranked = await rerankPassages({
+        query: input.intent,
+        passages: candidates,
+        topK: candidates.length,
+        context: {
+          source_kind: 'web_summary',
+          entity_slug: entity.slug,
+          ...(input.retrievalContext ?? {}),
+        },
+      });
+      const orderById = new Map(
+        reranked.passages.map((p, i) => [p.id, i] as const),
+      );
+      webSummaries = [...webSummaries].sort((a, b) => {
+        const ai = orderById.get(a.section) ?? Number.MAX_SAFE_INTEGER;
+        const bi = orderById.get(b.section) ?? Number.MAX_SAFE_INTEGER;
+        return ai - bi;
+      });
+    }
+  }
 
   // Customs context: the mapping shape carries reporter (importer
   // side) + partner (exporter side) + product-code ranges. We surface

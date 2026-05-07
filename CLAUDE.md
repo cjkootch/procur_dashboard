@@ -262,6 +262,20 @@ pnpm upsert-bge-embeddings --input bge-embeddings.json
 python -m procur_ml.bge_m3 query --text "refinería de Cartagena"
 ```
 
+BGE-reranker-v2-m3 (cross-encoder, post-retrieval sharpening):
+- Catalog helper `rerankPassages({ query, passages, topK })` — calls
+  HuggingFace Inference API when `HUGGINGFACE_API_TOKEN` is set,
+  falls back to identity (input order) otherwise.
+- Every call writes a row to `retrieval_runs` (audit + offline eval).
+  Scores stay INTERNAL — never surface in operator-facing copy.
+- Wired into `buildCommunicationContextPack(intent)` to reorder
+  webSummaries by intent relevance before LLM drafting.
+- Offline batch path:
+  ```sh
+  python -m procur_ml.bge_reranker rerank --input pairs.json --output scored.json
+  python -m procur_ml.bge_reranker score --query "ULSD cargo" --passages '["…", "…"]'
+  ```
+
 ## Website intelligence (PR #428)
 
 Per chat agreed-scope thread — frames as "company intelligence
@@ -468,6 +482,20 @@ pnpm upsert-bge-embeddings --input bge-embeddings.json
 # query a single string (prints 1024-dim JSON to stdout)
 python -m procur_ml.bge_m3 query --text "refinería de Cartagena"
 ```
+
+BGE-reranker-v2-m3 (cross-encoder, post-retrieval sharpening):
+- Catalog helper `rerankPassages({ query, passages, topK })` — calls
+  HuggingFace Inference API when `HUGGINGFACE_API_TOKEN` is set,
+  falls back to identity (input order) otherwise.
+- Every call writes a row to `retrieval_runs` (audit + offline eval).
+  Scores stay INTERNAL — never surface in operator-facing copy.
+- Wired into `buildCommunicationContextPack(intent)` to reorder
+  webSummaries by intent relevance before LLM drafting.
+- Offline batch path:
+  ```sh
+  python -m procur_ml.bge_reranker rerank --input pairs.json --output scored.json
+  python -m procur_ml.bge_reranker score --query "ULSD cargo" --passages '["…", "…"]'
+  ```
 
 ## Website intelligence (PR #428)
 
