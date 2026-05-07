@@ -232,11 +232,11 @@ export const proposePushToVexTool = defineTool({
     return {
       proposalId: randomUUID(),
       toolName: 'propose_push_to_vex_contact',
-      title: `Push ${resolved.legalName} to vex`,
+      title: `Qualify ${resolved.legalName} as lead`,
       description:
-        `Send this counterparty to vex as a new contact with full procur ` +
-        `commercial context. Vex's AI ingests the payload to seed the contact's ` +
-        `origination story.`,
+        `Qualify this counterparty as a lead with full procur commercial ` +
+        `context. The lead's origination story is captured for downstream ` +
+        `outreach + deal evaluation.`,
       preview: {
         identity: {
           legalName: resolved.legalName,

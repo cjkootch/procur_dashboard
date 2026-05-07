@@ -11,7 +11,7 @@ import { getCurrentUser } from '@procur/auth';
 import { EntityAvatar } from '../../../components/EntityAvatar';
 import { KycBadge } from '../../../components/KycBadge';
 import { parseEntityNotes } from '../../../lib/entity-notes';
-import { PushToVexButton } from './_components/PushToVexButton';
+import { QualifyAsLeadButton } from './_components/QualifyAsLeadButton';
 import { EntityDocumentsPanel } from './_components/EntityDocumentsPanel';
 import { QuoteAnchorsPanel } from './_components/QuoteAnchorsPanel';
 import { SupplierApprovalForm } from './_components/SupplierApprovalForm';
@@ -115,7 +115,7 @@ export default async function EntityProfilePage({ params }: Props) {
                   ? 'curated rolodex'
                   : 'portal-scraped'}
               </span>
-              <PushToVexButton slug={profile.canonicalKey} />
+              <QualifyAsLeadButton slug={profile.canonicalKey} />
             </div>
           </div>
           <div className="mt-3">

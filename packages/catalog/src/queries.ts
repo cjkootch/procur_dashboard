@@ -7247,7 +7247,7 @@ export interface MatchQueueItem {
   observedAt: string;
   score: number;
   rationale: string;
-  status: 'open' | 'dismissed' | 'pushed-to-vex' | 'actioned' | string;
+  status: 'open' | 'dismissed' | 'qualified' | 'actioned' | string;
   matchedAt: string;
   /** Set when knownEntityId resolves to a known_entities row. */
   entityProfileSlug: string | null;
@@ -7271,7 +7271,7 @@ export interface MatchQueueItem {
  *                    distinguish.
  */
 export async function getMatchQueue(filters: {
-  status?: 'open' | 'dismissed' | 'pushed-to-vex' | 'actioned';
+  status?: 'open' | 'dismissed' | 'qualified' | 'actioned';
   signalType?: 'distress_event' | 'velocity_drop' | 'new_award';
   daysBack?: number;
   limit?: number;
@@ -7373,7 +7373,7 @@ export async function getMatchQueue(filters: {
  */
 export async function updateMatchQueueStatus(args: {
   id: string;
-  status: 'open' | 'dismissed' | 'pushed-to-vex' | 'actioned';
+  status: 'open' | 'dismissed' | 'qualified' | 'actioned';
 }): Promise<void> {
   await db.execute(sql`
     UPDATE match_queue

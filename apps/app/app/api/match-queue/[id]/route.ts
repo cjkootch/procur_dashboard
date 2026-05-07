@@ -8,14 +8,14 @@ export const dynamic = 'force-dynamic';
 
 /**
  * PATCH /api/match-queue/[id]
- *   { status: 'dismissed' | 'pushed-to-vex' | 'actioned' | 'open' }
+ *   { status: 'dismissed' | 'qualified' | 'actioned' | 'open' }
  *
  * Workflow transition for a match-queue row. Auth via the existing
  * Clerk middleware (any authenticated user — match queue is shared
  * in v1; per-user scoping comes later).
  */
 const BodySchema = z.object({
-  status: z.enum(['open', 'dismissed', 'pushed-to-vex', 'actioned']),
+  status: z.enum(['open', 'dismissed', 'qualified', 'actioned']),
 });
 
 export async function PATCH(

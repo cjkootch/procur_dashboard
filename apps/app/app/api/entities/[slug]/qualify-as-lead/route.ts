@@ -13,22 +13,17 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * POST /api/entities/[slug]/push-to-vex
+ * POST /api/entities/[slug]/qualify-as-lead
  *   { contactName?, contactEmail?, contactPhone?, userNote? }
  *
- * One-click "qualify as lead" from the entity profile page. Mirrors the
- * match-queue path (and the assistant chat tool), keyed on the
+ * One-click "qualify as lead" from the entity profile page. Mirrors
+ * the match-queue path (and the assistant chat tool), keyed on the
  * canonical slug/UUID the profile page itself resolves with.
  *
  * Resolves the full profile via getEntityProfile (handles
  * known_entities slug OR external_suppliers UUID), then calls
- * qualifyAsLead — Phase 4 in-process replacement for the deleted
- * vex HTTP push. Returns the new lead's URL so the client can
+ * qualifyAsLead. Returns the new lead's URL so the client can
  * navigate.
- *
- * NOTE: route still named `push-to-vex` for back-compat with the
- * existing UI button + bookmarks; rename in a follow-up cleanup PR
- * after the merge stabilizes.
  */
 const BodySchema = z.object({
   contactName: z.string().nullish(),
@@ -69,8 +64,8 @@ export async function POST(
   }
 
   // Pull the per-tenant approval, market snapshot, and trading
-  // defaults in parallel — vex's enrichment worker treats all three
-  // as authoritative procur context, so shipping them on the push
+  // defaults in parallel — the lead-enrichment path treats all three
+  // as authoritative procur context, so shipping them on qualify
   // saves a follow-up callback for every lead.
   const [approval, banner, defaults] = await Promise.all([
     getSupplierApproval(company.id, profile.canonicalKey).catch(() => null),
@@ -101,7 +96,7 @@ export async function POST(
     : null;
 
   const chatSummary =
-    `Pushed from procur entity profile (${profile.primarySource === 'known_entity' ? 'curated rolodex' : 'portal-scraped'}). ` +
+    `Qualified from procur entity profile (${profile.primarySource === 'known_entity' ? 'curated rolodex' : 'portal-scraped'}). ` +
     `${profile.role ?? 'counterparty'}` +
     (profile.country ? ` based in ${profile.country}` : '') +
     (profile.categories.length > 0 ? `, categories: ${profile.categories.join(', ')}` : '') +

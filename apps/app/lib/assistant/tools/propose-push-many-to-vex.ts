@@ -180,11 +180,10 @@ export const proposePushManyToVexTool = defineTool({
     return {
       proposalId: randomUUID(),
       toolName: 'propose_push_many_to_vex_contacts',
-      title: `Push ${resolved.length} ${resolved.length === 1 ? 'entity' : 'entities'} to vex`,
+      title: `Qualify ${resolved.length} ${resolved.length === 1 ? 'entity' : 'entities'} as leads`,
       description:
-        `Send ${resolved.length} counterpart${resolved.length === 1 ? 'y' : 'ies'} ` +
-        `to vex as new contacts in one batch. Vex's AI ingests each payload to ` +
-        `seed the contacts' origination stories.` +
+        `Qualify ${resolved.length} counterpart${resolved.length === 1 ? 'y' : 'ies'} ` +
+        `as leads in one batch with full procur commercial context attached.` +
         (failed.length > 0
           ? ` ${failed.length} requested entit${failed.length === 1 ? 'y was' : 'ies were'} ` +
             `skipped (see preview).`

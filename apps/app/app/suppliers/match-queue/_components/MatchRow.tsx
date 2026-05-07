@@ -140,11 +140,11 @@ export function MatchRow(props: MatchRowProps) {
     });
   };
 
-  const pushToVex = () => {
+  const qualifyAsLead = () => {
     setPushError(null);
-    setOptimisticStatus('pushed-to-vex');
+    setOptimisticStatus('qualified');
     startTransition(async () => {
-      const res = await fetch(`/api/match-queue/${props.id}/push-to-vex`, {
+      const res = await fetch(`/api/match-queue/${props.id}/qualify-as-lead`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
@@ -298,17 +298,17 @@ export function MatchRow(props: MatchRowProps) {
         <button
           type="button"
           disabled={pending}
-          onClick={pushToVex}
-          title="Push this lead to vex CRM with full procur commercial context"
+          onClick={qualifyAsLead}
+          title="Qualify this signal as a lead with full match-queue context attached"
           className="rounded-[var(--radius-sm)] bg-[color:var(--color-foreground)] px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-background)] hover:opacity-90 disabled:opacity-40"
         >
-          Push to vex
+          Qualify as lead
         </button>
         <button
           type="button"
           disabled={pending}
           onClick={() => update('actioned')}
-          title="Mark as handled outside vex"
+          title="Mark as handled"
           className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-[11px] hover:border-[color:var(--color-foreground)] disabled:opacity-40"
         >
           Actioned

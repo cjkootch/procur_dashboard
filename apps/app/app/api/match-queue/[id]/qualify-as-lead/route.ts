@@ -14,17 +14,17 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * POST /api/match-queue/[id]/push-to-vex
+ * POST /api/match-queue/[id]/qualify-as-lead
  *   { contactName?, contactEmail?, contactPhone?, userNote? }
  *
- * One-click "push to vex" from the match-queue UI. Mirrors the
- * assistant chat-flow (propose_push_to_vex_contact + apply.ts →
- * pushVex) but skips the proposal/confirm step since the row itself
- * already represents an explicit user intent.
+ * One-click qualify-as-lead from the match-queue UI. Mirrors the
+ * assistant chat-flow but skips the proposal/confirm step since the
+ * row itself already represents an explicit user intent.
  *
- * On success: atomically transitions the row to status='pushed-to-vex'
- * so the queue de-duplicates re-pushes and hides the row from open.
- * On vex failure: row is left at status='open' so the user can retry.
+ * On success: atomically transitions the row to status='qualified'
+ * so the queue de-duplicates re-qualifications and hides the row
+ * from open. On failure: row is left at status='open' so the user
+ * can retry.
  */
 const BodySchema = z.object({
   contactName: z.string().nullish(),
@@ -113,10 +113,9 @@ export async function POST(
     `Surfaced via procur match queue (${row.signalType}/${row.signalKind}, ` +
     `score ${Number(row.score).toFixed(1)}). ${row.rationale}`;
 
-  // Push-time WHY context. Match queue is the canonical source — every
-  // row already carries score, rationale, signal kind/type, and a
-  // dated observation. The brief's ProcurSignal kinds: rfq |
-  // tender_award | vessel_clearance | customs_event | news | other.
+  // Qualification-time WHY context. Match queue is the canonical
+  // source — every row already carries score, rationale, signal
+  // kind/type, and a dated observation.
   const pushReason =
     `Match queue ${row.signalKind} signal at score ${Number(row.score).toFixed(2)}. ` +
     row.rationale;
@@ -170,7 +169,7 @@ export async function POST(
     },
   });
 
-  await updateMatchQueueStatus({ id: row.id, status: 'pushed-to-vex' });
+  await updateMatchQueueStatus({ id: row.id, status: 'qualified' });
 
   return NextResponse.json({
     ok: true,
