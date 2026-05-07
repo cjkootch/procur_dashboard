@@ -1,4 +1,8 @@
+'use client';
+
+import { useState, useTransition } from 'react';
 import Link from 'next/link';
+import { enrichApolloPersonAction } from '../../app/entities/[slug]/actions';
 import type { RenderedToolUse } from './types';
 
 /**
@@ -7,10 +11,11 @@ import type { RenderedToolUse } from './types';
  * debugging but noisy for the operator who just wants to see "who can
  * I reach at this entity, and which ones are already on file?"
  *
- * v1 (this file): static list, ✓ for already-enriched contacts, an
- * "Enrich" link to the entity profile for the rest. Inline enrich +
- * bulk lands in follow-up PRs (#2 and #3 of the chat-decision-makers
- * series).
+ * v2 (this file): inline enrich button next to each unresolved row,
+ * fires the same paid /people/match call the entity-profile button
+ * uses — server-side per-tenant daily cap is the only credit-burn
+ * gate. On success the row swaps to a confirmed-identity card with
+ * full name + email + phone. Bulk enrich lands in PR 3.
  */
 
 type Row = {
@@ -38,6 +43,19 @@ type Input = {
 };
 
 /**
+ * Locally-resolved row keyed by apolloPersonId. Populated when an
+ * inline enrich call succeeds; the renderer swaps the obfuscated row
+ * for one of these without re-fetching the tool result.
+ */
+type ResolvedRow = {
+  fullName: string;
+  title: string | null;
+  email: string | null;
+  directPhone: string | null;
+  linkedinUrl: string | null;
+};
+
+/**
  * Match-guard: confirms the tool output is the shape we expect before
  * the renderer dereferences it. The streaming pipeline can deliver
  * partial output, an error envelope, or a degraded-mode response —
@@ -58,6 +76,11 @@ export function DecisionMakersToolResult({
   const output = toolUse.result?.output as Output | undefined;
   const input = (toolUse.input ?? {}) as Input;
   const entitySlug = input.entitySlug ?? null;
+
+  // Locally-swapped rows live here. Keyed by apolloPersonId so the
+  // map stays stable even if the underlying tool output shape changes
+  // between renders.
+  const [resolved, setResolved] = useState<Record<string, ResolvedRow>>({});
 
   if (output?.degraded) {
     return (
@@ -99,7 +122,15 @@ export function DecisionMakersToolResult({
       </header>
       <ul className="divide-y divide-[color:var(--color-border)]">
         {people.map((p) => (
-          <PersonRow key={p.apolloPersonId} row={p} entitySlug={entitySlug} />
+          <PersonRow
+            key={p.apolloPersonId}
+            row={p}
+            entitySlug={entitySlug}
+            resolvedHere={resolved[p.apolloPersonId] ?? null}
+            onResolved={(r) =>
+              setResolved((prev) => ({ ...prev, [p.apolloPersonId]: r }))
+            }
+          />
         ))}
       </ul>
     </div>
@@ -109,48 +140,165 @@ export function DecisionMakersToolResult({
 function PersonRow({
   row,
   entitySlug,
+  resolvedHere,
+  onResolved,
 }: {
   row: Row;
   entitySlug: string | null;
+  resolvedHere: ResolvedRow | null;
+  onResolved: (r: ResolvedRow) => void;
 }) {
-  const displayName = [row.firstName, row.lastNameObfuscated]
-    .filter(Boolean)
-    .join(' ');
+  // Three rendering states, cascading by precedence:
+  //   1. Locally resolved this session → show full name + contacts.
+  //   2. Server says alreadyEnriched (prior /people/match) → ✓ pill.
+  //   3. Otherwise → inline Enrich affordance.
+  const isResolved = resolvedHere !== null || row.alreadyEnriched;
+
+  const displayName = resolvedHere
+    ? resolvedHere.fullName
+    : [row.firstName, row.lastNameObfuscated].filter(Boolean).join(' ');
+  const displayTitle = resolvedHere?.title ?? row.title ?? null;
+
   return (
-    <li className="flex items-center gap-2 px-2.5 py-1.5 text-xs">
+    <li className="flex items-start gap-2 px-2.5 py-1.5 text-xs">
       <div className="min-w-0 flex-1">
         <div className="truncate font-medium text-[color:var(--color-foreground)]">
           {displayName || '(unnamed)'}
         </div>
         <div className="truncate text-[color:var(--color-muted-foreground)]">
-          {row.title ?? '—'}
+          {displayTitle ?? '—'}
           {row.organization ? ` · ${row.organization}` : ''}
         </div>
+        {resolvedHere && (resolvedHere.email || resolvedHere.directPhone) && (
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[color:var(--color-muted-foreground)]">
+            {resolvedHere.email && (
+              <a
+                href={`mailto:${resolvedHere.email}`}
+                className="hover:text-[color:var(--color-foreground)]"
+              >
+                {resolvedHere.email}
+              </a>
+            )}
+            {resolvedHere.directPhone && (
+              <a
+                href={`tel:${resolvedHere.directPhone}`}
+                className="hover:text-[color:var(--color-foreground)]"
+              >
+                {resolvedHere.directPhone}
+              </a>
+            )}
+            {resolvedHere.linkedinUrl && (
+              <a
+                href={resolvedHere.linkedinUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-[color:var(--color-foreground)]"
+              >
+                LinkedIn ↗
+              </a>
+            )}
+          </div>
+        )}
       </div>
-      {row.alreadyEnriched ? (
-        <span
-          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300"
-          title="Already enriched via Apollo /people/match"
-        >
-          <svg
-            viewBox="0 0 12 12"
-            className="h-3 w-3"
-            aria-hidden
-            fill="currentColor"
-          >
-            <path d="M4.5 8.5L2 6l-.7.7 3.2 3.2 6.5-6.5L10.3 3z" />
-          </svg>
-          Enriched
-        </span>
+      {isResolved ? (
+        <EnrichedPill />
       ) : entitySlug ? (
-        <Link
-          href={`/entities/${entitySlug}#decision-makers`}
-          className="shrink-0 rounded-full border border-[color:var(--color-foreground)]/40 px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-foreground)] hover:border-[color:var(--color-foreground)] hover:bg-[color:var(--color-muted)]/40"
-          title="Open the entity profile to enrich this contact (paid, per-tenant daily cap)"
-        >
-          Enrich →
-        </Link>
+        <EnrichInChatButton
+          entitySlug={entitySlug}
+          apolloPersonId={row.apolloPersonId}
+          onResolved={onResolved}
+        />
       ) : null}
     </li>
+  );
+}
+
+function EnrichedPill() {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300"
+      title="Already enriched via Apollo /people/match"
+    >
+      <svg viewBox="0 0 12 12" className="h-3 w-3" aria-hidden fill="currentColor">
+        <path d="M4.5 8.5L2 6l-.7.7 3.2 3.2 6.5-6.5L10.3 3z" />
+      </svg>
+      Enriched
+    </span>
+  );
+}
+
+function EnrichInChatButton({
+  entitySlug,
+  apolloPersonId,
+  onResolved,
+}: {
+  entitySlug: string;
+  apolloPersonId: string;
+  onResolved: (r: ResolvedRow) => void;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [iconBroken, setIconBroken] = useState(false);
+
+  if (error) {
+    return (
+      <span
+        className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-700"
+        role="status"
+        title={error}
+      >
+        {error.length > 24 ? `${error.slice(0, 22)}…` : error}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setError(null);
+        startTransition(async () => {
+          const result = await enrichApolloPersonAction({
+            entitySlug,
+            apolloPersonId,
+          });
+          if (!result.ok) {
+            setError(result.message);
+            return;
+          }
+          onResolved({
+            fullName: `${result.person.firstName} ${result.person.lastName}`.trim(),
+            title: result.person.title,
+            email: result.person.email,
+            directPhone: result.person.directPhone,
+            linkedinUrl: result.person.linkedinUrl,
+          });
+        });
+      }}
+      disabled={pending}
+      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--color-foreground)]/40 px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-foreground)] hover:border-[color:var(--color-foreground)] hover:bg-[color:var(--color-muted)]/40 disabled:opacity-40"
+      title="Enrich this contact via Apollo /people/match (paid, per-tenant daily cap)"
+    >
+      {/* Apollo brand mark, rendered from /apollo-icon.svg in public/.
+          Drop the official SVG (https://www.apollo.io/brand) into
+          apps/app/public/apollo-icon.svg; the button silently falls
+          back to a text-only label when the asset is missing or the
+          image fails to load. We don't ship the logo in-repo to keep
+          the PR free of third-party brand assets. */}
+      {!iconBroken && (
+        // 12px static SVG; next/image's loader pipeline buys nothing
+        // here and breaks the silent-fallback-on-missing-asset
+        // behavior we want from `onError`.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src="/apollo-icon.svg"
+          alt=""
+          aria-hidden
+          className="h-3 w-3"
+          onError={() => setIconBroken(true)}
+        />
+      )}
+      <span>{pending ? 'Enriching…' : 'Enrich'}</span>
+    </button>
   );
 }
