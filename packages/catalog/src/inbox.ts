@@ -26,6 +26,10 @@ export async function listInboxThreads(
   options: { limit?: number } = {},
 ): Promise<ThreadListRow[]> {
   const limit = options.limit ?? 50;
+  // Falls back to metadata->>'from' when fromEmail is null — early
+  // outbound rows from email-send.ts didn't always populate the
+  // dedicated column, but they always carried `from` in metadata.
+  // Prevents "unknown sender" rows on threads we have full data for.
   const rows = await db
     .select({
       id: threads.id,
@@ -36,7 +40,10 @@ export async function listInboxThreads(
       createdAt: threads.createdAt,
       messageCount: sql<number>`(SELECT count(*)::int FROM ${messages} WHERE ${messages.threadId} = ${threads.id})`,
       lastFromEmail: sql<string | null>`(
-        SELECT ${messages.fromEmail}
+        SELECT COALESCE(
+          ${messages.fromEmail},
+          ${messages.metadata}->>'from'
+        )
         FROM ${messages}
         WHERE ${messages.threadId} = ${threads.id}
         ORDER BY ${messages.createdAt} DESC
@@ -44,6 +51,11 @@ export async function listInboxThreads(
       )`,
     })
     .from(threads)
+    // Hide orphan threads (created but the message insert failed
+    // mid-write — e.g. Resend retry between secret rotation). Without
+    // this filter the inbox shows ghost rows with 0 messages and no
+    // sender, which is just noise.
+    .where(sql`EXISTS (SELECT 1 FROM ${messages} WHERE ${messages.threadId} = ${threads.id})`)
     .orderBy(desc(threads.lastMessageAt))
     .limit(limit);
 

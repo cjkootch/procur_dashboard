@@ -273,14 +273,49 @@ function MessageCard({
           <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
             {message.bodyText}
           </pre>
+        ) : message.bodyHtml ? (
+          // Multipart/related emails (signature image inline) often
+          // ship the webhook payload with HTML only, no plain-text
+          // alternative. Strip-tag to text so the body still reads —
+          // good enough for triage. Full-fidelity HTML render is a
+          // future iteration (needs sanitization for safety).
+          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
+            {htmlToPlainText(message.bodyHtml)}
+          </pre>
         ) : (
           <p className="text-sm italic text-[color:var(--color-muted-foreground)]">
-            (no plain-text body)
+            (no body content)
           </p>
         )}
       </div>
     </details>
   );
+}
+
+/**
+ * Quick HTML → text fallback for inbound emails that arrived as HTML
+ * only (no multipart text alternative). NOT a full HTML renderer —
+ * just enough to surface the visible text so the operator can triage
+ * a thread without bouncing to the original email.
+ *
+ * Strips: tags, style blocks, script blocks, common entities.
+ * Preserves: line breaks at <br> and block-level boundaries.
+ */
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 // ----------------------------------------------------------------------------
