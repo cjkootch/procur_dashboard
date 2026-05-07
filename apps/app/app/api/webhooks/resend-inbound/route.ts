@@ -83,6 +83,44 @@ function pickAllEmails(value: string | string[] | undefined): string[] {
   return out;
 }
 
+/**
+ * Case-insensitive header lookup. RFC 5322 says header names are
+ * case-insensitive but JS object access is exact-match — different
+ * mail relays normalize differently (Resend lowercases on parse;
+ * raw MIME preserves whatever the sender shipped). Without this,
+ * `headers['In-Reply-To']` silently returns undefined when Resend
+ * delivered the key as `in-reply-to`, so threading breaks for
+ * Outlook / Exchange senders that always include the header.
+ */
+function pickHeader(
+  headers: Record<string, string> | undefined,
+  name: string,
+): string | null {
+  if (!headers) return null;
+  const lower = name.toLowerCase();
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === lower && typeof v === 'string' && v.length > 0) {
+      return v;
+    }
+  }
+  return null;
+}
+
+/**
+ * Extract the immediate-parent Message-ID from a `References`
+ * header value. References is space-separated `<id1@host> <id2@host> …`
+ * with the most recent ancestor LAST per RFC 5322. We use this as a
+ * fallback when `In-Reply-To` is missing — modern clients (Outlook,
+ * Gmail, Apple Mail) all emit both headers, so References gives us
+ * a robust second chance at threading.
+ */
+function lastReferenceId(value: string | null): string | null {
+  if (!value) return null;
+  const tokens = value.match(/<[^>]+>/g);
+  if (!tokens || tokens.length === 0) return null;
+  return tokens[tokens.length - 1] ?? null;
+}
+
 export async function POST(req: Request): Promise<Response> {
   const secret = process.env.RESEND_INBOUND_WEBHOOK_SECRET;
   if (!secret) {
@@ -130,9 +168,21 @@ export async function POST(req: Request): Promise<Response> {
   const data = envelope.data ?? {};
   const fromEmail = pickFirstEmail(data.from);
   const toEmails = pickAllEmails(data.to);
-  const messageId = data.message_id ?? data.headers?.['Message-ID'] ?? null;
+  // Headers come in via case-insensitive lookup — different relays
+  // normalize the key casing differently (Resend's parsed payload
+  // sometimes lowercases). For In-Reply-To we additionally fall
+  // back to the LAST id in References — modern clients (Outlook,
+  // Gmail, Apple Mail) emit both, and the References tail IS the
+  // immediate parent per RFC 5322 §3.6.4. Without these fallbacks
+  // Outlook replies arrive with empty in_reply_to and spawn fresh
+  // threads even though the parent is in our DB.
+  const messageId =
+    data.message_id ?? pickHeader(data.headers, 'Message-ID') ?? null;
   const inReplyTo =
-    data.in_reply_to ?? data.headers?.['In-Reply-To'] ?? null;
+    data.in_reply_to ??
+    pickHeader(data.headers, 'In-Reply-To') ??
+    lastReferenceId(pickHeader(data.headers, 'References')) ??
+    null;
   const subject = data.subject ?? null;
   // Resend's email.received webhook payload often DOESN'T carry the
   // parsed text/html — only a `raw.download_url` for the source MIME.
