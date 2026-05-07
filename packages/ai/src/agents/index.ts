@@ -14,7 +14,11 @@
 export {
   ActionDescriptor,
   actionRequiresApproval,
+  MlEvidence,
+  MlEvidenceItem,
   type ActionDescriptorT,
+  type MlEvidenceItemT,
+  type MlEvidenceT,
 } from './action-descriptor';
 export { ApprovalTier, requiresApproval } from './approval-tier';
 export { ApprovalGate } from './approval-gate';

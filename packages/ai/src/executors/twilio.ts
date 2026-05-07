@@ -9,7 +9,66 @@ import {
   touchpoints,
 } from '@procur/db';
 import { createId } from '../agents/id';
+import type { MlEvidenceT } from '../agents/action-descriptor';
 import { PostgresCostLedger } from '../cost-ledger';
+import {
+  buildOutreachMetadata,
+  emitOutreachSent,
+  parseOutreachEvidence,
+  type OutreachEvidence,
+} from './outreach-evidence';
+
+/**
+ * Optional ML-evidence fields shared across the SMS / WhatsApp /
+ * voice payloads. Populated when the chat assistant proposed via
+ * the recommendation pipeline (recommend_outreach_targets +
+ * draft_outreach_from_intelligence); empty for manual operator
+ * sends. Preserved into touchpoints + emitted as `outreach.sent`
+ * when the executor dispatches.
+ */
+interface OutreachEvidenceFields {
+  evidenceJson?: Record<string, unknown>;
+  mlEvidence?: MlEvidenceT;
+  sourceEntitySlug?: string;
+  sourceSignalId?: string;
+  sourceOpportunityId?: string;
+  riskWarnings?: string[];
+  doNotMention?: string[];
+}
+
+function pickEvidence(input: OutreachEvidenceFields): OutreachEvidence {
+  return {
+    ...(input.evidenceJson ? { evidenceJson: input.evidenceJson } : {}),
+    ...(input.mlEvidence ? { mlEvidence: input.mlEvidence } : {}),
+    ...(input.sourceEntitySlug
+      ? { sourceEntitySlug: input.sourceEntitySlug }
+      : {}),
+    ...(input.sourceSignalId
+      ? { sourceSignalId: input.sourceSignalId }
+      : {}),
+    ...(input.sourceOpportunityId
+      ? { sourceOpportunityId: input.sourceOpportunityId }
+      : {}),
+    ...(input.riskWarnings ? { riskWarnings: input.riskWarnings } : {}),
+    ...(input.doNotMention ? { doNotMention: input.doNotMention } : {}),
+  };
+}
+
+function copyEvidenceFromPayload(
+  proposedPayload: Record<string, unknown>,
+  out: OutreachEvidenceFields,
+): void {
+  const evidence = parseOutreachEvidence(proposedPayload);
+  if (evidence.evidenceJson) out.evidenceJson = evidence.evidenceJson;
+  if (evidence.mlEvidence) out.mlEvidence = evidence.mlEvidence;
+  if (evidence.sourceEntitySlug)
+    out.sourceEntitySlug = evidence.sourceEntitySlug;
+  if (evidence.sourceSignalId) out.sourceSignalId = evidence.sourceSignalId;
+  if (evidence.sourceOpportunityId)
+    out.sourceOpportunityId = evidence.sourceOpportunityId;
+  if (evidence.riskWarnings) out.riskWarnings = evidence.riskWarnings;
+  if (evidence.doNotMention) out.doNotMention = evidence.doNotMention;
+}
 
 /**
  * Twilio executors per docs/vex-into-procur-merge-brief.md Phase 7.
@@ -94,7 +153,7 @@ async function resolveContactOrg(
 // sms.send
 // ============================================================================
 
-export interface SmsSendPayload {
+export interface SmsSendPayload extends OutreachEvidenceFields {
   to: string;
   body: string;
   contactId?: string;
@@ -123,6 +182,7 @@ export function parseSmsSendPayload(
   if (typeof proposedPayload['templateName'] === 'string') {
     out.templateName = proposedPayload['templateName'] as string;
   }
+  copyEvidenceFromPayload(proposedPayload, out);
   return out;
 }
 
@@ -148,12 +208,15 @@ export async function applySmsSend(
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }
+  const evidence = pickEvidence(payload);
+  const evidenceMeta = buildOutreachMetadata(evidence);
   await writeOutboundTouchpoint(approvalId, 'sms.sent', payload.contactId, {
     provider_message_id: messageSid,
     to: payload.to,
     template_name: payload.templateName ?? null,
     body_preview: payload.body.slice(0, 240),
     segments,
+    ...evidenceMeta,
   });
   // Cost ledger — Twilio bills per SMS segment; stub at $0.0079/segment.
   await costLedger.record({
@@ -165,17 +228,26 @@ export async function applySmsSend(
     costUsdMicros: segments * 7900,
     occurredAt: new Date(),
   });
-  return await stampApplied(approvalId, messageSid, 'sms.sent', {
+  const result = await stampApplied(approvalId, messageSid, 'sms.sent', {
     to: payload.to,
     segments,
+    ...evidenceMeta,
   });
+  await emitOutreachSent({
+    approvalId,
+    channel: 'sms',
+    evidence,
+    occurredAt: new Date(),
+    providerObjectId: messageSid,
+  });
+  return result;
 }
 
 // ============================================================================
 // whatsapp.send (freeform within 24h conversation window)
 // ============================================================================
 
-export interface WhatsAppSendPayload {
+export interface WhatsAppSendPayload extends OutreachEvidenceFields {
   to: string;
   body: string;
   contactId?: string;
@@ -186,6 +258,7 @@ export interface WhatsAppSendPayload {
 export function parseWhatsAppSendPayload(
   proposedPayload: Record<string, unknown> | null | undefined,
 ): WhatsAppSendPayload | null {
+  // SMS + WhatsApp share the same field shape — including evidence.
   return parseSmsSendPayload(proposedPayload);
 }
 
@@ -213,6 +286,8 @@ export async function applyWhatsAppSend(
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }
+  const evidence = pickEvidence(payload);
+  const evidenceMeta = buildOutreachMetadata(evidence);
   await writeOutboundTouchpoint(
     approvalId,
     'whatsapp.sent',
@@ -222,6 +297,7 @@ export async function applyWhatsAppSend(
       to: payload.to,
       template_name: payload.templateName ?? null,
       body_preview: payload.body.slice(0, 240),
+      ...evidenceMeta,
     },
   );
   await costLedger.record({
@@ -234,16 +310,25 @@ export async function applyWhatsAppSend(
     costUsdMicros: 8500,
     occurredAt: new Date(),
   });
-  return await stampApplied(approvalId, messageSid, 'whatsapp.sent', {
+  const result = await stampApplied(approvalId, messageSid, 'whatsapp.sent', {
     to: payload.to,
+    ...evidenceMeta,
   });
+  await emitOutreachSent({
+    approvalId,
+    channel: 'whatsapp',
+    evidence,
+    occurredAt: new Date(),
+    providerObjectId: messageSid,
+  });
+  return result;
 }
 
 // ============================================================================
 // whatsapp.send_template
 // ============================================================================
 
-export interface WhatsAppSendTemplatePayload {
+export interface WhatsAppSendTemplatePayload extends OutreachEvidenceFields {
   to: string;
   contentSid: string;
   contentVariables?: Record<string, string>;
@@ -282,6 +367,7 @@ export function parseWhatsAppSendTemplatePayload(
   if (typeof proposedPayload['contactId'] === 'string') {
     out.contactId = proposedPayload['contactId'] as string;
   }
+  copyEvidenceFromPayload(proposedPayload, out);
   return out;
 }
 
@@ -309,6 +395,8 @@ export async function applyWhatsAppSendTemplate(
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }
+  const evidence = pickEvidence(payload);
+  const evidenceMeta = buildOutreachMetadata(evidence);
   await writeOutboundTouchpoint(
     approvalId,
     'whatsapp.sent',
@@ -318,6 +406,7 @@ export async function applyWhatsAppSendTemplate(
       to: payload.to,
       content_sid: payload.contentSid,
       template_name: payload.templateName ?? null,
+      ...evidenceMeta,
     },
   );
   await costLedger.record({
@@ -329,19 +418,27 @@ export async function applyWhatsAppSendTemplate(
     costUsdMicros: 8500,
     occurredAt: new Date(),
   });
-  return await stampApplied(
+  const result = await stampApplied(
     approvalId,
     messageSid,
     'whatsapp.sent',
-    { to: payload.to, content_sid: payload.contentSid },
+    { to: payload.to, content_sid: payload.contentSid, ...evidenceMeta },
   );
+  await emitOutreachSent({
+    approvalId,
+    channel: 'whatsapp_template',
+    evidence,
+    occurredAt: new Date(),
+    providerObjectId: messageSid,
+  });
+  return result;
 }
 
 // ============================================================================
 // outbound_call (operator-join-conference v1; aiMode deferred to Phase 7.5)
 // ============================================================================
 
-export interface OutboundCallPayload {
+export interface OutboundCallPayload extends OutreachEvidenceFields {
   contactId: string;
   orgId: string;
   toNumber: string;
@@ -381,6 +478,7 @@ export function parseOutboundCallPayload(
   if (typeof proposedPayload['goalHint'] === 'string') {
     out.goalHint = proposedPayload['goalHint'] as string;
   }
+  copyEvidenceFromPayload(proposedPayload, out);
   return out;
 }
 
@@ -435,6 +533,8 @@ export async function applyOutboundCall(
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }
+  const evidence = pickEvidence(payload);
+  const evidenceMeta = buildOutreachMetadata(evidence);
   await writeOutboundTouchpoint(
     approvalId,
     'voice.initiated',
@@ -445,6 +545,7 @@ export async function applyOutboundCall(
       mode: payload.aiMode ? 'ai' : 'conference',
       template_name: payload.templateName ?? null,
       goal_hint: payload.goalHint ?? null,
+      ...evidenceMeta,
     },
   );
   await costLedger.record({
@@ -458,9 +559,18 @@ export async function applyOutboundCall(
     costUsdMicros: 0,
     occurredAt: new Date(),
   });
-  return await stampApplied(approvalId, callSid, 'voice.initiated', {
+  const result = await stampApplied(approvalId, callSid, 'voice.initiated', {
     to: payload.toNumber,
+    ...evidenceMeta,
   });
+  await emitOutreachSent({
+    approvalId,
+    channel: 'outbound_call',
+    evidence,
+    occurredAt: new Date(),
+    providerObjectId: callSid,
+  });
+  return result;
 }
 
 // ============================================================================

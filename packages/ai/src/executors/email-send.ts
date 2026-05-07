@@ -11,7 +11,14 @@ import {
   touchpoints,
 } from '@procur/db';
 import { createId } from '../agents/id';
+import type { MlEvidenceT } from '../agents/action-descriptor';
 import { PostgresCostLedger } from '../cost-ledger';
+import {
+  buildOutreachMetadata,
+  emitOutreachSent,
+  parseOutreachEvidence,
+  type OutreachEvidence,
+} from './outreach-evidence';
 
 /**
  * email.send executor — closes the Phase 2 approval-queue loop.
@@ -57,6 +64,19 @@ export interface EmailSendPayload {
   templateName?: string;
   /** Optional language tag (ISO 639-1). Display-only. */
   lang?: string;
+  /** Operator rationale captured at proposal time. */
+  rationale?: string;
+  /** Recommendation-pipeline evidence pack (see ../agents/action-descriptor.ts).
+   *  Preserved into touchpoints + emitted as `outreach.sent` event so
+   *  outcome-time joins can pivot back to the model that produced the
+   *  send. */
+  evidenceJson?: Record<string, unknown>;
+  mlEvidence?: MlEvidenceT;
+  sourceEntitySlug?: string;
+  sourceSignalId?: string;
+  sourceOpportunityId?: string;
+  riskWarnings?: string[];
+  doNotMention?: string[];
 }
 
 export interface EmailSendResult {
@@ -184,6 +204,25 @@ export async function applyEmailSend(
       .limit(1);
     orgIdForTouchpoint = contactRow[0]?.orgId ?? null;
   }
+
+  // Recommendation-pipeline evidence — populated when the chat
+  // assistant proposed via `recommend_outreach_targets` +
+  // `draft_outreach_from_intelligence`; empty for manual sends.
+  const payloadEvidence: OutreachEvidence = {
+    ...(payload.evidenceJson ? { evidenceJson: payload.evidenceJson } : {}),
+    ...(payload.mlEvidence ? { mlEvidence: payload.mlEvidence } : {}),
+    ...(payload.sourceEntitySlug
+      ? { sourceEntitySlug: payload.sourceEntitySlug }
+      : {}),
+    ...(payload.sourceSignalId
+      ? { sourceSignalId: payload.sourceSignalId }
+      : {}),
+    ...(payload.sourceOpportunityId
+      ? { sourceOpportunityId: payload.sourceOpportunityId }
+      : {}),
+    ...(payload.riskWarnings ? { riskWarnings: payload.riskWarnings } : {}),
+    ...(payload.doNotMention ? { doNotMention: payload.doNotMention } : {}),
+  };
 
   // Fan out one Resend send per recipient. Sending all addresses in
   // a single Resend `to: [...]` would expose every recipient's address
@@ -322,6 +361,10 @@ export async function applyEmailSend(
         in_reply_to: payload.inReplyTo ?? null,
         template_name: payload.templateName ?? null,
         lang: payload.lang ?? null,
+        // Recommendation-pipeline evidence preserved on every touchpoint
+        // so we can join evidence ↔ outreach.replied / converted_to_deal
+        // outcomes. No-op for manual operator-driven sends.
+        ...buildOutreachMetadata(payloadEvidence),
       },
     });
 
@@ -355,11 +398,23 @@ export async function applyEmailSend(
       metadata: {
         provider_message_ids: providerMessageIds,
         recipient_count: payload.to.length,
+        ...buildOutreachMetadata(payloadEvidence),
       },
     })
     .onConflictDoNothing({
       target: [events.occurredAt, events.idempotencyKey],
     });
+
+  // Recommendation-pipeline lifecycle event. No-op for manual sends.
+  await emitOutreachSent({
+    approvalId,
+    channel: 'email',
+    evidence: payloadEvidence,
+    occurredAt,
+    ...(providerMessageIds[0]
+      ? { providerObjectId: providerMessageIds[0] }
+      : {}),
+  });
 
   await db
     .update(approvals)
@@ -404,6 +459,21 @@ export function parseEmailSendPayload(
   if (typeof proposedPayload['lang'] === 'string') {
     result.lang = proposedPayload['lang'] as string;
   }
+  if (typeof proposedPayload['rationale'] === 'string') {
+    result.rationale = proposedPayload['rationale'] as string;
+  }
+  // Recommendation-pipeline evidence fields. The shared parser
+  // returns an empty struct when the descriptor was operator-authored;
+  // anything it finds gets copied through.
+  const evidence = parseOutreachEvidence(proposedPayload);
+  if (evidence.evidenceJson) result.evidenceJson = evidence.evidenceJson;
+  if (evidence.mlEvidence) result.mlEvidence = evidence.mlEvidence;
+  if (evidence.sourceEntitySlug) result.sourceEntitySlug = evidence.sourceEntitySlug;
+  if (evidence.sourceSignalId) result.sourceSignalId = evidence.sourceSignalId;
+  if (evidence.sourceOpportunityId)
+    result.sourceOpportunityId = evidence.sourceOpportunityId;
+  if (evidence.riskWarnings) result.riskWarnings = evidence.riskWarnings;
+  if (evidence.doNotMention) result.doNotMention = evidence.doNotMention;
   return result;
 }
 

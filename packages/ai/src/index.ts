@@ -159,12 +159,16 @@ export {
   DEFAULT_DAILY_COST_LIMIT_USD,
   createId,
   isUlid,
+  MlEvidence,
+  MlEvidenceItem,
   type ActionDescriptorT,
   type AgentContext,
   type AgentOutput,
   type AgentRunRecord,
   type AgentRunnerOptions,
   type IAgent,
+  type MlEvidenceItemT,
+  type MlEvidenceT,
 } from './agents';
 export {
   InMemoryCostLedger,
@@ -181,6 +185,18 @@ export {
   type EmailSendPayload,
   type EmailSendResult,
 } from './executors/email-send';
+// Shared outreach-evidence handling — preserves recommendation
+// pipeline output through executors → touchpoints → events so
+// model-performance dashboards can join evidence ↔ outcomes.
+export {
+  buildOutreachMetadata,
+  emitOutreachSent,
+  hasOutreachEvidence,
+  parseOutreachEvidence,
+  OUTREACH_LIFECYCLE_VERBS,
+  type OutreachEvidence,
+  type OutreachLifecycleVerb,
+} from './executors/outreach-evidence';
 export {
   EmailReplyDraftAgent,
   type EmailReplyDraftInput,
