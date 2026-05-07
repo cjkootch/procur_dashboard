@@ -57,6 +57,7 @@
     "validate-graph-embeddings": "tsx src/validate-graph-embeddings.ts",
     "extract-bge-texts": "tsx src/extract-bge-texts.ts",
     "upsert-bge-embeddings": "tsx src/upsert-bge-embeddings.ts",
+    "upsert-gliner-spans": "tsx src/upsert-gliner-spans.ts",
     "ingest-crude-assays": "tsx src/ingest-crude-assays.ts",
     "infer-cargo-trips": "tsx src/infer-cargo-trips.ts",
     "backfill-crude-grade-properties": "tsx src/backfill-crude-grade-properties.ts",

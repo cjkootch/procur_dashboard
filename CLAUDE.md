@@ -267,6 +267,29 @@ pnpm upsert-bge-embeddings --input bge-embeddings.json
 python -m procur_ml.bge_m3 query --text "refinería de Cartagena"
 ```
 
+GLiNER NER extraction (multilingual, label-flexible):
+- Polymorphic `extracted_entities` table (migration 0088). Source
+  shape `(source_type, source_id)` covers message / document /
+  web_page / web_summary / inbound_email / deal_note / loi / icpo /
+  assay. Label inventory: company / person / title / product /
+  fuel_grade / crude_grade / port / terminal / vessel / bank /
+  payment_instrument / incoterm / country / document_type. Free
+  text in DB so new labels slot in additively.
+- Catalog helpers: `upsertExtractedEntities`,
+  `listExtractedEntitiesForSource`, `listExtractedEntitiesByLabel`,
+  `summarizeExtractedEntities`. `resolved_entity_slug` stays null
+  until a separate resolver pass maps surface forms to known_entities.
+- Discipline: GLiNER extracts; an LLM is only invoked downstream
+  for ambiguous synthesis.
+- Workflow:
+  ```sh
+  cd services/ml-training && pip install -e '.[gliner]' && cd ../..
+  # input: [{source_type, source_id, text, labels?}, ...]
+  python -m procur_ml.gliner_extract extract \
+      --input texts.json --output spans.json
+  pnpm --filter @procur/db upsert-gliner-spans --input spans.json
+  ```
+
 BGE-reranker-v2-m3 (cross-encoder, post-retrieval sharpening):
 - Catalog helper `rerankPassages({ query, passages, topK })` — calls
   HuggingFace Inference API when `HUGGINGFACE_API_TOKEN` is set,
@@ -492,6 +515,29 @@ pnpm upsert-bge-embeddings --input bge-embeddings.json
 # query a single string (prints 1024-dim JSON to stdout)
 python -m procur_ml.bge_m3 query --text "refinería de Cartagena"
 ```
+
+GLiNER NER extraction (multilingual, label-flexible):
+- Polymorphic `extracted_entities` table (migration 0088). Source
+  shape `(source_type, source_id)` covers message / document /
+  web_page / web_summary / inbound_email / deal_note / loi / icpo /
+  assay. Label inventory: company / person / title / product /
+  fuel_grade / crude_grade / port / terminal / vessel / bank /
+  payment_instrument / incoterm / country / document_type. Free
+  text in DB so new labels slot in additively.
+- Catalog helpers: `upsertExtractedEntities`,
+  `listExtractedEntitiesForSource`, `listExtractedEntitiesByLabel`,
+  `summarizeExtractedEntities`. `resolved_entity_slug` stays null
+  until a separate resolver pass maps surface forms to known_entities.
+- Discipline: GLiNER extracts; an LLM is only invoked downstream
+  for ambiguous synthesis.
+- Workflow:
+  ```sh
+  cd services/ml-training && pip install -e '.[gliner]' && cd ../..
+  # input: [{source_type, source_id, text, labels?}, ...]
+  python -m procur_ml.gliner_extract extract \
+      --input texts.json --output spans.json
+  pnpm --filter @procur/db upsert-gliner-spans --input spans.json
+  ```
 
 BGE-reranker-v2-m3 (cross-encoder, post-retrieval sharpening):
 - Catalog helper `rerankPassages({ query, passages, topK })` — calls

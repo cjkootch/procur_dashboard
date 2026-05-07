@@ -23,6 +23,7 @@ export * from './messaging';
 export * from './communication-templates';
 export * from './bge-embeddings';
 export * from './bge-reranker';
+export * from './extracted-entities';
 export {
   buildCatalogTools,
   buildFilterUrl,
