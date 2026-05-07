@@ -81,6 +81,28 @@ export type ApolloActionResult =
   | { ok: true; message: string }
   | { ok: false; reason: string; message: string };
 
+/**
+ * enrichApolloPersonAction result. Strict superset of ApolloActionResult
+ * — adds the resolved-person record on success so chat-side callers
+ * can swap the obfuscated row inline without re-fetching. Existing
+ * UI callers that only check `ok` keep working unchanged.
+ */
+export type EnrichApolloPersonActionResult =
+  | {
+      ok: true;
+      message: string;
+      person: {
+        apolloPersonId: string;
+        firstName: string;
+        lastName: string;
+        title: string | null;
+        email: string | null;
+        directPhone: string | null;
+        linkedinUrl: string | null;
+      };
+    }
+  | { ok: false; reason: string; message: string };
+
 function degradeMessage(reason: ApolloDegradeResult['reason']): string {
   switch (reason) {
     case 'feature-flag-disabled':
@@ -179,7 +201,7 @@ export async function refreshApolloOrgAction(input: {
 export async function enrichApolloPersonAction(input: {
   entitySlug: string;
   apolloPersonId: string;
-}): Promise<ApolloActionResult> {
+}): Promise<EnrichApolloPersonActionResult> {
   const { company } = await requireCompany();
   const result = await enrichPerson({
     apolloPersonId: input.apolloPersonId,
@@ -190,7 +212,19 @@ export async function enrichApolloPersonAction(input: {
     return { ok: false, reason: result.reason, message: degradeMessage(result.reason) };
   }
   revalidatePath(`/entities/${input.entitySlug}`);
-  return { ok: true, message: `Enriched ${result.full.firstName} ${result.full.lastName}.` };
+  return {
+    ok: true,
+    message: `Enriched ${result.full.firstName} ${result.full.lastName}.`,
+    person: {
+      apolloPersonId: result.full.id,
+      firstName: result.full.firstName,
+      lastName: result.full.lastName,
+      title: result.full.title,
+      email: result.full.email,
+      directPhone: result.full.directPhone,
+      linkedinUrl: result.full.linkedinUrl,
+    },
+  };
 }
 
 /**
