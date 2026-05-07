@@ -143,6 +143,27 @@ export async function awardXp(
       levelUp,
     });
 
+    // Fire-and-forget achievement evaluation — every credit may
+    // unlock a new badge. Detached so achievement-predicate latency
+    // doesn't pile onto the parent action's response time.
+    // Skip when the awarding verb itself is an achievement credit
+    // to avoid recursion (achievement.* → evaluate → maybe unlock
+    // another → repeat). The achievement xp.gained toast is
+    // sufficient for the secondary unlock to surface.
+    if (!input.verb.startsWith('achievement.')) {
+      void (async () => {
+        try {
+          const { evaluateAchievements } = await import('./achievements');
+          await evaluateAchievements(input.userId);
+        } catch (err) {
+          console.error(
+            '[gamification] post-award achievement eval failed',
+            err,
+          );
+        }
+      })();
+    }
+
     return {
       awarded: true,
       ledgerId: inserted[0]!.id,
