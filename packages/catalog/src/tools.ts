@@ -473,6 +473,8 @@ export function buildCatalogTools(): ToolRegistry {
         const pack = await buildCommunicationContextPack({
           entitySlug: input.entitySlug,
           ...(input.contactId ? { contactId: input.contactId } : {}),
+          intent: input.intent,
+          retrievalContext: { tool: 'recommend_and_draft_outreach' },
         });
         if (!pack) {
           return {
