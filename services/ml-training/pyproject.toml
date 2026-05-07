@@ -45,6 +45,13 @@ dependencies = [
 bge = [
     "sentence-transformers>=3.0,<5.0",
 ]
+# Optional: GLiNER NER extraction. Pulls transformers transitively
+# (already a dep of [bge]) so installing both extras adds only the
+# `gliner` package. Wheel-only on every Python+arch combo we care
+# about — no Apache Arrow / pyarrow.
+gliner = [
+    "gliner>=0.2,<1.0",
+]
 # Experiment tracking — opt-in via `pip install -e .[mlflow]` since
 # mlflow drags in pyarrow + sqlalchemy/greenlet, which need a working
 # C++ toolchain to build on macOS. train.py imports it lazily and
@@ -63,6 +70,7 @@ procur-ml-embed-entity = "procur_ml.embed_entity:main"
 procur-ml-validate = "procur_ml.validate:main"
 procur-ml-bge-m3 = "procur_ml.bge_m3:main"
 procur-ml-bge-reranker = "procur_ml.bge_reranker:main"
+procur-ml-gliner = "procur_ml.gliner_extract:main"
 
 [build-system]
 requires = ["hatchling"]

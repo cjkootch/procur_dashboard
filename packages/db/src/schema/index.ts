@@ -66,6 +66,7 @@ export * from './entity-activity-observations';
 export * from './entity-text-embeddings';
 export * from './bge-text-embeddings';
 export * from './retrieval-runs';
+export * from './extracted-entities';
 export * from './entity-web-intelligence';
 export * from './feedback-events';
 export * from './friction-status';
