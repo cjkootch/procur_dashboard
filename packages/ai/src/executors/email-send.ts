@@ -1,5 +1,5 @@
 import { Resend } from 'resend';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import {
   approvals,
   companies,
@@ -294,12 +294,31 @@ export async function applyEmailSend(
     // thread; otherwise create a fresh thread per recipient so each
     // counterparty conversation is its own row. Mirrors the inbound
     // webhook's resolve-or-create pattern (route.ts:222-244).
+    //
+    // Lookup tolerates angle-bracket / case / whitespace variation
+    // because different mail relays format Message-ID strings
+    // inconsistently — exact match was missing the parent. See
+    // packages/catalog/src/inbox.ts:normalizeRfcMessageId for the
+    // canonical normalization (kept in sync inline here so this
+    // executor doesn't need to import @procur/catalog and risk a
+    // circular dep with @procur/ai).
     let threadId: string | null = null;
-    if (payload.inReplyTo) {
+    const normalizedInReplyTo = payload.inReplyTo
+      ? payload.inReplyTo
+          .trim()
+          .split(/\s+/)[0]!
+          .replace(/^<+/, '')
+          .replace(/>+$/, '')
+          .toLowerCase()
+      : null;
+    if (normalizedInReplyTo) {
+      const legacyBracketed = `<${normalizedInReplyTo}>`;
       const parent = await db
         .select({ threadId: messages.threadId })
         .from(messages)
-        .where(eq(messages.messageId, payload.inReplyTo))
+        .where(
+          sql`${messages.messageId} = ${normalizedInReplyTo} OR ${messages.messageId} = ${legacyBracketed}`,
+        )
         .limit(1);
       if (parent[0]) threadId = parent[0].threadId;
     }
@@ -319,17 +338,25 @@ export async function applyEmailSend(
         .where(eq(threads.id, threadId));
     }
 
-    // Write the outbound message row with our generated Message-ID
-    // so a future inbound reply (whose In-Reply-To header points at
-    // this Message-ID) can resolve back to the same thread.
+    // Write the outbound message row with the normalized form of our
+    // generated Message-ID — bracket-less + lowercase — so a future
+    // inbound reply can resolve back to this thread regardless of how
+    // its mail relay formatted the In-Reply-To header. The wire
+    // header (sendHeaders['Message-ID']) keeps the canonical
+    // <id@host> form per RFC 5322.
+    const normalizedRfcMessageId = rfcMessageId
+      .trim()
+      .replace(/^<+/, '')
+      .replace(/>+$/, '')
+      .toLowerCase();
     await db.insert(messages).values({
       id: createId(),
       threadId,
       direction: 'outbound',
       subject: payload.subject,
       fromEmail: fromAddrOnly,
-      messageId: rfcMessageId,
-      inReplyTo: payload.inReplyTo ?? null,
+      messageId: normalizedRfcMessageId,
+      inReplyTo: normalizedInReplyTo,
       metadata: {
         to: [recipient],
         cc,

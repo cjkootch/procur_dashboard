@@ -9,6 +9,52 @@ import { contacts, db, messages, threads, touchpoints } from '@procur/db';
  * Phase 1 schema has explicit thread rows.
  */
 
+/**
+ * Normalize an RFC 5322 Message-ID for storage / lookup. Strips the
+ * surrounding angle brackets, trims whitespace, and lowercases —
+ * Message-IDs are case-insensitive per RFC, and different relays
+ * preserve the brackets inconsistently in `In-Reply-To` headers, so
+ * exact-match lookups fail intermittently without normalization.
+ *
+ * Use BOTH when storing on the outbound side AND when looking up the
+ * inbound `In-Reply-To` to resolve a parent thread. Returns null on
+ * empty input so callers can chain through optional values.
+ */
+export function normalizeRfcMessageId(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  // Some clients pack multiple Message-IDs into a single In-Reply-To
+  // header (rare but legal). Take the first — that's the immediate
+  // parent; chained ancestors live in References instead.
+  const first = trimmed.split(/\s+/)[0]!;
+  return first.replace(/^<+/, '').replace(/>+$/, '').toLowerCase();
+}
+
+/**
+ * Resolve the thread a parent Message-ID belongs to, tolerating
+ * angle-bracket / case / whitespace variations. Returns null when no
+ * matching outbound exists (the inbound is a fresh conversation).
+ */
+export async function findThreadIdByInReplyTo(
+  inReplyTo: string | null | undefined,
+): Promise<string | null> {
+  const normalized = normalizeRfcMessageId(inReplyTo);
+  if (!normalized) return null;
+  // Match against either the canonical normalized form OR the legacy
+  // bracketed form for rows that pre-date the backfill. Drop the
+  // legacy clause once we're confident every row has been normalized.
+  const legacy = `<${normalized}>`;
+  const rows = await db
+    .select({ threadId: messages.threadId })
+    .from(messages)
+    .where(
+      sql`${messages.messageId} = ${normalized} OR ${messages.messageId} = ${legacy}`,
+    )
+    .limit(1);
+  return rows[0]?.threadId ?? null;
+}
+
 export interface ThreadListRow {
   id: string;
   channel: string;

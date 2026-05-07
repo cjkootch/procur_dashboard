@@ -10,6 +10,10 @@ import {
   touchpoints,
 } from '@procur/db';
 import { createId, emitOutreachOutcome } from '@procur/ai';
+import {
+  findThreadIdByInReplyTo,
+  normalizeRfcMessageId,
+} from '@procur/catalog';
 import { recordWebhookReceipt } from '../../../../lib/webhook-events';
 import { notifyAllOperators } from '../../../../lib/notification-queries';
 
@@ -240,15 +244,11 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // Step 4: resolve thread. Prefer parent's thread; else create new.
-  let threadId: string | null = null;
-  if (inReplyTo) {
-    const parent = await db
-      .select({ threadId: messages.threadId })
-      .from(messages)
-      .where(eq(messages.messageId, inReplyTo))
-      .limit(1);
-    if (parent[0]) threadId = parent[0].threadId;
-  }
+  // findThreadIdByInReplyTo normalizes angle brackets / case /
+  // whitespace before lookup — different mail relays format
+  // In-Reply-To inconsistently and exact-match was missing the
+  // outbound's stored Message-ID.
+  let threadId = await findThreadIdByInReplyTo(inReplyTo);
   if (!threadId) {
     threadId = createId();
     await db.insert(threads).values({
@@ -265,7 +265,9 @@ export async function POST(req: Request): Promise<Response> {
       .where(eq(threads.id, threadId));
   }
 
-  // Step 5: insert message + event + touchpoint.
+  // Step 5: insert message + event + touchpoint. Both Message-ID
+  // fields go in normalized so a later reply-to-this-reply can find
+  // its parent without bracket / case mismatches.
   const newMessageId = createId();
   await db.insert(messages).values({
     id: newMessageId,
@@ -273,8 +275,8 @@ export async function POST(req: Request): Promise<Response> {
     direction: 'inbound',
     subject: subject ?? null,
     fromEmail: fromEmail ?? null,
-    messageId: messageId ?? null,
-    inReplyTo: inReplyTo ?? null,
+    messageId: normalizeRfcMessageId(messageId),
+    inReplyTo: normalizeRfcMessageId(inReplyTo),
     metadata: {
       to: toEmails,
       body_text: bodyText?.slice(0, 64_000) ?? null,
