@@ -50,6 +50,16 @@ export function NotificationsLiveLayer({
 }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const lastSeenRef = useRef<string | null>(initialLatest);
+  // ID-level dedup. The timestamp comparison alone wasn't enough:
+  // Postgres timestamps carry microsecond precision; serializing
+  // MAX(created_at)::text on the server, parsing back through
+  // `new Date()` on the client, then re-serializing for the next
+  // poll's `since` param truncates to milliseconds. So the
+  // server-side `WHERE created_at > since` keeps matching the same
+  // row, and the toast for an hours-old email kept re-firing on
+  // every 30s tick. Tracking IDs we've already shown is precision-
+  // independent.
+  const seenIdsRef = useRef<Set<string>>(new Set());
   const router = useRouter();
 
   const dismissToast = useCallback((id: string) => {
@@ -69,16 +79,19 @@ export function NotificationsLiveLayer({
       const res = await fetch(url.toString(), { cache: 'no-store' });
       if (!res.ok) return;
       const body = (await res.json()) as PollResponse;
-      if (body.newSince.length > 0) {
+      // Filter out anything we already toasted in this session.
+      const fresh = body.newSince.filter((n) => !seenIdsRef.current.has(n.id));
+      if (fresh.length > 0) {
+        for (const n of fresh) seenIdsRef.current.add(n.id);
         // Stack new toasts on top, capped — avoids infinite pile-up.
         setToasts((prev) =>
-          [...body.newSince.map((n) => ({ id: n.id, title: n.title, link: n.link })), ...prev].slice(
+          [...fresh.map((n) => ({ id: n.id, title: n.title, link: n.link })), ...prev].slice(
             0,
             TOAST_STACK_LIMIT,
           ),
         );
         // Auto-dismiss each new toast after TOAST_DURATION_MS.
-        for (const n of body.newSince) {
+        for (const n of fresh) {
           setTimeout(() => dismissToast(n.id), TOAST_DURATION_MS);
         }
         // Refresh server components so the bell badge updates.
