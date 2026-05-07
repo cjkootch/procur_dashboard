@@ -66,6 +66,7 @@ import {
   summarizeCatalog,
   whatsNewForUser,
   type OpportunityScope,
+  getEnrichedApolloPersonIdsForEntity,
 } from './queries';
 import {
   addOpportunityToPursuit,
@@ -6860,6 +6861,10 @@ export function buildCatalogTools(): ToolRegistry {
               };
             }
 
+            const enrichedIds = await getEnrichedApolloPersonIdsForEntity(
+              input.entitySlug,
+              result.people.map((p) => p.id),
+            );
             return {
               degraded: false,
               peopleCount: result.people.length,
@@ -6872,12 +6877,21 @@ export function buildCatalogTools(): ToolRegistry {
                 hasEmail: p.hasEmail,
                 hasDirectPhone: p.hasDirectPhone,
                 organization: p.organization?.name ?? null,
+                // True when this person has already been resolved via a
+                // prior /people/match call. The chat renderer uses this
+                // to draw a ✓ instead of an Enrich affordance, so the
+                // operator doesn't accidentally re-pay for a contact
+                // already on file.
+                alreadyEnriched: enrichedIds.has(p.id),
               })),
               note:
-                'Last names are obfuscated. Full name + email + phone ' +
-                'resolve only when the operator clicks Enrich in the ' +
-                'Decision-makers panel of the entity profile. Do NOT ' +
-                'invoke enrichment from chat.',
+                'Last names are obfuscated for unenriched rows. Rows ' +
+                'with `alreadyEnriched: true` have already been resolved ' +
+                'via /people/match — the chat UI renders those with a ' +
+                'confirmed-identity check. Unenriched rows show an ' +
+                'Enrich affordance that links to the entity profile, ' +
+                'where clicking Enrich fires /people/match (paid, ' +
+                'per-tenant daily cap).',
             };
           },
         ),
