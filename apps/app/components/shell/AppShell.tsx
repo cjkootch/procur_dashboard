@@ -108,6 +108,7 @@ const NAV: SidebarNavGroup[] = [
     items: [
       { href: '/settings', label: 'Company profile', iconName: 'settings' },
       { href: '/settings/email', label: 'Email defaults', iconName: 'inbox' },
+      { href: '/settings/templates', label: 'Templates', iconName: 'chat-bubble' },
       { href: '/settings/notifications', label: 'Notifications', iconName: 'bell' },
       { href: '/settings/integrations/mcp', label: 'Integrations', iconName: 'shield-check' },
       { href: '/friction', label: 'Friction log', iconName: 'inbox' },

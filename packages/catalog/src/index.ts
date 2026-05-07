@@ -20,6 +20,7 @@ export * from './signals';
 export * from './brief';
 export * from './calls';
 export * from './messaging';
+export * from './communication-templates';
 export {
   buildCatalogTools,
   buildFilterUrl,

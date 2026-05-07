@@ -490,6 +490,115 @@ export const proposeTools = {
   }),
 
   // ==========================================================================
+  // Communication templates — Cole's vex-parity request. Operator-authored
+  // pre-built email / SMS / WhatsApp / call bodies the chat assistant can
+  // reference by name. propose_save_template inserts/updates; propose_
+  // archive_template soft-deletes. Both T1 — metadata only, no outbound
+  // side effect, route through /approvals like every write.
+  // ==========================================================================
+
+  propose_save_template: defineTool({
+    name: 'propose_save_template',
+    description:
+      "Save (create or update) a communication template — email / sms / whatsapp / " +
+      "whatsapp_template / call. T1, metadata only. The slug `name` is unique within kind " +
+      "(`intro_refiner`, `caribbean_refined_first_touch`); operator references the template by " +
+      "this slug in chat. Variables use `{{name}}` placeholders for email / sms / whatsapp / " +
+      "call (named substitution at render time) or `{{1}}, {{2}}` for whatsapp_template (Twilio " +
+      "Content Template positional variables — pass the matching `contentSid` HX id). The " +
+      "`variables` array declares which placeholders the body uses + whether each is required + " +
+      "default values. Re-saving with the same (kind, name) updates in place.",
+    kind: 'write',
+    schema: z.object({
+      templateKind: z.enum([
+        'email',
+        'sms',
+        'whatsapp',
+        'whatsapp_template',
+        'call',
+      ]),
+      name: z
+        .string()
+        .regex(
+          /^[a-z0-9_-]{1,80}$/,
+          'name must be lowercase slug (a-z, 0-9, _, -; 1-80 chars)',
+        ),
+      displayName: z.string().min(1).max(200),
+      subject: z.string().max(500).optional(),
+      body: z.string().min(1).max(50_000),
+      contentSid: z
+        .string()
+        .regex(/^HX[a-fA-F0-9]{32}$/, 'contentSid must be HX + 32 hex chars')
+        .optional(),
+      variables: z
+        .array(
+          z.object({
+            name: z.string().min(1).max(80),
+            description: z.string().max(500).optional(),
+            required: z.boolean().optional(),
+            defaultValue: z.string().max(500).optional(),
+          }),
+        )
+        .max(40)
+        .optional(),
+      description: z.string().max(2000).optional(),
+      rationale: z.string().min(1).max(1000),
+    }),
+    handler: async (ctx, input): Promise<ProposeResult> => {
+      const action: ActionDescriptorT = {
+        kind: 'template.save',
+        tier: 'T1',
+        templateKind: input.templateKind,
+        name: input.name,
+        displayName: input.displayName,
+        body: input.body,
+        rationale: input.rationale,
+        ...(input.subject !== undefined ? { subject: input.subject } : {}),
+        ...(input.contentSid !== undefined
+          ? { contentSid: input.contentSid }
+          : {}),
+        ...(input.variables ? { variables: input.variables } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+      };
+      const row = await insertChatApproval(action, { userId: ctx.userId });
+      return chip(
+        action,
+        `Save ${input.templateKind} template: ${input.displayName}`,
+        row.id,
+      );
+    },
+  }),
+
+  propose_archive_template: defineTool({
+    name: 'propose_archive_template',
+    description:
+      'Soft-delete a communication template by id. T1 — historical touchpoints that referenced ' +
+      'the template stay readable; the unique slug index is partial on archived_at IS NULL so a ' +
+      'new template with the same slug can be created later if needed.',
+    kind: 'write',
+    schema: z.object({
+      templateId: z.string().min(1).max(64),
+      rationale: z.string().min(1).max(1000),
+    }),
+    handler: async (ctx, input): Promise<ProposeResult> => {
+      const action: ActionDescriptorT = {
+        kind: 'template.archive',
+        tier: 'T1',
+        templateId: input.templateId,
+        rationale: input.rationale,
+      };
+      const row = await insertChatApproval(action, { userId: ctx.userId });
+      return chip(
+        action,
+        `Archive template ${input.templateId.slice(0, 12)}…`,
+        row.id,
+      );
+    },
+  }),
+
+  // ==========================================================================
   // Phase 6 — sanctions
   // ==========================================================================
   propose_sanctions_screen: defineTool({
