@@ -118,7 +118,12 @@ export async function handleTwilioStream(
               type: 'server_vad',
               threshold: 0.5,
               prefix_padding_ms: 300,
-              silence_duration_ms: 500,
+              // Drop from 500 → 200ms. 500 felt sluggish in live calls
+              // (caller stops talking, half-second of dead air, then
+              // agent responds). 200ms is closer to natural turn-end
+              // pacing for phone speech without misfiring on mid-
+              // sentence pauses.
+              silence_duration_ms: 200,
               create_response: true,
               interrupt_response: true,
             },
@@ -150,6 +155,22 @@ export async function handleTwilioStream(
         }),
       );
       stats.framesToTwilio += 1;
+    }
+    if (event.type === 'input_audio_buffer.speech_started' && streamSid) {
+      // Caller started talking mid-AI-response. With
+      // `interrupt_response: true` OpenAI auto-cancels the
+      // generation, but the audio frames already streamed to
+      // Twilio sit in Twilio's playback buffer (~200-500ms
+      // worth) and keep playing. Send Twilio a `clear` so it
+      // drops the unplayed buffer immediately — that closes
+      // the perceived lag between caller-speaking and
+      // agent-yielding.
+      twilioSocket.send(
+        JSON.stringify({
+          event: 'clear',
+          streamSid,
+        }),
+      );
     }
     if (event.type === 'response.done') {
       // No-op; Twilio will keep streaming until the user hangs up.
