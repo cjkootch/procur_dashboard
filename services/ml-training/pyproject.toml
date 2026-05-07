@@ -52,6 +52,14 @@ bge = [
 gliner = [
     "gliner>=0.2,<1.0",
 ]
+# Optional: LightGBM outreach ranker (reply-within-14d classifier).
+# Wheel-only on every Python+arch combo we care about. Comes with
+# scikit-learn for evaluation utilities.
+outreach_rank = [
+    "lightgbm>=4.5,<5.0",
+    "scikit-learn>=1.5,<2.0",
+    "pandas>=2.2,<3.0",
+]
 # Experiment tracking — opt-in via `pip install -e .[mlflow]` since
 # mlflow drags in pyarrow + sqlalchemy/greenlet, which need a working
 # C++ toolchain to build on macOS. train.py imports it lazily and
@@ -71,6 +79,7 @@ procur-ml-validate = "procur_ml.validate:main"
 procur-ml-bge-m3 = "procur_ml.bge_m3:main"
 procur-ml-bge-reranker = "procur_ml.bge_reranker:main"
 procur-ml-gliner = "procur_ml.gliner_extract:main"
+procur-ml-outreach-rank = "procur_ml.outreach_ranker:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -24,6 +24,7 @@ export * from './communication-templates';
 export * from './bge-embeddings';
 export * from './bge-reranker';
 export * from './extracted-entities';
+export * from './outreach-features';
 export {
   buildCatalogTools,
   buildFilterUrl,

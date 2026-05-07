@@ -304,6 +304,30 @@ BGE-reranker-v2-m3 (cross-encoder, post-retrieval sharpening):
   python -m procur_ml.bge_reranker score --query "ULSD cargo" --passages '["…", "…"]'
   ```
 
+LightGBM outreach reply-within-14d classifier (migration 0089):
+- `outreach_feature_snapshots` table — feature vector captured at
+  proposal time + outcome labels stamped post-approval.
+  insertChatApproval() auto-snapshots for outreach action types.
+  emitOutreachOutcome() stamps replied_within_14d / meeting_booked
+  / converted_to_lead / converted_to_deal / disqualified.
+- `outreach_predictions` table — inference history per
+  (approval, model_version). INTERNAL — never surfaced in
+  operator-facing copy.
+- Heuristics remain the fallback until ~500 labels accumulate.
+- Workflow:
+  ```sh
+  cd services/ml-training && pip install -e '.[outreach_rank]' && cd ../..
+  # nightly: stamp 14+d-old null labels as false
+  pnpm --filter @procur/db backfill-outreach-negative-labels
+  # extract labeled snapshots
+  pnpm --filter @procur/db extract-outreach-training-data --output train.json
+  # train
+  python -m procur_ml.outreach_ranker train --input train.json --output model.lgb
+  # score (and write predictions back)
+  python -m procur_ml.outreach_ranker predict --model model.lgb --features feats.json > preds.json
+  pnpm --filter @procur/db upsert-outreach-predictions --input preds.json
+  ```
+
 ## Website intelligence (PR #428)
 
 Per chat agreed-scope thread — frames as "company intelligence
@@ -551,6 +575,30 @@ BGE-reranker-v2-m3 (cross-encoder, post-retrieval sharpening):
   ```sh
   python -m procur_ml.bge_reranker rerank --input pairs.json --output scored.json
   python -m procur_ml.bge_reranker score --query "ULSD cargo" --passages '["…", "…"]'
+  ```
+
+LightGBM outreach reply-within-14d classifier (migration 0089):
+- `outreach_feature_snapshots` table — feature vector captured at
+  proposal time + outcome labels stamped post-approval.
+  insertChatApproval() auto-snapshots for outreach action types.
+  emitOutreachOutcome() stamps replied_within_14d / meeting_booked
+  / converted_to_lead / converted_to_deal / disqualified.
+- `outreach_predictions` table — inference history per
+  (approval, model_version). INTERNAL — never surfaced in
+  operator-facing copy.
+- Heuristics remain the fallback until ~500 labels accumulate.
+- Workflow:
+  ```sh
+  cd services/ml-training && pip install -e '.[outreach_rank]' && cd ../..
+  # nightly: stamp 14+d-old null labels as false
+  pnpm --filter @procur/db backfill-outreach-negative-labels
+  # extract labeled snapshots
+  pnpm --filter @procur/db extract-outreach-training-data --output train.json
+  # train
+  python -m procur_ml.outreach_ranker train --input train.json --output model.lgb
+  # score (and write predictions back)
+  python -m procur_ml.outreach_ranker predict --model model.lgb --features feats.json > preds.json
+  pnpm --filter @procur/db upsert-outreach-predictions --input preds.json
   ```
 
 ## Website intelligence (PR #428)
