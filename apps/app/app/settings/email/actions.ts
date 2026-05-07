@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { companies, db } from '@procur/db';
 import { requireCompany } from '@procur/auth';
+import type { SaveEmailSettingsState } from './state';
 
 const FormSchema = z.object({
   displayName: z.string().max(120).optional(),
@@ -12,17 +13,6 @@ const FormSchema = z.object({
   signatureHtml: z.string().max(20_000).optional(),
   signatureText: z.string().max(8_000).optional(),
 });
-
-export type SaveEmailSettingsState = {
-  status: 'idle' | 'success' | 'error';
-  message: string;
-  savedAt?: string;
-};
-
-export const initialSaveEmailSettingsState: SaveEmailSettingsState = {
-  status: 'idle',
-  message: '',
-};
 
 /**
  * Save per-company email defaults (display name, always-CC, signatures).

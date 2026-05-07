@@ -4,16 +4,7 @@ import twilio from 'twilio';
 import { eq } from 'drizzle-orm';
 import { approvals, db } from '@procur/db';
 import { requireCompany } from '@procur/auth';
-
-export type JoinConferenceState =
-  | { status: 'idle'; message: '' }
-  | { status: 'success'; message: string; callSid: string }
-  | { status: 'error'; message: string };
-
-export const initialJoinConferenceState: JoinConferenceState = {
-  status: 'idle',
-  message: '',
-};
+import type { JoinConferenceState } from './state';
 
 const E164 = /^\+[1-9]\d{7,14}$/;
 

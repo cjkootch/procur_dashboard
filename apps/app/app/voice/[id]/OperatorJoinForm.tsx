@@ -5,7 +5,7 @@ import { useFormStatus } from 'react-dom';
 import {
   initialJoinConferenceState,
   type JoinConferenceState,
-} from './actions';
+} from './state';
 
 interface OperatorJoinFormProps {
   approvalId: string;
