@@ -11,7 +11,7 @@ export default async function AssistantHomePage() {
   const threads = await listThreads(company.id, user.id);
 
   return (
-    <div className="flex h-full flex-col lg:flex-row">
+    <div className="flex h-[calc(100vh-var(--shell-topbar-height)-1px)] flex-col lg:flex-row">
       <aside className="shrink-0 overflow-y-auto border-b border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-3 lg:w-64 lg:border-b-0 lg:border-r">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-medium">Conversations</div>
