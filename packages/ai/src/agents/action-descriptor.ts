@@ -219,14 +219,22 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
       'telegraphic_transfer',
       'mixed',
     ]),
-    volumeUsg: z.number().positive(),
+    // Allow 0 as a "TBD pending qualification" sentinel for early-
+    // stage trade leads where volume isn't quoted yet. Tool-layer
+    // .refine() and executor enforce remaining invariants.
+    volumeUsg: z.number().nonnegative(),
     volumeUnit: z
       .enum(['usg', 'mt', 'kg', 'lbs', 'containers'])
       .default('usg'),
     densityKgL: z.number().positive().max(2).optional(),
     productionLeadTimeWeeks: z.number().int().min(0).max(52).optional(),
     coldChainRequired: z.boolean().optional(),
-    buyerOrgId: zUlid,
+    // Either an existing CRM org ULID, OR a rolodex entity slug —
+    // the deal executor resolves the slug to a CRM org via
+    // resolveOrCreateOrgFromKnownEntity at apply time. Mirrors the
+    // shape propose_create_contact's orgs[] uses.
+    buyerOrgId: zUlid.optional(),
+    buyerKnownEntitySlug: z.string().min(1).max(200).optional(),
     destinationPort: z.string().optional(),
     laycanStart: z.string().optional(),
     laycanEnd: z.string().optional(),

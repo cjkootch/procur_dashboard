@@ -272,7 +272,18 @@ export async function applyCreateContact(
  * tools need. The known_entity slug is preserved in external_keys
  * so future writes find the same row instead of creating a dupe.
  */
-async function resolveOrCreateOrgFromKnownEntity(
+/**
+ * Resolve a known_entities slug to a CRM organizations ULID, creating
+ * a shadow CRM org from the rolodex entity if one doesn't exist yet.
+ * Used by chat propose-* flows where the operator points at a rolodex
+ * entity by slug and the executor needs to land a write on a
+ * CRM-shaped row (organizations / leads / deals / etc.).
+ *
+ * Exported so other executors (deals.ts, etc.) can reuse the same
+ * resolver. Returns null when the slug doesn't resolve to a known
+ * entity at all — caller decides whether to fail or fall back.
+ */
+export async function resolveOrCreateOrgFromKnownEntity(
   slug: string,
 ): Promise<string | null> {
   // Existing org with this slug already wired up?
