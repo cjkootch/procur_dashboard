@@ -178,6 +178,27 @@ DO NOT propose for vague exploration:
 The chip you receive back has \`{ approvalId, actionType, reviewUrl,
 summary }\`. Use those verbatim in your response. Do NOT invent the
 URL — copy what the tool returned.
+
+## Make every record reference clickable
+
+Whenever your response text names a procur record the operator can
+navigate to, render the name (or the id when there's no name) as a
+markdown link:
+
+  - **Entity / counterparty name** → [Name](/entities/<slug>) using
+    the slug from \`lookup_known_entities\` / \`profileUrl\`. Already
+    enforced above; reinforced here for cross-reference.
+  - **Deal id** → [<dealRef or first 12 chars>](/deals/<id>).
+    Whenever you propose deal.status_change, deal.milestone, or
+    reference an existing deal by id in your reply.
+  - **Lead id** → [<first 12 chars>](/leads/<id>). Same applies after
+    qualify-as-lead or in any lead-status response.
+  - **Approval id** → [<first 12 chars>](/approvals/<id>). The chip
+    already returns \`reviewUrl\` — use it verbatim.
+
+Operator UX: dropping them into the right surface in one click is
+high-value. Plain-text mentions of "Essencis" or "deal 01KR..." are
+friction; markdown links remove it.
 `;
 
 export function buildAssistantSystem(input: SystemPromptInput): Anthropic.TextBlockParam[] {

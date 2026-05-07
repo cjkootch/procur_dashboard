@@ -620,7 +620,10 @@ function ActionPreview({
     );
   }
   if (actionType === 'crm.create_contact') {
-    const orgs = (payload['orgs'] as Array<{ orgId: string }> | undefined) ?? [];
+    const orgs =
+      (payload['orgs'] as
+        | Array<{ orgId?: string; knownEntitySlug?: string; role?: string }>
+        | undefined) ?? [];
     const emails = (payload['emails'] as string[] | undefined) ?? [];
     const phones = (payload['phones'] as string[] | undefined) ?? [];
     return (
@@ -635,17 +638,38 @@ function ActionPreview({
         {phones.length > 0 && (
           <p className="text-xs">{phones.join(', ')}</p>
         )}
-        <p className="text-xs text-[color:var(--color-muted-foreground)]">
-          Linking to {orgs.length} org{orgs.length === 1 ? '' : 's'}.{' '}
-          {s(payload, 'rationale')}
-        </p>
+        {orgs.length > 0 && (
+          <p className="text-xs text-[color:var(--color-muted-foreground)]">
+            Linking to{' '}
+            {orgs.map((o, i) => (
+              <span key={i}>
+                {i > 0 && ', '}
+                {o.knownEntitySlug ? (
+                  <Link
+                    href={`/entities/${o.knownEntitySlug}`}
+                    className="font-mono underline hover:text-[color:var(--color-foreground)]"
+                  >
+                    {o.knownEntitySlug}
+                  </Link>
+                ) : o.orgId ? (
+                  <span className="font-mono">{o.orgId.slice(0, 12)}…</span>
+                ) : (
+                  <span>(unspecified)</span>
+                )}
+              </span>
+            ))}
+            .{' '}
+            {s(payload, 'rationale')}
+          </p>
+        )}
       </div>
     );
   }
   if (actionType === 'crm.create_deal') {
+    const dealRef = s(payload, 'dealRef');
     return (
       <div className="space-y-1 text-sm">
-        <p className="font-mono font-semibold">{s(payload, 'dealRef')}</p>
+        <p className="font-mono font-semibold">{dealRef}</p>
         <p className="text-xs">
           {s(payload, 'product').toUpperCase()} ·{' '}
           {Number(payload['volumeUsg'] ?? 0).toLocaleString()}{' '}
@@ -668,11 +692,17 @@ function ActionPreview({
     );
   }
   if (actionType === 'deal.status_change') {
+    const dealId = s(payload, 'deal_id');
     return (
       <div className="space-y-1 text-sm">
         <p>
           <span className="text-[color:var(--color-muted-foreground)]">Deal:</span>{' '}
-          <span className="font-mono">{s(payload, 'deal_id').slice(0, 12)}</span>
+          <Link
+            href={`/deals/${dealId}`}
+            className="font-mono underline hover:text-[color:var(--color-foreground)]"
+          >
+            {dealId.slice(0, 12)}
+          </Link>
         </p>
         <p>
           <span className="text-[color:var(--color-muted-foreground)]">→ status:</span>{' '}
@@ -685,11 +715,17 @@ function ActionPreview({
     );
   }
   if (actionType === 'deal.milestone') {
+    const dealId = s(payload, 'dealId');
     return (
       <div className="space-y-1 text-sm">
         <p>
           <span className="text-[color:var(--color-muted-foreground)]">Deal:</span>{' '}
-          <span className="font-mono">{s(payload, 'dealId').slice(0, 12)}</span>
+          <Link
+            href={`/deals/${dealId}`}
+            className="font-mono underline hover:text-[color:var(--color-foreground)]"
+          >
+            {dealId.slice(0, 12)}
+          </Link>
         </p>
         <p>
           <span className="text-[color:var(--color-muted-foreground)]">Milestone:</span>{' '}
@@ -702,11 +738,17 @@ function ActionPreview({
     );
   }
   if (actionType === 'lead.close') {
+    const leadId = s(payload, 'leadId');
     return (
       <div className="space-y-1 text-sm">
         <p>
           <span className="text-[color:var(--color-muted-foreground)]">Lead:</span>{' '}
-          <span className="font-mono">{s(payload, 'leadId').slice(0, 12)}</span>
+          <Link
+            href={`/leads/${leadId}`}
+            className="font-mono underline hover:text-[color:var(--color-foreground)]"
+          >
+            {leadId.slice(0, 12)}
+          </Link>
         </p>
         <p>
           Outcome:{' '}
@@ -743,13 +785,20 @@ function ActionPreview({
     );
   }
   if (actionType === 'sanctions.screen') {
+    const orgId = s(payload, 'organizationId');
+    // organizationId here is a known_entity slug (the sanctions tool
+    // operates on rolodex entities), not a CRM ULID. Treat the value
+    // as a slug and link to the entity profile.
     return (
       <div className="space-y-1 text-sm">
         <p>
           <span className="text-[color:var(--color-muted-foreground)]">Org:</span>{' '}
-          <span className="font-mono">
-            {s(payload, 'organizationId').slice(0, 12)}
-          </span>
+          <Link
+            href={`/entities/${orgId}`}
+            className="font-mono underline hover:text-[color:var(--color-foreground)]"
+          >
+            {orgId.length > 30 ? `${orgId.slice(0, 30)}…` : orgId}
+          </Link>
         </p>
         <p className="text-xs text-[color:var(--color-muted-foreground)]">
           {s(payload, 'rationale')}
