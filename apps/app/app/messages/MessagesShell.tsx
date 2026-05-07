@@ -1,10 +1,12 @@
 import Link from 'next/link';
 import {
   getMessagingConversation,
+  getOrInitConversationSettings,
   listMessagingConversations,
   type MessagingConversation,
   type MessagingMessage,
 } from '@procur/catalog';
+import { ConversationSettingsPanel } from '../../components/conversation/ConversationSettingsPanel';
 
 /**
  * Outlook-style two-pane shell for SMS + WhatsApp conversations.
@@ -59,12 +61,26 @@ export async function MessagesShell({ activePhone }: MessagesShellProps) {
   // Mobile two-pane: when a conversation is selected, hide the list
   // and show only the detail (with a back button); when nothing
   // selected, show only the list. Desktop (lg+) shows both side-by-
-  // side regardless.
+  // side regardless. The conversation-settings panel (third column
+  // on lg+) renders only when a conversation is selected.
   const showListOnMobile = !activePhone;
   const showDetailOnMobile = !!activePhone;
 
+  // Conversations carry mixed sms / whatsapp channels; pick the
+  // settings row by the most-recent direction of the conversation.
+  // Operators can later flip channel via the settings panel itself.
+  const settings =
+    activePhone && detail
+      ? await getOrInitConversationSettings({
+          channel: detail.messages.some((m) => m.channel === 'whatsapp')
+            ? 'whatsapp'
+            : 'sms',
+          conversationKey: activePhone,
+        })
+      : null;
+
   return (
-    <div className="grid h-[calc(100vh-var(--shell-topbar-height)-1px)] grid-cols-1 lg:grid-cols-[360px_1fr]">
+    <div className="grid h-[calc(100vh-var(--shell-topbar-height)-1px)] grid-cols-1 lg:grid-cols-[360px_1fr_320px]">
       <ConversationList
         conversations={conversations}
         activePhone={activePhone}
@@ -102,6 +118,14 @@ export async function MessagesShell({ activePhone }: MessagesShellProps) {
           </EmptyState>
         )}
       </main>
+
+      {settings && activePhone && (
+        <ConversationSettingsPanel
+          initialSettings={settings}
+          channel={settings.channel as 'sms' | 'whatsapp'}
+          conversationKey={activePhone}
+        />
+      )}
     </div>
   );
 }
