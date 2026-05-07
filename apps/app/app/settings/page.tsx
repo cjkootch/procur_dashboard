@@ -157,6 +157,39 @@ export default async function CompanyProfilePage() {
           full
         />
 
+        <div className="md:col-span-2 mt-4 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          Conversation agent persona
+        </div>
+        <p className="md:col-span-2 -mt-2 text-xs text-[color:var(--color-muted-foreground)]">
+          Injected verbatim into the SMS / WhatsApp / email draft prompt so
+          the agent signs as a real person and answers &ldquo;who is this?&rdquo;
+          with concrete words instead of a placeholder. Leave blank to
+          fall back to the legal name + a synthesized blurb from your
+          industry / country / capabilities above.
+        </p>
+        <Field
+          label="Operator first name"
+          name="agentOperatorName"
+          placeholder="e.g. Cole"
+          defaultValue={company.agentOperatorName ?? ''}
+          helper="Used in the prompt as &ldquo;the operator you are speaking on behalf of&rdquo;."
+        />
+        <Field
+          label="SMS / WhatsApp signature"
+          name="agentSignatureSms"
+          placeholder="e.g. — Cole, Procur"
+          defaultValue={company.agentSignatureSms ?? ''}
+          helper="Short signoff appended on outbound SMS / WhatsApp. Keep it 1–3 words."
+        />
+        <Textarea
+          label="Persona blurb"
+          name="agentPersonaBlurb"
+          rows={3}
+          defaultValue={company.agentPersonaBlurb ?? ''}
+          helper="Short positioning the agent quotes when asked &ldquo;who is this?&rdquo; / &ldquo;what company?&rdquo;. Example: &ldquo;Procur is a fuel & food trading desk based in Houston, focused on USGC clean products and Caribbean food deals.&rdquo;"
+          full
+        />
+
         <div className="md:col-span-2">
           <button
             type="submit"

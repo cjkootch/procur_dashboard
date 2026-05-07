@@ -69,6 +69,9 @@ export async function updateCompanyProfileAction(formData: FormData): Promise<vo
         formData,
         'monthlyFixedOverheadUsdDefault',
       ),
+      agentOperatorName: str(formData, 'agentOperatorName'),
+      agentPersonaBlurb: str(formData, 'agentPersonaBlurb'),
+      agentSignatureSms: str(formData, 'agentSignatureSms'),
       updatedAt: new Date(),
     })
     .where(eq(companies.id, company.id));

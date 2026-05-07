@@ -2,6 +2,7 @@ import 'server-only';
 import { and, desc, eq, gte, isNotNull, sql } from 'drizzle-orm';
 import {
   approvals,
+  companies,
   conversationSettings,
   db,
   messages,
@@ -41,13 +42,23 @@ import { lookupReplyTarget } from './inbox';
  *     inbound webhook from completing.
  */
 
-const SYSTEM_PROMPT_BASE = `You are a procur conversation agent
-representing the operator's company in a real-time SMS/WhatsApp
-exchange with a counterparty (refinery, trader, broker, buyer).
+const SYSTEM_PROMPT_BASE = `You are a conversation agent representing
+{COMPANY_NAME} in a real-time SMS/WhatsApp exchange with a counterparty
+(refinery, trader, broker, buyer).
+
+About {COMPANY_NAME}:
+{COMPANY_PERSONA}
+
+The operator you are speaking on behalf of: {OPERATOR_NAME}.
 
 Your job: draft the next reply. Keep the tone matched to
 {TONE}. Reply in {LANGUAGE}. Stay under one or two sentences —
 this is SMS/WhatsApp, not email.
+
+When asked "who is this?" / "what company?" / "who do you represent?",
+answer with the company name and a short positioning line drawn from
+"About {COMPANY_NAME}" above. Do NOT emit bracketed placeholders like
+"[Operator Company Name]" — concrete values are provided above.
 
 Constraints (NEVER violate):
 - {AUTHORITY_LINE}
@@ -60,6 +71,64 @@ Constraints (NEVER violate):
   reference procur/this assistant by name.
 
 Output ONLY the reply body — plain text, no markdown, no labels.`;
+
+/**
+ * Resolve persona fields for the conversation agent. Single-tenant for
+ * now: pulls the first company in the table and uses its persona
+ * columns (migration 0093). When the columns are NULL, falls back to
+ * generic strings so the prompt still has concrete substitutions and
+ * the model never emits "[Operator Company Name]" placeholders.
+ *
+ * Multi-tenant note: when conversation_settings grows a company_id,
+ * resolve via that join instead. Today there's no FK, but the catalog
+ * deployment is single-company so "first row" is correct.
+ */
+async function resolveOperatorPersona(): Promise<{
+  companyName: string;
+  companyPersona: string;
+  operatorName: string;
+  signatureSms: string | null;
+}> {
+  const [row] = await db
+    .select({
+      name: companies.name,
+      industry: companies.industry,
+      country: companies.country,
+      capabilities: companies.capabilities,
+      agentOperatorName: companies.agentOperatorName,
+      agentPersonaBlurb: companies.agentPersonaBlurb,
+      agentSignatureSms: companies.agentSignatureSms,
+    })
+    .from(companies)
+    .orderBy(companies.createdAt)
+    .limit(1);
+  if (!row) {
+    return {
+      companyName: 'our trading desk',
+      companyPersona: 'A commodities trading desk.',
+      operatorName: 'the desk operator',
+      signatureSms: null,
+    };
+  }
+  // Persona blurb falls back to a synthesized one-liner from the
+  // structural fields when the operator hasn't filled in
+  // agent_persona_blurb. Better than the model inventing facts.
+  const fallbackBlurb = [
+    row.industry ? `${row.industry} desk` : 'A trading desk',
+    row.country ? `based in ${row.country}` : null,
+    row.capabilities && row.capabilities.length > 0
+      ? `focused on ${row.capabilities.slice(0, 3).join(', ')}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' ') + '.';
+  return {
+    companyName: row.name,
+    companyPersona: row.agentPersonaBlurb ?? fallbackBlurb,
+    operatorName: row.agentOperatorName ?? 'the desk operator',
+    signatureSms: row.agentSignatureSms,
+  };
+}
 
 interface QueueAiReplyInput {
   channel: 'sms' | 'whatsapp';
@@ -212,6 +281,17 @@ async function runMaybeQueueAiReply(
   // Tiered + safe → auto-execute. Insert an approval row stamped
   // 'auto_approved' for audit, then dispatch the executor inline.
   if (settings.approvalMode === 'tiered' && riskKind === 'safe') {
+    // Honor the operator's response_delay_*_sec config — pause for a
+    // randomized interval before dispatching so the outbound doesn't
+    // land 200ms after the inbound (looks robotic and trips Twilio
+    // spam heuristics on rapid back-and-forths). This path runs
+    // fire-and-forget from the inbound webhook (PR #526), so the
+    // sleep doesn't block the webhook response — it sits inside the
+    // Vercel waitUntil window.
+    await sleepResponseDelay(
+      settings.responseDelayMinSec,
+      settings.responseDelayMaxSec,
+    );
     const approvalId = await autoExecuteReply({
       channel,
       toPhone: input.fromPhone,
@@ -315,8 +395,16 @@ async function draftReply(input: {
     input.settings.language === 'auto' ? 'the recipient' : input.settings.language;
   const authorityLine = authorityToPromptLine(input.settings.authority);
   const identityLine = identityToPromptLine(input.settings.identityDisclosure);
+  const persona = await resolveOperatorPersona();
 
-  const system = SYSTEM_PROMPT_BASE.replace('{TONE}', tone)
+  // Both occurrences of {COMPANY_NAME} in the prompt template — one in
+  // the opening line, one in the "About ..." header — get the same
+  // value via replaceAll-equivalent.
+  const system = SYSTEM_PROMPT_BASE.split('{COMPANY_NAME}')
+    .join(persona.companyName)
+    .replace('{COMPANY_PERSONA}', persona.companyPersona)
+    .replace('{OPERATOR_NAME}', persona.operatorName)
+    .replace('{TONE}', tone)
     .replace(
       '{LANGUAGE}',
       input.settings.language === 'auto'
@@ -361,6 +449,31 @@ Draft the next reply. Output ONLY the reply body — plain text, no labels, no m
     console.error('[conversation-agent] LLM draft failed', err);
     return { body: '' };
   }
+}
+
+/**
+ * Sleep a randomized interval inside [minSec, maxSec] before sending
+ * an auto-reply. The inbound webhook hands this code off via
+ * fire-and-forget (PR #526) so the sleep runs in the post-response
+ * waitUntil window — the Twilio caller already got 200 OK.
+ *
+ * Capped at 240s. Vercel Functions waitUntil is bounded (~5min on
+ * Hobby/Pro per platform docs); going over kills the auto-send
+ * silently. If an operator sets a longer delay we honor min but
+ * truncate the upper bound. Hardware/email-style scheduled-send
+ * (cron + scheduled_for column) is the right path for >5-min delays
+ * and ships with the Trigger.dev v3→v4 migration that's already
+ * gated.
+ */
+async function sleepResponseDelay(
+  minSec: number,
+  maxSec: number,
+): Promise<void> {
+  const lo = Math.max(0, minSec);
+  const hi = Math.max(lo, Math.min(maxSec, 240));
+  if (hi === 0) return;
+  const ms = Math.round((lo + Math.random() * (hi - lo)) * 1000);
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function authorityToPromptLine(
@@ -782,10 +895,14 @@ async function draftEmailReply(input: {
   history: EmailTurn[];
   inboundBody: string;
 }): Promise<{ body: string }> {
+  const persona = await resolveOperatorPersona();
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
+    // No-key fallback signs as the resolved company. Earlier this
+    // hardcoded "Vector Trade Capital" — a leftover from an early
+    // tester's profile that surfaced in production replies.
     return {
-      body: `Hi,\n\nThanks for the message — let me get back to you on this shortly with a proper response.\n\nBest regards,\nVector Trade Capital`,
+      body: `Hi,\n\nThanks for the message — let me get back to you on this shortly with a proper response.\n\nBest regards,\n${persona.companyName}`,
     };
   }
 
@@ -808,12 +925,21 @@ async function draftEmailReply(input: {
         ? 'Long-form is OK — up to a few paragraphs if the topic warrants it.'
         : 'Keep the reply concise — usually 1-2 short paragraphs.';
 
-  const system = `You are a procur conversation agent representing the
-operator's company in an EMAIL exchange with a counterparty (refinery,
+  const system = `You are a conversation agent representing
+${persona.companyName} in an EMAIL exchange with a counterparty (refinery,
 trader, broker, buyer).
+
+About ${persona.companyName}:
+${persona.companyPersona}
+
+The operator you are speaking on behalf of: ${persona.operatorName}.
 
 Your job: draft the next reply. Tone: ${tone}. Reply in ${language}.
 ${lengthLine}
+
+When asked who you represent, name ${persona.companyName} and use the
+"About" line above. Do not emit bracketed placeholders like "[Company
+Name]" — concrete values are provided.
 
 Constraints (NEVER violate):
 - ${authorityLine}

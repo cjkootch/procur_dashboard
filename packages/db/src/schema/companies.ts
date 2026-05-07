@@ -82,6 +82,22 @@ export const companies = pgTable('companies', {
   emailSignatureHtml: text('email_signature_html'),
   emailSignatureText: text('email_signature_text'),
 
+  /**
+   * Conversation-agent persona (migration 0093). Used by
+   * @procur/catalog/conversation-agent.ts to substitute concrete values
+   * into the SMS / WhatsApp / email draft system prompt. NULL falls
+   * back to a generic "the operator's company" line — concrete values
+   * stop the model from emitting "[Operator Company Name]" literally.
+   *
+   *   agentOperatorName   — first name the agent signs as ("Cole")
+   *   agentPersonaBlurb   — short free-text positioning, injected
+   *                         verbatim into the prompt
+   *   agentSignatureSms   — 1-2-word signoff ("— Cole, Procur")
+   */
+  agentOperatorName: text('agent_operator_name'),
+  agentPersonaBlurb: text('agent_persona_blurb'),
+  agentSignatureSms: text('agent_signature_sms'),
+
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
