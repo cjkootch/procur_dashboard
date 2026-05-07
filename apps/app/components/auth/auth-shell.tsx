@@ -4,16 +4,16 @@ import type { ReactNode } from 'react';
 
 const HIGHLIGHTS = [
   {
-    title: 'Discover',
-    body: 'Tenders from Caribbean, Latin America & Africa, normalized into one feed.',
+    title: 'Intelligence',
+    body: 'Refineries, traders, vessels, customs flows — mapped from public data.',
   },
   {
-    title: 'Capture',
-    body: 'Pursuit pipeline with capture questions, gate reviews, teaming & capabilities.',
+    title: 'Outreach',
+    body: 'Email, SMS, WhatsApp & AI voice from one workflow.',
   },
   {
-    title: 'Propose',
-    body: 'Compliance shred, AI-drafted sections, and review — purpose-built for emerging markets.',
+    title: 'Pipeline',
+    body: 'Lead → deal → retrospective. Operator approvals on every action.',
   },
 ];
 
@@ -66,13 +66,14 @@ export function AuthShell({
             />
           </Link>
           <p className="mt-6 max-w-md text-xl font-semibold leading-tight md:mt-8 md:text-2xl lg:text-3xl">
-            Win government contracts in emerging markets.
+            AI-native trading desk.
           </p>
           {/* Tagline + highlights only render on md+; phones get just the
               logo strip + headline so the form stays above the fold. */}
           <p className="mt-3 hidden max-w-md text-sm leading-relaxed text-white/70 md:block">
-            One workspace from tender discovery to contract delivery — for teams
-            bidding in the Caribbean, Latin America, and Africa.
+            Counterparty intelligence + execution for commodity trading.
+            Discover refineries, qualify counterparties, run outreach, and
+            close deals — all from one workspace.
           </p>
 
           <ul className="mt-10 hidden max-w-md space-y-5 lg:block">
@@ -92,7 +93,7 @@ export function AuthShell({
         </div>
 
         <div className="relative mt-6 hidden text-xs text-white/50 md:block">
-          © {new Date().getFullYear()} Procur · Built for developing-market procurement.
+          © {new Date().getFullYear()} Procur · Built for commodity trading desks.
         </div>
       </aside>
 
