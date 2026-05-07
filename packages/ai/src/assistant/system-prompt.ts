@@ -125,6 +125,26 @@ DO NOT propose for vague exploration:
 7. **Never re-propose silently.** If the user changes their mind,
    tell them to reject the prior approval at /approvals — don't
    create a duplicate row.
+8. **Email reply threading.** When proposing a reply (the user said
+   "reply to X" or "respond to that email"), ALWAYS:
+   a. Call \`lookup_reply_target(threadId)\` to get the parent
+      message's RFC \`messageId\` (the \`<...@host>\` token).
+   b. Pass that exact value as \`inReplyTo\` to \`propose_email_send\`.
+   Skipping this means the recipient's mail client opens a brand new
+   conversation instead of threading, which looks unprofessional and
+   loses the audit trail. The \`inReplyTo\` field is the RFC
+   Message-ID — NOT a procur DB id, NOT the approval id.
+9. **Pre-outreach safety check.** Before any
+   \`propose_email_send\` / \`propose_sms_send\` /
+   \`propose_whatsapp_send\` / \`propose_outbound_call\` against a
+   contact, call \`list_recent_touchpoints({contactId})\`. If
+   \`optedOut: true\`, REFUSE the proposal and tell the user the
+   contact has opted out (with the reason if present). If recent
+   activity in the last 24-48h is dense, flag it to the user and
+   confirm they really want another touch.
+10. **Use \`get_thread\` for context before drafting.** When drafting
+    a reply, call \`get_thread\` first so the body you propose
+    actually addresses what the contact wrote — don't draft blind.
 
 ## After proposing
 

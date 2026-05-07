@@ -75,6 +75,11 @@ import {
   SupplierApprovalEntityMissingError,
   upsertSupplierApproval,
 } from './mutations';
+import {
+  getThreadDetail,
+  listRecentTouchpoints,
+  lookupReplyTarget,
+} from './inbox';
 import { SUPPLIER_APPROVAL_STATUSES } from '@procur/db';
 import { composeDealEconomics, type CompanyDealDefaults } from './deal-economics';
 import { COUNTRY_NAME_EXAMPLES, normalizeCountryCode } from './country-codes';
@@ -157,6 +162,24 @@ const isoAlpha2Country = z
  * exact same URL shape that search_opportunities embeds in its
  * filterUrl response field.
  */
+/**
+ * Drop fields that bloat the chat-tool result (full message bodies,
+ * raw provider payloads). The assistant calls `get_thread` if it
+ * needs the body of a specific message — list views don't need it.
+ */
+function stripBulkyFields(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (key === 'body_text' || key === 'body_html' || key === 'raw_payload') {
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
 export function buildFilterUrl(filters: {
   query?: string | null;
   jurisdiction?: string | null;
@@ -210,6 +233,122 @@ export function buildCatalogTools(): ToolRegistry {
     // Vex-into-procur merge Phase 7.6 — chat propose-* tools that
     // emit ActionDescriptor approvals. See packages/catalog/src/proposal-tools.ts.
     ...proposeTools,
+
+    // ========================================================================
+    // Inbox / threads / touchpoints — read-only chat tools so the assistant
+    // can thread email replies correctly and avoid re-spamming opted-out or
+    // recently-contacted people. Without these the assistant has no view of
+    // the comms history (Finding #8 from the Phase 7 audit).
+    // ========================================================================
+
+    get_thread: defineTool({
+      name: 'get_thread',
+      description:
+        'Fetch a communications thread (email/sms/whatsapp/voice) and the messages in it. ' +
+        'Use this when the user asks about a specific conversation, asks you to draft a reply, ' +
+        'or wants the history before deciding what to do next. Returns thread metadata + ' +
+        'every message with direction, fromEmail, RFC messageId (for threading replies), ' +
+        'and a body excerpt. Pass the latest message\'s `messageId` as `inReplyTo` to ' +
+        'propose_email_send so the recipient\'s mail client threads the reply correctly.',
+      kind: 'read',
+      schema: z.object({
+        threadId: z
+          .string()
+          .min(1)
+          .describe('Thread id from get_thread / lookup_reply_target / inbox surfaces.'),
+      }),
+      handler: async (_ctx, input) => {
+        const detail = await getThreadDetail(input.threadId);
+        if (!detail) {
+          return { ok: false as const, error: `thread ${input.threadId} not found` };
+        }
+        return {
+          ok: true as const,
+          thread: detail.thread,
+          messages: detail.messages.map((m) => ({
+            id: m.id,
+            direction: m.direction,
+            subject: m.subject,
+            fromEmail: m.fromEmail,
+            messageId: m.messageId,
+            inReplyTo: m.inReplyTo,
+            bodyPreview: (m.bodyText ?? '').slice(0, 4000),
+            createdAt: m.createdAt,
+          })),
+        };
+      },
+    }),
+
+    lookup_reply_target: defineTool({
+      name: 'lookup_reply_target',
+      description:
+        'Given a thread id, return the RFC Message-ID of the latest message — the value to ' +
+        'pass as `inReplyTo` when proposing a reply via propose_email_send. Use this any ' +
+        'time you propose an email reply: without the correct in-reply-to header, the ' +
+        'recipient\'s client will start a new conversation instead of threading. Returns ' +
+        'null when the thread has no message with a known Message-ID (legacy inbound rows).',
+      kind: 'read',
+      schema: z.object({
+        threadId: z.string().min(1),
+      }),
+      handler: async (_ctx, input) => {
+        const target = await lookupReplyTarget(input.threadId);
+        if (!target) {
+          return {
+            ok: false as const,
+            error: `thread ${input.threadId} has no message with a Message-ID; the reply will start a new thread`,
+          };
+        }
+        return { ok: true as const, ...target };
+      },
+    }),
+
+    list_recent_touchpoints: defineTool({
+      name: 'list_recent_touchpoints',
+      description:
+        'List a contact\'s recent touchpoints (email/sms/whatsapp/voice — every channel) ' +
+        'and surface their opt-out status. ALWAYS call this before proposing new outreach so ' +
+        'you (a) refuse to propose anything when the contact is opted out, and (b) avoid ' +
+        're-spamming someone you contacted in the last few days. `sinceHours` defaults to ' +
+        '168 (one week). Returns `optedOut: true` when the contact has an opt-out date — ' +
+        'when this is true, do NOT call any propose_email_send / propose_sms_send / ' +
+        'propose_whatsapp_send / propose_outbound_call against this contact.',
+      kind: 'read',
+      schema: z.object({
+        contactId: z
+          .string()
+          .regex(/^[0-9A-HJKMNP-TV-Z]{26}$/, 'expected ULID')
+          .describe('Contact ULID.'),
+        sinceHours: z.number().int().min(1).max(8760).optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+      }),
+      handler: async (_ctx, input) => {
+        const result = await listRecentTouchpoints({
+          contactId: input.contactId,
+          ...(input.sinceHours !== undefined ? { sinceHours: input.sinceHours } : {}),
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        });
+        return {
+          ok: true as const,
+          contact: result.contact,
+          optedOut: result.optedOut,
+          optedOutWarning: result.optedOut
+            ? 'Contact is opted out — refuse to propose any further outreach.'
+            : null,
+          touchpointCount: result.touchpoints.length,
+          touchpoints: result.touchpoints.map((t) => ({
+            id: t.id,
+            channel: t.channel,
+            occurredAt: t.occurredAt,
+            // Strip body_html / body_text from metadata for the chat
+            // payload — they bloat context. The assistant can call
+            // get_thread for full message bodies if it needs them.
+            metadata: stripBulkyFields(t.metadata),
+          })),
+        };
+      },
+    }),
+
     search_opportunities: defineTool({
       name: 'search_opportunities',
       description:

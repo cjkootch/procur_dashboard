@@ -1,6 +1,6 @@
 import 'server-only';
-import { desc, eq, sql } from 'drizzle-orm';
-import { db, messages, threads } from '@procur/db';
+import { and, desc, eq, gte, isNotNull, sql } from 'drizzle-orm';
+import { contacts, db, messages, threads, touchpoints } from '@procur/db';
 
 /**
  * Inbox helpers for vex-into-procur merge Phase 3. The inbox UI groups
@@ -152,5 +152,145 @@ export async function getThreadDetail(
         createdAt: m.createdAt,
       };
     }),
+  };
+}
+
+/**
+ * Look up the RFC Message-ID the assistant should pass as `inReplyTo`
+ * to thread a reply correctly. Returns the latest message in the
+ * thread that has a `messageId` populated — typical email-client
+ * behavior is "reply to the most recent message regardless of
+ * direction." Falls back to null when the thread has no messages
+ * with a known Message-ID (e.g. legacy inbound rows).
+ */
+export interface ReplyTarget {
+  threadId: string;
+  subject: string | null;
+  latestMessageId: string;
+  latestMessageDirection: 'inbound' | 'outbound';
+  latestMessageAt: Date;
+  latestFromEmail: string | null;
+}
+
+export async function lookupReplyTarget(
+  threadId: string,
+): Promise<ReplyTarget | null> {
+  const rows = await db
+    .select({
+      threadId: messages.threadId,
+      subject: messages.subject,
+      messageId: messages.messageId,
+      direction: messages.direction,
+      createdAt: messages.createdAt,
+      fromEmail: messages.fromEmail,
+      threadSubject: threads.subject,
+    })
+    .from(messages)
+    .innerJoin(threads, eq(threads.id, messages.threadId))
+    .where(
+      and(eq(messages.threadId, threadId), isNotNull(messages.messageId)),
+    )
+    .orderBy(desc(messages.createdAt))
+    .limit(1);
+  const row = rows[0];
+  if (!row || !row.messageId) return null;
+  return {
+    threadId: row.threadId,
+    subject: row.subject ?? row.threadSubject ?? null,
+    latestMessageId: row.messageId,
+    latestMessageDirection: row.direction,
+    latestMessageAt: row.createdAt,
+    latestFromEmail: row.fromEmail ?? null,
+  };
+}
+
+export interface RecentTouchpointRow {
+  id: string;
+  channel: string;
+  occurredAt: Date;
+  contactId: string | null;
+  orgId: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface RecentTouchpointsResult {
+  contact: {
+    id: string;
+    fullName: string | null;
+    optedOutAt: Date | null;
+    optOutReason: string | null;
+  } | null;
+  touchpoints: RecentTouchpointRow[];
+  /** Convenience flag — true if the contact is opted out, regardless of
+   *  channel. Chat callers should refuse to propose new outreach. */
+  optedOut: boolean;
+}
+
+/**
+ * Return the contact's recent touchpoints (across all channels) plus
+ * their opt-out status. Used by the chat assistant before proposing
+ * outreach so it doesn't re-spam someone contacted yesterday or who
+ * has explicitly opted out.
+ *
+ * `sinceHours` defaults to 168 (one week). `limit` defaults to 25.
+ */
+export async function listRecentTouchpoints(input: {
+  contactId: string;
+  sinceHours?: number;
+  limit?: number;
+}): Promise<RecentTouchpointsResult> {
+  const sinceHours = input.sinceHours ?? 168;
+  const limit = input.limit ?? 25;
+  const since = new Date(Date.now() - sinceHours * 3600_000);
+
+  const contactRows = await db
+    .select({
+      id: contacts.id,
+      fullName: contacts.fullName,
+      optOutAt: contacts.optOutAt,
+      optOutReason: contacts.optOutReason,
+    })
+    .from(contacts)
+    .where(eq(contacts.id, input.contactId))
+    .limit(1);
+  const contact = contactRows[0] ?? null;
+
+  const tpRows = await db
+    .select({
+      id: touchpoints.id,
+      channel: touchpoints.channel,
+      occurredAt: touchpoints.occurredAt,
+      contactId: touchpoints.contactId,
+      orgId: touchpoints.orgId,
+      metadata: touchpoints.metadata,
+    })
+    .from(touchpoints)
+    .where(
+      and(
+        eq(touchpoints.contactId, input.contactId),
+        gte(touchpoints.occurredAt, since),
+      ),
+    )
+    .orderBy(desc(touchpoints.occurredAt))
+    .limit(limit);
+
+  return {
+    contact: contact
+      ? {
+          id: contact.id,
+          fullName: contact.fullName ?? null,
+          optedOutAt: contact.optOutAt ?? null,
+          optOutReason: contact.optOutReason ?? null,
+        }
+      : null,
+    touchpoints: tpRows.map((r) => ({
+      id: r.id,
+      channel: r.channel,
+      occurredAt: r.occurredAt,
+      contactId: r.contactId ?? null,
+      orgId: r.orgId ?? null,
+      metadata: (r.metadata as Record<string, unknown>) ?? {},
+    })),
+    optedOut: contact?.optOutAt != null,
   };
 }
