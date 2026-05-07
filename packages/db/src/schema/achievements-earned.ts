@@ -21,8 +21,8 @@ export const achievementsEarned = pgTable(
     earnedAt: timestamp('earned_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
-    /** Optional events.id pointer to the action that triggered the unlock. */
-    eventId: uuid('event_id'),
+    /** Optional events.id (ULID/text) pointer to the action that triggered the unlock. */
+    eventId: text('event_id'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

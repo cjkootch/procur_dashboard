@@ -23,8 +23,8 @@ export const xpLedger = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    /** events.id when applicable; null for quest completes / achievements / manual. */
-    eventId: uuid('event_id'),
+    /** events.id (ULID/text) when applicable; null for quest completes / achievements / manual. */
+    eventId: text('event_id'),
     /** Polymorphic source pointer for non-events sources. */
     sourceTable: text('source_table'),
     sourceId: text('source_id'),
