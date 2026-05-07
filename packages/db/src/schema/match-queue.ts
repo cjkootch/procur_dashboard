@@ -56,31 +56,34 @@ export const matchQueue = pgTable(
     score: numeric('score', { precision: 4, scale: 2 }).notNull(),
     rationale: text('rationale').notNull(),
 
-    /** 'open' | 'dismissed' | 'pushed-to-vex' | 'actioned'. */
+    /** 'open' | 'dismissed' | 'qualified' | 'actioned'. */
     status: text('status').notNull().default('open'),
     statusUpdatedAt: timestamp('status_updated_at', { withTimezone: true })
       .defaultNow()
       .notNull(),
 
-    /** When the match was pushed to vex. Null until status flips to
-     *  'pushed-to-vex'. Migration 0059. */
+    /** When the match was qualified as a lead. Null until status
+     *  flips to 'qualified'. Migration 0059 originally; column kept
+     *  as `pushed_to_vex_at` for back-compat with running queries —
+     *  rename in a follow-up schema migration. */
     pushedToVexAt: timestamp('pushed_to_vex_at', { withTimezone: true }),
-    /** Vex's deal ID once a fuel_deal materializes from this match.
-     *  Set by the match-outcome webhook when the deal is created.
-     *  Migration 0059. */
+    /** Linked deal id once a fuel_deal materializes from this match.
+     *  Set by the deal-creation flow. Migration 0059; column name
+     *  retained for back-compat. */
     vexDealId: text('vex_deal_id'),
-    /** Terminal outcome reported by vex:
+    /** Terminal outcome:
      *    'closed_won' — deal closed, VTC realized margin
      *    'closed_lost' — pursued but didn't close
-     *    'no_engagement' — pushed but no real conversation occurred
-     *    'still_active' — pushed long ago, deal still open at 90+ days
+     *    'no_engagement' — qualified but no real conversation occurred
+     *    'still_active' — qualified long ago, deal still open at 90+ days
      *  Validated at the route layer; left as text here for additive
      *  evolution. Migration 0059. */
     dealOutcome: text('deal_outcome'),
     /** When dealOutcome was set. Migration 0059. */
     outcomeRecordedAt: timestamp('outcome_recorded_at', { withTimezone: true }),
     /** Realized margin (USD) when dealOutcome='closed_won'; NULL
-     *  otherwise. Captured from vex's deal close metrics. Mig 0059. */
+     *  otherwise. Captured from the linked deal's close metrics.
+     *  Migration 0059. */
     realizedMarginUsd: numeric('realized_margin_usd', { precision: 14, scale: 2 }),
 
     matchedAt: timestamp('matched_at', { withTimezone: true })
@@ -104,11 +107,9 @@ export const matchQueue = pgTable(
   }),
 );
 
-/** Valid `dealOutcome` values — single source of truth. The webhook
- *  validates against this list; the match_signal_performance view
- *  aggregates by it. Aligned with vex's contract (PR #309): vex
- *  emits 'created' on fuel_deal creation, 'closed_won' on settle,
- *  'closed_lost' on cancel/fail, 'no_engagement' on 90d-stale leads. */
+/** Valid `dealOutcome` values — single source of truth. The
+ *  outcome-recording route validates against this list; the
+ *  match_signal_performance view aggregates by it. */
 export const MATCH_DEAL_OUTCOMES = [
   'created',
   'closed_won',

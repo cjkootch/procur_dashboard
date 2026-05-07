@@ -14,21 +14,19 @@ export const dynamic = 'force-dynamic';
  *   fresh awards in target categories × target countries
  *
  * Layout: ranked list, score chip + signal-class badge + entity
- * link + rationale + per-row actions (push to vex, actioned,
+ * link + rationale + per-row actions (qualify as lead, actioned,
  * dismiss). Filters: signal type + lookback. Status defaults to
  * 'open' — dismissed/actioned rows hide.
  *
- * Click "Push to vex" marks the row in procur; the actual push
- * happens via the assistant chat (propose_push_to_vex_contact tool
- * from PR #264). v2 will connect the button directly to that flow
- * — for now the button is a status-only marker so the queue
- * doesn't re-surface things you've already handled.
+ * Click "Qualify as lead" creates an in-process lead with the
+ * match-queue context attached and flips the row to status='qualified'
+ * so the queue de-duplicates re-qualifications.
  */
 interface Props {
   searchParams: Promise<{
     signal?: 'distress_event' | 'velocity_drop' | 'new_award';
     days?: string;
-    /** 'counterparty' (default; push-to-vex eligible rows) | 'macro'
+    /** 'counterparty' (default; lead-qualification eligible rows) | 'macro'
      *  (geo / region / market signals — Tuapse, Iran, Strait of Hormuz)
      *  | 'all' (legacy mixed view). */
     target?: 'counterparty' | 'macro' | 'all';
@@ -63,8 +61,8 @@ export default async function MatchQueuePage({ searchParams }: Props) {
         <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
           Today&apos;s ranked deal-origination signals across the whole VTC lane: distress events
           (SEC EDGAR / RECAP / RSS), velocity drops in award flow, fresh procurement awards in
-          target categories × countries. Click &quot;Push to vex&quot; to forward the lead with
-          full commercial context — vex&apos;s CRM record opens in a new tab on success.
+          target categories × countries. Click &quot;Qualify as lead&quot; to create the lead
+          with full match-queue context attached.
         </p>
       </header>
 

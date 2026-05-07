@@ -22,7 +22,7 @@ export const dynamic = 'force-dynamic';
  * tight 4-card surface answering "what should I look at right now?":
  *
  *   1. Match queue       — operator-curated supplier signals
- *   2. Active deals      — pointer into vex (deals live there)
+ *   2. Active deals      — link to /deals
  *   3. New tenders       — opps published in last 24h matching bid criteria
  *   4. Entity proposals  — chat-emitted propose_create/update awaiting approval
  *
@@ -77,7 +77,7 @@ export default async function BriefPage() {
     counterpartyNews,
     fuelMarketNews,
   ] = await Promise.all([
-      // Counterparty rows only — actionable, push-to-vex eligible.
+      // Counterparty rows only — actionable for lead qualification.
       // Macro/geo signals (Tuapse, Iran, Strait of Hormuz) get their
       // own panel since they're context, not leads.
       getMatchQueue({
@@ -214,16 +214,14 @@ export default async function BriefPage() {
 
           <BriefCard
             title="Active deals"
-            iconSrc="/brand/vex-icon-on-light.svg"
             count={null}
-            href="https://app.vexhq.ai"
-            external
-            ctaLabel="Open vex"
-            empty="Deals live in vex — open the CRM to act on candidates pushed from procur."
+            href="/deals"
+            ctaLabel="Open deals"
+            empty="No active deals. Qualify a lead from the match queue or open /deals."
           >
             <p className="text-xs text-[color:var(--color-muted-foreground)]">
-              Once you push entities to vex from the rolodex or chat, they appear in vex&apos;s
-              origination queue with the chat-summary context attached.
+              Qualified leads from the match queue or chat assistant land in /deals
+              with the originating commercial context attached.
             </p>
           </BriefCard>
 
@@ -546,8 +544,7 @@ function BriefCard({
   children,
 }: {
   title: string;
-  /** Optional brand icon shown next to the title. Currently used by
-   *  the "Active deals" card to visually mark it as the vex surface. */
+  /** Optional brand icon shown next to the title. */
   iconSrc?: string;
   count: number | null;
   countLabel?: string;

@@ -304,8 +304,8 @@ function ExternalContactList({
         ))}
       </div>
       <p className="mt-2 text-[10px] italic text-[color:var(--color-muted-foreground)]">
-        Discoveries from connected integrations (vex CRM today). Procur treats these
-        as suggestions — they don&apos;t overwrite your primary contact-of-record.
+        Discoveries from connected integrations. Procur treats these as
+        suggestions — they don&apos;t overwrite your primary contact-of-record.
         Confidence dots reflect the source&apos;s certainty.
       </p>
     </section>

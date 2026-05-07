@@ -11,13 +11,13 @@ export const dynamic = 'force-dynamic';
  * docs/feedback-ui-brief.md §8.2.
  *
  * Reachable via:
- *   - Direct URL `/retrospectives/{vex_deal_id}` from a user-typed
- *     link or vex's deal-closure email (when that wires in)
+ *   - Direct URL `/retrospectives/{deal_id}` from a user-typed link
+ *     or a deal-closure email
  *   - The auto-generated retrospective queue once the 7-day delayed
  *     notification system is built (gated on Trigger.dev v3→v4)
  *
- * Search-param `outcome` lets vex/external links pre-set the
- * outcome for fresh retrospectives:
+ * Search-param `outcome` lets external links pre-set the outcome for
+ * fresh retrospectives:
  *   /retrospectives/abc123?outcome=won
  */
 interface Props {
@@ -49,7 +49,7 @@ export default async function RetrospectivePage({ params, searchParams }: Props)
       <header className="mb-6">
         <h1 className="text-xl font-semibold tracking-tight">Deal retrospective</h1>
         <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
-          Vex deal{' '}
+          Deal{' '}
           <code className="rounded bg-[color:var(--color-muted)] px-1 font-mono text-xs">
             {decodedDealId}
           </code>
