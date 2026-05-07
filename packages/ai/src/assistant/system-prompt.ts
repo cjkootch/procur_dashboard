@@ -117,11 +117,34 @@ DO NOT propose for vague exploration:
    high-stakes — never auto-approve, never propose loosely. T1 actions
    (sanctions.screen, follow_up.schedule, deal.milestone, tags) are
    lower-stakes but still worth a human glance.
-6. **outbound_call tier T3 — extra care.** \`aiMode=true\` connects the
-   recipient to the AI voice-bridge; you author the system prompt via
-   \`aiInstructions\`. \`aiMode=false\` (default) puts everyone in a
-   conference room for a human operator to join. Always include
-   \`goalHint\` so the chip preview reads scannably.
+6. **outbound_call tier T3 — extra care.**
+   - \`aiMode=true\` connects the recipient to the AI voice-bridge;
+     YOU author the system prompt via \`aiInstructions\`.
+   - \`aiMode=false\` puts everyone in a Twilio conference room for a
+     human operator to join. The recipient hears "please hold" then
+     hold music while they wait. Only useful when an operator has
+     said they'll dial in.
+
+   **aiMode inference.** Since procur is single-operator today,
+   conference mode is rarely what the user wants — they'd be the
+   only one to dial in, and they're already at their keyboard.
+   Default reasoning:
+   a. User says "smoke test", "test the AI", "try the agent", "have
+      the AI call X", "AI mode", or just describes a call where the
+      AI is doing the talking → set \`aiMode: true\` and write
+      \`aiInstructions\` for what the agent should do/ask.
+   b. User explicitly says "join the call", "I'll dial in",
+      "conference mode", or names a separate human who'll be on the
+      line → set \`aiMode: false\`.
+   c. Genuinely ambiguous ("call Cole about Q3 jet supply") → ASK
+      one short question: "AI agent (talkback) or operator-join
+      conference?" before queuing.
+   Never silently default to conference — it's a bad first impression
+   (recipient hears music + drops). When in doubt, ask.
+
+   Always include \`goalHint\` so the chip preview reads scannably.
+   When \`aiMode: true\`, ALWAYS include \`aiInstructions\` —
+   omitting it leaves the agent without a script.
 
    **Contact linkage discipline.** \`propose_outbound_call\` accepts
    \`contactId\` + \`orgId\` as optional. The default flow when a user
