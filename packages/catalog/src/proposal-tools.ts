@@ -203,7 +203,11 @@ export const proposeTools = {
     description:
       'Queue a new CRM contact (person at a company) for operator approval. Use when the user ' +
       'asks to add / create a contact, person, or representative. Always link to at least one ' +
-      'organization via orgs[]; mark exactly one as isPrimary.',
+      'organization via orgs[]; mark exactly one as isPrimary. Each org link can supply either ' +
+      '`orgId` (an existing CRM org ULID, e.g. 01K...) OR `knownEntitySlug` (a rolodex entity ' +
+      "slug from lookup_known_entities, e.g. 'env-services:essencis'). When the entity is in " +
+      'the rolodex, prefer knownEntitySlug — the executor will find or create the matching ' +
+      "CRM org row automatically, so you don't need a separate propose_create_company step.",
     kind: 'write',
     schema: z.object({
       fullName: z.string().min(1).max(200),
@@ -212,11 +216,19 @@ export const proposeTools = {
       phones: z.array(z.string().max(40)).max(10).optional(),
       orgs: z
         .array(
-          z.object({
-            orgId: ulidString,
-            role: z.string().max(200).optional(),
-            isPrimary: z.boolean().optional(),
-          }),
+          z
+            .object({
+              orgId: ulidString.optional(),
+              knownEntitySlug: z.string().min(1).max(200).optional(),
+              role: z.string().max(200).optional(),
+              isPrimary: z.boolean().optional(),
+            })
+            .refine(
+              (v) => Boolean(v.orgId) || Boolean(v.knownEntitySlug),
+              {
+                message: 'each org link needs orgId or knownEntitySlug',
+              },
+            ),
         )
         .min(1)
         .max(20),

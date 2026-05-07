@@ -6,6 +6,7 @@ import {
   db,
   events,
   followUps,
+  knownEntities,
   leads,
   organizationProducts,
   organizationRelationships,
@@ -130,7 +131,15 @@ export interface CreateContactPayload {
   title?: string;
   emails?: string[];
   phones?: string[];
-  orgs: Array<{ orgId: string; role?: string; isPrimary?: boolean }>;
+  /** Each org link supplies orgId OR knownEntitySlug; the executor
+   *  resolves the slug to (or creates) an organizations row before
+   *  inserting the contact. */
+  orgs: Array<{
+    orgId?: string;
+    knownEntitySlug?: string;
+    role?: string;
+    isPrimary?: boolean;
+  }>;
   rationale: string;
 }
 
@@ -149,9 +158,30 @@ export function parseCreateContactPayload(
   ) {
     return null;
   }
+  // Validate each org link has at least one of orgId / knownEntitySlug.
+  const validatedOrgs: CreateContactPayload['orgs'] = [];
+  for (const raw of orgs) {
+    if (!raw || typeof raw !== 'object') return null;
+    const r = raw as Record<string, unknown>;
+    const orgId = typeof r['orgId'] === 'string' ? (r['orgId'] as string) : undefined;
+    const knownEntitySlug =
+      typeof r['knownEntitySlug'] === 'string'
+        ? (r['knownEntitySlug'] as string)
+        : undefined;
+    if (!orgId && !knownEntitySlug) return null;
+    validatedOrgs.push({
+      ...(orgId ? { orgId } : {}),
+      ...(knownEntitySlug ? { knownEntitySlug } : {}),
+      ...(typeof r['role'] === 'string' ? { role: r['role'] as string } : {}),
+      ...(typeof r['isPrimary'] === 'boolean'
+        ? { isPrimary: r['isPrimary'] as boolean }
+        : {}),
+    });
+  }
+
   const out: CreateContactPayload = {
     fullName,
-    orgs: orgs as CreateContactPayload['orgs'],
+    orgs: validatedOrgs,
     rationale,
   };
   if (typeof proposedPayload['title'] === 'string') {
@@ -171,27 +201,58 @@ export async function applyCreateContact(
   payload: CreateContactPayload,
 ): Promise<ExecutorResult> {
   if (await alreadyApplied(approvalId)) return { ok: true };
+
+  // Resolve every org link to a concrete organizations.id, creating
+  // shadow rows for known_entity slugs that don't yet have a CRM
+  // counterpart. This collapses the old "create company → create
+  // contact" two-approval round trip into one approval when the
+  // entity is already in the rolodex.
+  const resolved: Array<{
+    orgId: string;
+    role: string | null;
+    isPrimary: boolean;
+  }> = [];
+  for (const link of payload.orgs) {
+    const orgId =
+      link.orgId ??
+      (link.knownEntitySlug
+        ? await resolveOrCreateOrgFromKnownEntity(link.knownEntitySlug)
+        : null);
+    if (!orgId) {
+      return {
+        ok: false,
+        error: `Could not resolve org link (orgId=${link.orgId ?? 'null'}, slug=${link.knownEntitySlug ?? 'null'})`,
+      };
+    }
+    resolved.push({
+      orgId,
+      role: link.role ?? null,
+      isPrimary: link.isPrimary ?? false,
+    });
+  }
+
+  // Pick the primary AFTER resolving — keeps the "first link is
+  // primary if none flagged" fallback intact.
+  const primary = resolved.find((o) => o.isPrimary) ?? resolved[0]!;
+
   const id = createId();
-  const primaryOrg =
-    payload.orgs.find((o) => o.isPrimary) ?? payload.orgs[0]!;
   await db.insert(contacts).values({
     id,
-    orgId: primaryOrg.orgId,
+    orgId: primary.orgId,
     fullName: payload.fullName,
     title: payload.title ?? null,
     emails: (payload.emails ?? []).map((e) => e.toLowerCase()),
     phones: payload.phones ?? [],
     status: 'active',
   });
-  for (const link of payload.orgs) {
+  for (const link of resolved) {
     await db
       .insert(contactOrgMemberships)
       .values({
         contactId: id,
         orgId: link.orgId,
-        role: link.role ?? null,
-        isPrimary:
-          (link.isPrimary ?? false) || link.orgId === primaryOrg.orgId,
+        role: link.role,
+        isPrimary: link.isPrimary || link.orgId === primary.orgId,
       })
       .onConflictDoNothing();
   }
@@ -199,6 +260,54 @@ export async function applyCreateContact(
     full_name: payload.fullName,
   });
   return { ok: true, appliedObjectId: id };
+}
+
+/**
+ * Look up an organizations row carrying the given known_entity slug
+ * in its external_keys.known_entity_slug; create one on demand from
+ * the entity's curated metadata when no shadow row exists yet.
+ *
+ * The shadow org isn't a duplicate of the rolodex entity — it's the
+ * CRM-side handle the agent runtime, sales pipeline, and outreach
+ * tools need. The known_entity slug is preserved in external_keys
+ * so future writes find the same row instead of creating a dupe.
+ */
+async function resolveOrCreateOrgFromKnownEntity(
+  slug: string,
+): Promise<string | null> {
+  // Existing org with this slug already wired up?
+  const existing = await db
+    .select({ id: organizations.id })
+    .from(organizations)
+    .where(sql`${organizations.externalKeys} ->> 'known_entity_slug' = ${slug}`)
+    .limit(1);
+  if (existing[0]?.id) return existing[0].id;
+
+  // Create a shadow CRM org from the rolodex entity's data.
+  const entity = await db
+    .select({
+      slug: knownEntities.slug,
+      name: knownEntities.name,
+      country: knownEntities.country,
+      role: knownEntities.role,
+    })
+    .from(knownEntities)
+    .where(eq(knownEntities.slug, slug))
+    .limit(1);
+  if (!entity[0]) return null;
+
+  const id = createId();
+  await db.insert(organizations).values({
+    id,
+    legalName: entity[0].name,
+    domain: null,
+    industry: entity[0].role ?? null,
+    geo: entity[0].country ? { country: entity[0].country } : null,
+    externalKeys: { known_entity_slug: slug },
+    sourceOfTruth: 'known_entity',
+    status: 'active',
+  });
+  return id;
 }
 
 // ============================================================================
