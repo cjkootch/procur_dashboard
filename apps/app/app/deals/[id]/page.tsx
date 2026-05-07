@@ -18,6 +18,7 @@ const TABS = [
   'documents',
   'structure',
   'compliance',
+  'assumptions',
   'activity',
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -30,6 +31,7 @@ const TAB_LABEL: Record<Tab, string> = {
   documents: 'Documents',
   structure: 'Structure',
   compliance: 'Compliance',
+  assumptions: 'Assumptions',
   activity: 'Activity',
 };
 
@@ -107,6 +109,7 @@ export default async function DealRoomPage({ params, searchParams }: PageProps) 
         {tab === 'documents' && <DocumentsTab room={room} />}
         {tab === 'structure' && <StructureTab room={room} />}
         {tab === 'compliance' && <ComplianceTab room={room} />}
+        {tab === 'assumptions' && <AssumptionsTab room={room} />}
         {tab === 'activity' && <ActivityTab room={room} />}
       </div>
     </div>
@@ -671,6 +674,157 @@ function ComplianceTab({ room }: { room: DealRoomContext }) {
           </p>
         )}
       </Card>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Assumptions tab — Revenue Assumption Map renders here.
+// Empty state nudges the operator to ask the chat assistant to call
+// `generate_assumption_map`. ML scores + fastest tests render in the
+// audit panel, never in outbound copy.
+// ----------------------------------------------------------------------------
+
+const ASSUMPTION_STATUS_TONE: Record<string, string> = {
+  untested: 'bg-[color:var(--color-muted)]/60',
+  pending: 'bg-yellow-100 text-yellow-900',
+  partial: 'bg-blue-100 text-blue-900',
+  confirmed: 'bg-green-100 text-green-900',
+  disproven: 'bg-red-100 text-red-900',
+};
+
+const ASSUMPTION_TYPE_LABEL: Record<string, string> = {
+  authority: 'Authority',
+  availability: 'Availability',
+  price: 'Price',
+  payment: 'Payment',
+  compliance: 'Compliance',
+  bankability: 'Bankability',
+  logistics: 'Logistics',
+  commercial_protection: 'Commercial protection',
+  timing: 'Timing',
+  relationship_access: 'Relationship access',
+};
+
+function AssumptionsTab({ room }: { room: DealRoomContext }) {
+  const { assumptions } = room;
+  if (assumptions.length === 0) {
+    return (
+      <div className="rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] p-6 text-center text-sm text-[color:var(--color-muted-foreground)]">
+        <p>
+          No Revenue Assumption Map yet. Ask the chat assistant to{' '}
+          <code className="font-mono">generate_assumption_map</code> for this
+          deal — it produces 6-10 typed assumptions you can review and save
+          via the approval queue.
+        </p>
+        <p className="mt-3 text-xs">
+          Concept: every deal becomes a <em>hypothesis</em>. The map shows
+          what must be true for this deal to become revenue, plus the cheapest
+          test for each assumption.
+        </p>
+      </div>
+    );
+  }
+  const total = assumptions.length;
+  const confirmed = assumptions.filter((a) => a.status === 'confirmed').length;
+  const disproven = assumptions.filter((a) => a.status === 'disproven').length;
+  const untested = assumptions.filter((a) => a.status === 'untested').length;
+  return (
+    <div>
+      <div className="mb-4 flex flex-wrap items-baseline gap-3 text-xs text-[color:var(--color-muted-foreground)]">
+        <span>
+          <strong className="text-[color:var(--color-foreground)]">
+            {confirmed}
+          </strong>{' '}
+          confirmed
+        </span>
+        <span>
+          <strong className="text-[color:var(--color-foreground)]">
+            {untested}
+          </strong>{' '}
+          untested
+        </span>
+        {disproven > 0 && (
+          <span className="text-red-700">
+            <strong>{disproven}</strong> disproven
+          </span>
+        )}
+        <span className="ml-auto">
+          {total} total{' '}
+          {assumptions[0]?.generatorVersion && (
+            <>· {assumptions[0].generatorVersion}</>
+          )}
+        </span>
+      </div>
+      <table className="w-full text-sm">
+        <thead className="text-xs uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          <tr>
+            <th className="px-2 py-1 text-left">Assumption</th>
+            <th className="px-2 py-1 text-left">Confidence</th>
+            <th className="px-2 py-1 text-left">Fastest test</th>
+            <th className="px-2 py-1 text-left">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {assumptions.map((a) => (
+            <tr
+              key={a.id}
+              className="border-t border-[color:var(--color-border)] align-top"
+            >
+              <td className="px-2 py-3">
+                <p className="text-[10px] font-mono uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                  {ASSUMPTION_TYPE_LABEL[a.assumptionType] ?? a.assumptionType}
+                </p>
+                <p className="mt-1">{a.assumptionText}</p>
+                {a.riskIfFalse && (
+                  <p className="mt-1 text-xs text-red-700">
+                    <strong>Risk if false:</strong> {a.riskIfFalse}
+                  </p>
+                )}
+                {a.result && (
+                  <p className="mt-2 text-xs">
+                    <strong>Result:</strong> {a.result}
+                  </p>
+                )}
+              </td>
+              <td className="px-2 py-3 font-mono">{a.confidenceScore}</td>
+              <td className="px-2 py-3 text-xs">
+                {a.fastestTest ?? (
+                  <span className="text-[color:var(--color-muted-foreground)]">
+                    —
+                  </span>
+                )}
+                {a.recommendedActionType && (
+                  <p className="mt-1 font-mono text-[10px] text-[color:var(--color-muted-foreground)]">
+                    via {a.recommendedActionType}
+                  </p>
+                )}
+              </td>
+              <td className="px-2 py-3">
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs ${ASSUMPTION_STATUS_TONE[a.status] ?? ''}`}
+                >
+                  {a.status}
+                </span>
+                {a.testedAt && (
+                  <p className="mt-1 text-[10px] text-[color:var(--color-muted-foreground)]">
+                    <time dateTime={a.testedAt.toISOString()}>
+                      {a.testedAt.toLocaleDateString()}
+                    </time>
+                  </p>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-4 text-xs text-[color:var(--color-muted-foreground)]">
+        Tests update via{' '}
+        <code className="font-mono">propose_record_assumption_test</code> in
+        chat. Re-generate the map any time the underlying intel shifts —
+        re-saving updates rows in place by{' '}
+        <code className="font-mono">(subject, type)</code>.
+      </p>
     </div>
   );
 }

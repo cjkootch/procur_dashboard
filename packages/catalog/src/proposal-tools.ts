@@ -490,6 +490,124 @@ export const proposeTools = {
   }),
 
   // ==========================================================================
+  // Revenue Assumption Map (the "Counterfactual Deal Simulator").
+  // Per Cole's brief: every deal/opportunity/lead/org gets a small set of
+  // assumptions that must be true for it to become real revenue. Each row
+  // carries a confidence + cheapest test + the action type that test maps
+  // to. propose_save_assumption_map bulk-saves a generated map;
+  // propose_record_assumption_test records a single operator test result.
+  // ==========================================================================
+
+  propose_save_assumption_map: defineTool({
+    name: 'propose_save_assumption_map',
+    description:
+      "Save a Revenue Assumption Map onto a fuel deal (v1; opportunity/lead/org follow-up). " +
+      "T1 — metadata only, no outbound side effect. Pass the assumptions array verbatim from " +
+      "`generate_assumption_map` (ML scores + fastest_test + risk_if_false stay internal — never " +
+      "show in outbound copy). On approve, each row upserts by (subject_type, subject_id, " +
+      "assumption_type) so re-running with a refreshed map updates in place.",
+    kind: 'write',
+    schema: z.object({
+      subjectType: z.enum(['fuel_deal', 'opportunity', 'lead', 'organization']),
+      subjectId: z.string().min(1).max(256),
+      generatorVersion: z.string().min(1).max(120),
+      assumptions: z
+        .array(
+          z.object({
+            assumptionType: z.enum([
+              'authority',
+              'availability',
+              'price',
+              'payment',
+              'compliance',
+              'bankability',
+              'logistics',
+              'commercial_protection',
+              'timing',
+              'relationship_access',
+            ]),
+            assumptionText: z.string().min(1).max(1000),
+            confidenceScore: z.number().int().min(0).max(100),
+            fastestTest: z.string().max(1000).optional(),
+            riskIfFalse: z.string().max(1000).optional(),
+            recommendedActionType: z
+              .string()
+              .min(1)
+              .max(120)
+              .optional()
+              .nullable(),
+          }),
+        )
+        .min(1)
+        .max(15),
+      rationale: z.string().min(1).max(1000),
+    }),
+    handler: async (ctx, input): Promise<ProposeResult> => {
+      const action: ActionDescriptorT = {
+        kind: 'assumption.save_map',
+        tier: 'T1',
+        subjectType: input.subjectType,
+        subjectId: input.subjectId,
+        generatorVersion: input.generatorVersion,
+        assumptions: input.assumptions,
+        rationale: input.rationale,
+      };
+      const row = await insertChatApproval(action, { userId: ctx.userId });
+      return chip(
+        action,
+        `Save ${input.assumptions.length}-assumption map for ${input.subjectType} ${input.subjectId.slice(0, 12)}…`,
+        row.id,
+      );
+    },
+  }),
+
+  propose_record_assumption_test: defineTool({
+    name: 'propose_record_assumption_test',
+    description:
+      'Record a test result on a single Revenue Assumption Map row. T1 — metadata write. Use ' +
+      'when the operator says "I asked the buyer about LC capability and they confirmed SBLC" or ' +
+      "when an outreach reply implicitly confirms/disproves an assumption. `status` flips between " +
+      '`untested → pending → partial → confirmed` (or `disproven`). `result` is operator-readable; ' +
+      '`resultEvidence` carries pointers (approval ids, touchpoint ids) so the audit panel can ' +
+      'jump back to the records that produced the test.',
+    kind: 'write',
+    schema: z.object({
+      assumptionId: z.string().min(1).max(64),
+      status: z.enum([
+        'untested',
+        'pending',
+        'partial',
+        'confirmed',
+        'disproven',
+      ]),
+      result: z.string().min(1).max(2000),
+      confidenceScore: z.number().int().min(0).max(100).optional(),
+      resultEvidence: z.record(z.string(), z.unknown()).optional(),
+      rationale: z.string().min(1).max(1000),
+    }),
+    handler: async (ctx, input): Promise<ProposeResult> => {
+      const action: ActionDescriptorT = {
+        kind: 'assumption.record_test',
+        tier: 'T1',
+        assumptionId: input.assumptionId,
+        status: input.status,
+        result: input.result,
+        rationale: input.rationale,
+        ...(input.confidenceScore !== undefined
+          ? { confidenceScore: input.confidenceScore }
+          : {}),
+        ...(input.resultEvidence ? { resultEvidence: input.resultEvidence } : {}),
+      };
+      const row = await insertChatApproval(action, { userId: ctx.userId });
+      return chip(
+        action,
+        `Record ${input.status} test on assumption ${input.assumptionId.slice(0, 12)}…`,
+        row.id,
+      );
+    },
+  }),
+
+  // ==========================================================================
   // Phase 6 — sanctions
   // ==========================================================================
   propose_sanctions_screen: defineTool({
