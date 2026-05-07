@@ -306,6 +306,7 @@ export async function upsertSupplierApproval(
       .update(supplierApprovals)
       .set(patch)
       .where(eq(supplierApprovals.id, existing.id));
+    await awardKycXp(input.userId ?? null, existing.id, input.status);
     return { id: existing.id, created: false };
   }
 
@@ -322,7 +323,38 @@ export async function upsertSupplierApproval(
       notes: input.notes ?? null,
     })
     .returning({ id: supplierApprovals.id });
+  await awardKycXp(input.userId ?? null, inserted[0]!.id, input.status);
   return { id: inserted[0]!.id, created: true };
+}
+
+/**
+ * Status → XP verb mapping for supplier approvals. Idempotency on
+ * (source_table, source_id, verb) means flipping back-and-forth
+ * between approved and rejected only credits each verb once per row;
+ * we accept that — the first promotion to a milestone state is the
+ * meaningful event.
+ */
+const KYC_STATUS_VERBS: Record<string, string> = {
+  approved_with_kyc: 'kyc.approved_with_kyc',
+  approved_without_kyc: 'kyc.approved_without_kyc',
+  rejected: 'kyc.rejected',
+};
+
+async function awardKycXp(
+  userId: string | null,
+  approvalId: string,
+  status: string,
+): Promise<void> {
+  if (!userId) return;
+  const verb = KYC_STATUS_VERBS[status];
+  if (!verb) return;
+  const { awardXp } = await import('./gamification/award');
+  void awardXp({
+    userId,
+    sourceTable: 'supplier_approvals',
+    sourceId: approvalId,
+    verb,
+  });
 }
 
 // ─── Entity document attachment (chat-side flow) ─────────────────

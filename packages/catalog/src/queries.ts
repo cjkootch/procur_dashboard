@@ -12621,6 +12621,21 @@ export async function insertFeedbackEvent(input: FeedbackEventInput): Promise<st
     RETURNING id;
   `)).rows as unknown as Array<{ id: string }>;
   if (!result[0]) throw new Error('insertFeedbackEvent: insert returned no id');
+
+  // Gamification credit. awardXp swallows its own errors; the
+  // feedback insert above must succeed regardless. Skip when
+  // userId is null (server-action callers without a user context —
+  // e.g. system-driven feedback fixtures).
+  if (input.userId) {
+    const { awardXp } = await import('./gamification/award');
+    void awardXp({
+      userId: input.userId,
+      sourceTable: 'feedback_events',
+      sourceId: result[0].id,
+      verb: `feedback.${input.feedbackKind}`,
+    });
+  }
+
   return result[0].id;
 }
 
@@ -12899,6 +12914,20 @@ export async function upsertDealRetrospective(input: UpsertRetrospectiveInput): 
     RETURNING id;
   `)).rows as unknown as Array<{ id: string }>;
   if (!rows[0]) throw new Error('upsertDealRetrospective: insert returned no id');
+
+  // Gamification credit on transition to completed. The xp_ledger's
+  // unique partial index on (source_table, source_id, verb) means
+  // re-saving a completed retro never double-credits. Drafts get
+  // no credit until they're submitted.
+  if (!input.isDraft) {
+    const { awardXp } = await import('./gamification/award');
+    void awardXp({
+      userId: input.userId,
+      sourceTable: 'deal_retrospectives',
+      sourceId: rows[0].id,
+      verb: 'retrospective.completed',
+    });
+  }
   return rows[0].id;
 }
 

@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { UserButton } from '@clerk/nextjs';
 import { getCurrentCompany, getCurrentUser } from '@procur/auth';
 import { NotificationsBell } from './NotificationsBell';
+import { LevelChip } from '../gamification/LevelChip';
 import { NotificationsLiveLayer } from './NotificationsLiveLayer';
 import { getNotificationPollState } from '../../lib/notification-queries';
 import { PageHeader } from './PageHeader';
@@ -169,6 +170,7 @@ export async function AppShell({
             >
               Get help
             </a>
+            <LevelChip />
             <NotificationsBell />
             <UserButton afterSignOutUrl="/sign-in" />
           </div>

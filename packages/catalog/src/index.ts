@@ -27,6 +27,7 @@ export * from './extracted-entities';
 export * from './outreach-features';
 export * from './conversation-settings';
 export * from './conversation-agent';
+export * from './gamification';
 export {
   buildCatalogTools,
   buildFilterUrl,
