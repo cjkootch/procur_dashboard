@@ -129,8 +129,29 @@ export async function POST(req: Request): Promise<Response> {
   const inReplyTo =
     data.in_reply_to ?? data.headers?.['In-Reply-To'] ?? null;
   const subject = data.subject ?? null;
-  const bodyText = data.text ?? null;
-  const bodyHtml = data.html ?? null;
+  // Resend's email.received webhook payload often DOESN'T carry the
+  // parsed text/html — only a `raw.download_url` for the source MIME.
+  // Their REST endpoint /emails/receiving/{id} does return them. So
+  // when text/html are missing in the webhook, fall back to the API
+  // before persisting. Otherwise the inbox shows "(no body content)"
+  // for every reply.
+  let bodyText = data.text ?? null;
+  let bodyHtml = data.html ?? null;
+  if ((!bodyText && !bodyHtml) && data.email_id && process.env.RESEND_API_KEY) {
+    try {
+      const res = await fetch(
+        `https://api.resend.com/emails/receiving/${data.email_id}`,
+        { headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` } },
+      );
+      if (res.ok) {
+        const body = (await res.json()) as { text?: string; html?: string };
+        bodyText = body.text ?? null;
+        bodyHtml = body.html ?? null;
+      }
+    } catch (err) {
+      console.warn('[resend-inbound] body fetch failed', err);
+    }
+  }
   const occurredAt = data.received_at ? new Date(data.received_at) : new Date();
 
   const providerEventId = messageId ?? data.email_id ?? svixId;

@@ -11,8 +11,8 @@ export default async function AssistantHomePage() {
   const threads = await listThreads(company.id, user.id);
 
   return (
-    <div className="flex h-full">
-      <aside className="w-64 shrink-0 overflow-y-auto border-r border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-3">
+    <div className="flex h-full flex-col lg:flex-row">
+      <aside className="shrink-0 overflow-y-auto border-b border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-3 lg:w-64 lg:border-b-0 lg:border-r">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-medium">Conversations</div>
           <Link
@@ -40,8 +40,8 @@ export default async function AssistantHomePage() {
           </ul>
         )}
       </aside>
-      <div className="flex flex-1 flex-col">
-        <header className="border-b border-[color:var(--color-border)] px-6 py-3">
+      <div className="flex min-h-0 flex-1 flex-col">
+        <header className="border-b border-[color:var(--color-border)] px-4 py-3 md:px-6">
           <h1 className="text-lg font-semibold tracking-tight">Procur Assistant</h1>
           <p className="text-xs text-[color:var(--color-muted-foreground)]">
             Ask about your pipeline, search tenders, draft sections.
