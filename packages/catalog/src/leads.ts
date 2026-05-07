@@ -7,7 +7,12 @@ import {
   leads,
   organizations,
 } from '@procur/db';
-import { createId } from '@procur/ai';
+import {
+  createId,
+  emitOutreachOutcome,
+  findRecentOutreachApprovalsByContact,
+  findRecentOutreachApprovalsByOrg,
+} from '@procur/ai';
 
 /**
  * In-process replacement for the vex-into-procur-merge brief Phase 4
@@ -236,6 +241,35 @@ export async function qualifyAsLead(
         input.procurMetadata.pushReason ?? input.userNote ?? undefined,
     },
   });
+
+  // Outreach lifecycle: every recent applied comm approval (last 30d)
+  // that targeted this contact OR any contact at this org gets
+  // attributed `outreach.converted_to_lead`. Powers the dashboard's
+  // mid-funnel conversion column. Idempotent on
+  // (originatingApproval, verb).
+  const matched = new Set<string>();
+  if (contactId) {
+    for (const id of await findRecentOutreachApprovalsByContact(contactId)) {
+      matched.add(id);
+    }
+  }
+  for (const id of await findRecentOutreachApprovalsByOrg(org.id)) {
+    matched.add(id);
+  }
+  for (const originatingApproval of matched) {
+    await emitOutreachOutcome({
+      approvalId: originatingApproval,
+      verb: 'outreach.converted_to_lead',
+      occurredAt: new Date(),
+      objectId: leadId,
+      objectType: 'lead',
+      metadata: {
+        org_id: org.id,
+        contact_id: contactId ?? null,
+        source_ref: input.sourceRef,
+      },
+    });
+  }
 
   return {
     leadId,

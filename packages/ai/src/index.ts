@@ -190,7 +190,12 @@ export {
 // model-performance dashboards can join evidence ↔ outcomes.
 export {
   buildOutreachMetadata,
+  emitOutreachOutcome,
   emitOutreachSent,
+  findOutreachSentForApprovals,
+  findRecentOutreachApprovalsByContact,
+  findRecentOutreachApprovalsByEntity,
+  findRecentOutreachApprovalsByOrg,
   hasOutreachEvidence,
   parseOutreachEvidence,
   OUTREACH_LIFECYCLE_VERBS,

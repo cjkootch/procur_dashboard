@@ -1,5 +1,5 @@
-import { eq } from 'drizzle-orm';
-import { db, events } from '@procur/db';
+import { and, eq, gte, inArray, isNotNull, sql as drizzleSql } from 'drizzle-orm';
+import { approvals, db, events } from '@procur/db';
 import { createId } from '../agents/id';
 import type { MlEvidenceT } from '../agents/action-descriptor';
 
@@ -215,6 +215,240 @@ export const OUTREACH_LIFECYCLE_VERBS = [
 ] as const;
 export type OutreachLifecycleVerb = (typeof OUTREACH_LIFECYCLE_VERBS)[number];
 
-// Silence the unused-eq lint — kept available for future joins inside
-// helpers in this file (e.g. dedupe lookup before emit).
-void eq;
+/**
+ * Emit a downstream outreach lifecycle event (replied / converted /
+ * disqualified). Idempotent on `(approvalId, verb)` so duplicate
+ * webhook deliveries / repeated lead conversions don't double-count.
+ *
+ * Returns true when the event was inserted (or already existed
+ * because of the dedupe key); false on insert error.
+ *
+ * Pulls the `outreach.sent` event for the same approvalId so the
+ * outcome inherits the model_version + evidence_item_ids — that's
+ * the join Match Performance Dashboard pivots on. Falls back to
+ * empty metadata when no sent event exists (manual operator-driven
+ * sends still produce a usable outcome row).
+ */
+export async function emitOutreachOutcome(args: {
+  approvalId: string;
+  verb: Exclude<OutreachLifecycleVerb, 'outreach.proposed' | 'outreach.approved' | 'outreach.sent'>;
+  occurredAt: Date;
+  /** Optional extra metadata — e.g. inbound channel, deal id, lead id. */
+  metadata?: Record<string, unknown>;
+  /** Object id stamped onto the event row — typically the inbound
+   *  message id, lead id, or deal id that triggered the outcome. */
+  objectId?: string;
+  /** Object type — defaults to 'outreach'. */
+  objectType?: string;
+}): Promise<boolean> {
+  // Hydrate from the matching outreach.sent so model_version + item
+  // ids ride through. One `outreach.sent` row per (approval, channel)
+  // — pick the most recent.
+  const sent = await db
+    .select({ metadata: events.metadata })
+    .from(events)
+    .where(
+      and(
+        eq(events.subjectId, args.approvalId),
+        eq(events.verb, 'outreach.sent'),
+      ),
+    )
+    .orderBy(events.occurredAt)
+    .limit(1);
+  const sentMeta = (sent[0]?.metadata as Record<string, unknown> | null) ?? {};
+
+  try {
+    await db
+      .insert(events)
+      .values({
+        id: createId(),
+        verb: args.verb,
+        subjectType: 'approval',
+        subjectId: args.approvalId,
+        actorType: 'system',
+        actorId: 'outreach-pipeline',
+        objectType: args.objectType ?? 'outreach',
+        objectId: args.objectId ?? args.approvalId,
+        occurredAt: args.occurredAt,
+        idempotencyKey: `${args.verb}:${args.approvalId}`,
+        metadata: {
+          ...(sentMeta['model_version']
+            ? { model_version: sentMeta['model_version'] }
+            : {}),
+          ...(sentMeta['evidence_item_ids']
+            ? { evidence_item_ids: sentMeta['evidence_item_ids'] }
+            : {}),
+          ...(sentMeta['entity_slug']
+            ? { entity_slug: sentMeta['entity_slug'] }
+            : {}),
+          ...(sentMeta['signal_id']
+            ? { signal_id: sentMeta['signal_id'] }
+            : {}),
+          ...(sentMeta['channel']
+            ? { channel: sentMeta['channel'] }
+            : {}),
+          ...(args.metadata ?? {}),
+        },
+      })
+      .onConflictDoNothing({
+        target: [events.occurredAt, events.idempotencyKey],
+      });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find recent outreach approvals (with `outreach.sent` events) that
+ * targeted the given contact/org/entity. Used by the lead-close +
+ * contact-opt-out + deal-conversion paths to attribute downstream
+ * outcomes back to the originating outreach.
+ *
+ * Lookback default: 30 days (longer than the inbound-reply window
+ * because conversion takes longer than reply).
+ *
+ * Matches on the outreach.sent event's metadata fields:
+ *   - entity_slug → for entity-keyed conversions
+ *   - The approvals.proposed_payload.contactId / orgId would also
+ *     work but requires a join; metadata is faster + already populated
+ *     by the recommendation pipeline.
+ */
+export async function findRecentOutreachApprovalsByEntity(
+  entitySlug: string,
+  options: { sinceHours?: number } = {},
+): Promise<string[]> {
+  const since = new Date(
+    Date.now() - (options.sinceHours ?? 30 * 24) * 60 * 60 * 1000,
+  );
+  const rows = await db
+    .select({ subjectId: events.subjectId })
+    .from(events)
+    .where(
+      and(
+        eq(events.verb, 'outreach.sent'),
+        // metadata->>'entity_slug' lookup
+        sqlEntitySlugMatch(entitySlug),
+        sqlOccurredAfter(since),
+      ),
+    );
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    if (!seen.has(r.subjectId)) {
+      seen.add(r.subjectId);
+      out.push(r.subjectId);
+    }
+  }
+  return out;
+}
+
+function sqlEntitySlugMatch(slug: string) {
+  return drizzleSql`${events.metadata}->>'entity_slug' = ${slug}`;
+}
+function sqlOccurredAfter(d: Date) {
+  return drizzleSql`${events.occurredAt} >= ${d}`;
+}
+
+/**
+ * Find recent applied communication approvals targeting any contact
+ * at the given organization. Joins approvals → contacts (via
+ * payload.contactId) → contacts.orgId. Used by the deal-conversion
+ * path (deal targets buyerOrgId; outreach was to specific contacts
+ * at that org).
+ */
+export async function findRecentOutreachApprovalsByOrg(
+  orgId: string,
+  options: { sinceHours?: number } = {},
+): Promise<string[]> {
+  const since = new Date(
+    Date.now() - (options.sinceHours ?? 30 * 24) * 60 * 60 * 1000,
+  );
+  // Inline join via JSONB → contacts.id → contacts.org_id. One query
+  // per org-attributed conversion is cheap; if this becomes a hot path
+  // we can pre-materialize approvals.target_org_id at insert time.
+  const rows = await db.execute(drizzleSql`
+    SELECT a.id
+      FROM approvals a
+      JOIN contacts c ON c.id = (a.proposed_payload->>'contactId')
+     WHERE a.action_type IN ('email.send','sms.send','whatsapp.send','whatsapp.send_template','outbound_call')
+       AND a.applied_at IS NOT NULL
+       AND a.applied_at >= ${since}
+       AND c.org_id = ${orgId}
+  `);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const r of rows.rows as Array<{ id: string }>) {
+    if (!seen.has(r.id)) {
+      seen.add(r.id);
+      out.push(r.id);
+    }
+  }
+  return out;
+}
+
+/**
+ * Find recent applied communication approvals (email/sms/whatsapp/
+ * call) that targeted the given contact id. Used by the disqualified +
+ * converted outcome paths.
+ *
+ * Lookback default: 30 days. Filters to approvals.appliedAt being
+ * non-null (i.e. the executor actually dispatched), so a rejected
+ * approval doesn't get attributed.
+ */
+export async function findRecentOutreachApprovalsByContact(
+  contactId: string,
+  options: { sinceHours?: number } = {},
+): Promise<string[]> {
+  const since = new Date(
+    Date.now() - (options.sinceHours ?? 30 * 24) * 60 * 60 * 1000,
+  );
+  const COMM_TYPES = [
+    'email.send',
+    'sms.send',
+    'whatsapp.send',
+    'whatsapp.send_template',
+    'outbound_call',
+  ];
+  const rows = await db
+    .select({ id: approvals.id })
+    .from(approvals)
+    .where(
+      and(
+        inArray(approvals.actionType, COMM_TYPES),
+        isNotNull(approvals.appliedAt),
+        gte(approvals.appliedAt, since),
+        drizzleSql`${approvals.proposedPayload}->>'contactId' = ${contactId}`,
+      ),
+    );
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Find recent `outreach.sent` events for any of the supplied
+ * approvalIds, returning a map of approvalId → first sent timestamp.
+ * Used by inbound-webhook outcome emitters to confirm an inbound
+ * actually corresponds to an outreach we sent.
+ */
+export async function findOutreachSentForApprovals(
+  approvalIds: string[],
+): Promise<Map<string, Date>> {
+  if (approvalIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      subjectId: events.subjectId,
+      occurredAt: events.occurredAt,
+    })
+    .from(events)
+    .where(
+      and(
+        eq(events.verb, 'outreach.sent'),
+        inArray(events.subjectId, approvalIds),
+      ),
+    );
+  const out = new Map<string, Date>();
+  for (const r of rows) {
+    if (!out.has(r.subjectId)) out.set(r.subjectId, r.occurredAt);
+  }
+  return out;
+}

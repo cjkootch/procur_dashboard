@@ -1,5 +1,5 @@
 import { Webhook } from 'svix';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import {
   contacts,
   db,
@@ -9,7 +9,7 @@ import {
   threads,
   touchpoints,
 } from '@procur/db';
-import { createId } from '@procur/ai';
+import { createId, emitOutreachOutcome } from '@procur/ai';
 import { recordWebhookReceipt } from '../../../../lib/webhook-events';
 
 export const runtime = 'nodejs';
@@ -302,6 +302,18 @@ export async function POST(req: Request): Promise<Response> {
     },
   });
 
+  // Outreach lifecycle: when an inbound message lands in a thread that
+  // has any outbound message we previously sent via the recommendation
+  // pipeline, emit `outreach.replied` against the originating approval.
+  // This is the join Match Performance Dashboard pivots on (model
+  // version + evidence item ids → reply outcome).
+  //
+  // Look only at outbound messages with an `approval_id` in metadata —
+  // those are the ones our executors stamped (email-send.ts:319).
+  // Manual operator-driven sends without an approvalId can't be
+  // attributed and silently no-op here.
+  await emitRepliedForThread({ threadId, occurredAt, messageDbId: newMessageId });
+
   await db
     .update(rawEvents)
     .set({ status: 'processed' })
@@ -320,4 +332,45 @@ export async function POST(req: Request): Promise<Response> {
   });
 
   return new Response('ok', { status: 200 });
+}
+
+/**
+ * Find the originating approval id for any outbound message in the
+ * thread (executors stamp `approval_id` into messages.metadata) and
+ * emit `outreach.replied` against it. Idempotent — emitOutreachOutcome
+ * dedupes on (approvalId, verb).
+ *
+ * Skips when the thread has only inbound messages (cold inbound) or
+ * outbound from a manual operator send (no approvalId in metadata).
+ */
+async function emitRepliedForThread(args: {
+  threadId: string;
+  occurredAt: Date;
+  messageDbId: string;
+}): Promise<void> {
+  const outboundRows = await db
+    .select({ metadata: messages.metadata })
+    .from(messages)
+    .where(
+      and(eq(messages.threadId, args.threadId), eq(messages.direction, 'outbound')),
+    );
+
+  const seen = new Set<string>();
+  for (const row of outboundRows) {
+    const meta = (row.metadata ?? {}) as Record<string, unknown>;
+    const approvalId = meta['approval_id'];
+    if (typeof approvalId !== 'string' || seen.has(approvalId)) continue;
+    seen.add(approvalId);
+    await emitOutreachOutcome({
+      approvalId,
+      verb: 'outreach.replied',
+      occurredAt: args.occurredAt,
+      objectId: args.messageDbId,
+      objectType: 'message',
+      metadata: {
+        thread_id: args.threadId,
+        inbound_message_id: args.messageDbId,
+      },
+    });
+  }
 }
