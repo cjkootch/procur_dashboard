@@ -124,8 +124,18 @@ export async function POST(req: Request): Promise<Response> {
     processed: true,
     payload: { kind, params },
   });
-  return new Response('ok', { status: 200 });
+  // Empty TwiML — required for inbound-SMS webhooks. Twilio parses
+  // the response body as TwiML; returning plain text "ok" caused
+  // every inbound to bounce back to the sender as an outbound-reply
+  // with body "ok" (Direction: Reply in the Twilio console). An
+  // empty <Response> says "I handled this, no reply intended."
+  return new Response(EMPTY_TWIML, {
+    status: 200,
+    headers: { 'Content-Type': 'text/xml; charset=utf-8' },
+  });
 }
+
+const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 
 async function handleCallStatus(
   params: Record<string, string>,
