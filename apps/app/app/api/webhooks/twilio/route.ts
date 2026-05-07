@@ -8,6 +8,7 @@ import {
   touchpoints,
 } from '@procur/db';
 import { createId, emitOutreachOutcome } from '@procur/ai';
+import { maybeQueueAiReply } from '@procur/catalog';
 import { recordWebhookReceipt } from '../../../../lib/webhook-events';
 import { notifyAllOperators } from '../../../../lib/notification-queries';
 
@@ -330,6 +331,20 @@ async function handleInboundMessage(
     body: body.slice(0, 240) || null,
     link: fromPhone ? `/messages/${encodeURIComponent(fromPhone)}` : '/messages',
   });
+
+  // Conversation-agent auto-reply (Slice 2). Reads
+  // conversation_settings for the (channel, fromPhone) pair; if AI
+  // is on and not paused/over-budget/stop-keyworded, drafts a reply
+  // and queues it to /approvals. Fully no-op when AI is off (the
+  // default for every conversation). Failures swallowed inside.
+  if (fromPhone && body) {
+    await maybeQueueAiReply({
+      channel: isWhatsapp ? 'whatsapp' : 'sms',
+      fromPhone,
+      inboundBody: body,
+      inboundOccurredAt: new Date(),
+    });
+  }
 }
 
 // Twilio's GET preflight on the URL — return a 200 so a basic health
