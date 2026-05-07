@@ -1,7 +1,7 @@
 [project]
 name = "procur-ml-training"
 version = "0.0.0"
-description = "GraphSAGE training pipeline for procur's ML layer (Component B per docs/procur-ml-layer-brief.md §5)"
+description = "GraphSAGE training + BGE-M3 multilingual text embeddings for procur's ML layer"
 requires-python = ">=3.10,<3.13"
 license = { text = "Proprietary" }
 
@@ -24,6 +24,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Optional: BGE-M3 multilingual embeddings. Pulled in via the
+# `bge` extra so the GraphSAGE-only path doesn't drag transformers
+# + huggingface_hub by default. Install with:
+#   uv pip install -e .[bge]
+bge = [
+    # FlagEmbedding is BAAI's reference impl with first-class BGE-M3
+    # support including the dense / sparse / multi-vector heads.
+    # Pulls in transformers + tokenizers + accelerate transitively.
+    "FlagEmbedding>=1.3,<2.0",
+]
 # Experiment tracking — opt-in via `pip install -e .[mlflow]` since
 # mlflow drags in pyarrow + sqlalchemy/greenlet, which need a working
 # C++ toolchain to build on macOS. train.py imports it lazily and
@@ -40,6 +50,7 @@ procur-ml-train = "procur_ml.train:main"
 procur-ml-upsert = "procur_ml.upsert:main"
 procur-ml-embed-entity = "procur_ml.embed_entity:main"
 procur-ml-validate = "procur_ml.validate:main"
+procur-ml-bge-m3 = "procur_ml.bge_m3:main"
 
 [build-system]
 requires = ["hatchling"]
