@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { enrichApolloPersonAction } from '../../app/entities/[slug]/actions';
 import type { RenderedToolUse } from './types';
@@ -11,11 +11,11 @@ import type { RenderedToolUse } from './types';
  * debugging but noisy for the operator who just wants to see "who can
  * I reach at this entity, and which ones are already on file?"
  *
- * v2 (this file): inline enrich button next to each unresolved row,
- * fires the same paid /people/match call the entity-profile button
- * uses — server-side per-tenant daily cap is the only credit-burn
- * gate. On success the row swaps to a confirmed-identity card with
- * full name + email + phone. Bulk enrich lands in PR 3.
+ * v3 (this file): bulk-enrich header button, single-pass loop over
+ * unresolved rows, stops on first failure (including daily cap) with
+ * a banner. Individual per-row buttons stay; they're disabled during
+ * a bulk run so the operator can't accidentally double-fire on one
+ * person.
  */
 
 type Row = {
@@ -44,8 +44,8 @@ type Input = {
 
 /**
  * Locally-resolved row keyed by apolloPersonId. Populated when an
- * inline enrich call succeeds; the renderer swaps the obfuscated row
- * for one of these without re-fetching the tool result.
+ * inline (or bulk) enrich call succeeds; the renderer swaps the
+ * obfuscated row for one of these without re-fetching the tool result.
  */
 type ResolvedRow = {
   fullName: string;
@@ -55,12 +55,6 @@ type ResolvedRow = {
   linkedinUrl: string | null;
 };
 
-/**
- * Match-guard: confirms the tool output is the shape we expect before
- * the renderer dereferences it. The streaming pipeline can deliver
- * partial output, an error envelope, or a degraded-mode response —
- * fall back to JSON dump in those cases.
- */
 export function isFindDecisionMakersOutput(value: unknown): value is Output {
   if (value == null || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
@@ -77,10 +71,33 @@ export function DecisionMakersToolResult({
   const input = (toolUse.input ?? {}) as Input;
   const entitySlug = input.entitySlug ?? null;
 
-  // Locally-swapped rows live here. Keyed by apolloPersonId so the
-  // map stays stable even if the underlying tool output shape changes
-  // between renders.
+  // Locally-swapped rows live here; keyed by apolloPersonId.
   const [resolved, setResolved] = useState<Record<string, ResolvedRow>>({});
+
+  // Per-row pending: lets the bulk loop disable individual buttons
+  // and show "Enriching…" state on the row currently being resolved.
+  const [pendingIds, setPendingIds] = useState<Set<string>>(() => new Set());
+
+  // Bulk-run state. `bulkActive` blocks new bulk runs and disables
+  // individual per-row buttons; `bulkError` surfaces the message
+  // from whichever call broke the chain (typically the daily cap).
+  const [bulkActive, setBulkActive] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [, startBulkTransition] = useTransition();
+
+  // Hooks must run in stable order — derive count and handler before
+  // any early-return branches. `people` lives behind a useMemo so the
+  // unresolvedCount memo's deps array doesn't churn every render
+  // (the `?? []` would otherwise allocate a fresh empty array each
+  // pass).
+  const people = useMemo<Row[]>(() => output?.people ?? [], [output?.people]);
+  const unresolvedCount = useMemo(
+    () =>
+      people.filter(
+        (p) => !p.alreadyEnriched && !resolved[p.apolloPersonId],
+      ).length,
+    [people, resolved],
+  );
 
   if (output?.degraded) {
     return (
@@ -93,7 +110,6 @@ export function DecisionMakersToolResult({
     );
   }
 
-  const people = output?.people ?? [];
   if (people.length === 0) {
     return (
       <div className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] p-2 text-xs text-[color:var(--color-muted-foreground)]">
@@ -102,24 +118,100 @@ export function DecisionMakersToolResult({
     );
   }
 
+  const runBulk = () => {
+    if (!entitySlug || bulkActive) return;
+    setBulkActive(true);
+    setBulkError(null);
+    startBulkTransition(async () => {
+      try {
+        // Sequential — Apollo's per-tenant cap is enforced server-
+        // side per call, so parallel would just race to the same
+        // 429. Sequential also lets us stop cleanly the moment the
+        // cap is hit instead of finishing in-flight requests after.
+        for (const p of people) {
+          if (p.alreadyEnriched) continue;
+          // Re-check `resolved` inside the loop because earlier
+          // iterations of this same bulk run may have just resolved
+          // it. (Redundant for now — apolloPersonId is unique per
+          // search result — but cheap and future-proofs against
+          // duplicate IDs in result sets.)
+          const alreadyDone = resolved[p.apolloPersonId];
+          if (alreadyDone) continue;
+
+          setPendingIds((prev) => {
+            const next = new Set(prev);
+            next.add(p.apolloPersonId);
+            return next;
+          });
+          const result = await enrichApolloPersonAction({
+            entitySlug,
+            apolloPersonId: p.apolloPersonId,
+          });
+          setPendingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(p.apolloPersonId);
+            return next;
+          });
+
+          if (!result.ok) {
+            setBulkError(result.message);
+            return; // Stop the chain; remaining rows stay unresolved.
+          }
+
+          setResolved((prev) => ({
+            ...prev,
+            [p.apolloPersonId]: {
+              fullName: `${result.person.firstName} ${result.person.lastName}`.trim(),
+              title: result.person.title,
+              email: result.person.email,
+              directPhone: result.person.directPhone,
+              linkedinUrl: result.person.linkedinUrl,
+            },
+          }));
+        }
+      } finally {
+        setBulkActive(false);
+      }
+    });
+  };
+
   return (
     <div className="overflow-hidden rounded-[var(--radius-sm)] border border-[color:var(--color-border)]">
-      <header className="flex items-baseline justify-between border-b border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30 px-2.5 py-1.5 text-[10px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30 px-2.5 py-1.5 text-[10px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
         <span>
           Decision-makers · {people.length}
           {output?.totalEntries && output.totalEntries > people.length
             ? ` of ${output.totalEntries}`
             : ''}
         </span>
-        {entitySlug && (
-          <Link
-            href={`/entities/${entitySlug}#decision-makers`}
-            className="font-normal normal-case tracking-normal hover:text-[color:var(--color-foreground)]"
-          >
-            View on entity profile →
-          </Link>
-        )}
+        <div className="flex items-center gap-2">
+          {entitySlug && unresolvedCount > 0 && (
+            <button
+              type="button"
+              onClick={runBulk}
+              disabled={bulkActive}
+              className="rounded-full border border-[color:var(--color-foreground)]/50 px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal text-[color:var(--color-foreground)] hover:border-[color:var(--color-foreground)] hover:bg-[color:var(--color-muted)]/40 disabled:opacity-40"
+              title={`Enrich the ${unresolvedCount} unresolved contacts via Apollo /people/match (paid, per-tenant daily cap; stops on first failure)`}
+            >
+              {bulkActive ? 'Enriching…' : `Enrich all (${unresolvedCount})`}
+            </button>
+          )}
+          {entitySlug && (
+            <Link
+              href={`/entities/${entitySlug}#decision-makers`}
+              className="font-normal normal-case tracking-normal hover:text-[color:var(--color-foreground)]"
+            >
+              View on entity profile →
+            </Link>
+          )}
+        </div>
       </header>
+      {bulkError && (
+        <div className="border-b border-amber-500/40 bg-amber-50/60 px-2.5 py-1.5 text-[11px] text-amber-900">
+          <span className="font-medium">Bulk enrich stopped: </span>
+          <span className="text-amber-800/80">{bulkError}</span>
+        </div>
+      )}
       <ul className="divide-y divide-[color:var(--color-border)]">
         {people.map((p) => (
           <PersonRow
@@ -127,6 +219,8 @@ export function DecisionMakersToolResult({
             row={p}
             entitySlug={entitySlug}
             resolvedHere={resolved[p.apolloPersonId] ?? null}
+            individualDisabled={bulkActive}
+            isBulkPendingHere={pendingIds.has(p.apolloPersonId)}
             onResolved={(r) =>
               setResolved((prev) => ({ ...prev, [p.apolloPersonId]: r }))
             }
@@ -141,17 +235,17 @@ function PersonRow({
   row,
   entitySlug,
   resolvedHere,
+  individualDisabled,
+  isBulkPendingHere,
   onResolved,
 }: {
   row: Row;
   entitySlug: string | null;
   resolvedHere: ResolvedRow | null;
+  individualDisabled: boolean;
+  isBulkPendingHere: boolean;
   onResolved: (r: ResolvedRow) => void;
 }) {
-  // Three rendering states, cascading by precedence:
-  //   1. Locally resolved this session → show full name + contacts.
-  //   2. Server says alreadyEnriched (prior /people/match) → ✓ pill.
-  //   3. Otherwise → inline Enrich affordance.
   const isResolved = resolvedHere !== null || row.alreadyEnriched;
 
   const displayName = resolvedHere
@@ -207,6 +301,8 @@ function PersonRow({
           entitySlug={entitySlug}
           apolloPersonId={row.apolloPersonId}
           onResolved={onResolved}
+          disabled={individualDisabled}
+          forcePending={isBulkPendingHere}
         />
       ) : null}
     </li>
@@ -231,10 +327,14 @@ function EnrichInChatButton({
   entitySlug,
   apolloPersonId,
   onResolved,
+  disabled,
+  forcePending,
 }: {
   entitySlug: string;
   apolloPersonId: string;
   onResolved: (r: ResolvedRow) => void;
+  disabled: boolean;
+  forcePending: boolean;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -251,6 +351,8 @@ function EnrichInChatButton({
       </span>
     );
   }
+
+  const isPending = pending || forcePending;
 
   return (
     <button
@@ -275,7 +377,7 @@ function EnrichInChatButton({
           });
         });
       }}
-      disabled={pending}
+      disabled={disabled || isPending}
       className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--color-foreground)]/40 px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-foreground)] hover:border-[color:var(--color-foreground)] hover:bg-[color:var(--color-muted)]/40 disabled:opacity-40"
       title="Enrich this contact via Apollo /people/match (paid, per-tenant daily cap)"
     >
@@ -298,7 +400,7 @@ function EnrichInChatButton({
           onError={() => setIconBroken(true)}
         />
       )}
-      <span>{pending ? 'Enriching…' : 'Enrich'}</span>
+      <span>{isPending ? 'Enriching…' : 'Enrich'}</span>
     </button>
   );
 }
