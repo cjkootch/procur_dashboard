@@ -34,7 +34,19 @@ export function PageHeader({
   children,
 }: PageHeaderProps) {
   return (
-    <div className="border-b border-[color:var(--color-border)] bg-[color:var(--color-background)]">
+    // Header divider is a 1px gradient strip (accent → muted-border →
+    // transparent) instead of a flat border. The accent is
+    // concentrated on the left under the title where attention
+    // lands first; it fades out across the action area to avoid
+    // competing with primary buttons. Same procur-blue as the
+    // sidebar active state + button focus rings — the page header
+    // is the third surface that anchors the brand identity, so the
+    // whole shell reads as one design.
+    //
+    // Implemented as an `after:` pseudo-element to keep the header
+    // DOM untouched and make every page that consumes <PageHeader>
+    // pick up the treatment automatically.
+    <div className="relative bg-[color:var(--color-background)] after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-gradient-to-r after:from-[color:var(--color-accent)]/40 after:via-[color:var(--color-border)] after:to-transparent">
       <div className="flex min-h-14 items-center justify-between gap-3 px-4 py-2 md:px-6">
         <div className="min-w-0">
           {breadcrumb && breadcrumb.length > 0 && (
