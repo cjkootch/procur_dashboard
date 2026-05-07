@@ -193,7 +193,9 @@ function LauncherButton({ onOpen }: { onOpen: () => void }) {
       // drawer goes one higher (z-[1000]) so the launcher tucks under
       // it cleanly. Hover-lift mirrors FrictionButton's "Stuck?" pill
       // so the two launchers feel like a paired affordance.
-      className="fixed bottom-4 right-4 z-[999] flex items-center gap-2 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-4 py-2.5 text-sm font-medium shadow-lg transition hover:-translate-y-px hover:bg-[color:var(--color-muted)]/40 hover:shadow-xl"
+      // `hidden md:flex` — hide on mobile; the chip crowds a small
+      // viewport and Assistant is already a top-level sidebar nav row.
+      className="fixed bottom-4 right-4 z-[999] hidden items-center gap-2 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-4 py-2.5 text-sm font-medium shadow-lg transition hover:-translate-y-px hover:bg-[color:var(--color-muted)]/40 hover:shadow-xl md:flex"
       aria-label="Open Procur Assistant"
       title="Procur Assistant (⌘K)"
     >
