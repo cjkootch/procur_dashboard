@@ -13,6 +13,10 @@ import type {
 import { DealEconomicsCard, isDealEconomicsOutput } from './DealEconomicsCard';
 import { CrudeGradeCard, isCrudeGradeDetailOutput } from './CrudeGradeCard';
 import {
+  DecisionMakersToolResult,
+  isFindDecisionMakersOutput,
+} from './DecisionMakersToolResult';
+import {
   ApprovalActionCard,
   ApprovalActionCardStack,
   isApprovalActionOutput,
@@ -773,6 +777,18 @@ function ToolCard({ toolUse }: { toolUse: RenderedToolUse }) {
     if (toolUse.result) return 'done';
     return 'running';
   }, [toolUse.result]);
+
+  // Tool-specific rendering. The default body is a collapse-to-JSON
+  // debug view; specialized tools get a custom layout that surfaces
+  // their result inline (no collapse) so the operator doesn't have
+  // to expand a card to see the answer.
+  const specialized =
+    toolUse.name === 'find_decision_makers_at_entity' &&
+    !toolUse.result?.isError &&
+    isFindDecisionMakersOutput(toolUse.result?.output) ? (
+      <DecisionMakersToolResult toolUse={toolUse} />
+    ) : null;
+
   return (
     <div className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] text-xs">
       <button
@@ -794,8 +810,15 @@ function ToolCard({ toolUse }: { toolUse: RenderedToolUse }) {
           </span>
           <span className="font-mono">{toolUse.name}</span>
         </span>
-        <span className="text-[color:var(--color-muted-foreground)]">{open ? 'hide' : 'show'}</span>
+        <span className="text-[color:var(--color-muted-foreground)]">
+          {specialized ? (open ? 'hide JSON' : 'show JSON') : open ? 'hide' : 'show'}
+        </span>
       </button>
+      {specialized && (
+        <div className="border-t border-[color:var(--color-border)] p-2">
+          {specialized}
+        </div>
+      )}
       {open && (
         <div className="border-t border-[color:var(--color-border)] p-2">
           {toolUse.input !== null && (

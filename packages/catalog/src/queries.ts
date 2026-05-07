@@ -7476,6 +7476,38 @@ export async function getContactEnrichmentsBySlug(
   });
 }
 
+/**
+ * For a list of Apollo person IDs already returned by
+ * find_decision_makers_at_entity (search results), check which ones
+ * have a fully-enriched row in entity_contact_enrichments — i.e. a
+ * prior /people/match call resolved them. Used by the chat renderer
+ * to draw a ✓ next to enriched contacts and an "Enrich" affordance
+ * next to the rest, so the operator doesn't accidentally re-pay for
+ * a contact already on file.
+ *
+ * Returns the subset of `apolloPersonIds` that are enriched. Rows
+ * with apollo_last_refreshed_at IS NULL count as not-yet-enriched
+ * (pre-enrichment search hits live in the table too).
+ */
+export async function getEnrichedApolloPersonIdsForEntity(
+  entitySlug: string,
+  apolloPersonIds: readonly string[],
+): Promise<Set<string>> {
+  if (apolloPersonIds.length === 0) return new Set();
+  const result = await db.execute(sql`
+    SELECT apollo_person_id
+      FROM entity_contact_enrichments
+     WHERE entity_slug = ${entitySlug}
+       AND apollo_person_id = ANY(${apolloPersonIds as string[]}::text[])
+       AND apollo_last_refreshed_at IS NOT NULL
+  `);
+  const enriched = new Set<string>();
+  for (const r of result.rows as Array<{ apollo_person_id: string | null }>) {
+    if (r.apollo_person_id) enriched.add(r.apollo_person_id);
+  }
+  return enriched;
+}
+
 // ─── Apollo entity cache reader ──────────────────────────────────
 
 export type ApolloEntityCache = {
