@@ -237,11 +237,13 @@ export async function spawnDealLifecycleMissions(
 // ─── Evaluate ───────────────────────────────────────────────────────
 
 /**
- * Run automated stage predicates on every active registered mission;
- * mark newly-passing stages complete, credit their xpReward, and fire
- * a mission_stage_complete notification. When all stages of a mission
- * pass, mark mission complete + credit completionBonus + fire a
- * mission_complete notification.
+ * Run automated stage predicates on every active mission — both
+ * registered (deal_lifecycle, etc.) and custom (chat-proposed
+ * with non-manual predicates). Mark newly-passing stages complete,
+ * credit their xpReward, and fire a mission_stage_complete
+ * notification. When all stages of a mission pass, mark mission
+ * complete + credit a completion bonus + fire a mission_complete
+ * notification.
  *
  * Called fire-and-forget after awardXp and on home page render.
  * Errors are swallowed.
@@ -259,75 +261,244 @@ export async function evaluateAutomatedMissions(
         and(
           eq(missionInstances.userId, userId),
           eq(missionInstances.status, 'active'),
-          isNotNull(missionInstances.subjectId),
         ),
       );
     for (const m of rows) {
-      const reg = getRegisteredMission(m.kind);
-      if (!reg) continue;
-      if (!m.subjectId) continue;
-      const completions = { ...(m.stageCompletions ?? {}) };
-      let mutated = false;
-      for (const stage of reg.stages) {
-        if (completions[stage.key]) continue;
-        if (stage.predicate.kind !== 'sql_exists') continue;
-        const result = await db.execute<{ ok: boolean }>(
-          stage.predicate.sql(m.subjectId, userId),
-        );
-        if (!result.rows[0]?.ok) continue;
-        completions[stage.key] = new Date().toISOString();
-        mutated = true;
-        stagesCompleted += 1;
-        await awardXp({
-          userId,
-          sourceTable: 'mission_stage',
-          sourceId: `${m.id}:${stage.key}`,
-          verb: `mission.stage.${reg.kind}.${stage.key}`,
-          points: stage.xpReward,
-          reason: `Mission stage: ${stage.title}`,
-        });
-        await fanoutMissionNotification({
-          userId,
-          type: 'gamification.mission_stage_complete',
-          title: `Stage complete — ${stage.title}`,
-          body: `+${stage.xpReward} XP • ${m.title}`,
-        });
-      }
-      const allComplete = reg.stages.every((s) => completions[s.key]);
-      const updates: Partial<MissionInstanceRow> = {};
-      if (mutated) updates.stageCompletions = completions;
-      if (allComplete && m.status === 'active') {
-        updates.status = 'complete';
-        updates.completedAt = new Date();
-        missionsCompleted += 1;
-      }
-      if (Object.keys(updates).length > 0) {
-        await db
-          .update(missionInstances)
-          .set(updates)
-          .where(eq(missionInstances.id, m.id));
-      }
-      if (allComplete && m.status === 'active') {
-        await awardXp({
-          userId,
-          sourceTable: 'mission',
-          sourceId: m.id,
-          verb: `mission.complete.${reg.kind}`,
-          points: reg.completionBonus,
-          reason: `Mission complete: ${m.title}`,
-        });
-        await fanoutMissionNotification({
-          userId,
-          type: 'gamification.mission_complete',
-          title: `Mission complete — ${m.title}`,
-          body: `+${reg.completionBonus} XP bonus`,
-        });
-      }
+      const result = await evaluateOneMission(m, userId);
+      stagesCompleted += result.stagesCompleted;
+      if (result.missionCompleted) missionsCompleted += 1;
     }
   } catch (err) {
     console.error('[gamification] evaluateAutomatedMissions failed', err);
   }
   return { stagesCompleted, missionsCompleted };
+}
+
+interface OneMissionResult {
+  stagesCompleted: number;
+  missionCompleted: boolean;
+}
+
+async function evaluateOneMission(
+  m: MissionInstanceRow,
+  userId: string,
+): Promise<OneMissionResult> {
+  let stagesCompleted = 0;
+  let missionCompleted = false;
+  const completions = { ...(m.stageCompletions ?? {}) };
+  let mutated = false;
+
+  if (m.kind === 'custom') {
+    const stages = (m.customStages ?? []) as CustomStageDef[];
+    for (const stage of stages) {
+      if (completions[stage.key]) continue;
+      if (stage.predicate.kind === 'manual') continue;
+      const passed = await evaluateCustomPredicate({
+        predicate: stage.predicate,
+        missionCreatedAt: m.createdAt,
+        userId,
+      });
+      if (!passed) continue;
+      completions[stage.key] = new Date().toISOString();
+      mutated = true;
+      stagesCompleted += 1;
+      await awardXp({
+        userId,
+        sourceTable: 'mission_stage',
+        sourceId: `${m.id}:${stage.key}`,
+        verb: `mission.stage.custom.${stage.key}`,
+        points: stage.xpReward,
+        reason: `Mission stage: ${stage.title}`,
+      });
+      await fanoutMissionNotification({
+        userId,
+        type: 'gamification.mission_stage_complete',
+        title: `Stage complete — ${stage.title}`,
+        body: `+${stage.xpReward} XP • ${m.title}`,
+      });
+    }
+    const allComplete = stages.every((s) => completions[s.key]);
+    const updates: Partial<MissionInstanceRow> = {};
+    if (mutated) updates.stageCompletions = completions;
+    if (allComplete && m.status === 'active') {
+      updates.status = 'complete';
+      updates.completedAt = new Date();
+      missionCompleted = true;
+    }
+    if (Object.keys(updates).length > 0) {
+      await db
+        .update(missionInstances)
+        .set(updates)
+        .where(eq(missionInstances.id, m.id));
+    }
+    if (missionCompleted) {
+      await awardXp({
+        userId,
+        sourceTable: 'mission',
+        sourceId: m.id,
+        verb: 'mission.complete.custom',
+        points: 50,
+        reason: `Mission complete: ${m.title}`,
+      });
+      await fanoutMissionNotification({
+        userId,
+        type: 'gamification.mission_complete',
+        title: `Mission complete — ${m.title}`,
+        body: '+50 XP bonus',
+      });
+    }
+    return { stagesCompleted, missionCompleted };
+  }
+
+  const reg = getRegisteredMission(m.kind);
+  if (!reg || !m.subjectId) {
+    return { stagesCompleted, missionCompleted };
+  }
+  for (const stage of reg.stages) {
+    if (completions[stage.key]) continue;
+    if (stage.predicate.kind !== 'sql_exists') continue;
+    const result = await db.execute<{ ok: boolean }>(
+      stage.predicate.sql(m.subjectId, userId),
+    );
+    if (!result.rows[0]?.ok) continue;
+    completions[stage.key] = new Date().toISOString();
+    mutated = true;
+    stagesCompleted += 1;
+    await awardXp({
+      userId,
+      sourceTable: 'mission_stage',
+      sourceId: `${m.id}:${stage.key}`,
+      verb: `mission.stage.${reg.kind}.${stage.key}`,
+      points: stage.xpReward,
+      reason: `Mission stage: ${stage.title}`,
+    });
+    await fanoutMissionNotification({
+      userId,
+      type: 'gamification.mission_stage_complete',
+      title: `Stage complete — ${stage.title}`,
+      body: `+${stage.xpReward} XP • ${m.title}`,
+    });
+  }
+  const allComplete = reg.stages.every((s) => completions[s.key]);
+  const updates: Partial<MissionInstanceRow> = {};
+  if (mutated) updates.stageCompletions = completions;
+  if (allComplete && m.status === 'active') {
+    updates.status = 'complete';
+    updates.completedAt = new Date();
+    missionCompleted = true;
+  }
+  if (Object.keys(updates).length > 0) {
+    await db
+      .update(missionInstances)
+      .set(updates)
+      .where(eq(missionInstances.id, m.id));
+  }
+  if (missionCompleted) {
+    await awardXp({
+      userId,
+      sourceTable: 'mission',
+      sourceId: m.id,
+      verb: `mission.complete.${reg.kind}`,
+      points: reg.completionBonus,
+      reason: `Mission complete: ${m.title}`,
+    });
+    await fanoutMissionNotification({
+      userId,
+      type: 'gamification.mission_complete',
+      title: `Mission complete — ${m.title}`,
+      body: `+${reg.completionBonus} XP bonus`,
+    });
+  }
+  return { stagesCompleted, missionCompleted };
+}
+
+interface CustomPredicateContext {
+  predicate: Exclude<CustomStageDef['predicate'], { kind: 'manual' }>;
+  missionCreatedAt: Date;
+  userId: string;
+}
+
+async function evaluateCustomPredicate(
+  ctx: CustomPredicateContext,
+): Promise<boolean> {
+  const { predicate, missionCreatedAt, userId } = ctx;
+  const { current, target } = await measureCustomPredicate({
+    predicate,
+    missionCreatedAt,
+    userId,
+  });
+  return current >= target;
+}
+
+/**
+ * Read-only progress measurement for an automated custom-stage
+ * predicate. Returns the current count + the threshold target so
+ * the UI can render "3 / 5" in addition to the binary done state.
+ *
+ * Window starts at the mission's createdAt — anything that
+ * happened BEFORE the mission was created doesn't count toward
+ * its goals. (kyc_for_entities is the exception — KYC status is
+ * cumulative, the historical state is what matters.)
+ */
+export async function measureCustomPredicate(
+  ctx: CustomPredicateContext,
+): Promise<{ current: number; target: number }> {
+  const { predicate, missionCreatedAt, userId } = ctx;
+  if (predicate.kind === 'count_events') {
+    const baseFilter = sql`
+      verb = ${predicate.verb}
+        AND occurred_at >= ${missionCreatedAt}
+    `;
+    const slugFilter =
+      predicate.entitySlugs && predicate.entitySlugs.length > 0
+        ? sql` AND metadata->>'entity_slug' IN (${sql.join(
+            predicate.entitySlugs.map((s) => sql`${s}`),
+            sql`, `,
+          )})`
+        : sql``;
+    const rows = await db.execute<{ n: number }>(sql`
+      SELECT COUNT(*)::int AS n
+      FROM events
+      WHERE ${baseFilter}${slugFilter}
+    `);
+    return {
+      current: Number(rows.rows[0]?.n ?? 0),
+      target: predicate.threshold,
+    };
+  }
+  if (predicate.kind === 'count_feedback') {
+    const rows = await db.execute<{ n: number }>(sql`
+      SELECT COUNT(*)::int AS n
+      FROM feedback_events
+      WHERE user_id = ${userId}
+        AND feedback_kind = ${predicate.feedbackKind}
+        AND created_at >= ${missionCreatedAt}
+    `);
+    return {
+      current: Number(rows.rows[0]?.n ?? 0),
+      target: predicate.threshold,
+    };
+  }
+  if (predicate.kind === 'kyc_for_entities') {
+    if (predicate.entitySlugs.length === 0) {
+      return { current: 0, target: predicate.threshold };
+    }
+    const slugList = sql.join(
+      predicate.entitySlugs.map((s) => sql`${s}`),
+      sql`, `,
+    );
+    const rows = await db.execute<{ n: number }>(sql`
+      SELECT COUNT(DISTINCT entity_slug)::int AS n
+      FROM supplier_approvals
+      WHERE entity_slug IN (${slugList})
+        AND status IN ('approved_with_kyc', 'approved_without_kyc')
+    `);
+    return {
+      current: Number(rows.rows[0]?.n ?? 0),
+      target: predicate.threshold,
+    };
+  }
+  return { current: 0, target: 1 };
 }
 
 async function fanoutMissionNotification(input: {
@@ -426,6 +597,12 @@ export async function completeManualMissionStage(input: {
   const stages = (m.customStages ?? []) as CustomStageDef[];
   const stage = stages.find((s) => s.key === input.stageKey);
   if (!stage) return { ok: false, reason: 'unknown_stage' };
+  if (stage.predicate.kind !== 'manual') {
+    // Automated stages auto-tick from evaluateAutomatedMissions —
+    // refusing the manual mark prevents an operator from short-
+    // circuiting a count predicate before it's actually reached.
+    return { ok: false, reason: 'stage_is_automated' };
+  }
   const completions = { ...(m.stageCompletions ?? {}) };
   if (completions[input.stageKey]) {
     return { ok: true };
@@ -505,9 +682,17 @@ export interface MissionStageView {
   xpReward: number;
   /** When the stage completed (ISO string from JSONB), or null. */
   completedAt: string | null;
-  /** True for registered missions — stage auto-evaluates. False for
-   *  custom missions — operator clicks "Mark done". */
+  /** True when the stage auto-evaluates from a predicate. False for
+   *  manual stages where the operator clicks "Mark done". */
   automated: boolean;
+  /** For automated stages, the live count toward the threshold.
+   *  Null on registered (deal_lifecycle) stages whose predicates are
+   *  exists-shaped (binary), and on manual stages. */
+  progress: { current: number; target: number } | null;
+  /** Short human-readable label of the automated predicate
+   *  ("5 outreach.sent", "3 KYC", etc.). Null on manual stages and
+   *  registered exists-shaped stages. */
+  predicateLabel: string | null;
 }
 
 export interface MissionView {
@@ -549,23 +734,57 @@ export async function listActiveMissions(
     .orderBy(asc(missionInstances.status), desc(missionInstances.createdAt))
     .limit(limit);
 
-  return rows.map((m) => toMissionView(m));
+  return Promise.all(rows.map((m) => toMissionView(m, userId)));
 }
 
-function toMissionView(m: MissionInstanceRow): MissionView {
+async function toMissionView(
+  m: MissionInstanceRow,
+  userId: string,
+): Promise<MissionView> {
   const completions = (m.stageCompletions ?? {}) as Record<string, string>;
   let stages: MissionStageView[] = [];
   let completionBonus = 0;
   if (m.kind === 'custom') {
     const list = (m.customStages ?? []) as CustomStageDef[];
-    stages = list.map((s) => ({
-      key: s.key,
-      title: s.title,
-      description: s.description ?? '',
-      xpReward: s.xpReward,
-      completedAt: completions[s.key] ?? null,
-      automated: false,
-    }));
+    stages = await Promise.all(
+      list.map(async (s) => {
+        const automated = s.predicate.kind !== 'manual';
+        let progress: MissionStageView['progress'] = null;
+        let predicateLabel: string | null = null;
+        if (automated) {
+          predicateLabel = describePredicate(s.predicate);
+          if (!completions[s.key]) {
+            try {
+              progress = await measureCustomPredicate({
+                predicate: s.predicate as Exclude<
+                  CustomStageDef['predicate'],
+                  { kind: 'manual' }
+                >,
+                missionCreatedAt: m.createdAt,
+                userId,
+              });
+            } catch {
+              progress = null;
+            }
+          } else {
+            // Already complete — render as full bar.
+            const target =
+              'threshold' in s.predicate ? s.predicate.threshold : 1;
+            progress = { current: target, target };
+          }
+        }
+        return {
+          key: s.key,
+          title: s.title,
+          description: s.description ?? '',
+          xpReward: s.xpReward,
+          completedAt: completions[s.key] ?? null,
+          automated,
+          progress,
+          predicateLabel,
+        };
+      }),
+    );
     completionBonus = 50;
   } else {
     const reg = getRegisteredMission(m.kind);
@@ -577,6 +796,8 @@ function toMissionView(m: MissionInstanceRow): MissionView {
         xpReward: s.xpReward,
         completedAt: completions[s.key] ?? null,
         automated: s.predicate.kind !== 'manual',
+        progress: null,
+        predicateLabel: null,
       }));
       completionBonus = reg.completionBonus;
     }
@@ -594,6 +815,27 @@ function toMissionView(m: MissionInstanceRow): MissionView {
     progress: { completed, total: stages.length },
     completionBonus,
   };
+}
+
+function describePredicate(
+  predicate: CustomStageDef['predicate'],
+): string | null {
+  switch (predicate.kind) {
+    case 'count_events': {
+      const scope =
+        predicate.entitySlugs && predicate.entitySlugs.length > 0
+          ? ` in ${predicate.entitySlugs.length} entities`
+          : '';
+      return `${predicate.threshold}× ${predicate.verb}${scope}`;
+    }
+    case 'count_feedback':
+      return `${predicate.threshold}× ${predicate.feedbackKind} feedback`;
+    case 'kyc_for_entities':
+      return `${predicate.threshold} of ${predicate.entitySlugs.length} KYC'd`;
+    case 'manual':
+    default:
+      return null;
+  }
 }
 
 // Suppress unused-import lint on isNull (kept for future filter on

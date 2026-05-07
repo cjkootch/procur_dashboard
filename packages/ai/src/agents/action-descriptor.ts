@@ -844,10 +844,11 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
       .max(20),
     rationale: z.string().min(1).max(1000),
   }),
-  // Custom missions proposed via the chat assistant. Stages are
-  // operator-defined; each is a manual checklist item that earns
-  // its own xpReward when the operator marks it done. Tier T1 —
-  // missions are scoped to the user, no external side-effects.
+  // Custom missions proposed via the chat assistant. Stages can
+  // either be `manual` (operator clicks "Mark done") or carry an
+  // automated predicate (count of events / feedback / KYC) that
+  // auto-ticks when the threshold is met. Tier T1 — missions are
+  // scoped to the user, no external side-effects.
   z.object({
     kind: z.literal('mission.create'),
     tier: z.literal(ApprovalTier.T1),
@@ -860,6 +861,27 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
           title: z.string().min(1).max(200),
           description: z.string().max(500).optional(),
           xpReward: z.number().int().min(5).max(500),
+          predicate: z
+            .discriminatedUnion('kind', [
+              z.object({ kind: z.literal('manual') }),
+              z.object({
+                kind: z.literal('count_events'),
+                verb: z.string().min(1).max(80),
+                threshold: z.number().int().min(1).max(1000),
+                entitySlugs: z.array(z.string().min(1).max(200)).max(200).optional(),
+              }),
+              z.object({
+                kind: z.literal('count_feedback'),
+                feedbackKind: z.string().min(1).max(60),
+                threshold: z.number().int().min(1).max(1000),
+              }),
+              z.object({
+                kind: z.literal('kyc_for_entities'),
+                entitySlugs: z.array(z.string().min(1).max(200)).min(1).max(200),
+                threshold: z.number().int().min(1).max(200),
+              }),
+            ])
+            .default({ kind: 'manual' }),
         }),
       )
       .min(2)
