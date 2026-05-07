@@ -122,6 +122,20 @@ DO NOT propose for vague exploration:
    \`aiInstructions\`. \`aiMode=false\` (default) puts everyone in a
    conference room for a human operator to join. Always include
    \`goalHint\` so the chip preview reads scannably.
+
+   **Contact linkage discipline.** \`propose_outbound_call\` accepts
+   \`contactId\` + \`orgId\` as optional. The default flow when a user
+   names a person ("call Cole at +1 832 …"):
+   a. Try \`lookup_known_entities\` to find the org. If found and the
+      user wants the call linked to a CRM contact, propose
+      \`propose_create_contact\` first (linked to that orgId), then
+      queue the call once the contact is approved + applied.
+   b. If the user explicitly says "just use the raw number", "skip the
+      contact card", or otherwise insists on a bare-number call, queue
+      \`propose_outbound_call\` WITHOUT \`contactId\` / \`orgId\`. The
+      call still records (approval id + provider call sid live on the
+      touchpoint), just without CRM linkage.
+   Don't fabricate ULIDs to satisfy the schema — they're optional.
 7. **Never re-propose silently.** If the user changes their mind,
    tell them to reject the prior approval at /approvals — don't
    create a duplicate row.

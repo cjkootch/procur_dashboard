@@ -439,8 +439,10 @@ export async function applyWhatsAppSendTemplate(
 // ============================================================================
 
 export interface OutboundCallPayload extends OutreachEvidenceFields {
-  contactId: string;
-  orgId: string;
+  /** Optional CRM contact id. Omit for ad-hoc raw-number calls. */
+  contactId?: string;
+  /** Optional CRM org id. Omit for ad-hoc raw-number calls. */
+  orgId?: string;
   toNumber: string;
   aiMode?: boolean;
   aiInstructions?: string;
@@ -457,15 +459,12 @@ export function parseOutboundCallPayload(
   const orgId = proposedPayload['orgId'];
   const toNumber = proposedPayload['toNumber'];
   const rationale = proposedPayload['rationale'];
-  if (
-    typeof contactId !== 'string' ||
-    typeof orgId !== 'string' ||
-    typeof toNumber !== 'string' ||
-    typeof rationale !== 'string'
-  ) {
+  if (typeof toNumber !== 'string' || typeof rationale !== 'string') {
     return null;
   }
-  const out: OutboundCallPayload = { contactId, orgId, toNumber, rationale };
+  const out: OutboundCallPayload = { toNumber, rationale };
+  if (typeof contactId === 'string') out.contactId = contactId;
+  if (typeof orgId === 'string') out.orgId = orgId;
   if (typeof proposedPayload['aiMode'] === 'boolean') {
     out.aiMode = proposedPayload['aiMode'] as boolean;
   }
@@ -497,8 +496,11 @@ export async function applyOutboundCall(
   const twimlUrl = new URL(`${APP_URL}/api/webhooks/twilio/twiml`);
   twimlUrl.searchParams.set('approval', approvalId);
   twimlUrl.searchParams.set('mode', payload.aiMode ? 'ai' : 'conference');
-  twimlUrl.searchParams.set('contactId', payload.contactId);
-  twimlUrl.searchParams.set('orgId', payload.orgId);
+  // contactId/orgId are optional — set only when present so raw-number
+  // calls (no CRM linkage) don't propagate empty strings into the
+  // TwiML callback's touchpoint write.
+  if (payload.contactId) twimlUrl.searchParams.set('contactId', payload.contactId);
+  if (payload.orgId) twimlUrl.searchParams.set('orgId', payload.orgId);
   if (payload.aiInstructions) {
     twimlUrl.searchParams.set(
       'aiInstructions',
