@@ -3141,6 +3141,12 @@ export interface FindCounterpartiesArgs {
   /** ISO-2 country filter. Applied to both rolodex (exact) AND Apollo
    *  discovery (organizationLocations). */
   country?: string;
+  /** Free-form rolodex tag filter — e.g. 'region:uswc' to constrain
+   *  US refiners to the West Coast. Applied to the rolodex side only;
+   *  Apollo discovery doesn't have a basin concept. The chat tool's
+   *  `originBasin` enum maps onto this so the model emits a structured
+   *  basin instead of a free-text tag. */
+  tag?: string;
   /** Apollo industry-keyword tags — passed to discover_orgs_by_criteria
    *  filter. e.g. ['fuel distribution', 'marine bunker']. Optional;
    *  when omitted, Apollo discovery falls back to country + role. */
@@ -3204,6 +3210,7 @@ export async function findCounterpartiesUnified(
       role: args.role,
       categoryTag: args.categoryTag,
       country: args.country,
+      tag: args.tag,
       companyId: args.companyId,
       limit: rolodexLimit,
     }),
