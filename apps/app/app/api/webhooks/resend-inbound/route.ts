@@ -12,6 +12,7 @@ import {
 import { createId, emitOutreachOutcome } from '@procur/ai';
 import { recordWebhookReceipt } from '../../../../lib/webhook-events';
 import { notifyAllOperators } from '../../../../lib/notification-queries';
+import { maybeQueueAiEmailReply } from '@procur/catalog';
 
 export const runtime = 'nodejs';
 
@@ -348,6 +349,21 @@ export async function POST(req: Request): Promise<Response> {
     link: `/inbox/${threadId}`,
     entityType: 'thread',
     entityId: null,
+  });
+
+  // Conversation-agent auto-reply (Slice 3). Reads
+  // conversation_settings keyed on (email, threadId); if AI is on
+  // and not paused/over-budget/OOO/stop-keyworded, drafts a reply
+  // and queues it to /approvals. Fully no-op when AI is off (the
+  // default for every thread). Failures swallowed inside.
+  await maybeQueueAiEmailReply({
+    threadId,
+    inboundMessageId: newMessageId,
+    inboundFromEmail: fromEmail,
+    inboundSubject: subject,
+    inboundBodyText: bodyText,
+    inboundBodyHtml: bodyHtml,
+    inboundOccurredAt: occurredAt,
   });
 
   await db
