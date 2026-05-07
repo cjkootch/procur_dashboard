@@ -210,15 +210,18 @@ export {
 // Phase 5 — fuel-deal executors + DealEvaluator + DealMarketContext agents
 export {
   applyCreateDeal,
+  applyDealEvaluate,
   applyDealHumanReview,
   applyDealMilestone,
   applyDealSetBroker,
   applyDealStatusChange,
   parseCreateDealPayload,
+  parseDealEvaluatePayload,
   parseDealMilestonePayload,
   parseDealSetBrokerPayload,
   parseDealStatusChangePayload,
   type CreateDealPayload,
+  type DealEvaluatePayload,
   type DealMilestonePayload,
   type DealSetBrokerPayload,
   type DealStatusChangePayload,
