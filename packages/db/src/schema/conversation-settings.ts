@@ -36,8 +36,13 @@ export const conversationSettings = pgTable(
     aiEnabled: boolean('ai_enabled').notNull().default(false),
     /** 'chitchat_only' | 'ranges_only' | 'commit_with_approval'. */
     authority: text('authority').notNull().default('chitchat_only'),
-    /** 'full_approval' | 'tiered' | 'business_hours_only'. */
-    approvalMode: text('approval_mode').notNull().default('full_approval'),
+    /** 'full_approval' | 'tiered' | 'business_hours_only'.
+     *  Default: 'tiered' — when an operator flips AI auto-reply on,
+     *  the sensible expectation is "let the agent send the safe stuff,
+     *  ask me about the commitments." `full_approval` defeats the
+     *  point of the toggle (every single reply still needs my
+     *  sign-off). Per migration 0092 the column default matches. */
+    approvalMode: text('approval_mode').notNull().default('tiered'),
 
     objective: text('objective'),
     customPrompt: text('custom_prompt'),
