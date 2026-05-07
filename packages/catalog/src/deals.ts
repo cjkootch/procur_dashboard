@@ -41,6 +41,7 @@ export interface DealListRow {
   product: string;
   lineOfBusiness: string;
   volumeUsg: number;
+  volumeUnit: string;
   buyerOrgId: string;
   buyerLegalName: string | null;
   destinationPort: string | null;
@@ -65,6 +66,7 @@ export async function listDeals(
       product: fuelDeals.product,
       lineOfBusiness: fuelDeals.lineOfBusiness,
       volumeUsg: fuelDeals.volumeUsg,
+      volumeUnit: fuelDeals.volumeUnit,
       buyerOrgId: fuelDeals.buyerOrgId,
       buyerLegalName: organizations.legalName,
       destinationPort: fuelDeals.destinationPort,
@@ -335,7 +337,8 @@ export async function getDealRoomContext(
       .where(eq(assistantThreads.dealId, dealId))
       .orderBy(desc(assistantThreads.lastMessageAt))
       .limit(20),
-    // Activity: deal lifecycle events (fuel_deal.*) + every approval
+    // Activity: deal lifecycle events (deal.*; legacy rows may carry
+    // fuel_deal.*) + every approval
     // event (approval.approved / rejected) where the approval payload
     // references this deal. Last 100, ordered desc.
     db

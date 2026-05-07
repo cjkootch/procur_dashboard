@@ -80,7 +80,9 @@ export default async function DealsPage() {
                 <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
                   Buyer: {row.buyerLegalName ?? row.buyerOrgId}
                   {' · '}
-                  {(row.volumeUsg / 1_000_000).toFixed(2)}M USG
+                  {row.volumeUnit === 'usg'
+                    ? `${(row.volumeUsg / 1_000_000).toFixed(2)}M USG`
+                    : `${row.volumeUsg.toLocaleString()} ${(row.volumeUnit || 'usg').toUpperCase()}`}
                   {row.destinationPort && <> · {row.destinationPort}</>}
                   {row.laycanStart && (
                     <> · laycan {row.laycanStart}</>

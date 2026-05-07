@@ -47,6 +47,26 @@ const MARKET_VERDICT_TONE: Record<string, string> = {
   outlier_high: 'bg-red-100 text-red-900',
 };
 
+/**
+ * Render the deal volume in its native unit. Fuel deals ship in
+ * millions of USG (so we scale + drop the M suffix); food/other
+ * lines (kg, lbs, mt, containers) read literally without scaling.
+ * Preserves "M USG" only when that's actually the unit on file.
+ */
+function formatDealVolume(volume: number, unit: string): string {
+  const u = (unit || 'usg').toLowerCase();
+  if (u === 'usg') {
+    return `${(volume / 1_000_000).toFixed(2)}M USG`;
+  }
+  return `${volume.toLocaleString()} ${u.toUpperCase()}`;
+}
+
+/** Per-unit label for the active scenario / cost-stack columns. Fuel
+ *  scenarios are priced per USG; food deals are priced per kg/lbs/etc. */
+function perUnitLabel(unit: string): string {
+  return `/ ${(unit || 'usg').toUpperCase()}`;
+}
+
 interface ScenarioResults {
   perUsg?: { landedCost?: number; grossMargin?: number; netMargin?: number };
   totals?: { ebitdaUsd?: number; totalCashExposureUsd?: number };
@@ -144,7 +164,7 @@ function DealHeader({ room }: { room: DealRoomContext }) {
       <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
         Buyer: {buyer?.legalName ?? deal.buyerOrgId}
         {' · '}
-        {(deal.volumeUsg / 1_000_000).toFixed(2)}M USG{' '}
+        {formatDealVolume(deal.volumeUsg, deal.volumeUnit)}{' '}
         {deal.incoterm.toUpperCase()}
         {deal.destinationPort && <> · {deal.destinationPort}</>}
       </p>
@@ -183,7 +203,8 @@ function OverviewTab({
   room: DealRoomContext;
   dealId: string;
 }) {
-  const { counterparties, communications, documents, activeScenario } = room;
+  const { deal, counterparties, communications, documents, activeScenario } =
+    room;
   const recentComms = communications.slice(0, 5);
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -251,7 +272,7 @@ function OverviewTab({
             <dt className="text-[color:var(--color-muted-foreground)]">Name</dt>
             <dd className="font-mono">{activeScenario.scenarioName}</dd>
             <dt className="text-[color:var(--color-muted-foreground)]">
-              Sell / USG
+              Sell {perUnitLabel(deal.volumeUnit)}
             </dt>
             <dd className="font-mono">
               ${activeScenario.sellPricePerUsg.toFixed(4)}
@@ -445,8 +466,9 @@ function DocumentsTab({ room }: { room: DealRoomContext }) {
 }
 
 function StructureTab({ room }: { room: DealRoomContext }) {
-  const { activeScenario, costStack, marketContext } = room;
+  const { deal, activeScenario, costStack, marketContext } = room;
   const results = (activeScenario?.resultsJson ?? null) as ScenarioResults | null;
+  const unitLabel = perUnitLabel(deal.volumeUnit);
   return (
     <div className="space-y-4">
       {results?.scorecard && (
@@ -478,7 +500,7 @@ function StructureTab({ room }: { room: DealRoomContext }) {
               {results.perUsg.landedCost != null && (
                 <>
                   <dt className="text-[color:var(--color-muted-foreground)]">
-                    Landed cost / USG
+                    Landed cost {unitLabel}
                   </dt>
                   <dd className="font-mono">
                     ${results.perUsg.landedCost.toFixed(4)}
@@ -488,7 +510,7 @@ function StructureTab({ room }: { room: DealRoomContext }) {
               {results.perUsg.grossMargin != null && (
                 <>
                   <dt className="text-[color:var(--color-muted-foreground)]">
-                    Gross margin / USG
+                    Gross margin {unitLabel}
                   </dt>
                   <dd className="font-mono">
                     ${results.perUsg.grossMargin.toFixed(4)}
@@ -498,7 +520,7 @@ function StructureTab({ room }: { room: DealRoomContext }) {
               {results.perUsg.netMargin != null && (
                 <>
                   <dt className="text-[color:var(--color-muted-foreground)]">
-                    Net margin / USG
+                    Net margin {unitLabel}
                   </dt>
                   <dd className="font-mono">
                     ${results.perUsg.netMargin.toFixed(4)}
@@ -518,7 +540,7 @@ function StructureTab({ room }: { room: DealRoomContext }) {
               {results.breakeven?.sellPriceUsg != null && (
                 <>
                   <dt className="text-[color:var(--color-muted-foreground)]">
-                    Breakeven sell / USG
+                    Breakeven sell {unitLabel}
                   </dt>
                   <dd className="font-mono">
                     ${results.breakeven.sellPriceUsg.toFixed(4)}
@@ -581,7 +603,7 @@ function StructureTab({ room }: { room: DealRoomContext }) {
       {costStack && (
         <section className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4">
           <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-            Cost stack (per USG, summary)
+            Cost stack (per {(deal.volumeUnit || 'usg').toUpperCase()}, summary)
           </h2>
           <dl className="grid grid-cols-2 gap-2 text-sm font-mono">
             <dt className="font-sans text-[color:var(--color-muted-foreground)]">
