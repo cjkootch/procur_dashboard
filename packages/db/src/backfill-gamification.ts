@@ -114,8 +114,15 @@ async function main(): Promise<void> {
     return inserted.length > 0;
   }
 
-  // 1. Outreach lifecycle from events.
+  // 1. Outreach lifecycle from events. Using `sql.join` to splay the
+  // verb list into an IN (...) expression — a bare JS-array
+  // interpolation gets wrapped as a record by Drizzle's tagged
+  // template and `::text[]` rejects the cast (NeonDbError 42846).
   const outreachVerbs = Object.keys(RULES).filter((v) => v.startsWith('outreach.'));
+  const outreachVerbsSql = sql.join(
+    outreachVerbs.map((v) => sql`${v}`),
+    sql`, `,
+  );
   const outreachRows = await db.execute<{
     id: string;
     verb: string;
@@ -123,7 +130,7 @@ async function main(): Promise<void> {
   }>(sql`
     SELECT id, verb, occurred_at
     FROM events
-    WHERE verb = ANY(${outreachVerbs}::text[])
+    WHERE verb IN (${outreachVerbsSql})
     ORDER BY occurred_at
   `);
   for (const r of outreachRows.rows) {
