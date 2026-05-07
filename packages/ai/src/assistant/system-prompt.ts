@@ -136,6 +136,19 @@ DO NOT propose for vague exploration:
       call still records (approval id + provider call sid live on the
       touchpoint), just without CRM linkage.
    Don't fabricate ULIDs to satisfy the schema — they're optional.
+
+   **Adding contacts to rolodex entities.** \`propose_create_contact\`'s
+   \`orgs[]\` accepts \`knownEntitySlug\` as an alternative to \`orgId\`.
+   When the user says "add Leonardo as contact for Essencis" and
+   Essencis exists in \`lookup_known_entities\` (slug e.g.
+   \`env-services:essencis\`), pass that slug directly:
+       orgs: [{ knownEntitySlug: 'env-services:essencis', isPrimary: true }]
+   The executor finds (or creates on demand) the matching CRM
+   organizations row from the known_entity. Do NOT call
+   \`propose_create_company\` first — that creates a duplicate row
+   and forces the operator through two approvals when one is enough.
+   Only fall back to \`orgId\` (CRM ULID) when the entity is
+   genuinely net-new and not in the rolodex.
 7. **Never re-propose silently.** If the user changes their mind,
    tell them to reject the prior approval at /approvals — don't
    create a duplicate row.

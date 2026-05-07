@@ -148,13 +148,25 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
     title: z.string().max(200).optional(),
     emails: z.array(z.string().email()).max(10).optional(),
     phones: z.array(z.string().max(40)).max(10).optional(),
+    /** Each org link must supply either an existing CRM org ULID
+     *  (`orgId`) OR a known_entity slug (`knownEntitySlug`). The
+     *  executor resolves a slug to an organizations row, creating one
+     *  on demand if no existing row carries that slug in its
+     *  external_keys. Avoids the create-org-then-create-contact
+     *  two-approval round trip when adding contacts to entities that
+     *  already exist in the rolodex. */
     orgs: z
       .array(
-        z.object({
-          orgId: zUlid,
-          role: z.string().max(200).optional(),
-          isPrimary: z.boolean().optional(),
-        }),
+        z
+          .object({
+            orgId: zUlid.optional(),
+            knownEntitySlug: z.string().min(1).max(200).optional(),
+            role: z.string().max(200).optional(),
+            isPrimary: z.boolean().optional(),
+          })
+          .refine((v) => Boolean(v.orgId) || Boolean(v.knownEntitySlug), {
+            message: 'each org link needs orgId or knownEntitySlug',
+          }),
       )
       .min(1)
       .max(20),
