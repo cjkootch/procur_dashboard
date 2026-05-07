@@ -146,6 +146,7 @@ interface QueueAiReplyResult {
     | 'skipped_budget'
     | 'skipped_session_window'
     | 'skipped_draft_failed'
+    | 'skipped_superseded'
     | 'queued'
     | 'auto_executed';
   approvalId?: string;
@@ -292,6 +293,20 @@ async function runMaybeQueueAiReply(
       settings.responseDelayMinSec,
       settings.responseDelayMaxSec,
     );
+    // Stale-draft guard: if a fresh inbound arrived during the delay,
+    // the draft we built before the sleep is now stale — answering
+    // the OLD inbound instead of the NEW one. Bail out; the new
+    // inbound's webhook will fire its own draft pass and that'll be
+    // the right reply. Without this, the recipient sees us address
+    // their first message ~30-90s after they already sent a follow-up.
+    const supersededBy = await findInboundNewerThan({
+      channel,
+      fromPhone: input.fromPhone,
+      after: input.inboundOccurredAt,
+    });
+    if (supersededBy) {
+      return { status: 'skipped_superseded', reason: supersededBy };
+    }
     const approvalId = await autoExecuteReply({
       channel,
       toPhone: input.fromPhone,
@@ -335,6 +350,35 @@ interface ConversationTurn {
   direction: 'inbound' | 'outbound';
   body: string;
   occurredAt: Date;
+}
+
+/**
+ * Returns the timestamp of the newest INBOUND touchpoint from this
+ * phone strictly after `after`, or null when none. Used by the
+ * stale-draft guard: after sleepResponseDelay completes we re-check
+ * for a fresh inbound that landed during the sleep — if one did, the
+ * draft we built before the sleep is no longer addressing the latest
+ * message and we must skip the auto-send.
+ */
+async function findInboundNewerThan(input: {
+  channel: 'sms' | 'whatsapp';
+  fromPhone: string;
+  after: Date;
+}): Promise<string | null> {
+  const inboundChannel = `${input.channel}.received`;
+  const [row] = await db
+    .select({ occurredAt: touchpoints.occurredAt })
+    .from(touchpoints)
+    .where(
+      and(
+        eq(touchpoints.channel, inboundChannel),
+        sql`${touchpoints.metadata}->>'from' = ${input.fromPhone}`,
+        sql`${touchpoints.occurredAt} > ${input.after.toISOString()}`,
+      ),
+    )
+    .orderBy(desc(touchpoints.occurredAt))
+    .limit(1);
+  return row?.occurredAt ? row.occurredAt.toISOString() : null;
 }
 
 async function loadRecentHistory(input: {
