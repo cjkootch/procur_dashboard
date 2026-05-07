@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { usePathname } from 'next/navigation';
+import { Button } from '@procur/ui';
 
 /**
  * Pattern 3 (friction logging) per docs/feedback-ui-brief.md §6.
@@ -119,22 +120,22 @@ export function FrictionButton() {
             Context auto-captured: page <span className="font-mono">{pathname}</span>, time, referrer.
           </div>
           <div className="mt-2 flex justify-end gap-1.5">
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setOpen(false)}
               disabled={pending}
-              className="rounded border border-[color:var(--color-border)] px-2 py-0.5 text-xs hover:border-[color:var(--color-foreground)] disabled:opacity-40"
             >
               Skip
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
               onClick={submit}
               disabled={pending || draft.trim().length < 3}
-              className="rounded bg-[color:var(--color-foreground)] px-2 py-0.5 text-xs text-[color:var(--color-background)] hover:opacity-90 disabled:opacity-40"
             >
               Save
-            </button>
+            </Button>
           </div>
         </div>
       )}
