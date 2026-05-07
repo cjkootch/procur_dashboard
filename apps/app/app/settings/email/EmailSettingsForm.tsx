@@ -5,7 +5,7 @@ import { useFormStatus } from 'react-dom';
 import {
   initialSaveEmailSettingsState,
   type SaveEmailSettingsState,
-} from './actions';
+} from './state';
 
 interface EmailSettingsFormProps {
   action: (
