@@ -508,6 +508,21 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
     scenarioId: zUlid.optional(),
     rationale: z.string().min(1).max(1000),
   }),
+  /**
+   * `deal.attach` — pin an existing record (touchpoint, communications
+   * thread, assistant chat) to a fuel_deal so the /deals/[id] room
+   * surfaces it. T1 because it's a pointer write — no outbound side
+   * effects, just a join. The room's read helpers (getDealRoomContext)
+   * pivot off these joins.
+   */
+  z.object({
+    kind: z.literal('deal.attach'),
+    tier: z.literal(ApprovalTier.T1),
+    dealId: zUlid,
+    targetType: z.enum(['touchpoint', 'thread', 'assistant_thread']),
+    targetId: z.string().min(1).max(256),
+    rationale: z.string().min(1).max(1000),
+  }),
   z.object({
     kind: z.literal('deal.milestone'),
     tier: z.literal(ApprovalTier.T1),

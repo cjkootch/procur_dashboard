@@ -13,6 +13,10 @@ export const assistantThreads = pgTable(
       .references(() => users.id)
       .notNull(),
     title: text('title').notNull().default('New conversation'),
+    /** Optional pin to a fuel_deal (text ULID, no FK declared — same
+     *  convention as touchpoints.deal_id). Powers the /deals/[id]
+     *  room's Assistant chats tab + propose_attach_to_deal chat tool. */
+    dealId: text('deal_id'),
     lastMessageAt: timestamp('last_message_at').defaultNow().notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -23,6 +27,7 @@ export const assistantThreads = pgTable(
       table.userId,
       table.lastMessageAt,
     ),
+    dealIdx: index('assistant_threads_deal_idx').on(table.dealId),
   }),
 );
 

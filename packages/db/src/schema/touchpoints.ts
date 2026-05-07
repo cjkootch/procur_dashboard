@@ -30,6 +30,11 @@ export const touchpoints = pgTable(
     orgId: text('org_id').references(() => organizations.id, {
       onDelete: 'set null',
     }),
+    /** Optional pin to a fuel_deal (text ULID, no FK declared — matches
+     *  the polymorphic-via-metadata convention; keeping it as a plain
+     *  text + partial index avoids cascade complications when a deal is
+     *  reassigned). Powers the /deals/[id] room's Communications tab. */
+    dealId: text('deal_id'),
     metadata: jsonb('metadata')
       .$type<Record<string, unknown>>()
       .notNull()
@@ -44,6 +49,7 @@ export const touchpoints = pgTable(
     leadIdx: index('touchpoints_lead_idx').on(t.leadId),
     contactIdx: index('touchpoints_contact_idx').on(t.contactId),
     orgIdx: index('touchpoints_org_idx').on(t.orgId),
+    dealIdx: index('touchpoints_deal_idx').on(t.dealId),
   }),
 );
 

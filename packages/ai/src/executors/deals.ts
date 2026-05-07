@@ -1,11 +1,14 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import {
   approvals,
+  assistantThreads,
   db,
   events,
   fuelDealCostStack,
   fuelDealScenarios,
   fuelDeals,
+  threads,
+  touchpoints,
 } from '@procur/db';
 import { createId } from '../agents/id';
 import { AgentRunner } from '../agents/agent-runner';
@@ -622,6 +625,105 @@ export async function applyDealEvaluate(
     status: record.status,
     approvals_created: record.approvalsCreated,
     cost_usd: record.costUsd,
+  });
+  return { ok: true, appliedObjectId: payload.dealId };
+}
+
+// ============================================================================
+// deal.attach — pin a touchpoint / thread / assistant thread to a deal.
+// ============================================================================
+
+export interface DealAttachPayload {
+  dealId: string;
+  targetType: 'touchpoint' | 'thread' | 'assistant_thread';
+  targetId: string;
+  rationale: string;
+}
+
+export function parseDealAttachPayload(
+  proposedPayload: Record<string, unknown> | null | undefined,
+): DealAttachPayload | null {
+  if (!proposedPayload || typeof proposedPayload !== 'object') return null;
+  const dealId = proposedPayload['dealId'];
+  const targetType = proposedPayload['targetType'];
+  const targetId = proposedPayload['targetId'];
+  const rationale = proposedPayload['rationale'];
+  if (
+    typeof dealId !== 'string' ||
+    typeof targetType !== 'string' ||
+    typeof targetId !== 'string' ||
+    typeof rationale !== 'string'
+  ) {
+    return null;
+  }
+  if (
+    targetType !== 'touchpoint' &&
+    targetType !== 'thread' &&
+    targetType !== 'assistant_thread'
+  ) {
+    return null;
+  }
+  return {
+    dealId,
+    targetType: targetType as DealAttachPayload['targetType'],
+    targetId,
+    rationale,
+  };
+}
+
+/**
+ * Set the deal_id pointer on an existing touchpoint, thread (via the
+ * touchpoints that reference it), or assistant_thread. The
+ * /deals/[id] room then surfaces the attached record in the
+ * appropriate tab.
+ *
+ * Idempotent: re-running just rewrites the same deal_id.
+ */
+export async function applyDealAttach(
+  approvalId: string,
+  payload: DealAttachPayload,
+): Promise<ExecutorResult> {
+  if (await alreadyApplied(approvalId)) return { ok: true };
+
+  // Verify the deal exists before pointing anything at it.
+  const dealRows = await db
+    .select({ id: fuelDeals.id })
+    .from(fuelDeals)
+    .where(eq(fuelDeals.id, payload.dealId))
+    .limit(1);
+  if (!dealRows[0]) {
+    return { ok: false, error: `deal ${payload.dealId} not found` };
+  }
+
+  if (payload.targetType === 'touchpoint') {
+    await db
+      .update(touchpoints)
+      .set({ dealId: payload.dealId })
+      .where(eq(touchpoints.id, payload.targetId));
+  } else if (payload.targetType === 'assistant_thread') {
+    await db
+      .update(assistantThreads)
+      .set({ dealId: payload.dealId })
+      .where(eq(assistantThreads.id, payload.targetId));
+  } else {
+    // 'thread' — the threads table has no deal_id column today (kept
+    // narrow per the migration). Stamp the deal_id on every touchpoint
+    // currently linked to this thread instead, so the room's
+    // communications query (which reads via touchpoints + thread_id)
+    // surfaces them.
+    await db.execute(sql`
+      UPDATE touchpoints
+         SET deal_id = ${payload.dealId}
+       WHERE metadata->>'thread_id' = ${payload.targetId}
+    `);
+    void threads;
+  }
+
+  await stampApplied(approvalId, payload.dealId, 'fuel_deal.attached', {
+    deal_id: payload.dealId,
+    target_type: payload.targetType,
+    target_id: payload.targetId,
+    rationale: payload.rationale,
   });
   return { ok: true, appliedObjectId: payload.dealId };
 }

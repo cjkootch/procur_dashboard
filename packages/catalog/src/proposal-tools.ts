@@ -454,6 +454,41 @@ export const proposeTools = {
     },
   }),
 
+  propose_attach_to_deal: defineTool({
+    name: 'propose_attach_to_deal',
+    description:
+      "Pin an existing record (touchpoint, communications thread, or assistant chat thread) " +
+      'to a fuel deal so the /deals/[id] room surfaces it in the appropriate tab. T1 because ' +
+      "it's a join write — no outbound side effects, just a pointer update. Use when the user " +
+      'says "attach this conversation to deal X" or "this thread is about deal X". Pass the ' +
+      'target id verbatim from a prior tool call (touchpoint id, thread id, or assistant_thread ' +
+      'uuid). When `targetType=thread`, every touchpoint currently linked to the thread gets ' +
+      'the deal_id stamped (the threads table has no deal_id column today).',
+    kind: 'write',
+    schema: z.object({
+      dealId: ulidString,
+      targetType: z.enum(['touchpoint', 'thread', 'assistant_thread']),
+      targetId: z.string().min(1).max(256),
+      rationale: z.string().min(1).max(1000),
+    }),
+    handler: async (ctx, input): Promise<ProposeResult> => {
+      const action: ActionDescriptorT = {
+        kind: 'deal.attach',
+        tier: 'T1',
+        dealId: input.dealId,
+        targetType: input.targetType,
+        targetId: input.targetId,
+        rationale: input.rationale,
+      };
+      const row = await insertChatApproval(action, { userId: ctx.userId });
+      return chip(
+        action,
+        `Attach ${input.targetType} ${input.targetId.slice(0, 12)}… to deal`,
+        row.id,
+      );
+    },
+  }),
+
   // ==========================================================================
   // Phase 6 — sanctions
   // ==========================================================================
