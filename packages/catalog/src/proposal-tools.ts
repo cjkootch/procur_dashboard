@@ -202,12 +202,17 @@ export const proposeTools = {
     name: 'propose_create_contact',
     description:
       'Queue a new CRM contact (person at a company) for operator approval. Use when the user ' +
-      'asks to add / create a contact, person, or representative. Always link to at least one ' +
-      'organization via orgs[]; mark exactly one as isPrimary. Each org link can supply either ' +
-      '`orgId` (an existing CRM org ULID, e.g. 01K...) OR `knownEntitySlug` (a rolodex entity ' +
-      "slug from lookup_known_entities, e.g. 'env-services:essencis'). When the entity is in " +
-      'the rolodex, prefer knownEntitySlug — the executor will find or create the matching ' +
-      "CRM org row automatically, so you don't need a separate propose_create_company step.",
+      'asks to add / create a contact, person, or representative. Every contact MUST link to at ' +
+      'least one organization — `orgs[]` is required and non-empty. If the user did not mention ' +
+      'a company, ASK them ("which company is X with?") or auto-derive a placeholder from the ' +
+      "person's email domain or surname (e.g. \"Jean Baptiste Corp\") via a separate " +
+      'propose_create_company first; do NOT call this tool with `orgs: []` — the schema rejects ' +
+      'it. Each org link supplies either `orgId` (an existing CRM org ULID, e.g. 01K... — ONLY ' +
+      'pulled verbatim from a prior tool result, NEVER a slug or company name) OR ' +
+      "`knownEntitySlug` (a kebab-case rolodex slug like 'env-services:essencis' or " +
+      "'jean-baptiste-corp'). When the entity is in the rolodex, prefer knownEntitySlug — the " +
+      "executor finds or creates the matching CRM org row automatically, so you don't need a " +
+      'separate propose_create_company step. Mark exactly one link as isPrimary.',
     kind: 'write',
     schema: z.object({
       fullName: z.string().min(1).max(200),
@@ -218,15 +223,45 @@ export const proposeTools = {
         .array(
           z
             .object({
-              orgId: ulidString.optional(),
+              // Accept any string; the transform below routes a
+              // non-ULID into knownEntitySlug instead of failing
+              // validation. Earlier traces had the model passing
+              // 'jean-baptiste-corp' into orgId and burning a tool
+              // call before recovering. Belt-and-suspenders: the
+              // description tells the model to put slugs in
+              // knownEntitySlug, AND the transform recovers if it
+              // doesn't.
+              orgId: z.string().min(1).max(200).optional(),
               knownEntitySlug: z.string().min(1).max(200).optional(),
               role: z.string().max(200).optional(),
               isPrimary: z.boolean().optional(),
+            })
+            .transform((v) => {
+              if (
+                v.orgId &&
+                !/^[0-9A-HJKMNP-TV-Z]{26}$/.test(v.orgId) &&
+                !v.knownEntitySlug
+              ) {
+                return {
+                  ...v,
+                  orgId: undefined,
+                  knownEntitySlug: v.orgId,
+                };
+              }
+              return v;
             })
             .refine(
               (v) => Boolean(v.orgId) || Boolean(v.knownEntitySlug),
               {
                 message: 'each org link needs orgId or knownEntitySlug',
+              },
+            )
+            .refine(
+              (v) =>
+                !v.orgId || /^[0-9A-HJKMNP-TV-Z]{26}$/.test(v.orgId),
+              {
+                message: 'orgId must be a ULID — use knownEntitySlug for slugs',
+                path: ['orgId'],
               },
             ),
         )
