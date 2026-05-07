@@ -69,6 +69,10 @@ const PatchSchema = z.object({
       stopKeywords: z.array(z.string().max(50)).max(50).optional(),
       handoffTriggers: z.record(z.string(), z.unknown()).optional(),
       channelConfig: z.record(z.string(), z.unknown()).optional(),
+      // Resume-from-paused: only `null` is accepted — operators clear
+      // the pause but cannot fabricate a paused-at timestamp via the API.
+      pausedAt: z.null().optional(),
+      pausedReason: z.null().optional(),
     })
     .strict(),
 });
@@ -120,5 +124,41 @@ export async function PATCH(req: Request): Promise<Response> {
   if (!settings) {
     return NextResponse.json({ error: 'not_found' }, { status: 404 });
   }
+
+  // Auto-resume: when a budget cap was breached and the operator just
+  // raised the cap above current usage, clear pausedAt/pausedReason in
+  // a follow-up patch. Without this, bumping max_turns from 8 → 20
+  // leaves pausedAt set and the agent stays silent until the operator
+  // hits "Resume now" — which is exactly the friction Cole flagged.
+  // We match on the human-formatted reason strings emitted by
+  // pauseConversation() in conversation-agent.ts (`max_turns (X)
+  // reached`, `max_cost_usd_cents (X) reached`, `max_duration_hours
+  // (X) reached`). Stop-keyword + manual pauses don't auto-resume.
+  if (settings.pausedAt && settings.pausedReason) {
+    const reason = settings.pausedReason;
+    const ageHours =
+      (Date.now() - new Date(settings.createdAt).getTime()) / 3_600_000;
+    const costUsdCents = Math.round(
+      Number(settings.totalCostUsdMicros) / 10_000,
+    );
+    const turnsCleared =
+      reason.startsWith('max_turns') &&
+      settings.totalTurns < settings.maxTurns;
+    const costCleared =
+      reason.startsWith('max_cost_usd_cents') &&
+      costUsdCents < settings.maxCostUsdCents;
+    const durationCleared =
+      reason.startsWith('max_duration_hours') &&
+      ageHours < settings.maxDurationHours;
+    if (turnsCleared || costCleared || durationCleared) {
+      const resumed = await updateConversationSettings({
+        channel: parsed.data.channel,
+        conversationKey: parsed.data.conversation_key,
+        patch: { pausedAt: null, pausedReason: null },
+      });
+      return NextResponse.json({ settings: resumed ?? settings });
+    }
+  }
+
   return NextResponse.json({ settings });
 }

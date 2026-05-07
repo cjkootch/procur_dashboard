@@ -72,8 +72,12 @@ export function ConversationSettingsPanel({
     });
   };
 
+  // pb-24 reserves space for the floating Stuck?/Ask launchers anchored
+  // at bottom-right of the viewport — without it the last few rows in
+  // this panel sit underneath the buttons and get clipped on shorter
+  // screens.
   return (
-    <aside className="flex w-full flex-col gap-5 border-l border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-4 lg:w-80 lg:overflow-y-auto">
+    <aside className="flex w-full flex-col gap-5 border-l border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-4 pb-24 lg:w-80 lg:overflow-y-auto">
       <header className="flex items-baseline justify-between">
         <h2 className="text-sm font-semibold tracking-tight">
           Conversation settings
@@ -274,10 +278,24 @@ export function ConversationSettingsPanel({
           value={`$${(Number(settings.totalCostUsdMicros) / 1_000_000).toFixed(4)}`}
         />
         {settings.pausedAt && (
-          <ReadOnly
-            label="Paused"
-            value={`${new Date(settings.pausedAt).toLocaleString()} · ${settings.pausedReason ?? '(no reason)'}`}
-          />
+          <>
+            <ReadOnly
+              label="Paused"
+              value={`${new Date(settings.pausedAt).toLocaleString()} · ${settings.pausedReason ?? '(no reason)'}`}
+            />
+            {/* Manual escape hatch: clear paused_at + paused_reason. The
+                server also auto-clears these on the patch that raises the
+                breached cap above current usage, but a stop-keyword pause
+                (or any other non-budget cause) needs this button. */}
+            <button
+              type="button"
+              onClick={() => patch({ pausedAt: null, pausedReason: null })}
+              disabled={pending}
+              className="self-start rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs font-medium hover:bg-[color:var(--color-muted)]/40 disabled:opacity-40"
+            >
+              Resume now
+            </button>
+          </>
         )}
       </Section>
 
