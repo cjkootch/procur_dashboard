@@ -7,6 +7,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uuid,
 } from 'drizzle-orm/pg-core';
 import {
   dealCurrencyEnum,
@@ -153,6 +154,17 @@ export const fuelDeals = pgTable(
     eeiItn: text('eei_itn'),
     complianceHold: boolean('compliance_hold').notNull().default(false),
     complianceNotes: text('compliance_notes'),
+
+    /** Commercial-protection state for the broker workflow (per Cole's
+     *  prioritization notes #4 + #15 + #16). Surfaces in the
+     *  /deals/[id] Compliance tab. `disclosure_allowed` is the
+     *  hard gate — chat tools refuse to disclose buyer/seller identity
+     *  or share documents until this is true. */
+    ndaSignedAt: timestamp('nda_signed_at', { withTimezone: true }),
+    ndaCounterpartyOrgId: uuid('nda_counterparty_org_id'),
+    feeProtectionStatus: text('fee_protection_status'),
+    feeProtectionProviderOrgId: uuid('fee_protection_provider_org_id'),
+    disclosureAllowed: boolean('disclosure_allowed').notNull().default(false),
 
     counterpartyRiskScore: doublePrecision('counterparty_risk_score'),
     countryRiskScore: doublePrecision('country_risk_score'),

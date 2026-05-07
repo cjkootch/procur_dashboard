@@ -18,12 +18,14 @@ import {
 } from '../executors/sales';
 import {
   applyCreateDeal,
+  applyDealAttach,
   applyDealEvaluate,
   applyDealStatusChange,
   applyDealMilestone,
   applyDealSetBroker,
   applyDealHumanReview,
   parseCreateDealPayload,
+  parseDealAttachPayload,
   parseDealEvaluatePayload,
   parseDealStatusChangePayload,
   parseDealMilestonePayload,
@@ -276,6 +278,12 @@ export async function dispatchApprovalExecutor(
     const payload = parseDealEvaluatePayload(row.proposedPayload);
     if (!payload) return;
     await applyDealEvaluate(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'deal.attach') {
+    const payload = parseDealAttachPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyDealAttach(row.id, payload);
     return;
   }
 
