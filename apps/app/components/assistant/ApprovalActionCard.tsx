@@ -84,7 +84,10 @@ interface ApprovalRow {
   decidedAt: string | null;
   appliedAt: string | null;
   appliedObjectId: string | null;
+  proposedPayload: Record<string, unknown>;
 }
+
+type EditableField = 'body' | 'subject' | 'aiInstructions' | 'goalHint';
 
 function rowToState(row: ApprovalRow): DecisionState {
   if (row.decision === 'pending') return { status: 'pending' };
@@ -127,6 +130,11 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
   const [state, setState] = useState<DecisionState>({ status: 'loading' });
   const stateRef = useRef(state);
   stateRef.current = state;
+  // Local mirror of the proposed payload so inline edits (pencil →
+  // textarea) render immediately. Seeded from the streamed-in
+  // approval output, then refreshed from /api/approvals/[id] on
+  // mount so revisiting a thread shows the most recent revision.
+  const [payload, setPayload] = useState<Record<string, unknown>>(output.payload);
 
   // Hydrate the card from the server's view of this approval on mount
   // (and whenever the approvalId changes — happens during streaming
@@ -159,6 +167,9 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
         }
         const body = (await res.json()) as { row: ApprovalRow };
         setState(rowToState(body.row));
+        if (body.row.proposedPayload) {
+          setPayload(body.row.proposedPayload);
+        }
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -221,6 +232,36 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
         status: 'error',
         message: err instanceof Error ? err.message : 'unknown error',
       });
+    }
+  };
+
+  const saveEdit = async (
+    field: EditableField,
+    value: string,
+  ): Promise<{ ok: true } | { ok: false; message: string }> => {
+    try {
+      const res = await fetch(`/api/approvals/${output.approvalId}/edit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field, value }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        return {
+          ok: false,
+          message: body.error ?? `save failed (${res.status})`,
+        };
+      }
+      const body = (await res.json()) as { row: ApprovalRow };
+      setPayload(body.row.proposedPayload);
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        message: err instanceof Error ? err.message : 'unknown error',
+      };
     }
   };
 
@@ -304,11 +345,13 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
 
       <ActionPreview
         actionType={output.actionType}
-        payload={output.payload}
+        payload={payload}
         summary={output.summary}
+        editable={state.status === 'pending'}
+        onEdit={saveEdit}
       />
 
-      <OutreachEvidencePanel payload={output.payload} />
+      <OutreachEvidencePanel payload={payload} />
 
       {state.status === 'error' && (
         <p className="mt-3 text-xs text-red-700">{state.message}</p>
@@ -435,15 +478,31 @@ function s(payload: Record<string, unknown>, key: string): string {
 /**
  * Per-action-type preview body. Adds new variants here as more
  * propose-* tools land.
+ *
+ * The four free-text fields (body / subject / aiInstructions /
+ * goalHint) are rendered via `<EditableField>` so the operator can
+ * tweak language inline before approving — pencil → textarea →
+ * save. Each save POSTs to /api/approvals/[id]/edit, updates
+ * proposed_payload, and writes a feedback_events row so revisions
+ * accumulate as a fine-tuning corpus over time.
  */
+type EditCallback = (
+  field: EditableField,
+  value: string,
+) => Promise<{ ok: true } | { ok: false; message: string }>;
+
 function ActionPreview({
   actionType,
   payload,
   summary,
+  editable,
+  onEdit,
 }: {
   actionType: string;
   payload: Record<string, unknown>;
   summary: string;
+  editable: boolean;
+  onEdit: EditCallback;
 }) {
   if (actionType === 'email.send') {
     const to = (payload['to'] as string[] | undefined) ?? [];
@@ -452,10 +511,21 @@ function ActionPreview({
         <p className="text-[color:var(--color-muted-foreground)]">
           to: {to.join(', ')}
         </p>
-        <p className="font-semibold">{s(payload, 'subject')}</p>
-        <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
-          {s(payload, 'body')}
-        </pre>
+        <EditableField
+          label="Subject"
+          value={s(payload, 'subject')}
+          editable={editable}
+          onSave={(v) => onEdit('subject', v)}
+          variant="single-line"
+          renderClassName="font-semibold"
+        />
+        <EditableField
+          label="Body"
+          value={s(payload, 'body')}
+          editable={editable}
+          onSave={(v) => onEdit('body', v)}
+          variant="multi-line"
+        />
       </div>
     );
   }
@@ -465,9 +535,13 @@ function ActionPreview({
         <p className="text-[color:var(--color-muted-foreground)]">
           to: {s(payload, 'to')}
         </p>
-        <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
-          {s(payload, 'body')}
-        </pre>
+        <EditableField
+          label="Message"
+          value={s(payload, 'body')}
+          editable={editable}
+          onSave={(v) => onEdit('body', v)}
+          variant="multi-line"
+        />
       </div>
     );
   }
@@ -499,21 +573,23 @@ function ActionPreview({
             </span>
           )}
         </p>
-        {s(payload, 'goalHint') && (
-          <p>
-            <span className="text-[color:var(--color-muted-foreground)]">Goal:</span>{' '}
-            {s(payload, 'goalHint')}
-          </p>
-        )}
-        {aiMode && s(payload, 'aiInstructions') && (
-          <details className="text-xs">
-            <summary className="cursor-pointer text-[color:var(--color-muted-foreground)]">
-              AI instructions
-            </summary>
-            <pre className="mt-1 whitespace-pre-wrap break-words font-sans">
-              {s(payload, 'aiInstructions')}
-            </pre>
-          </details>
+        <EditableField
+          label="Goal"
+          value={s(payload, 'goalHint')}
+          editable={editable}
+          onSave={(v) => onEdit('goalHint', v)}
+          variant="single-line"
+          hideWhenEmpty
+        />
+        {aiMode && (
+          <EditableField
+            label="AI instructions"
+            value={s(payload, 'aiInstructions')}
+            editable={editable}
+            onSave={(v) => onEdit('aiInstructions', v)}
+            variant="multi-line"
+            collapsedByDefault
+          />
         )}
       </div>
     );
@@ -845,5 +921,186 @@ function OutreachEvidencePanel({ payload }: { payload: Record<string, unknown> }
         )}
       </div>
     </details>
+  );
+}
+
+/**
+ * Inline editable field on an approval preview. Click the pencil to
+ * swap the rendered value for a textarea + Save / Cancel; on save,
+ * `onSave(value)` POSTs to `/api/approvals/[id]/edit` and the parent
+ * card mirrors the new payload locally so the rendered preview
+ * matches what's in the DB.
+ *
+ * Variants:
+ *   - `single-line` — short fields (subject, goalHint), uses an
+ *     <input> in edit mode
+ *   - `multi-line` — long fields (body, aiInstructions), uses a
+ *     <textarea> sized to content
+ *
+ * `editable={false}` hides the pencil entirely — used when the
+ * approval is already approved / rejected / applied so post-decision
+ * rewrites don't silently happen.
+ *
+ * `collapsedByDefault` wraps the whole field in <details> so long
+ * AI-instruction blobs don't dominate the card. Pencil sits in the
+ * summary row; clicking pencil expands and switches to edit mode in
+ * one motion.
+ */
+function EditableField({
+  label,
+  value,
+  editable,
+  onSave,
+  variant,
+  hideWhenEmpty,
+  renderClassName,
+  collapsedByDefault,
+}: {
+  label: string;
+  value: string;
+  editable: boolean;
+  onSave: (
+    v: string,
+  ) => Promise<{ ok: true } | { ok: false; message: string }>;
+  variant: 'single-line' | 'multi-line';
+  hideWhenEmpty?: boolean;
+  renderClassName?: string;
+  collapsedByDefault?: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset draft when the underlying value changes from outside (e.g.
+  // hydrate fetch resolved with a more recent revision than the
+  // streamed-in initial payload).
+  useEffect(() => {
+    if (!editing) setDraft(value);
+  }, [value, editing]);
+
+  if (!value && hideWhenEmpty && !editing) return null;
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    const result = await onSave(draft);
+    setSaving(false);
+    if (result.ok) {
+      setEditing(false);
+    } else {
+      setError(result.message);
+    }
+  };
+
+  const handleCancel = () => {
+    setDraft(value);
+    setEditing(false);
+    setError(null);
+  };
+
+  if (editing) {
+    return (
+      <div className="space-y-1.5">
+        <p className="text-[10px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          {label}
+        </p>
+        {variant === 'single-line' ? (
+          <input
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            disabled={saving}
+            className="w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-sm focus:border-[color:var(--color-foreground)] focus:outline-none disabled:opacity-50"
+          />
+        ) : (
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            disabled={saving}
+            rows={Math.max(3, Math.min(20, draft.split('\n').length + 1))}
+            className="w-full resize-y rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1.5 font-sans text-sm leading-relaxed focus:border-[color:var(--color-foreground)] focus:outline-none disabled:opacity-50"
+          />
+        )}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || draft === value}
+            className="rounded-[var(--radius-sm)] bg-[color:var(--color-foreground)] px-2 py-0.5 text-xs font-medium text-[color:var(--color-background)] disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            onClick={handleCancel}
+            disabled={saving}
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-xs disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          {error && <span className="text-xs text-red-700">{error}</span>}
+        </div>
+      </div>
+    );
+  }
+
+  const pencil = editable && (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      title={`Edit ${label.toLowerCase()}`}
+      aria-label={`Edit ${label.toLowerCase()}`}
+      className="text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+    >
+      {/* Inline pencil glyph keeps the bundle small (no icon-library
+       *   dep). Unicode pencil PNG-equivalent is U+270E. */}
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
+        <path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25a1.75 1.75 0 0 1 .445-.758l8.61-8.61Z" />
+      </svg>
+    </button>
+  );
+
+  if (collapsedByDefault) {
+    return (
+      <details className="text-xs">
+        <summary className="flex cursor-pointer items-center gap-2 text-[color:var(--color-muted-foreground)]">
+          <span>{label}</span>
+          {pencil}
+        </summary>
+        <pre className={`mt-1 whitespace-pre-wrap break-words font-sans ${renderClassName ?? ''}`}>
+          {value}
+        </pre>
+      </details>
+    );
+  }
+
+  if (variant === 'single-line') {
+    return (
+      <div className="flex items-baseline gap-2">
+        <p className={renderClassName ?? ''}>{value}</p>
+        {pencil}
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-start gap-2">
+      <pre
+        className={`flex-1 whitespace-pre-wrap break-words font-sans text-sm leading-relaxed ${renderClassName ?? ''}`}
+      >
+        {value}
+      </pre>
+      <span className="mt-1 shrink-0">{pencil}</span>
+    </div>
   );
 }

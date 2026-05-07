@@ -6,6 +6,7 @@ import {
   costLedger,
   db,
   events,
+  feedbackEvents,
 } from '@procur/db';
 import { ActionDescriptor, createId, type ActionDescriptorT } from '@procur/ai';
 
@@ -160,6 +161,71 @@ export async function recordApprovalDecision(
   }
 
   return { updated: updated.length > 0, row };
+}
+
+/**
+ * Edit a single field on a pending approval's `proposed_payload` and
+ * record the before/after to `feedback_events` for later fine-tuning
+ * (operator's voice on a given action type — what the model drafted
+ * vs what the operator actually wanted to send).
+ *
+ * Refuses non-pending approvals so a half-fired SMS can't be
+ * silently retconned. The whitelist of editable fields lives client-
+ * side per action type; the server validates that the field is one
+ * of `body / subject / aiInstructions / goalHint` (the four free-
+ * text fields that cover sms / email / call). Other fields are
+ * structural and not editable from the chat preview.
+ */
+export async function editApprovalPayloadField(input: {
+  approvalId: string;
+  field: 'body' | 'subject' | 'aiInstructions' | 'goalHint';
+  value: string;
+  userId: string | null;
+}): Promise<
+  | { ok: true; row: ApprovalListRow }
+  | { ok: false; reason: 'not_found' | 'not_pending' | 'unchanged' }
+> {
+  const existing = await getApproval(input.approvalId);
+  if (!existing) return { ok: false, reason: 'not_found' };
+  if (existing.decision !== 'pending') {
+    return { ok: false, reason: 'not_pending' };
+  }
+  const before = existing.proposedPayload[input.field];
+  if (typeof before === 'string' && before === input.value) {
+    return { ok: false, reason: 'unchanged' };
+  }
+  const nextPayload = {
+    ...existing.proposedPayload,
+    [input.field]: input.value,
+  };
+  await db
+    .update(approvals)
+    .set({ proposedPayload: nextPayload })
+    .where(
+      and(
+        eq(approvals.id, input.approvalId),
+        eq(approvals.decision, 'pending'),
+      ),
+    );
+  // Training signal: record the operator's revision so we can later
+  // fine-tune the model on (action_type + draft → preferred phrasing).
+  // sentiment is left null — the brief's enum doesn't have an "edit"
+  // value; the kind alone is enough to query.
+  await db.insert(feedbackEvents).values({
+    userId: input.userId ?? null,
+    feedbackKind: 'communication_edit',
+    targetType: 'approval',
+    targetId: input.approvalId,
+    payload: {
+      action_type: existing.actionType,
+      field: input.field,
+      before: typeof before === 'string' ? before : null,
+      after: input.value,
+    },
+  });
+  const updated = await getApproval(input.approvalId);
+  if (!updated) return { ok: false, reason: 'not_found' };
+  return { ok: true, row: updated };
 }
 
 /**
