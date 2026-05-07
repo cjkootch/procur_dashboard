@@ -28,3 +28,12 @@ export {
   type DailyQuest,
   type QuestHistoryDay,
 } from './quests';
+export {
+  ACHIEVEMENT_REGISTRY,
+  evaluateAchievements,
+  listAchievementsForUser,
+  type AchievementDefinition,
+  type AchievementCategory,
+  type AchievementWithState,
+  type EvaluateSummary,
+} from './achievements';
