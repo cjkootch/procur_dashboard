@@ -17,16 +17,38 @@ export type NotificationTypeKey =
   | 'pursuit.stage_moved'
   | 'pursuit.gate_review_decided'
   | 'proposal.comment_mentioned'
-  | 'digest.match_queue';
+  | 'digest.match_queue'
+  | 'comm.email_received'
+  | 'comm.sms_received'
+  | 'comm.whatsapp_received';
 
 export type NotificationTypeMeta = {
   key: NotificationTypeKey;
   label: string;
   description: string;
-  group: 'capture' | 'proposal' | 'digest';
+  group: 'capture' | 'proposal' | 'digest' | 'comms';
 };
 
 export const NOTIFICATION_TYPES: NotificationTypeMeta[] = [
+  {
+    key: 'comm.email_received',
+    label: 'Inbound email',
+    description:
+      'When a reply or new email lands in /inbox. Toast in the bottom-left + bell badge.',
+    group: 'comms',
+  },
+  {
+    key: 'comm.sms_received',
+    label: 'Inbound SMS',
+    description: 'When a contact replies via SMS. Lands in /messages.',
+    group: 'comms',
+  },
+  {
+    key: 'comm.whatsapp_received',
+    label: 'Inbound WhatsApp',
+    description: 'When a contact replies via WhatsApp. Lands in /messages.',
+    group: 'comms',
+  },
   {
     key: 'pursuit.stage_moved',
     label: 'Pursuit stage changes',

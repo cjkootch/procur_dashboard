@@ -1,8 +1,9 @@
 import 'server-only';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm';
 import {
   db,
   notifications,
+  users,
   type NewNotification,
   type Notification,
 } from '@procur/db';
@@ -52,6 +53,101 @@ export async function insertNotificationsForUsers(
   } catch (err) {
     console.error('[notifications] bulk insert failed', err);
   }
+}
+
+/**
+ * Fan-out helper for events that don't carry a specific recipient —
+ * inbound email/SMS arrives at the company, not at a user. Writes one
+ * notification row per active operator, honoring per-user mute
+ * preferences.
+ *
+ * Single-tenant deployment: this currently means "every user with a
+ * companyId set". When per-tenant scoping matters (multi-company
+ * deployment), narrow the SELECT to the inferred company.
+ */
+export async function notifyAllOperators(input: {
+  type: string;
+  title: string;
+  body?: string | null;
+  link?: string | null;
+  entityType?: string | null;
+  entityId?: string | null;
+}): Promise<void> {
+  try {
+    const operators = await db
+      .select({ id: users.id, companyId: users.companyId })
+      .from(users)
+      .where(isNotNull(users.companyId));
+    if (operators.length === 0) return;
+
+    const enabled = await filterRecipientsByPreference(
+      operators.map((u) => u.id),
+      input.type,
+    );
+    const enabledSet = new Set(enabled);
+    const rows: NewNotification[] = operators
+      .filter((u) => enabledSet.has(u.id) && u.companyId)
+      .map((u) => ({
+        userId: u.id,
+        companyId: u.companyId as string,
+        type: input.type,
+        title: input.title,
+        body: input.body ?? null,
+        link: input.link ?? null,
+        entityType: input.entityType ?? null,
+        entityId: (input.entityId as string | null) ?? null,
+      }));
+    if (rows.length === 0) return;
+    await db.insert(notifications).values(rows);
+  } catch (err) {
+    console.error('[notifications] fan-out failed', err);
+  }
+}
+
+/**
+ * Cheap polling endpoint payload — current unread count + latest
+ * createdAt. The bell client component compares the latest createdAt
+ * to its previous tick to decide whether to flash a toast.
+ */
+export async function getNotificationPollState(
+  userId: string,
+): Promise<{ unread: number; latestCreatedAt: string | null }> {
+  const [counts] = await db
+    .select({
+      unread: sql<number>`count(*) FILTER (WHERE ${notifications.readAt} IS NULL)::int`,
+      latest: sql<string | null>`MAX(${notifications.createdAt})::text`,
+    })
+    .from(notifications)
+    .where(eq(notifications.userId, userId));
+  return {
+    unread: counts?.unread ?? 0,
+    latestCreatedAt: counts?.latest ?? null,
+  };
+}
+
+/**
+ * Notifications created strictly after the given ISO timestamp — used
+ * by the bell's poll loop to surface a toast for "new since last tick"
+ * rather than every unread row.
+ */
+export async function listNotificationsSince(
+  userId: string,
+  sinceIso: string,
+  limit = 5,
+): Promise<Notification[]> {
+  const since = new Date(sinceIso);
+  if (Number.isNaN(since.getTime())) return [];
+  return db
+    .select()
+    .from(notifications)
+    .where(
+      and(
+        eq(notifications.userId, userId),
+        gt(notifications.createdAt, since),
+      ),
+    )
+    .orderBy(desc(notifications.createdAt))
+    .limit(limit);
 }
 
 /** Unread count for the bell badge. Hot path — runs on every page render. */

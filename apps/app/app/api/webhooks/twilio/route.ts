@@ -9,6 +9,7 @@ import {
 } from '@procur/db';
 import { createId, emitOutreachOutcome } from '@procur/ai';
 import { recordWebhookReceipt } from '../../../../lib/webhook-events';
+import { notifyAllOperators } from '../../../../lib/notification-queries';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -320,6 +321,15 @@ async function handleInboundMessage(
       });
     }
   }
+
+  // Operator notification — bell + (client-side) toast. Per-channel
+  // type so the recipient can mute SMS without muting email.
+  await notifyAllOperators({
+    type: isWhatsapp ? 'comm.whatsapp_received' : 'comm.sms_received',
+    title: `New ${isWhatsapp ? 'WhatsApp' : 'SMS'} from ${fromPhone || 'unknown'}`,
+    body: body.slice(0, 240) || null,
+    link: fromPhone ? `/messages/${encodeURIComponent(fromPhone)}` : '/messages',
+  });
 }
 
 // Twilio's GET preflight on the URL — return a 200 so a basic health

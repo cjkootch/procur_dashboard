@@ -77,6 +77,7 @@ export default async function NotificationPreferencesPage() {
 }
 
 const GROUP_LABEL: Record<NotificationTypeMeta['group'], string> = {
+  comms: 'Inbound communications',
   capture: 'Capture',
   proposal: 'Proposal',
   digest: 'Email digests',
