@@ -173,7 +173,11 @@ export async function listMessagingConversations(
       channel,
       contactId: contact?.id ?? null,
       contactName: contact?.fullName ?? null,
-      lastMessageAt: r.last_at,
+      // Neon HTTP returns timestamps as ISO strings, not Date — the
+      // typed `db.execute<{last_at: Date}>` is a TypeScript-only
+      // assertion. The page's render path calls `.toISOString()` on
+      // this value, which throws on a string. Coerce defensively.
+      lastMessageAt: r.last_at instanceof Date ? r.last_at : new Date(r.last_at as unknown as string),
       lastMessagePreview: r.last_preview ?? null,
       lastDirection: (r.last_direction as 'inbound' | 'outbound') ?? 'inbound',
       totalMessages: Number(r.total_messages ?? 0),

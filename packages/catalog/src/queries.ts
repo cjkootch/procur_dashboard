@@ -13290,12 +13290,24 @@ export async function getFrictionQueueForUser(
     description: String(r.description ?? ''),
     status: (String(r.status ?? 'logged') as FrictionQueueRow['status']),
     resolutionNote: r.resolution_note == null ? null : String(r.resolution_note),
-    resolvedAt:
-      r.resolved_at instanceof Date ? r.resolved_at.toISOString() : (r.resolved_at as string | null),
+    // Neon HTTP returns timestamps as ISO strings, not Date objects —
+    // earlier code did `(r.logged_at as Date).toISOString()` which is
+    // a type cast, not a conversion. At runtime that throws when the
+    // value is a string. Coerce defensively.
+    resolvedAt: r.resolved_at == null ? null : toIso(r.resolved_at),
     relatedPrUrl: r.related_pr_url == null ? null : String(r.related_pr_url),
     page: r.page == null ? null : String(r.page),
-    loggedAt: (r.logged_at as Date).toISOString(),
+    loggedAt: toIso(r.logged_at),
   }));
+}
+
+function toIso(value: unknown): string {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'string') {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? value : d.toISOString();
+  }
+  return new Date().toISOString();
 }
 
 export type FrictionStatusUpdate = {

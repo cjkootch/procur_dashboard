@@ -80,9 +80,17 @@ export function FrictionButton() {
         onClick={() => setOpen(true)}
         title="Tell us what's not working  [? or Ctrl+/]"
         aria-label="Log friction"
-        className="fixed bottom-20 right-4 z-40 rounded-full bg-[color:var(--color-foreground)] px-3 py-2 text-xs font-medium text-[color:var(--color-background)] shadow-lg hover:opacity-90"
+        // Sized to match the AssistantDrawer's Ask launcher (px-4 py-2.5
+        // text-sm) so the two stacked launchers feel like a paired
+        // affordance instead of two unrelated chips. `transition` +
+        // `-translate-y-px` give a subtle hover-lift; the dark fill
+        // distinguishes it from Ask's light pill below.
+        className="fixed bottom-20 right-4 z-40 flex items-center gap-2 rounded-full bg-[color:var(--color-foreground)] px-4 py-2.5 text-sm font-medium text-[color:var(--color-background)] shadow-lg transition hover:-translate-y-px hover:shadow-xl"
       >
-        ❓ Stuck?
+        <span className="text-rose-400" aria-hidden>
+          ?
+        </span>
+        <span>Stuck?</span>
       </button>
 
       {confirmation && (
