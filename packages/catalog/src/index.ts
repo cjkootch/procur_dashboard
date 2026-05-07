@@ -21,6 +21,7 @@ export * from './brief';
 export * from './calls';
 export * from './messaging';
 export * from './communication-templates';
+export * from './bge-embeddings';
 export {
   buildCatalogTools,
   buildFilterUrl,

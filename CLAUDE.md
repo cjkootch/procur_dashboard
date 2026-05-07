@@ -212,24 +212,32 @@ B (GraphSAGE training) + D (attribute prediction + mention
 resolution) shipped. C (two-tower) deferred per brief §12.2 —
 gated on ≥10K match-outcome labels.
 
-**Two distinct embedding spaces** (separate tables, never mix
-similarity calcs):
+**Three distinct embedding spaces** (separate tables, never mix
+similarity calcs across them):
 - `entity_embeddings` (vector(128)) — graph-structural, populated
   by GraphSAGE training in `services/ml-training/` (Python project)
-- `entity_text_embeddings` (vector(1536)) — text similarity for
-  mention resolution, populated by `seed-entity-text-embeddings`
-  via OpenAI `text-embedding-3-small`
+- `entity_text_embeddings` (vector(1536)) — English-leaning text
+  similarity for mention resolution, populated by
+  `seed-entity-text-embeddings` via OpenAI `text-embedding-3-small`
+- `bge_text_embeddings` (vector(1024)) — multilingual (100+ lang)
+  retrieval, populated by BGE-M3 (BAAI, MIT). Polymorphic owner
+  shape `(owner_type, owner_id)` — covers entity / web_summary /
+  message / document / loi / icpo / assay / deal_note. Migration
+  0086.
 
 `signal_embeddings` (vector(128)) for signal-side similarity.
 
 Catalog query helpers: `findSimilarEntities`, `findSimilarSignals`,
-`findEntitiesByText`, `resolveEntityMention`, `predictEntityAttributes`.
+`findEntitiesByText`, `resolveEntityMention`,
+`predictEntityAttributes`, `findByBgeText`, `upsertBgeEmbedding`.
 `getEntityWebIntelligenceWithOverlay` falls back to fuzzy-name
 match when the supplier.id is an external_suppliers UUID without
 a direct embedding (Codex P2 follow-up on #428).
 
 Python ML pipeline lives outside pnpm/turbo at
-`services/ml-training/` — own pyproject.toml + uv venv. Workflow:
+`services/ml-training/` — own pyproject.toml + uv venv.
+
+GraphSAGE workflow:
 ```sh
 pnpm extract-graph --output graph.json
 python -m procur_ml.train --graph graph.json   # trains + saves checkpoints/best/
@@ -237,6 +245,21 @@ python -m procur_ml.upsert --embeddings embeddings.json
 # inductive (single new entity, sub-second on CPU):
 pnpm extract-graph --single-entity=<slug> --output single.json
 python -m procur_ml.embed_entity --graph single.json --upsert
+```
+
+BGE-M3 workflow (multilingual text embeddings):
+```sh
+# install the optional [bge] extra (FlagEmbedding + transformers)
+uv pip install -e .[bge]
+# extract candidate texts: known_entities (name + aliases + combined)
+# + entity_web_summaries (per section_kind)
+pnpm extract-bge-texts --output bge-texts.json
+# embed with BGE-M3 (loads BAAI/bge-m3, emits 1024-dim dense vectors)
+python -m procur_ml.bge_m3 embed --input bge-texts.json --output bge-embeddings.json
+# write back
+pnpm upsert-bge-embeddings --input bge-embeddings.json
+# query a single string (prints 1024-dim JSON to stdout)
+python -m procur_ml.bge_m3 query --text "refinería de Cartagena"
 ```
 
 ## Website intelligence (PR #428)
@@ -396,24 +419,32 @@ B (GraphSAGE training) + D (attribute prediction + mention
 resolution) shipped. C (two-tower) deferred per brief §12.2 —
 gated on ≥10K match-outcome labels.
 
-**Two distinct embedding spaces** (separate tables, never mix
-similarity calcs):
+**Three distinct embedding spaces** (separate tables, never mix
+similarity calcs across them):
 - `entity_embeddings` (vector(128)) — graph-structural, populated
   by GraphSAGE training in `services/ml-training/` (Python project)
-- `entity_text_embeddings` (vector(1536)) — text similarity for
-  mention resolution, populated by `seed-entity-text-embeddings`
-  via OpenAI `text-embedding-3-small`
+- `entity_text_embeddings` (vector(1536)) — English-leaning text
+  similarity for mention resolution, populated by
+  `seed-entity-text-embeddings` via OpenAI `text-embedding-3-small`
+- `bge_text_embeddings` (vector(1024)) — multilingual (100+ lang)
+  retrieval, populated by BGE-M3 (BAAI, MIT). Polymorphic owner
+  shape `(owner_type, owner_id)` — covers entity / web_summary /
+  message / document / loi / icpo / assay / deal_note. Migration
+  0086.
 
 `signal_embeddings` (vector(128)) for signal-side similarity.
 
 Catalog query helpers: `findSimilarEntities`, `findSimilarSignals`,
-`findEntitiesByText`, `resolveEntityMention`, `predictEntityAttributes`.
+`findEntitiesByText`, `resolveEntityMention`,
+`predictEntityAttributes`, `findByBgeText`, `upsertBgeEmbedding`.
 `getEntityWebIntelligenceWithOverlay` falls back to fuzzy-name
 match when the supplier.id is an external_suppliers UUID without
 a direct embedding (Codex P2 follow-up on #428).
 
 Python ML pipeline lives outside pnpm/turbo at
-`services/ml-training/` — own pyproject.toml + uv venv. Workflow:
+`services/ml-training/` — own pyproject.toml + uv venv.
+
+GraphSAGE workflow:
 ```sh
 pnpm extract-graph --output graph.json
 python -m procur_ml.train --graph graph.json   # trains + saves checkpoints/best/
@@ -421,6 +452,21 @@ python -m procur_ml.upsert --embeddings embeddings.json
 # inductive (single new entity, sub-second on CPU):
 pnpm extract-graph --single-entity=<slug> --output single.json
 python -m procur_ml.embed_entity --graph single.json --upsert
+```
+
+BGE-M3 workflow (multilingual text embeddings):
+```sh
+# install the optional [bge] extra (FlagEmbedding + transformers)
+uv pip install -e .[bge]
+# extract candidate texts: known_entities (name + aliases + combined)
+# + entity_web_summaries (per section_kind)
+pnpm extract-bge-texts --output bge-texts.json
+# embed with BGE-M3 (loads BAAI/bge-m3, emits 1024-dim dense vectors)
+python -m procur_ml.bge_m3 embed --input bge-texts.json --output bge-embeddings.json
+# write back
+pnpm upsert-bge-embeddings --input bge-embeddings.json
+# query a single string (prints 1024-dim JSON to stdout)
+python -m procur_ml.bge_m3 query --text "refinería de Cartagena"
 ```
 
 ## Website intelligence (PR #428)
