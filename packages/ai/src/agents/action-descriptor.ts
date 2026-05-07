@@ -844,6 +844,28 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
       .max(20),
     rationale: z.string().min(1).max(1000),
   }),
+  // Custom missions proposed via the chat assistant. Stages are
+  // operator-defined; each is a manual checklist item that earns
+  // its own xpReward when the operator marks it done. Tier T1 —
+  // missions are scoped to the user, no external side-effects.
+  z.object({
+    kind: z.literal('mission.create'),
+    tier: z.literal(ApprovalTier.T1),
+    title: z.string().min(1).max(200),
+    description: z.string().max(1000).optional(),
+    stages: z
+      .array(
+        z.object({
+          key: z.string().min(1).max(60),
+          title: z.string().min(1).max(200),
+          description: z.string().max(500).optional(),
+          xpReward: z.number().int().min(5).max(500),
+        }),
+      )
+      .min(2)
+      .max(8),
+    rationale: z.string().min(1).max(1000),
+  }),
 ]);
 
 export type ActionDescriptorT = z.infer<typeof ActionDescriptor>;

@@ -308,3 +308,12 @@ export {
   type ArchiveCommunicationTemplatePayload,
   type SaveCommunicationTemplatePayload,
 } from './executors/communication-templates';
+// Mission executor — gamification slice 4. Custom missions
+// proposed via the chat assistant. Stages are operator-defined
+// manual checklists that earn XP per stage on "Mark done".
+export {
+  applyCreateMission,
+  parseCreateMissionPayload,
+  type CreateMissionPayload,
+  type CreateMissionResult,
+} from './executors/missions';

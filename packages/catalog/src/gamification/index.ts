@@ -37,3 +37,16 @@ export {
   type AchievementWithState,
   type EvaluateSummary,
 } from './achievements';
+export {
+  MISSION_REGISTRY,
+  spawnDealLifecycleMissions,
+  evaluateAutomatedMissions,
+  createCustomMission,
+  completeManualMissionStage,
+  abandonMission,
+  listActiveMissions,
+  type MissionView,
+  type MissionStageView,
+  type RegisteredMission,
+  type RegisteredStage,
+} from './missions';
