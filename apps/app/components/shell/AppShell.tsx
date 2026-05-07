@@ -40,6 +40,7 @@ const NAV: SidebarNavGroup[] = [
       { href: '/approvals', label: 'Approvals', iconName: 'check-shield' },
       { href: '/signals', label: 'Signals', iconName: 'lightning' },
       { href: '/inbox', label: 'Inbox', iconName: 'inbox' },
+      { href: '/messages', label: 'Messages', iconName: 'chat-bubble' },
       { href: '/suppliers/match-queue', label: 'Match queue', iconName: 'lightning' },
       { href: '/follow-ups', label: 'Follow-ups', iconName: 'clock' },
       { href: '/pinned', label: 'Pinned', iconName: 'clock' },
