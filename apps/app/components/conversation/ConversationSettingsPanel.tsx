@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import type { ConversationSettings } from '@procur/db';
 
 /**
@@ -12,10 +12,16 @@ import type { ConversationSettings } from '@procur/db';
  * runtime reads it yet (Slices 2 + 3 wire the inbound webhook →
  * agent path).
  *
- * Save model: every field-level change PATCHes immediately. No
- * "save" button — settings are operator config, not a draft to
- * commit. Optimistic update on the client; server is source of
- * truth on conflict (next page load).
+ * Save model:
+ *   - Toggles, selects, and number inputs → auto-save on change
+ *     (single-action fields, no rapid input).
+ *   - Text inputs / textareas → save on blur only. Live text edits
+ *     hold local draft state; we DON'T fire a PATCH per keystroke
+ *     (each PATCH re-renders the panel, which lost focus mid-typing
+ *     in the original implementation).
+ *   - On PATCH success we DO NOT overwrite local state from the
+ *     server snapshot. The optimistic value is good enough; the
+ *     server response only matters for error rollback.
  */
 export function ConversationSettingsPanel({
   initialSettings,
@@ -51,11 +57,16 @@ export function ConversationSettingsPanel({
           };
           throw new Error(body.error ?? `HTTP ${res.status}`);
         }
-        const body = (await res.json()) as { settings: ConversationSettings };
-        setSettings(body.settings);
+        // Intentionally NOT calling setSettings(body.settings) here.
+        // Re-rendering with the server snapshot during in-flight
+        // edits clobbers the user's typed input. Optimistic value is
+        // already in state; server response only matters on error.
       } catch (err) {
         setError(err instanceof Error ? err.message : 'save failed');
-        // Roll back the optimistic update.
+        // Roll back the offending fields. We don't have the
+        // pre-patch values here so reset the whole row to the most
+        // recent server snapshot we have (the initial). Fine for
+        // recovery — operator can re-edit.
         setSettings(initialSettings);
       }
     });
@@ -153,7 +164,6 @@ export function ConversationSettingsPanel({
           hint="Extra instructions appended to the agent's system prompt for this convo only."
           value={settings.customPrompt ?? ''}
           onChange={(v) => patch({ customPrompt: v || null })}
-          disabled={pending}
           rows={4}
         />
       </Section>
@@ -217,7 +227,6 @@ export function ConversationSettingsPanel({
           onChange={(min, max) =>
             patch({ responseDelayMinSec: min, responseDelayMaxSec: max })
           }
-          disabled={pending}
         />
         {channel !== 'email' && (
           <NumberPair
@@ -232,7 +241,6 @@ export function ConversationSettingsPanel({
                 quietHoursEndLocal: max,
               })
             }
-            disabled={pending}
           />
         )}
       </Section>
@@ -244,20 +252,17 @@ export function ConversationSettingsPanel({
           hint="Force handoff after this many AI turns."
           value={settings.maxTurns}
           onChange={(v) => patch({ maxTurns: v })}
-          disabled={pending}
         />
         <NumberInput
           label="Max cost (USD ¢)"
           hint="Forced cap on this conversation's LLM spend."
           value={settings.maxCostUsdCents}
           onChange={(v) => patch({ maxCostUsdCents: v })}
-          disabled={pending}
         />
         <NumberInput
           label="Max duration (hours)"
           value={settings.maxDurationHours}
           onChange={(v) => patch({ maxDurationHours: v })}
-          disabled={pending}
         />
       </Section>
 
@@ -401,14 +406,19 @@ function NumberInput({
   hint,
   value,
   onChange,
-  disabled,
 }: {
   label: string;
   hint?: string;
   value: number;
   onChange: (v: number) => void;
-  disabled?: boolean;
 }) {
+  // Same blur-commit pattern as Textarea — typing per-keystroke
+  // PATCH would also reset focus on the number input.
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
   return (
     <label className="flex flex-col gap-1">
       <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
@@ -416,13 +426,13 @@ function NumberInput({
       </span>
       <input
         type="number"
-        value={value}
-        disabled={disabled}
-        onChange={(e) => {
-          const next = Number(e.target.value);
-          if (!Number.isNaN(next)) onChange(next);
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          const next = Number(draft);
+          if (!Number.isNaN(next) && next !== value) onChange(next);
         }}
-        className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-sm focus:border-[color:var(--color-foreground)] focus:outline-none disabled:opacity-40"
+        className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-sm focus:border-[color:var(--color-foreground)] focus:outline-none"
       />
       {hint && (
         <span className="text-[10px] text-[color:var(--color-muted-foreground)]">
@@ -440,7 +450,6 @@ function NumberPair({
   minValue,
   maxValue,
   onChange,
-  disabled,
 }: {
   label: string;
   minLabel: string;
@@ -448,8 +457,26 @@ function NumberPair({
   minValue: number;
   maxValue: number;
   onChange: (min: number, max: number) => void;
-  disabled?: boolean;
 }) {
+  // Blur-commit on both halves; live drafts so typing doesn't fight
+  // a parent re-render.
+  const [minDraft, setMinDraft] = useState(String(minValue));
+  const [maxDraft, setMaxDraft] = useState(String(maxValue));
+  useEffect(() => {
+    setMinDraft(String(minValue));
+  }, [minValue]);
+  useEffect(() => {
+    setMaxDraft(String(maxValue));
+  }, [maxValue]);
+
+  const commit = (rawMin: string, rawMax: string) => {
+    const nextMin = Number(rawMin);
+    const nextMax = Number(rawMax);
+    if (Number.isNaN(nextMin) || Number.isNaN(nextMax)) return;
+    if (nextMin === minValue && nextMax === maxValue) return;
+    onChange(nextMin, nextMax);
+  };
+
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
@@ -461,26 +488,20 @@ function NumberPair({
         </span>
         <input
           type="number"
-          value={minValue}
-          disabled={disabled}
-          onChange={(e) => {
-            const next = Number(e.target.value);
-            if (!Number.isNaN(next)) onChange(next, maxValue);
-          }}
-          className="w-16 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 disabled:opacity-40"
+          value={minDraft}
+          onChange={(e) => setMinDraft(e.target.value)}
+          onBlur={() => commit(minDraft, maxDraft)}
+          className="w-16 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
         />
         <span className="text-[10px] text-[color:var(--color-muted-foreground)]">
           {maxLabel}
         </span>
         <input
           type="number"
-          value={maxValue}
-          disabled={disabled}
-          onChange={(e) => {
-            const next = Number(e.target.value);
-            if (!Number.isNaN(next)) onChange(minValue, next);
-          }}
-          className="w-16 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 disabled:opacity-40"
+          value={maxDraft}
+          onChange={(e) => setMaxDraft(e.target.value)}
+          onBlur={() => commit(minDraft, maxDraft)}
+          className="w-16 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
         />
       </div>
     </div>
@@ -492,28 +513,37 @@ function Textarea({
   hint,
   value,
   onChange,
-  disabled,
   rows = 3,
 }: {
   label: string;
   hint?: string;
   value: string;
   onChange: (v: string) => void;
-  disabled?: boolean;
   rows?: number;
 }) {
+  // Local draft holds the typing-in-progress text. We only call
+  // `onChange` (which fires PATCH) on blur — typing per-keystroke
+  // would PATCH on every key, re-render the parent, and lose focus.
+  // Sync from the prop only when the prop changes from outside
+  // (e.g. operator switches to a different conversation).
+  const [draft, setDraft] = useState(value);
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
   return (
     <label className="flex flex-col gap-1">
       <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
         {label}
       </span>
       <textarea
-        value={value}
+        value={draft}
         rows={rows}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={(e) => onChange(e.target.value)}
-        className="resize-y rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-sm focus:border-[color:var(--color-foreground)] focus:outline-none disabled:opacity-40"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          if (draft !== value) onChange(draft);
+        }}
+        className="resize-y rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-sm focus:border-[color:var(--color-foreground)] focus:outline-none"
       />
       {hint && (
         <span className="text-[10px] text-[color:var(--color-muted-foreground)]">
