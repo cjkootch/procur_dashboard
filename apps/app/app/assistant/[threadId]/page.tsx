@@ -35,14 +35,8 @@ export default async function AssistantThreadPage({ params, searchParams }: Prop
   const pageContext = parsePageContext(ctxKind, ctxId);
 
   return (
-    <div className="flex h-[calc(100vh-0px)]">
+    <div className="flex h-full">
       <aside className="w-64 shrink-0 overflow-y-auto border-r border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-3">
-        <Link
-          href="/"
-          className="mb-3 inline-flex items-center gap-1 text-xs text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
-        >
-          ← Back to app
-        </Link>
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-medium">Conversations</div>
           <Link
