@@ -48,6 +48,7 @@ const NAV: SidebarNavGroup[] = [
       { href: '/follow-ups', label: 'Follow-ups', iconName: 'clock' },
       { href: '/pinned', label: 'Pinned', iconName: 'clock' },
       { href: '/alerts', label: 'Alerts', iconName: 'bell' },
+      { href: '/quests', label: 'Quests', iconName: 'sparkles' },
     ],
   },
   // Pipeline — active work. Leads + Deals are the new vex-execution

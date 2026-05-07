@@ -13,6 +13,7 @@ import {
 } from '@procur/catalog';
 import { AppShell } from '../components/shell/AppShell';
 import { CommodityPriceTicker } from '../components/CommodityPriceTicker';
+import { QuestsCard } from '../components/gamification/QuestsCard';
 import { formatDate, formatMoney } from '../lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -181,6 +182,13 @@ export default async function BriefPage() {
         <CommodityPriceTicker />
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {/* Today's quests — gamification slice 2. Spans full width
+              of the grid (md:col-span-2 inside QuestsCard) so the 3
+              quest tiles get room. Sits above the BriefCards because
+              the morning ritual is "what's my plan today?" before
+              "what's the inbox saying?". */}
+          <QuestsCard />
+
           <BriefCard
             title="Match queue"
             count={matchQueueItems.length}
