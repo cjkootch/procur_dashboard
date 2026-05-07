@@ -256,19 +256,35 @@ function MessageCard({
   message: ThreadMessageRow;
   defaultOpen: boolean;
 }) {
-  const directionTone =
-    message.direction === 'inbound'
-      ? 'bg-[color:var(--color-background)]'
-      : 'bg-[color:var(--color-muted)]/20';
+  const isInbound = message.direction === 'inbound';
+  // Inbound = "them"  → left side, neutral surface, blue accent strip.
+  // Outbound = "us"   → right side, tinted surface, emerald accent strip.
+  // Mimics the conversation framing of /messages without going to full
+  // SMS-style bubbles (email bodies are too long to right-align well).
+  const directionStyle = isInbound
+    ? 'border-l-[3px] border-l-blue-400 bg-[color:var(--color-background)] mr-0 lg:mr-12'
+    : 'border-l-[3px] border-l-emerald-400 bg-[color:var(--color-muted)]/20 ml-0 lg:ml-12';
+
+  // Split out quoted reply context (lines starting with "From:" /
+  // "On … wrote:" + everything after) so the signal-to-noise of a
+  // long thread stays high. Operator can expand to see the original.
+  const split = message.bodyText ? splitQuotedReply(message.bodyText) : null;
+
   return (
     <details
       open={defaultOpen}
-      className={`rounded-[var(--radius-lg)] border border-[color:var(--color-border)] ${directionTone}`}
+      className={`overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)] ${directionStyle}`}
     >
       <summary className="cursor-pointer list-none px-4 py-3">
         <div className="flex items-baseline gap-2">
-          <span className="rounded-full bg-[color:var(--color-muted)]/60 px-2 py-0.5 text-[10px] font-mono uppercase">
-            {message.direction}
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-mono uppercase ${
+              isInbound
+                ? 'bg-blue-100 text-blue-900'
+                : 'bg-emerald-100 text-emerald-900'
+            }`}
+          >
+            {isInbound ? '↓ inbound' : '↑ outbound'}
           </span>
           <span className="text-sm font-medium">
             {message.fromEmail ?? '(unknown)'}
@@ -290,16 +306,28 @@ function MessageCard({
         )}
       </summary>
       <div className="border-t border-[color:var(--color-border)] px-4 py-4">
-        {message.bodyText ? (
-          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
-            {message.bodyText}
-          </pre>
+        {split && split.body ? (
+          <>
+            <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
+              {split.body}
+            </pre>
+            {split.quoted && (
+              <details className="mt-3 text-xs">
+                <summary className="cursor-pointer text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]">
+                  Show quoted history
+                </summary>
+                <pre className="mt-2 whitespace-pre-wrap break-words border-l-2 border-[color:var(--color-border)] pl-3 font-sans text-[color:var(--color-muted-foreground)]">
+                  {split.quoted}
+                </pre>
+              </details>
+            )}
+          </>
         ) : message.bodyHtml ? (
           // Multipart/related emails (signature image inline) often
           // ship the webhook payload with HTML only, no plain-text
           // alternative. Strip-tag to text so the body still reads —
-          // good enough for triage. Full-fidelity HTML render is a
-          // future iteration (needs sanitization for safety).
+          // good enough for triage. Full-fidelity HTML render +
+          // inline-attachment resolution is a future iteration.
           <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
             {htmlToPlainText(message.bodyHtml)}
           </pre>
@@ -311,6 +339,35 @@ function MessageCard({
       </div>
     </details>
   );
+}
+
+/**
+ * Split a plain-text email body into the reply portion and the
+ * quoted-history portion. Quoted history typically starts with
+ * `From: …` (Outlook/Gmail forward style) or `On <date> <name> wrote:`
+ * (Gmail reply style). Returning the body alone when no quote
+ * marker is found lets long single-author messages still render
+ * cleanly.
+ */
+function splitQuotedReply(body: string): { body: string; quoted: string | null } {
+  // Order matters — the more specific marker wins.
+  const markers = [
+    /\nFrom: .+(?:\n|$)/,
+    /\nOn .+ wrote:.*?(?:\n|$)/,
+    /\n-----Original Message-----.*?(?:\n|$)/i,
+    /\n_{2,}.*?(?:\n|$)/, // long underscore separator some clients use
+  ];
+  for (const re of markers) {
+    const match = body.match(re);
+    if (match && match.index !== undefined) {
+      const head = body.slice(0, match.index).trim();
+      const tail = body.slice(match.index).trim();
+      if (head.length > 0 && tail.length > 0) {
+        return { body: head, quoted: tail };
+      }
+    }
+  }
+  return { body: body.trim(), quoted: null };
 }
 
 /**
