@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
   approvals,
   assistantThreads,
@@ -14,8 +14,10 @@ import {
   fuelDeals,
   messages,
   organizations,
+  revenueAssumptions,
   threads,
   touchpoints,
+  type RevenueAssumption,
 } from '@procur/db';
 
 /**
@@ -235,6 +237,10 @@ export interface DealRoomContext {
   documents: DealRoomDocument[];
   compliance: DealRoomCompliance;
   activity: DealRoomActivityRow[];
+  /** Revenue Assumption Map rows (the "Counterfactual Deal Simulator").
+   *  Empty when no map has been generated/saved yet — the UI prompts
+   *  the operator to call `generate_assumption_map` from chat. */
+  assumptions: RevenueAssumption[];
 }
 
 /**
@@ -282,6 +288,7 @@ export async function getDealRoomContext(
     threadDealRows,
     assistantRows,
     activityRows,
+    assumptionRows,
   ] = await Promise.all([
     db
       .select()
@@ -356,6 +363,19 @@ export async function getDealRoomContext(
       )
       .orderBy(desc(events.occurredAt))
       .limit(100),
+    db
+      .select()
+      .from(revenueAssumptions)
+      .where(
+        and(
+          eq(revenueAssumptions.subjectType, 'fuel_deal'),
+          eq(revenueAssumptions.subjectId, dealId),
+        ),
+      )
+      .orderBy(
+        asc(revenueAssumptions.status),
+        asc(revenueAssumptions.assumptionType),
+      ),
   ]);
 
   // Collect contact ids from participants.
@@ -520,6 +540,7 @@ export async function getDealRoomContext(
       actorId: e.actorId ?? null,
       metadata: (e.metadata ?? {}) as Record<string, unknown>,
     })),
+    assumptions: assumptionRows,
   };
 }
 

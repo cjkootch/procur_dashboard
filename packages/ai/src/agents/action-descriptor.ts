@@ -523,6 +523,66 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
     targetId: z.string().min(1).max(256),
     rationale: z.string().min(1).max(1000),
   }),
+  /**
+   * `assumption.save_map` — bulk-save a generated Revenue Assumption
+   * Map onto a subject (fuel_deal v1; opportunity / lead / org
+   * follow-ups). T1 because it's metadata only — no outbound side
+   * effect, no party disclosure. Operator approves the whole set
+   * atomically; individual rows can be edited later via
+   * `assumption.record_test`.
+   */
+  z.object({
+    kind: z.literal('assumption.save_map'),
+    tier: z.literal(ApprovalTier.T1),
+    subjectType: z.enum(['fuel_deal', 'opportunity', 'lead', 'organization']),
+    subjectId: z.string().min(1).max(256),
+    generatorVersion: z.string().min(1).max(120),
+    assumptions: z
+      .array(
+        z.object({
+          assumptionType: z.enum([
+            'authority',
+            'availability',
+            'price',
+            'payment',
+            'compliance',
+            'bankability',
+            'logistics',
+            'commercial_protection',
+            'timing',
+            'relationship_access',
+          ]),
+          assumptionText: z.string().min(1).max(1000),
+          confidenceScore: z.number().int().min(0).max(100),
+          fastestTest: z.string().max(1000).optional(),
+          riskIfFalse: z.string().max(1000).optional(),
+          recommendedActionType: z.string().min(1).max(120).optional().nullable(),
+        }),
+      )
+      .min(1)
+      .max(15),
+    rationale: z.string().min(1).max(1000),
+  }),
+  /**
+   * `assumption.record_test` — record a test result on a single
+   * assumption row. The operator says "I asked the buyer about LC
+   * capability and they confirmed SBLC" — this flips the row's
+   * status, sets the result text, optionally bumps confidence, and
+   * stamps tested_at. T1 because it's a metadata write tied to an
+   * audit trail.
+   */
+  z.object({
+    kind: z.literal('assumption.record_test'),
+    tier: z.literal(ApprovalTier.T1),
+    assumptionId: z.string().min(1).max(64),
+    status: z.enum(['untested', 'pending', 'partial', 'confirmed', 'disproven']),
+    result: z.string().min(1).max(2000),
+    confidenceScore: z.number().int().min(0).max(100).optional(),
+    /** Pointers to the records that produced the result — approval
+     *  id, touchpoint id, sanctions screen id, document id, etc. */
+    resultEvidence: z.record(z.string(), z.unknown()).optional(),
+    rationale: z.string().min(1).max(1000),
+  }),
   z.object({
     kind: z.literal('deal.milestone'),
     tier: z.literal(ApprovalTier.T1),

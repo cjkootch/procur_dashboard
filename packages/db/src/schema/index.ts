@@ -105,4 +105,5 @@ export * from './fuel-deal-scenarios';
 export * from './fuel-deal-counterparty-scores';
 export * from './fuel-deal-documents';
 export * from './fuel-deal-market-context';
+export * from './revenue-assumptions';
 export * from './fuel-deal-participants';

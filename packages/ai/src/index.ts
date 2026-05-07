@@ -266,6 +266,16 @@ export {
   parseSanctionsScreenPayload,
   type SanctionsScreenPayload,
 } from './executors/sanctions';
+// Revenue Assumption Map executors (the "Counterfactual Deal Simulator"
+// — Cole's brief). T1 metadata writes; no outbound side effects.
+export {
+  applyRecordAssumptionTest,
+  applySaveAssumptionMap,
+  parseRecordAssumptionTestPayload,
+  parseSaveAssumptionMapPayload,
+  type RecordAssumptionTestPayload,
+  type SaveAssumptionMapPayload,
+} from './executors/revenue-assumptions';
 // Phase 7 — Twilio executors (SMS, WhatsApp, outbound voice)
 export {
   applySmsSend,

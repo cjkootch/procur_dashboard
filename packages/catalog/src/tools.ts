@@ -87,6 +87,7 @@ import {
   recommendCommunicationTargets,
   type RecommendCandidate,
 } from './communication-recommendations';
+import { generateAssumptionMap } from './revenue-assumptions';
 import { insertChatApproval } from './agent-runtime';
 import type { ActionDescriptorT } from '@procur/ai';
 import { SUPPLIER_APPROVAL_STATUSES } from '@procur/db';
@@ -486,6 +487,46 @@ export function buildCatalogTools(): ToolRegistry {
           entitySlug: pack.entity.slug,
           entityName: pack.entity.name,
           ...draft,
+        };
+      },
+    }),
+
+    // ========================================================================
+    // Revenue Assumption Map ("Counterfactual Deal Simulator") read tool.
+    // Generates a fresh assumption map for a subject and returns it for the
+    // operator to review. Save path goes through propose_save_assumption_map
+    // so nothing mutates without an explicit approve.
+    // ========================================================================
+
+    generate_assumption_map: defineTool({
+      name: 'generate_assumption_map',
+      description:
+        "Generate a Revenue Assumption Map for a fuel deal (v1; opportunity / lead / org " +
+        "follow-up). Returns 6-10 typed assumptions across the 10-value taxonomy (authority, " +
+        "availability, price, payment, compliance, bankability, logistics, commercial_protection, " +
+        "timing, relationship_access) with confidence + cheapest test + risk-if-false. " +
+        "READ-ONLY — does NOT save; pass the result to `propose_save_assumption_map` if the " +
+        "operator wants to save it. Confidence scores are operator-facing audit only — never " +
+        "quote them in outbound copy.",
+      kind: 'read',
+      schema: z.object({
+        subjectType: z.enum(['fuel_deal', 'opportunity', 'lead', 'organization']),
+        subjectId: z.string().min(1).max(256),
+      }),
+      handler: async (_ctx, input) => {
+        const result = await generateAssumptionMap({
+          subjectType: input.subjectType,
+          subjectId: input.subjectId,
+        });
+        return {
+          ok: true as const,
+          subjectType: input.subjectType,
+          subjectId: input.subjectId,
+          generatorVersion: result.generatorVersion,
+          fromTemplate: result.fromTemplate,
+          contextSummary: result.contextSummary,
+          assumptionCount: result.assumptions.length,
+          assumptions: result.assumptions,
         };
       },
     }),

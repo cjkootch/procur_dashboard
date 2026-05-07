@@ -36,6 +36,12 @@ import {
   parseSanctionsScreenPayload,
 } from '../executors/sanctions';
 import {
+  applyRecordAssumptionTest,
+  applySaveAssumptionMap,
+  parseRecordAssumptionTestPayload,
+  parseSaveAssumptionMapPayload,
+} from '../executors/revenue-assumptions';
+import {
   applySmsSend,
   applyWhatsAppSend,
   applyWhatsAppSendTemplate,
@@ -284,6 +290,20 @@ export async function dispatchApprovalExecutor(
     const payload = parseDealAttachPayload(row.proposedPayload);
     if (!payload) return;
     await applyDealAttach(row.id, payload);
+    return;
+  }
+
+  // ---- Revenue Assumption Map ---------------------------------------------
+  if (row.actionType === 'assumption.save_map') {
+    const payload = parseSaveAssumptionMapPayload(row.proposedPayload);
+    if (!payload) return;
+    await applySaveAssumptionMap(row.id, payload, reviewerId);
+    return;
+  }
+  if (row.actionType === 'assumption.record_test') {
+    const payload = parseRecordAssumptionTestPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyRecordAssumptionTest(row.id, payload);
     return;
   }
 
