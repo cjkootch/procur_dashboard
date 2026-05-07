@@ -55,7 +55,8 @@ interface ResendInboundEnvelope {
     /** RFC-5322 Message-ID. Resend may put it under headers or top-level. */
     message_id?: string;
     in_reply_to?: string;
-    headers?: Record<string, string>;
+    headers?: ResendHeadersField;
+    references?: string;
     received_at?: string;
   };
 }
@@ -84,27 +85,53 @@ function pickAllEmails(value: string | string[] | undefined): string[] {
 }
 
 /**
- * Case-insensitive header lookup. RFC 5322 says header names are
- * case-insensitive but JS object access is exact-match — different
- * mail relays normalize differently (Resend lowercases on parse;
- * raw MIME preserves whatever the sender shipped). Without this,
- * `headers['In-Reply-To']` silently returns undefined when Resend
- * delivered the key as `in-reply-to`, so threading breaks for
- * Outlook / Exchange senders that always include the header.
+ * Case-insensitive header lookup tolerant of BOTH shapes Resend ships:
+ *
+ *   Array form (what email.delivered / email.sent give us, and what
+ *   GET /emails/receiving/{id} returns for inbound):
+ *     [{ name: 'In-Reply-To', value: '<id@host>' }, ...]
+ *
+ *   Object form (what some legacy webhook payloads use):
+ *     { 'In-Reply-To': '<id@host>', ... }
+ *
+ * RFC 5322 says header names are case-insensitive; both shapes are
+ * compared with toLowerCase(). Returns null when not found OR when the
+ * input itself is null/undefined.
  */
 function pickHeader(
-  headers: Record<string, string> | undefined,
+  headers: ResendHeadersField,
   name: string,
 ): string | null {
-  if (!headers) return null;
+  if (headers == null) return null;
   const lower = name.toLowerCase();
-  for (const [k, v] of Object.entries(headers)) {
-    if (k.toLowerCase() === lower && typeof v === 'string' && v.length > 0) {
-      return v;
+  if (Array.isArray(headers)) {
+    for (const h of headers) {
+      if (h && typeof h === 'object' && typeof h.name === 'string') {
+        if (h.name.toLowerCase() === lower) {
+          return typeof h.value === 'string' && h.value.length > 0
+            ? h.value
+            : null;
+        }
+      }
+    }
+    return null;
+  }
+  if (typeof headers === 'object') {
+    for (const [k, v] of Object.entries(headers)) {
+      if (k.toLowerCase() === lower && typeof v === 'string' && v.length > 0) {
+        return v;
+      }
     }
   }
   return null;
 }
+
+type ResendHeaderEntry = { name?: string; value?: string };
+type ResendHeadersField =
+  | ResendHeaderEntry[]
+  | Record<string, string>
+  | null
+  | undefined;
 
 /**
  * Extract the immediate-parent Message-ID from a `References`
@@ -168,45 +195,68 @@ export async function POST(req: Request): Promise<Response> {
   const data = envelope.data ?? {};
   const fromEmail = pickFirstEmail(data.from);
   const toEmails = pickAllEmails(data.to);
-  // Headers come in via case-insensitive lookup — different relays
-  // normalize the key casing differently (Resend's parsed payload
-  // sometimes lowercases). For In-Reply-To we additionally fall
-  // back to the LAST id in References — modern clients (Outlook,
-  // Gmail, Apple Mail) emit both, and the References tail IS the
-  // immediate parent per RFC 5322 §3.6.4. Without these fallbacks
-  // Outlook replies arrive with empty in_reply_to and spawn fresh
-  // threads even though the parent is in our DB.
-  const messageId =
-    data.message_id ?? pickHeader(data.headers, 'Message-ID') ?? null;
-  const inReplyTo =
-    data.in_reply_to ??
-    pickHeader(data.headers, 'In-Reply-To') ??
-    lastReferenceId(pickHeader(data.headers, 'References')) ??
-    null;
   const subject = data.subject ?? null;
-  // Resend's email.received webhook payload often DOESN'T carry the
-  // parsed text/html — only a `raw.download_url` for the source MIME.
-  // Their REST endpoint /emails/receiving/{id} does return them. So
-  // when text/html are missing in the webhook, fall back to the API
-  // before persisting. Otherwise the inbox shows "(no body content)"
-  // for every reply.
   let bodyText = data.text ?? null;
   let bodyHtml = data.html ?? null;
-  if ((!bodyText && !bodyHtml) && data.email_id && process.env.RESEND_API_KEY) {
+
+  // Resend's email.received webhook payload is intentionally thin:
+  // it leaves out the body (only ships a raw.download_url) AND it
+  // strips most RFC headers — empirically `headers` arrives empty
+  // for inbound and the parsed `data.in_reply_to` / `data.message_id`
+  // are absent. The full email lives behind the REST endpoint
+  // GET /emails/receiving/{id}. We pull it once for inbound events
+  // and use it as the source of truth for body, Message-ID, and
+  // In-Reply-To. Outbound delivery events (sent / delivered / etc.)
+  // skip this fetch — those don't write threads.
+  let restMessageId: string | null = null;
+  let restInReplyTo: string | null = null;
+  let restReferences: string | null = null;
+  if (envelope.type === 'email.received' && data.email_id && process.env.RESEND_API_KEY) {
     try {
       const res = await fetch(
         `https://api.resend.com/emails/receiving/${data.email_id}`,
         { headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` } },
       );
       if (res.ok) {
-        const body = (await res.json()) as { text?: string; html?: string };
-        bodyText = body.text ?? null;
-        bodyHtml = body.html ?? null;
+        const full = (await res.json()) as {
+          text?: string;
+          html?: string;
+          headers?: ResendHeadersField;
+          message_id?: string;
+          in_reply_to?: string;
+          references?: string;
+        };
+        bodyText = bodyText ?? full.text ?? null;
+        bodyHtml = bodyHtml ?? full.html ?? null;
+        restMessageId =
+          full.message_id ?? pickHeader(full.headers, 'Message-ID') ?? null;
+        restInReplyTo =
+          full.in_reply_to ?? pickHeader(full.headers, 'In-Reply-To') ?? null;
+        restReferences =
+          full.references ?? pickHeader(full.headers, 'References') ?? null;
       }
     } catch (err) {
-      console.warn('[resend-inbound] body fetch failed', err);
+      console.warn('[resend-inbound] full-email fetch failed', err);
     }
   }
+
+  // Resolve Message-ID and In-Reply-To with cascading fallbacks:
+  // REST first (only place inbound headers actually live), then
+  // top-level webhook fields, then webhook headers map (legacy
+  // shape), then References tail. References' last <id@host> token
+  // IS the immediate parent per RFC 5322 §3.6.4 — used when an
+  // upstream relay strips In-Reply-To but keeps References.
+  const messageId =
+    restMessageId ??
+    data.message_id ??
+    pickHeader(data.headers, 'Message-ID') ??
+    null;
+  const inReplyTo =
+    restInReplyTo ??
+    data.in_reply_to ??
+    pickHeader(data.headers, 'In-Reply-To') ??
+    lastReferenceId(restReferences ?? data.references ?? pickHeader(data.headers, 'References')) ??
+    null;
   const occurredAt = data.received_at ? new Date(data.received_at) : new Date();
 
   const providerEventId = messageId ?? data.email_id ?? svixId;
