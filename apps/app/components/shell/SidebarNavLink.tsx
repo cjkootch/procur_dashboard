@@ -26,11 +26,16 @@ export function SidebarNavLink({
       (href !== '/' && pathname?.startsWith(`${href}/`)) ||
       (href !== '/' && pathname?.startsWith(href)));
 
+  // Active items get an accent-color left bar + filled accent-subtle
+  // background + bold accent text. The base class always reserves a
+  // 2px transparent left border so the layout doesn't shift when
+  // navigating between items (Vercel-in-light-mode pattern: anchor
+  // the active row, breathe the inactive ones).
   const baseCls =
-    'flex items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 text-sm transition hover:bg-[color:var(--color-background)]';
+    'group flex items-center gap-2 rounded-[var(--radius-sm)] border-l-2 border-transparent px-2 py-1.5 text-sm transition-colors';
   const activeCls = active
-    ? 'bg-[color:var(--color-accent-subtle)] font-medium text-[color:var(--color-accent)]'
-    : 'text-[color:var(--color-foreground)]/85';
+    ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-subtle)] font-semibold text-[color:var(--color-accent)]'
+    : 'text-[color:var(--color-foreground)]/80 hover:bg-[color:var(--color-muted)]/50 hover:text-[color:var(--color-foreground)]';
 
   const inner = (
     <>

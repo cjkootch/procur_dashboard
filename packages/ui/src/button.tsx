@@ -28,7 +28,11 @@ const SIZE_CLASSES: Record<ButtonSize, string> = {
 
 const BASE =
   'inline-flex items-center justify-center gap-1.5 rounded-[var(--radius-md)] font-medium transition-colors ' +
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-foreground)]/30 focus-visible:ring-offset-1 focus-visible:ring-offset-[color:var(--color-background)] ' +
+  // Focus ring uses --color-accent (procur blue) instead of foreground —
+  // this is the Vercel/Stripe-style brand pop on keyboard focus, and
+  // it visually links every interactive element back to the same
+  // brand identity. Pairs with sidebar's accent-anchored active state.
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]/40 focus-visible:ring-offset-1 focus-visible:ring-offset-[color:var(--color-background)] ' +
   'disabled:cursor-not-allowed';
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
