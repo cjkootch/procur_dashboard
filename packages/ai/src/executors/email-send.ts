@@ -6,6 +6,8 @@ import {
   contacts,
   db,
   events,
+  messages,
+  threads,
   touchpoints,
 } from '@procur/db';
 import { createId } from '../agents/id';
@@ -115,11 +117,22 @@ export async function applyEmailSend(
     return { ok: false, error: (err as Error).message };
   }
 
-  const headers: Record<string, string> = {};
+  // RFC-5322 threading. inReplyTo carries the parent message's
+  // Message-ID header (NOT a procur DB id) — the inbound resend
+  // webhook resolves replies via `messages.message_id = inReplyTo`,
+  // so symmetric outbound MUST set the same shape on replies and
+  // on first-touch sends. Headers attach to every fan-out.
+  const inReplyToHeaders: Record<string, string> = {};
   if (payload.inReplyTo) {
-    headers['In-Reply-To'] = payload.inReplyTo;
-    headers['References'] = payload.inReplyTo;
+    inReplyToHeaders['In-Reply-To'] = payload.inReplyTo;
+    inReplyToHeaders['References'] = payload.inReplyTo;
   }
+
+  // Domain for our generated Message-IDs. Pulled from FROM_DEFAULT
+  // so the domain matches the Sent-from address and looks legit to
+  // recipients' MTAs (Gmail spam-checks Message-ID host alignment).
+  const fromAddrOnly = stripBrackets(FROM_DEFAULT);
+  const messageIdDomain = fromAddrOnly.split('@')[1] ?? 'procur.app';
 
   // Pull per-company email defaults set at /settings/email. Prefer
   // the explicit companyId from the dispatcher (resolved from the
@@ -187,12 +200,23 @@ export async function applyEmailSend(
   let firstTouchpointId: string | undefined;
 
   for (const recipient of payload.to) {
+    // Generate our own RFC-5322 Message-ID before sending so we can
+    // (a) tell Resend to use it on the wire (lets us correlate the
+    // recipient's eventual reply via In-Reply-To), and (b) store it
+    // in messages.message_id for the inbound webhook to resolve back
+    // to this thread.
+    const rfcMessageId = `<${createId()}@${messageIdDomain}>`;
+    const sendHeaders: Record<string, string> = {
+      ...inReplyToHeaders,
+      'Message-ID': rfcMessageId,
+    };
+
     const sendArgs: Parameters<typeof resend.emails.send>[0] = {
       from,
       to: [recipient],
       subject: payload.subject,
       text: bodyText,
-      headers: Object.keys(headers).length > 0 ? headers : undefined,
+      headers: sendHeaders,
     };
     if (bodyHtml) sendArgs.html = bodyHtml;
     if (cc.length > 0) sendArgs.cc = cc;
@@ -226,6 +250,60 @@ export async function applyEmailSend(
     }
     providerMessageIds.push(providerMessageId);
 
+    // Resolve the thread for this recipient. If we're replying
+    // (inReplyTo set), look up the parent message and reuse its
+    // thread; otherwise create a fresh thread per recipient so each
+    // counterparty conversation is its own row. Mirrors the inbound
+    // webhook's resolve-or-create pattern (route.ts:222-244).
+    let threadId: string | null = null;
+    if (payload.inReplyTo) {
+      const parent = await db
+        .select({ threadId: messages.threadId })
+        .from(messages)
+        .where(eq(messages.messageId, payload.inReplyTo))
+        .limit(1);
+      if (parent[0]) threadId = parent[0].threadId;
+    }
+    if (!threadId) {
+      threadId = createId();
+      await db.insert(threads).values({
+        id: threadId,
+        channel: 'email',
+        subject: payload.subject,
+        participantIds: payload.contactId ? [payload.contactId] : [],
+        lastMessageAt: occurredAt,
+      });
+    } else {
+      await db
+        .update(threads)
+        .set({ lastMessageAt: occurredAt })
+        .where(eq(threads.id, threadId));
+    }
+
+    // Write the outbound message row with our generated Message-ID
+    // so a future inbound reply (whose In-Reply-To header points at
+    // this Message-ID) can resolve back to the same thread.
+    await db.insert(messages).values({
+      id: createId(),
+      threadId,
+      direction: 'outbound',
+      subject: payload.subject,
+      fromEmail: fromAddrOnly,
+      messageId: rfcMessageId,
+      inReplyTo: payload.inReplyTo ?? null,
+      metadata: {
+        to: [recipient],
+        cc,
+        body_text: bodyText.slice(0, 64_000),
+        body_html: bodyHtml ? bodyHtml.slice(0, 64_000) : null,
+        contact_id: payload.contactId ?? null,
+        org_id: orgIdForTouchpoint,
+        provider_email_id: providerMessageId,
+        approval_id: approvalId,
+        template_name: payload.templateName ?? null,
+      },
+    });
+
     const touchpointId = createId();
     if (!firstTouchpointId) firstTouchpointId = touchpointId;
     await db.insert(touchpoints).values({
@@ -237,6 +315,8 @@ export async function applyEmailSend(
       orgId: orgIdForTouchpoint,
       metadata: {
         provider_message_id: providerMessageId,
+        rfc_message_id: rfcMessageId,
+        thread_id: threadId,
         to: recipient,
         subject: payload.subject,
         in_reply_to: payload.inReplyTo ?? null,
