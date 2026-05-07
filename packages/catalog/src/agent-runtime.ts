@@ -9,6 +9,10 @@ import {
   feedbackEvents,
 } from '@procur/db';
 import { ActionDescriptor, createId, type ActionDescriptorT } from '@procur/ai';
+import {
+  buildOutreachFeatures,
+  recordOutreachFeatureSnapshot,
+} from './outreach-features';
 
 /**
  * Read/write helpers for the agent runtime (vex-into-procur merge
@@ -346,6 +350,34 @@ export async function insertChatApproval(
     .onConflictDoNothing({
       target: [events.occurredAt, events.idempotencyKey],
     });
+
+  // Outreach feature snapshot — captured here at proposal time so
+  // the LightGBM reply-14d classifier trains on the same signals
+  // the operator saw when approving. Limited to the four outreach
+  // action types; other actions (sanctions screens, follow-ups,
+  // milestones) aren't ranked. Errors swallowed inside the
+  // helpers — a feature-snapshot failure must never block the
+  // approval write itself.
+  if (
+    parsed.kind === 'email.send' ||
+    parsed.kind === 'sms.send' ||
+    parsed.kind === 'whatsapp.send' ||
+    parsed.kind === 'whatsapp.send_template' ||
+    parsed.kind === 'outbound_call'
+  ) {
+    try {
+      const features = await buildOutreachFeatures({
+        approvalId: row.id,
+        proposedPayload: parsed as unknown as Record<string, unknown>,
+      });
+      await recordOutreachFeatureSnapshot({
+        approvalId: row.id,
+        features,
+      });
+    } catch (err) {
+      console.error('[outreach-features] hook failed', err);
+    }
+  }
 
   return row;
 }

@@ -1,5 +1,10 @@
 import { and, eq, gte, inArray, isNotNull, sql as drizzleSql } from 'drizzle-orm';
-import { approvals, db, events } from '@procur/db';
+import {
+  approvals,
+  db,
+  events,
+  outreachFeatureSnapshots,
+} from '@procur/db';
 import { createId } from '../agents/id';
 import type { MlEvidenceT } from '../agents/action-descriptor';
 
@@ -293,10 +298,71 @@ export async function emitOutreachOutcome(args: {
       .onConflictDoNothing({
         target: [events.occurredAt, events.idempotencyKey],
       });
+
+    // Outcome-label stamp on the LightGBM training table. Each
+    // verb maps to a boolean column on outreach_feature_snapshots;
+    // we update in-place so the snapshot we wrote at proposal time
+    // gets a label for the trainer. Idempotent — re-running the
+    // same verb just resets the boolean to the same value. Errors
+    // swallowed; a missing snapshot row (action wasn't an outreach
+    // type) is also fine.
+    try {
+      await stampOutreachLabel({
+        approvalId: args.approvalId,
+        verb: args.verb,
+        occurredAt: args.occurredAt,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[outreach-evidence] label stamp failed', err);
+    }
     return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * Stamp the boolean column on outreach_feature_snapshots
+ * corresponding to the lifecycle verb. `replied_within_14d` is
+ * computed from the elapsed time between the snapshot's
+ * created_at and the verb's occurredAt — anything ≤14d after
+ * proposal counts. Late replies leave the column false (not null),
+ * which lets the trainer treat them as negative examples.
+ */
+async function stampOutreachLabel(args: {
+  approvalId: string;
+  verb: OutreachLifecycleVerb;
+  occurredAt: Date;
+}): Promise<void> {
+  const set: Record<string, unknown> = { labelsUpdatedAt: new Date() };
+
+  if (args.verb === 'outreach.replied') {
+    const [snap] = await db
+      .select({ createdAt: outreachFeatureSnapshots.createdAt })
+      .from(outreachFeatureSnapshots)
+      .where(eq(outreachFeatureSnapshots.approvalId, args.approvalId))
+      .limit(1);
+    if (!snap) return;
+    const ageMs =
+      args.occurredAt.getTime() - new Date(snap.createdAt).getTime();
+    set['repliedWithin14d'] = ageMs <= 14 * 24 * 3600 * 1000;
+  } else if (args.verb === 'outreach.meeting_booked') {
+    set['meetingBooked'] = true;
+  } else if (args.verb === 'outreach.converted_to_lead') {
+    set['convertedToLead'] = true;
+  } else if (args.verb === 'outreach.converted_to_deal') {
+    set['convertedToDeal'] = true;
+  } else if (args.verb === 'outreach.disqualified') {
+    set['disqualified'] = true;
+  } else {
+    return;
+  }
+
+  await db
+    .update(outreachFeatureSnapshots)
+    .set(set)
+    .where(eq(outreachFeatureSnapshots.approvalId, args.approvalId));
 }
 
 /**
