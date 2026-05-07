@@ -50,12 +50,58 @@ export function isApprovalActionOutput(value: unknown): value is ApprovalActionO
   );
 }
 
+/**
+ * Persistent approval state. The card hydrates from
+ * `/api/approvals/[id]` on mount so a thread re-opened after a
+ * decision was made shows the actual outcome — not a fresh
+ * Approve/Reject prompt that double-fires on click.
+ *
+ * Sub-state on the `approved` branch tracks executor outcome:
+ *   - `sent` — executor wrote `applied_at` (e.g. Twilio MessageSid
+ *     stamped on the row); the action successfully dispatched
+ *   - `failed` — decision is `approved` but `applied_at` is null;
+ *     the executor errored. The user can retry from /approvals.
+ *   - `dispatching` — transient while the approve POST is in-flight
+ *     (the route awaits dispatch synchronously, so this collapses
+ *     into `sent` or `failed` immediately after the API resolves).
+ */
 type DecisionState =
+  | { status: 'loading' }
   | { status: 'pending' }
   | { status: 'submitting' }
-  | { status: 'approved' }
-  | { status: 'rejected' }
+  | {
+      status: 'approved';
+      auto: boolean;
+      delivery: 'dispatching' | 'sent' | 'failed';
+      appliedAt: Date | null;
+    }
+  | { status: 'rejected'; decidedAt: Date | null }
   | { status: 'error'; message: string };
+
+interface ApprovalRow {
+  id: string;
+  decision: 'pending' | 'approved' | 'rejected' | 'auto_approved';
+  decidedAt: string | null;
+  appliedAt: string | null;
+  appliedObjectId: string | null;
+}
+
+function rowToState(row: ApprovalRow): DecisionState {
+  if (row.decision === 'pending') return { status: 'pending' };
+  if (row.decision === 'rejected') {
+    return {
+      status: 'rejected',
+      decidedAt: row.decidedAt ? new Date(row.decidedAt) : null,
+    };
+  }
+  // approved or auto_approved
+  return {
+    status: 'approved',
+    auto: row.decision === 'auto_approved',
+    delivery: row.appliedAt ? 'sent' : 'failed',
+    appliedAt: row.appliedAt ? new Date(row.appliedAt) : null,
+  };
+}
 
 const TIER_TONE: Record<string, string> = {
   T0: 'bg-[color:var(--color-muted)]/60 text-[color:var(--color-muted-foreground)]',
@@ -78,9 +124,51 @@ interface BulkActionSignal {
 const BulkActionContext = createContext<BulkActionSignal | null>(null);
 
 export function ApprovalActionCard({ output }: { output: ApprovalActionOutput }) {
-  const [state, setState] = useState<DecisionState>({ status: 'pending' });
+  const [state, setState] = useState<DecisionState>({ status: 'loading' });
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  // Hydrate the card from the server's view of this approval on mount
+  // (and whenever the approvalId changes — happens during streaming
+  // when a tool result re-renders with new ids). Without this, a
+  // thread re-opened after a decision was made would show stale
+  // Approve/Reject buttons and clicking would either re-record a
+  // no-op decision (idempotent) or re-fire a duplicate executor
+  // dispatch — confusing for the operator either way.
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: 'loading' });
+    fetch(`/api/approvals/${output.approvalId}`, {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    })
+      .then(async (res) => {
+        if (cancelled) return;
+        if (!res.ok) {
+          // Treat 404 / 401 / 5xx as "show buttons" — we can't prove
+          // a decision exists, and the worst case is the operator
+          // sees a redundant button (clicks are idempotent server-
+          // side). Logging keeps real bugs visible.
+          if (res.status !== 404) {
+            console.warn(
+              `[approval-card] hydrate ${output.approvalId} → ${res.status}`,
+            );
+          }
+          setState({ status: 'pending' });
+          return;
+        }
+        const body = (await res.json()) as { row: ApprovalRow };
+        setState(rowToState(body.row));
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        console.warn('[approval-card] hydrate failed', err);
+        setState({ status: 'pending' });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [output.approvalId]);
 
   const decide = async (decision: 'approve' | 'reject') => {
     setState({ status: 'submitting' });
@@ -102,7 +190,32 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
         });
         return;
       }
-      setState({ status: decision === 'approve' ? 'approved' : 'rejected' });
+      // The approve route awaits dispatchApprovalExecutor, so the
+      // server has either stamped applied_at (sent ✓) or left it
+      // null (executor failed). Read it back so the card reflects
+      // delivery status, not just the decision.
+      if (decision === 'approve') {
+        try {
+          const detail = await fetch(`/api/approvals/${output.approvalId}`, {
+            cache: 'no-store',
+          });
+          if (detail.ok) {
+            const body = (await detail.json()) as { row: ApprovalRow };
+            setState(rowToState(body.row));
+            return;
+          }
+        } catch {
+          // fall through to optimistic state
+        }
+        setState({
+          status: 'approved',
+          auto: false,
+          delivery: 'dispatching',
+          appliedAt: null,
+        });
+      } else {
+        setState({ status: 'rejected', decidedAt: new Date() });
+      }
     } catch (err) {
       setState({
         status: 'error',
@@ -140,6 +253,11 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
           {output.tier}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          {state.status === 'loading' && (
+            <span className="text-xs text-[color:var(--color-muted-foreground)]">
+              …
+            </span>
+          )}
           {state.status === 'pending' || state.status === 'submitting' ? (
             <>
               <button
@@ -161,13 +279,24 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
             </>
           ) : null}
           {state.status === 'approved' && (
-            <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-900">
-              ✓ Approved
-            </span>
+            <ApprovedBadge state={state} />
           )}
           {state.status === 'rejected' && (
             <span className="rounded-full bg-[color:var(--color-muted)]/60 px-2 py-0.5 text-xs">
               Rejected
+              {state.decidedAt && (
+                <>
+                  {' · '}
+                  <time dateTime={state.decidedAt.toISOString()}>
+                    {state.decidedAt.toLocaleString([], {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: 'numeric',
+                      minute: '2-digit',
+                    })}
+                  </time>
+                </>
+              )}
             </span>
           )}
         </div>
@@ -184,7 +313,9 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
       {state.status === 'error' && (
         <p className="mt-3 text-xs text-red-700">{state.message}</p>
       )}
-      {state.status !== 'pending' && state.status !== 'submitting' && (
+      {(state.status === 'approved' ||
+        state.status === 'rejected' ||
+        state.status === 'error') && (
         <p className="mt-3 text-xs text-[color:var(--color-muted-foreground)]">
           <Link href={output.reviewUrl} className="underline">
             View full audit trail
@@ -192,6 +323,48 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * Approved-state pill: distinguishes a successful executor dispatch
+ * (`sent`, with timestamp) from a recorded approval whose executor
+ * never landed (`failed` — typically a Twilio / Resend outage that
+ * raised through the synchronous dispatch path). The operator can
+ * retry from /approvals/[id] in the failed case.
+ */
+function ApprovedBadge({
+  state,
+}: {
+  state: Extract<DecisionState, { status: 'approved' }>;
+}) {
+  if (state.delivery === 'sent' && state.appliedAt) {
+    return (
+      <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-900">
+        ✓ {state.auto ? 'Auto-approved' : 'Approved'} · sent{' '}
+        <time dateTime={state.appliedAt.toISOString()}>
+          {state.appliedAt.toLocaleString([], {
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          })}
+        </time>
+      </span>
+    );
+  }
+  if (state.delivery === 'dispatching') {
+    return (
+      <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-900">
+        ✓ Approved · sending…
+      </span>
+    );
+  }
+  // failed
+  return (
+    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">
+      ✓ Approved · send failed
+    </span>
   );
 }
 
