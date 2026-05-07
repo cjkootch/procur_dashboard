@@ -179,6 +179,8 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
         summary={output.summary}
       />
 
+      <OutreachEvidencePanel payload={output.payload} />
+
       {state.status === 'error' && (
         <p className="mt-3 text-xs text-red-700">{state.message}</p>
       )}
@@ -519,5 +521,156 @@ function ActionPreview({
         </pre>
       </details>
     </div>
+  );
+}
+
+/**
+ * Per-action-kind evidence panel — renders ONLY when the descriptor
+ * carries recommendation-pipeline output (`evidenceJson`,
+ * `mlEvidence`, `riskWarnings`, etc.). Manual operator-driven
+ * proposals leave these blank and the panel is silent.
+ *
+ * The panel is the audit-trail surface for "Why this outreach?" —
+ * model version, evidence items with confidence, source entity /
+ * signal / opportunity, and any risk warnings the pipeline flagged.
+ * `doNotMention` is shown so the operator can verify the body
+ * doesn't accidentally surface internal-only context (ML scores,
+ * pipeline tags, etc.).
+ */
+function OutreachEvidencePanel({ payload }: { payload: Record<string, unknown> }) {
+  const evidenceJson = payload['evidenceJson'];
+  const mlEvidence = payload['mlEvidence'] as
+    | {
+        modelVersion?: string;
+        totalScore?: number;
+        items?: Array<{
+          kind?: string;
+          sourceId?: string;
+          confidence?: number;
+          summary?: string;
+        }>;
+      }
+    | undefined;
+  const sourceEntitySlug = s(payload, 'sourceEntitySlug');
+  const sourceSignalId = s(payload, 'sourceSignalId');
+  const sourceOpportunityId = s(payload, 'sourceOpportunityId');
+  const riskWarnings = (payload['riskWarnings'] as string[] | undefined) ?? [];
+  const doNotMention = (payload['doNotMention'] as string[] | undefined) ?? [];
+
+  const hasAny =
+    Boolean(mlEvidence) ||
+    Boolean(evidenceJson) ||
+    Boolean(sourceEntitySlug) ||
+    Boolean(sourceSignalId) ||
+    Boolean(sourceOpportunityId) ||
+    riskWarnings.length > 0 ||
+    doNotMention.length > 0;
+  if (!hasAny) return null;
+
+  return (
+    <details className="mt-4 rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30 px-3 py-2 text-xs">
+      <summary className="cursor-pointer font-medium">
+        Why this outreach?{' '}
+        <span className="text-[color:var(--color-muted-foreground)]">
+          (internal — not shown to recipient)
+        </span>
+      </summary>
+      <div className="mt-3 space-y-3">
+        {(sourceEntitySlug || sourceSignalId || sourceOpportunityId) && (
+          <div className="space-y-1">
+            {sourceEntitySlug && (
+              <p>
+                <span className="text-[color:var(--color-muted-foreground)]">
+                  Entity:
+                </span>{' '}
+                <span className="font-mono">{sourceEntitySlug}</span>
+              </p>
+            )}
+            {sourceSignalId && (
+              <p>
+                <span className="text-[color:var(--color-muted-foreground)]">
+                  Signal:
+                </span>{' '}
+                <span className="font-mono">{sourceSignalId}</span>
+              </p>
+            )}
+            {sourceOpportunityId && (
+              <p>
+                <span className="text-[color:var(--color-muted-foreground)]">
+                  Opportunity:
+                </span>{' '}
+                <span className="font-mono">{sourceOpportunityId}</span>
+              </p>
+            )}
+          </div>
+        )}
+
+        {mlEvidence && Array.isArray(mlEvidence.items) && (
+          <div>
+            <p className="mb-1 text-[color:var(--color-muted-foreground)]">
+              Model {mlEvidence.modelVersion ?? '?'}
+              {typeof mlEvidence.totalScore === 'number' && (
+                <> · score {mlEvidence.totalScore}/100</>
+              )}
+            </p>
+            <ul className="space-y-1">
+              {mlEvidence.items.map((item, i) => (
+                <li
+                  key={`${item.sourceId ?? 'ev'}-${i}`}
+                  className="flex items-start gap-2"
+                >
+                  <span className="rounded-full bg-[color:var(--color-muted)] px-1.5 py-0.5 text-[10px] font-mono">
+                    {item.kind ?? 'evidence'}
+                  </span>
+                  <span className="flex-1">
+                    {item.summary ?? '(no summary)'}
+                    {typeof item.confidence === 'number' && (
+                      <span className="ml-1 text-[color:var(--color-muted-foreground)]">
+                        · {Math.round(item.confidence * 100)}% conf
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {riskWarnings.length > 0 && (
+          <div>
+            <p className="mb-1 font-medium text-red-700">Risk warnings</p>
+            <ul className="list-disc space-y-0.5 pl-4 text-red-700">
+              {riskWarnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {doNotMention.length > 0 && (
+          <div>
+            <p className="mb-1 font-medium">
+              Do NOT mention in the outbound copy:
+            </p>
+            <ul className="list-disc space-y-0.5 pl-4">
+              {doNotMention.map((d, i) => (
+                <li key={i}>{d}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {evidenceJson != null && typeof evidenceJson === 'object' && (
+          <details>
+            <summary className="cursor-pointer text-[color:var(--color-muted-foreground)]">
+              Raw evidence pack
+            </summary>
+            <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-[var(--radius-sm)] bg-[color:var(--color-muted)]/40 p-2 font-mono">
+              {JSON.stringify(evidenceJson, null, 2)}
+            </pre>
+          </details>
+        )}
+      </div>
+    </details>
   );
 }

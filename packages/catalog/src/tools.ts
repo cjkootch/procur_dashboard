@@ -80,6 +80,15 @@ import {
   listRecentTouchpoints,
   lookupReplyTarget,
 } from './inbox';
+import {
+  buildCommunicationContextPack,
+  candidateToMlEvidence,
+  draftOutreachFromContext,
+  recommendCommunicationTargets,
+  type RecommendCandidate,
+} from './communication-recommendations';
+import { insertChatApproval } from './agent-runtime';
+import type { ActionDescriptorT } from '@procur/ai';
 import { SUPPLIER_APPROVAL_STATUSES } from '@procur/db';
 import { composeDealEconomics, type CompanyDealDefaults } from './deal-economics';
 import { COUNTRY_NAME_EXAMPLES, normalizeCountryCode } from './country-codes';
@@ -345,6 +354,299 @@ export function buildCatalogTools(): ToolRegistry {
             // get_thread for full message bodies if it needs them.
             metadata: stripBulkyFields(t.metadata),
           })),
+        };
+      },
+    }),
+
+    // ========================================================================
+    // ML-aware outreach recommendation pipeline. Two read tools (recommend +
+    // draft) feed one write tool (propose batch). Hard separation: read tools
+    // never side-effect, write tool ONLY creates pending approvals — every
+    // outbound action still requires explicit operator approval. Discipline
+    // the model can't bypass:
+    //   - ML scores live only in the operator-facing audit panel; never in
+    //     outbound copy (enforced by `doNotMention` in every descriptor).
+    //   - candidates with sanctions hits return `compliance_blocked`; the
+    //     batch tool refuses to propose for them.
+    //   - candidates with weak evidence return `research_target` (not
+    //     `outreach_ready`); the batch tool refuses those too.
+    // ========================================================================
+
+    recommend_outreach_targets: defineTool({
+      name: 'recommend_outreach_targets',
+      description:
+        'Rank counterparties for outreach by combining graph-embedding similarity, predicted ' +
+        'attributes, fuel-consumption signals, customs flows, web intelligence, Apollo contact ' +
+        'availability, and recency. Pass `seedEntitySlug` to find counterparties similar to one ' +
+        'we already engage; pass `seedSignalId` to react to a market event. Returns ranked ' +
+        'candidates with `score` (0-100, internal-only), `scoreBreakdown` (per-source point ' +
+        "contributions), `evidenceItems`, `risks`, and `nextBestAction`. The score and " +
+        '`evidenceItems` are AUDIT-ONLY — never quote them in outbound copy. Use the result to ' +
+        'decide which entities to draft for, then call `draft_outreach_from_intelligence` per ' +
+        'entity, then `propose_outreach_batch` to queue the approvals.',
+      kind: 'read',
+      schema: z.object({
+        seedEntitySlug: z.string().min(1).max(256).optional(),
+        seedSignalId: z.string().min(1).max(256).optional(),
+        seedOpportunityId: z.string().min(1).max(256).optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+        filters: z
+          .object({
+            role: z.string().min(1).max(100).optional(),
+            category: z.string().min(1).max(100).optional(),
+            country: z.string().length(2).optional(),
+          })
+          .optional(),
+      }),
+      handler: async (_ctx, input) => {
+        if (!input.seedEntitySlug && !input.seedSignalId) {
+          return {
+            ok: false as const,
+            error:
+              'Need seedEntitySlug or seedSignalId — pick a seed before ranking.',
+          };
+        }
+        const candidates = await recommendCommunicationTargets({
+          ...(input.seedEntitySlug
+            ? { seedEntitySlug: input.seedEntitySlug }
+            : {}),
+          ...(input.seedSignalId
+            ? { seedSignalId: input.seedSignalId }
+            : {}),
+          ...(input.seedOpportunityId
+            ? { seedOpportunityId: input.seedOpportunityId }
+            : {}),
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+          ...(input.filters ? { filters: input.filters } : {}),
+        });
+        return {
+          ok: true as const,
+          candidateCount: candidates.length,
+          outreachReadyCount: candidates.filter(
+            (c) => c.nextBestAction === 'outreach_ready',
+          ).length,
+          researchTargetCount: candidates.filter(
+            (c) => c.nextBestAction === 'research_target',
+          ).length,
+          complianceBlockedCount: candidates.filter(
+            (c) => c.nextBestAction === 'compliance_blocked',
+          ).length,
+          candidates: candidates.map((c) => ({
+            entitySlug: c.entitySlug,
+            entityName: c.entityName,
+            recommendedChannel: c.recommendedChannel,
+            score: c.score,
+            scoreBreakdown: c.scoreBreakdown,
+            evidenceItems: c.evidenceItems,
+            risks: c.risks,
+            nextBestAction: c.nextBestAction,
+          })),
+        };
+      },
+    }),
+
+    draft_outreach_from_intelligence: defineTool({
+      name: 'draft_outreach_from_intelligence',
+      description:
+        "Draft outbound copy (email subject + body, WhatsApp body, SMS body, call goal) from " +
+        "an entity's intelligence pack — touchpoints, fuel signals, web intel, customs flows, " +
+        'Apollo contact, sanctions screens. The model honors `doNotMention` (never surfaces ML ' +
+        "scores or pipeline tags). Refuses to draft when the contact is opted out OR has a " +
+        'sanctions hit on file. Returns drafts for ALL channels — pick the right one(s) when ' +
+        'calling propose_outreach_batch. Pass `intent` as the operator-stated goal in plain ' +
+        'language ("introduce, ask about Q3 jet supply"), NOT an ML score or model output.',
+      kind: 'read',
+      schema: z.object({
+        entitySlug: z.string().min(1).max(256),
+        intent: z.string().min(1).max(500),
+        contactId: z
+          .string()
+          .regex(/^[0-9A-HJKMNP-TV-Z]{26}$/, 'expected ULID')
+          .optional(),
+        doNotMention: z.array(z.string().min(1).max(200)).max(20).optional(),
+      }),
+      handler: async (_ctx, input) => {
+        const pack = await buildCommunicationContextPack({
+          entitySlug: input.entitySlug,
+          ...(input.contactId ? { contactId: input.contactId } : {}),
+        });
+        if (!pack) {
+          return {
+            ok: false as const,
+            error: `Entity ${input.entitySlug} not found in known_entities.`,
+          };
+        }
+        const draft = await draftOutreachFromContext({
+          pack,
+          intent: input.intent,
+          ...(input.doNotMention ? { doNotMention: input.doNotMention } : {}),
+        });
+        return {
+          ok: true as const,
+          entitySlug: pack.entity.slug,
+          entityName: pack.entity.name,
+          ...draft,
+        };
+      },
+    }),
+
+    propose_outreach_batch: defineTool({
+      name: 'propose_outreach_batch',
+      description:
+        'Queue a batch of outreach approvals from recommendation candidates + drafts. Each item ' +
+        'becomes its own pending approval row (one per channel per entity) — every outbound ' +
+        'action still requires explicit operator approval; this tool NEVER sends anything. ' +
+        'REFUSES candidates whose `nextBestAction` is `compliance_blocked` (sanctions risk) or ' +
+        '`research_target` (evidence too weak). The evidence pack is preserved on the approval ' +
+        "payload so the approval card's audit panel renders and the executor stamps the " +
+        'evidence onto the dispatched touchpoint. Use AFTER `recommend_outreach_targets` + ' +
+        '`draft_outreach_from_intelligence`.',
+      kind: 'write',
+      schema: z.object({
+        items: z
+          .array(
+            z.object({
+              candidate: z.object({
+                entitySlug: z.string().min(1).max(256),
+                entityName: z.string().min(1).max(500),
+                recommendedChannel: z.enum(['email', 'whatsapp', 'sms', 'call']),
+                score: z.number().min(0).max(100),
+                scoreBreakdown: z.record(z.string(), z.number()),
+                evidenceItems: z.array(z.unknown()),
+                risks: z.array(z.string()),
+                nextBestAction: z.enum([
+                  'outreach_ready',
+                  'research_target',
+                  'compliance_blocked',
+                ]),
+              }),
+              channel: z.enum(['email', 'whatsapp', 'sms']),
+              recipient: z
+                .union([z.string().email(), z.string().regex(/^\+[1-9]\d{7,14}$/)])
+                .describe('Email address (for email) or E.164 phone'),
+              draft: z.object({
+                subject: z.string().min(1).max(200).optional(),
+                body: z.string().min(1).max(50_000),
+              }),
+              rationale: z.string().min(1).max(1000),
+              sourceSignalId: z.string().min(1).max(256).optional(),
+              sourceOpportunityId: z.string().min(1).max(256).optional(),
+            }),
+          )
+          .min(1)
+          .max(20),
+      }),
+      handler: async (ctx, input) => {
+        const accepted: Array<{
+          approvalId: string;
+          channel: string;
+          entitySlug: string;
+          reviewUrl: string;
+        }> = [];
+        const refused: Array<{
+          entitySlug: string;
+          channel: string;
+          reason: string;
+        }> = [];
+
+        for (const item of input.items) {
+          // Hard refuse — sanctions block + research_target gate.
+          if (item.candidate.nextBestAction === 'compliance_blocked') {
+            refused.push({
+              entitySlug: item.candidate.entitySlug,
+              channel: item.channel,
+              reason:
+                'compliance_blocked — operator must approve a sanctions.screen action first',
+            });
+            continue;
+          }
+          if (item.candidate.nextBestAction === 'research_target') {
+            refused.push({
+              entitySlug: item.candidate.entitySlug,
+              channel: item.channel,
+              reason:
+                'research_target — evidence too weak; gather more context before outreach',
+            });
+            continue;
+          }
+
+          const mlEvidence = candidateToMlEvidence(
+            item.candidate as unknown as RecommendCandidate,
+          );
+          const evidenceJson = {
+            score_breakdown: item.candidate.scoreBreakdown,
+            recommended_channel: item.candidate.recommendedChannel,
+            risks: item.candidate.risks,
+          };
+          const baseAnnotations = {
+            sourceEntitySlug: item.candidate.entitySlug,
+            ...(item.sourceSignalId
+              ? { sourceSignalId: item.sourceSignalId }
+              : {}),
+            ...(item.sourceOpportunityId
+              ? { sourceOpportunityId: item.sourceOpportunityId }
+              : {}),
+            mlEvidence,
+            evidenceJson,
+            riskWarnings: item.candidate.risks,
+            doNotMention: [
+              'ML similarity score',
+              'graph embedding',
+              'recommendation pipeline',
+              'we noticed you',
+              'our system identified',
+            ],
+          };
+
+          let action: ActionDescriptorT;
+          let summary: string;
+          if (item.channel === 'email') {
+            action = {
+              kind: 'email.send',
+              tier: 'T2',
+              to: [item.recipient],
+              subject: item.draft.subject ?? `Following up — ${item.candidate.entityName}`,
+              body: item.draft.body,
+              rationale: item.rationale,
+              ...baseAnnotations,
+            };
+            summary = `Email ${item.candidate.entityName} (${item.recipient})`;
+          } else if (item.channel === 'whatsapp') {
+            action = {
+              kind: 'whatsapp.send',
+              tier: 'T2',
+              to: item.recipient,
+              body: item.draft.body,
+              rationale: item.rationale,
+              ...baseAnnotations,
+            };
+            summary = `WhatsApp ${item.candidate.entityName} (${item.recipient})`;
+          } else {
+            action = {
+              kind: 'sms.send',
+              tier: 'T2',
+              to: item.recipient,
+              body: item.draft.body,
+              rationale: item.rationale,
+              ...baseAnnotations,
+            };
+            summary = `SMS ${item.candidate.entityName} (${item.recipient})`;
+          }
+          const row = await insertChatApproval(action, { userId: ctx.userId });
+          accepted.push({
+            approvalId: row.id,
+            channel: item.channel,
+            entitySlug: item.candidate.entitySlug,
+            reviewUrl: `/approvals/${row.id}`,
+          });
+        }
+
+        return {
+          ok: true as const,
+          acceptedCount: accepted.length,
+          refusedCount: refused.length,
+          accepted,
+          refused,
         };
       },
     }),

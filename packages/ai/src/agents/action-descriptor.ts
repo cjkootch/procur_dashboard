@@ -5,6 +5,94 @@ import { isUlid } from './id';
 const zUlid = z.string().refine(isUlid, { message: 'expected ULID' });
 
 /**
+ * One row in the ML evidence pack attached to an outreach descriptor.
+ * Each item is a typed pointer back into procur's intelligence layer
+ * — entity_embeddings similarity, attribute prediction, signal hit,
+ * customs flow, web fact, etc. — with a confidence score and a
+ * compact human-readable summary the operator can scan.
+ *
+ * Used by the "Why this outreach?" panel in the inline approval card
+ * AND copied into touchpoints.metadata + events.metadata when the
+ * action ships, so post-hoc model performance can join evidence to
+ * outreach.replied / outreach.converted_to_deal outcomes.
+ */
+export const MlEvidenceItem = z.object({
+  /** What kind of evidence this is — drives panel rendering. */
+  kind: z.enum([
+    'graph_similarity',
+    'attribute_prediction',
+    'fuel_consumption_signal',
+    'customs_flow',
+    'web_fact',
+    'web_summary',
+    'apollo_contact',
+    'match_queue',
+    'role_match',
+    'category_match',
+    'sanctions_warning',
+  ]),
+  /** Stable id of the underlying record (signal id, entity slug,
+   *  prediction model+id, etc.). Powers join-back at outcome time. */
+  sourceId: z.string().min(1).max(256),
+  /** Confidence in [0,1]. Calibrated per `kind`. */
+  confidence: z.number().min(0).max(1),
+  /** One-line summary for the operator. Plain text — never goes into
+   *  outbound copy; reserved for the audit panel. */
+  summary: z.string().min(1).max(500),
+});
+export type MlEvidenceItemT = z.infer<typeof MlEvidenceItem>;
+
+/**
+ * Versioned wrapper around the evidence list. `modelVersion` is the
+ * git-tag or build-id of the recommendation pipeline so we can
+ * regression-test ML changes against historical outreach outcomes.
+ */
+export const MlEvidence = z.object({
+  modelVersion: z.string().min(1).max(120),
+  items: z.array(MlEvidenceItem).min(1).max(50),
+  /** Top-level score the pipeline assigned this outreach (0-100).
+   *  NEVER surfaced in outbound copy — only in the operator audit. */
+  totalScore: z.number().min(0).max(100).optional(),
+});
+export type MlEvidenceT = z.infer<typeof MlEvidence>;
+
+/**
+ * Optional ML-evidence + intelligence-source fields attached to every
+ * outreach descriptor (email/sms/whatsapp/voice). All optional so
+ * existing callers stay compatible — the recommendation pipeline
+ * populates them; manual operator-driven proposals leave them blank.
+ *
+ * Spread into each communication variant via `...mlOutreachAnnotations`.
+ */
+const mlOutreachAnnotations = {
+  /** Free-form audit-only context: graph snippets, signal payloads,
+   *  apollo cache excerpts, customs deltas. Capped 64KB. Operator-
+   *  visible in the approval card; copied into touchpoints.metadata
+   *  on dispatch so we can join evidence ↔ replies later. */
+  evidenceJson: z.record(z.string(), z.unknown()).optional(),
+  /** Structured ML-pipeline output (versioned). See MlEvidence above. */
+  mlEvidence: MlEvidence.optional(),
+  /** known_entities.slug (or external_suppliers.id) the outreach
+   *  targets. Powers cross-outreach dedupe + per-entity outcome
+   *  rollups in the cost ledger. */
+  sourceEntitySlug: z.string().min(1).max(256).optional(),
+  /** signals.id this outreach reacts to (a price move, an import
+   *  tender, a distress event). Used to credit the signal when an
+   *  outreach converts. */
+  sourceSignalId: z.string().min(1).max(256).optional(),
+  /** opportunities.id (Discover catalog) when outreach is RFP-driven. */
+  sourceOpportunityId: z.string().min(1).max(256).optional(),
+  /** Operator-facing risk strings — sanctions screen pending, recent
+   *  bounce, opted out, etc. Renders in the approval card; never goes
+   *  into outbound body. */
+  riskWarnings: z.array(z.string().min(1).max(500)).max(20).optional(),
+  /** Topics the outbound copy MUST NOT mention — ML similarity
+   *  scores, internal entity tagging, "we noticed you...", etc. The
+   *  draft generator + operator both honor this list. */
+  doNotMention: z.array(z.string().min(1).max(200)).max(20).optional(),
+} as const;
+
+/**
  * Typed descriptor for an action an agent wants to take. The descriptor is
  * stored verbatim on `approvals.proposed_payload` so reviewers see exactly
  * what they're approving — no free-form strings or raw tool-call blobs.
@@ -26,6 +114,11 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
     lang: z.string().length(2).optional(),
     /** Registered-template name for chip preview. Empty = freeform send. */
     templateName: z.string().min(1).max(120).optional(),
+    /** Why this outreach. Optional in the descriptor for back-compat
+     *  with manual operator-authored sends; the chat propose tool now
+     *  requires it (vex parity with sms/whatsapp/call). */
+    rationale: z.string().min(1).max(1000).optional(),
+    ...mlOutreachAnnotations,
   }),
   z.object({
     kind: z.literal('crm.note'),
@@ -273,6 +366,7 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
     contactId: zUlid.optional(),
     templateName: z.string().min(1).max(120).optional(),
     rationale: z.string().min(1).max(1000),
+    ...mlOutreachAnnotations,
   }),
   z.object({
     kind: z.literal('whatsapp.send'),
@@ -284,6 +378,7 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
     contactId: zUlid.optional(),
     templateName: z.string().min(1).max(120).optional(),
     rationale: z.string().min(1).max(1000),
+    ...mlOutreachAnnotations,
   }),
   z.object({
     kind: z.literal('whatsapp.send_template'),
@@ -298,6 +393,7 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
     templateName: z.string().min(1).max(120).optional(),
     contactId: zUlid.optional(),
     rationale: z.string().min(1).max(1000),
+    ...mlOutreachAnnotations,
   }),
   z.object({
     kind: z.literal('deal.status_change'),
@@ -340,6 +436,7 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
     templateName: z.string().min(1).max(120).optional(),
     goalHint: z.string().min(1).max(280).optional(),
     rationale: z.string().min(1).max(1000),
+    ...mlOutreachAnnotations,
   }),
   z.object({
     kind: z.literal('enrollment.control'),

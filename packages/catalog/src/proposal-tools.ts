@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { defineTool } from '@procur/ai';
-import type { ActionDescriptorT } from '@procur/ai';
+import { defineTool, MlEvidence } from '@procur/ai';
+import type { ActionDescriptorT, MlEvidenceT } from '@procur/ai';
 import { insertChatApproval } from './agent-runtime';
 
 /**
@@ -65,6 +65,56 @@ function chip(action: ActionDescriptorT, summary: string, approvalId: string): P
   };
 }
 
+/**
+ * Shared optional ML-evidence fragment accepted by every communication
+ * propose tool. Mirrors `mlOutreachAnnotations` on the descriptor side
+ * so the recommendation pipeline can hand its output straight in. The
+ * recommendation tool (`recommend_outreach_targets`) populates these;
+ * manual operator-driven proposals leave them blank.
+ */
+const mlOutreachFields = {
+  evidenceJson: z.record(z.string(), z.unknown()).optional(),
+  mlEvidence: MlEvidence.optional(),
+  sourceEntitySlug: z.string().min(1).max(256).optional(),
+  sourceSignalId: z.string().min(1).max(256).optional(),
+  sourceOpportunityId: z.string().min(1).max(256).optional(),
+  riskWarnings: z.array(z.string().min(1).max(500)).max(20).optional(),
+  doNotMention: z.array(z.string().min(1).max(200)).max(20).optional(),
+} as const;
+
+/** Spread the parsed ML fields into the action descriptor when present. */
+function mlOutreachIntoAction(
+  input: Partial<{
+    evidenceJson: Record<string, unknown>;
+    mlEvidence: MlEvidenceT;
+    sourceEntitySlug: string;
+    sourceSignalId: string;
+    sourceOpportunityId: string;
+    riskWarnings: string[];
+    doNotMention: string[];
+  }>,
+): Record<string, unknown> {
+  return {
+    ...(input.evidenceJson ? { evidenceJson: input.evidenceJson } : {}),
+    ...(input.mlEvidence ? { mlEvidence: input.mlEvidence } : {}),
+    ...(input.sourceEntitySlug
+      ? { sourceEntitySlug: input.sourceEntitySlug }
+      : {}),
+    ...(input.sourceSignalId
+      ? { sourceSignalId: input.sourceSignalId }
+      : {}),
+    ...(input.sourceOpportunityId
+      ? { sourceOpportunityId: input.sourceOpportunityId }
+      : {}),
+    ...(input.riskWarnings && input.riskWarnings.length > 0
+      ? { riskWarnings: input.riskWarnings }
+      : {}),
+    ...(input.doNotMention && input.doNotMention.length > 0
+      ? { doNotMention: input.doNotMention }
+      : {}),
+  };
+}
+
 export const proposeTools = {
   // ==========================================================================
   // Phase 3 — communications
@@ -76,16 +126,23 @@ export const proposeTools = {
       'or reply to an email. The email DOES NOT send until the operator approves it on the /approvals ' +
       'page. Lead your reply with the approval chip you receive back so the operator can click ' +
       'through. NEVER call this for greetings or read-only intent — only when the user has stated a ' +
-      'concrete recipient + subject + body.',
+      'concrete recipient + subject + body. ALWAYS include a rationale (vex parity with sms/whatsapp/' +
+      'call) — operators scan this to decide approve vs reject without re-reading the body. When ' +
+      'the email comes from `recommend_outreach_targets` + `draft_outreach_from_intelligence`, pass ' +
+      'the evidence pack (`evidenceJson`, `mlEvidence`, `sourceEntitySlug`, `riskWarnings`, ' +
+      "`doNotMention`) verbatim so the approval card's evidence panel renders and the touchpoint " +
+      'preserves the audit trail at dispatch.',
     kind: 'write',
     schema: z.object({
       to: z.array(z.string().email()).min(1).max(20),
       subject: z.string().min(1).max(200),
       body: z.string().min(1).max(50_000),
+      rationale: z.string().min(1).max(1000),
       inReplyTo: z.string().max(500).optional(),
       contactId: ulidString.optional(),
       lang: z.string().length(2).optional(),
       templateName: z.string().min(1).max(120).optional(),
+      ...mlOutreachFields,
     }),
     handler: async (ctx, input): Promise<ProposeResult> => {
       const action: ActionDescriptorT = {
@@ -94,10 +151,12 @@ export const proposeTools = {
         to: input.to,
         subject: input.subject,
         body: input.body,
+        rationale: input.rationale,
         ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}),
         ...(input.contactId ? { contactId: input.contactId } : {}),
         ...(input.lang ? { lang: input.lang } : {}),
         ...(input.templateName ? { templateName: input.templateName } : {}),
+        ...mlOutreachIntoAction(input),
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
       return chip(
@@ -432,7 +491,9 @@ export const proposeTools = {
     name: 'propose_sms_send',
     description:
       'Queue an outbound SMS for operator approval. T2 — sends a real text. Use when the user ' +
-      'asks to text someone with concrete content.',
+      'asks to text someone with concrete content. When the SMS comes from ' +
+      '`recommend_outreach_targets` + `draft_outreach_from_intelligence`, pass the evidence pack ' +
+      'verbatim so the approval card renders the audit panel.',
     kind: 'write',
     schema: z.object({
       to: e164Phone,
@@ -440,6 +501,7 @@ export const proposeTools = {
       contactId: ulidString.optional(),
       templateName: z.string().min(1).max(120).optional(),
       rationale: z.string().min(1).max(1000),
+      ...mlOutreachFields,
     }),
     handler: async (ctx, input): Promise<ProposeResult> => {
       const action: ActionDescriptorT = {
@@ -450,6 +512,7 @@ export const proposeTools = {
         rationale: input.rationale,
         ...(input.contactId ? { contactId: input.contactId } : {}),
         ...(input.templateName ? { templateName: input.templateName } : {}),
+        ...mlOutreachIntoAction(input),
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
       return chip(action, `SMS to ${input.to}`, row.id);
@@ -461,7 +524,8 @@ export const proposeTools = {
     description:
       'Queue an outbound WhatsApp message for operator approval. Recipient must have messaged ' +
       'you in the last 24h or be addressable via a Twilio Content Template (use ' +
-      'propose_whatsapp_send_template for templates).',
+      'propose_whatsapp_send_template for templates). When sourced from the recommendation ' +
+      'pipeline, pass the evidence pack so the approval card and downstream touchpoint preserve it.',
     kind: 'write',
     schema: z.object({
       to: e164Phone,
@@ -469,6 +533,7 @@ export const proposeTools = {
       contactId: ulidString.optional(),
       templateName: z.string().min(1).max(120).optional(),
       rationale: z.string().min(1).max(1000),
+      ...mlOutreachFields,
     }),
     handler: async (ctx, input): Promise<ProposeResult> => {
       const action: ActionDescriptorT = {
@@ -479,6 +544,7 @@ export const proposeTools = {
         rationale: input.rationale,
         ...(input.contactId ? { contactId: input.contactId } : {}),
         ...(input.templateName ? { templateName: input.templateName } : {}),
+        ...mlOutreachIntoAction(input),
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
       return chip(action, `WhatsApp to ${input.to}`, row.id);
@@ -504,6 +570,7 @@ export const proposeTools = {
       templateName: z.string().min(1).max(120).optional(),
       contactId: ulidString.optional(),
       rationale: z.string().min(1).max(1000),
+      ...mlOutreachFields,
     }),
     handler: async (ctx, input): Promise<ProposeResult> => {
       const action: ActionDescriptorT = {
@@ -517,6 +584,7 @@ export const proposeTools = {
           : {}),
         ...(input.templateName ? { templateName: input.templateName } : {}),
         ...(input.contactId ? { contactId: input.contactId } : {}),
+        ...mlOutreachIntoAction(input),
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
       return chip(
@@ -534,7 +602,8 @@ export const proposeTools = {
       "modes: aiMode=false (default) joins the recipient + operator in a Twilio conference; " +
       'aiMode=true connects to procur-voice-bridge for full AI talkback. When aiMode=true, ' +
       'aiInstructions becomes the system prompt for the AI conversation. Always include goalHint ' +
-      'so the operator-review chip shows what the call is trying to accomplish.',
+      'so the operator-review chip shows what the call is trying to accomplish. When sourced ' +
+      'from the recommendation pipeline, pass the evidence pack verbatim.',
     kind: 'write',
     schema: z.object({
       contactId: ulidString,
@@ -545,6 +614,7 @@ export const proposeTools = {
       templateName: z.string().min(1).max(120).optional(),
       goalHint: z.string().min(1).max(280).optional(),
       rationale: z.string().min(1).max(1000),
+      ...mlOutreachFields,
     }),
     handler: async (ctx, input): Promise<ProposeResult> => {
       const action: ActionDescriptorT = {
@@ -558,6 +628,7 @@ export const proposeTools = {
         ...(input.aiInstructions ? { aiInstructions: input.aiInstructions } : {}),
         ...(input.templateName ? { templateName: input.templateName } : {}),
         ...(input.goalHint ? { goalHint: input.goalHint } : {}),
+        ...mlOutreachIntoAction(input),
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
       return chip(
