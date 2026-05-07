@@ -93,6 +93,16 @@ export async function MissionsCard() {
               <ol className="space-y-1.5">
                 {m.stages.map((s, i) => {
                   const done = Boolean(s.completedAt);
+                  const stagePct =
+                    s.progress
+                      ? Math.min(
+                          100,
+                          Math.round(
+                            (s.progress.current / Math.max(1, s.progress.target)) *
+                              100,
+                          ),
+                        )
+                      : null;
                   return (
                     <li
                       key={s.key}
@@ -114,13 +124,36 @@ export async function MissionsCard() {
                           >
                             {s.title}
                           </span>
-                          <span className="shrink-0 text-[color:var(--color-muted-foreground)]">
-                            +{s.xpReward}
-                          </span>
+                          <div className="flex shrink-0 items-center gap-1.5 text-[color:var(--color-muted-foreground)]">
+                            {s.automated && (
+                              <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-900">
+                                Auto
+                              </span>
+                            )}
+                            <span>+{s.xpReward}</span>
+                          </div>
                         </div>
                         {s.description && (
                           <p className="mt-0.5 text-[11px] text-[color:var(--color-muted-foreground)]">
                             {s.description}
+                          </p>
+                        )}
+                        {s.automated && s.progress && !done && (
+                          <div className="mt-1 flex items-center gap-2 text-[11px]">
+                            <div className="h-1 flex-1 overflow-hidden rounded-full bg-[color:var(--color-muted)]">
+                              <div
+                                className="h-full bg-[color:var(--color-foreground)]/70"
+                                style={{ width: `${stagePct ?? 0}%` }}
+                              />
+                            </div>
+                            <span className="shrink-0 text-[color:var(--color-muted-foreground)]">
+                              {s.progress.current} / {s.progress.target}
+                            </span>
+                          </div>
+                        )}
+                        {s.automated && s.predicateLabel && !done && (
+                          <p className="mt-0.5 text-[10px] text-[color:var(--color-muted-foreground)]">
+                            Tracks: {s.predicateLabel}
                           </p>
                         )}
                         {!done && !s.automated && (

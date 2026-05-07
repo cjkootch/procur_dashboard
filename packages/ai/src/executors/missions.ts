@@ -12,6 +12,25 @@ import { approvals, db } from '@procur/db';
  * (catalog already imports ai for executor entry points).
  */
 
+export type StagePredicateInput =
+  | { kind: 'manual' }
+  | {
+      kind: 'count_events';
+      verb: string;
+      threshold: number;
+      entitySlugs?: string[];
+    }
+  | {
+      kind: 'count_feedback';
+      feedbackKind: string;
+      threshold: number;
+    }
+  | {
+      kind: 'kyc_for_entities';
+      entitySlugs: string[];
+      threshold: number;
+    };
+
 export interface CreateMissionPayload {
   title: string;
   description?: string;
@@ -20,8 +39,46 @@ export interface CreateMissionPayload {
     title: string;
     description?: string;
     xpReward: number;
+    predicate: StagePredicateInput;
   }>;
   rationale: string;
+}
+
+function parsePredicate(value: unknown): StagePredicateInput {
+  if (!value || typeof value !== 'object') return { kind: 'manual' };
+  const v = value as Record<string, unknown>;
+  switch (v['kind']) {
+    case 'count_events':
+      return {
+        kind: 'count_events',
+        verb: String(v['verb']),
+        threshold: Number(v['threshold']),
+        ...(Array.isArray(v['entitySlugs'])
+          ? {
+              entitySlugs: (v['entitySlugs'] as unknown[]).map((s) =>
+                String(s),
+              ),
+            }
+          : {}),
+      };
+    case 'count_feedback':
+      return {
+        kind: 'count_feedback',
+        feedbackKind: String(v['feedbackKind']),
+        threshold: Number(v['threshold']),
+      };
+    case 'kyc_for_entities':
+      return {
+        kind: 'kyc_for_entities',
+        entitySlugs: Array.isArray(v['entitySlugs'])
+          ? (v['entitySlugs'] as unknown[]).map((s) => String(s))
+          : [],
+        threshold: Number(v['threshold']),
+      };
+    case 'manual':
+    default:
+      return { kind: 'manual' };
+  }
 }
 
 export function parseCreateMissionPayload(
@@ -48,6 +105,7 @@ export function parseCreateMissionPayload(
         title: String(s['title']),
         xpReward:
           typeof s['xpReward'] === 'number' ? (s['xpReward'] as number) : 25,
+        predicate: parsePredicate(s['predicate']),
       };
       if (typeof s['description'] === 'string') {
         stage.description = s['description'] as string;
@@ -86,19 +144,15 @@ export async function applyCreateMission(
         userId: string;
         title: string;
         description?: string;
-        stages: CreateMissionPayload['stages'] & { predicate: 'manual' }[];
+        stages: CreateMissionPayload['stages'];
         approvalId?: string;
       }) => Promise<{ id: string }>;
     };
-    const stages = payload.stages.map((s) => ({
-      ...s,
-      predicate: 'manual' as const,
-    }));
     const created = await mod.createCustomMission({
       userId: ctx.reviewerId,
       title: payload.title,
       ...(payload.description ? { description: payload.description } : {}),
-      stages,
+      stages: payload.stages,
       approvalId,
     });
     await db

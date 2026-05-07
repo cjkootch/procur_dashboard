@@ -65,16 +65,44 @@ export const missionInstances = pgTable(
   }),
 );
 
-/** Custom-stage shape stored in mission_instances.custom_stages JSONB. */
+/** Custom-stage shape stored in mission_instances.custom_stages JSONB.
+ *
+ *  Each stage carries a discriminated `predicate` describing how it
+ *  completes:
+ *    - `manual` — operator clicks "Mark done"
+ *    - `count_events` — auto-tick when a count of `events` rows
+ *      matching `verb` (optionally filtered by `entitySlugs`)
+ *      reaches `threshold`. Window starts at mission.createdAt.
+ *    - `count_feedback` — same shape but counts `feedback_events`
+ *      filtered by `feedbackKind`.
+ *    - `kyc_for_entities` — counts `supplier_approvals` in an
+ *      approved status for the given entity slugs; complete when
+ *      coverage hits `threshold`.
+ */
 export interface CustomStageDef {
   key: string;
   title: string;
   description?: string;
   xpReward: number;
-  /** 'manual' for v1 — custom missions only support operator-marked
-   *  completion. Future kinds (e.g. 'count_events') would let chat
-   *  define automated predicates. */
-  predicate: 'manual';
+  predicate:
+    | { kind: 'manual' }
+    | {
+        kind: 'count_events';
+        verb: string;
+        threshold: number;
+        /** Optional entity_slug whitelist applied via metadata->>'entity_slug'. */
+        entitySlugs?: string[];
+      }
+    | {
+        kind: 'count_feedback';
+        feedbackKind: string;
+        threshold: number;
+      }
+    | {
+        kind: 'kyc_for_entities';
+        entitySlugs: string[];
+        threshold: number;
+      };
 }
 
 export type MissionInstanceRow = typeof missionInstances.$inferSelect;

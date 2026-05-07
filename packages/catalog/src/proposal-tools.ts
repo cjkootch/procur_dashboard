@@ -277,13 +277,13 @@ export const proposeTools = {
   propose_create_mission: defineTool({
     name: 'propose_create_mission',
     description:
-      'Queue a custom gamification mission for operator approval. Use when the user asks to set up ' +
-      'a mission, checklist, or playbook for a specific objective ("set up a mission to onboard ' +
-      'Petrobras as a buyer", "make a mission for the Q3 RFP push", etc.). Stages are manual ' +
-      'checklist items the operator marks done from the home Brief; each earns its own xpReward ' +
-      'on completion plus a bonus when all stages finish. Tier T1 — scoped to the user, no ' +
-      'external side-effects. Pick 3-5 stages that map to the real workflow; xpReward 25-100 per ' +
-      'stage scales with effort.',
+      'Queue a custom gamification mission for operator approval. Use when the user asks to set up a mission, checklist, or playbook for a specific objective. Tier T1 — scoped to the user, no external side-effects. Pick 2-8 stages that map to the real workflow; xpReward 25-100 per stage scales with effort.\n\n' +
+      'Each stage carries a `predicate` that determines how it completes:\n\n' +
+      '  - `{kind: "manual"}` (default) — operator clicks "Mark done." Use for tasks the system can\'t observe (research, prep, planning, conversations outside procur).\n' +
+      '  - `{kind: "count_events", verb: "outreach.sent", threshold: 5, entitySlugs?: [...]}` — auto-ticks when N matching events fire. Use for outreach goals ("email 5 specific companies"). Set `entitySlugs` to scope to specific known_entities (use the rolodex slugs from lookup_known_entities). Common verbs: outreach.sent, outreach.replied, outreach.meeting_booked, outreach.converted_to_lead, outreach.converted_to_deal.\n' +
+      '  - `{kind: "count_feedback", feedbackKind: "match_quality", threshold: 5}` — auto-ticks on N feedback events of that kind (match_quality / entity_attribute / friction / disposition / retrospective).\n' +
+      '  - `{kind: "kyc_for_entities", entitySlugs: [...], threshold: 3}` — auto-ticks when supplier_approvals is in approved_with_kyc / approved_without_kyc for `threshold` of the listed entities.\n\n' +
+      'Prefer automated predicates when the user\'s ask is observable through procur events (sending outreach, getting replies, completing KYC, capturing feedback). Fall back to manual when the work happens off-system or is judgment-based. Mix-and-match within one mission is fine.',
     kind: 'write',
     schema: z.object({
       title: z.string().min(1).max(200),
@@ -299,6 +299,27 @@ export const proposeTools = {
             title: z.string().min(1).max(200),
             description: z.string().max(500).optional(),
             xpReward: z.number().int().min(5).max(500),
+            predicate: z
+              .discriminatedUnion('kind', [
+                z.object({ kind: z.literal('manual') }),
+                z.object({
+                  kind: z.literal('count_events'),
+                  verb: z.string().min(1).max(80),
+                  threshold: z.number().int().min(1).max(1000),
+                  entitySlugs: z.array(z.string().min(1).max(200)).max(200).optional(),
+                }),
+                z.object({
+                  kind: z.literal('count_feedback'),
+                  feedbackKind: z.string().min(1).max(60),
+                  threshold: z.number().int().min(1).max(1000),
+                }),
+                z.object({
+                  kind: z.literal('kyc_for_entities'),
+                  entitySlugs: z.array(z.string().min(1).max(200)).min(1).max(200),
+                  threshold: z.number().int().min(1).max(200),
+                }),
+              ])
+              .default({ kind: 'manual' }),
           }),
         )
         .min(2)
