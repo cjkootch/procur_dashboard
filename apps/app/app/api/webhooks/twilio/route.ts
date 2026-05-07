@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { and, desc, eq, like, sql } from 'drizzle-orm';
 import twilio from 'twilio';
 import {
   contacts,
@@ -7,7 +7,7 @@ import {
   rawEvents,
   touchpoints,
 } from '@procur/db';
-import { createId } from '@procur/ai';
+import { createId, emitOutreachOutcome } from '@procur/ai';
 import { recordWebhookReceipt } from '../../../../lib/webhook-events';
 
 export const runtime = 'nodejs';
@@ -275,6 +275,51 @@ async function handleInboundMessage(
     .onConflictDoNothing({
       target: [events.occurredAt, events.idempotencyKey],
     });
+
+  // Outreach lifecycle: when an inbound SMS/WhatsApp arrives from a
+  // number we recently sent to via the recommendation pipeline, emit
+  // `outreach.replied` against the originating approval. Match by:
+  //   - touchpoints.channel = sms.sent / whatsapp.sent
+  //   - touchpoints.metadata->>'to' = fromPhone
+  //   - touchpoints.actor LIKE 'approval:%' (extract the approval id)
+  // 7-day lookback — replies after that are usually a fresh
+  // conversation, not a reply to our outreach.
+  if (fromPhone) {
+    const outboundChannel = isWhatsapp ? 'whatsapp.sent' : 'sms.sent';
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const recentOutbound = await db
+      .select({
+        actor: touchpoints.actor,
+        occurredAt: touchpoints.occurredAt,
+      })
+      .from(touchpoints)
+      .where(
+        and(
+          eq(touchpoints.channel, outboundChannel),
+          like(touchpoints.actor, 'approval:%'),
+          sql`${touchpoints.metadata}->>'to' = ${fromPhone}`,
+          sql`${touchpoints.occurredAt} >= ${sevenDaysAgo}`,
+        ),
+      )
+      .orderBy(desc(touchpoints.occurredAt))
+      .limit(1);
+    const match = recentOutbound[0];
+    if (match?.actor) {
+      const approvalId = match.actor.slice('approval:'.length);
+      await emitOutreachOutcome({
+        approvalId,
+        verb: 'outreach.replied',
+        occurredAt: new Date(),
+        objectId: messageSid,
+        objectType: 'message',
+        metadata: {
+          channel: isWhatsapp ? 'whatsapp' : 'sms',
+          inbound_message_sid: messageSid,
+          from_phone: fromPhone,
+        },
+      });
+    }
+  }
 }
 
 // Twilio's GET preflight on the URL — return a 200 so a basic health

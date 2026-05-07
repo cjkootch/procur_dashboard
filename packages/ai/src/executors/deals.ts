@@ -11,6 +11,10 @@ import { createId } from '../agents/id';
 import { AgentRunner } from '../agents/agent-runner';
 import { DealEvaluatorAgent } from '../agents/agents/deal-evaluator';
 import { PostgresCostLedger } from '../cost-ledger';
+import {
+  emitOutreachOutcome,
+  findRecentOutreachApprovalsByOrg,
+} from './outreach-evidence';
 
 /**
  * Per-action executors for Phase 5 fuel-deal surfaces. Same pattern as
@@ -273,6 +277,31 @@ export async function applyCreateDeal(
     product: payload.product,
     line_of_business: payload.lineOfBusiness,
   });
+
+  // Outreach lifecycle: every recent applied comm approval (last 30d)
+  // that targeted a contact at the buyer org gets attributed
+  // `outreach.converted_to_deal`. The dashboard pivots these by
+  // model_version + evidence_item_ids to compute true conversion
+  // rates per pipeline rev. Idempotent on (originatingApproval, verb)
+  // via emitOutreachOutcome.
+  const recent = await findRecentOutreachApprovalsByOrg(payload.buyerOrgId);
+  for (const originatingApproval of recent) {
+    await emitOutreachOutcome({
+      approvalId: originatingApproval,
+      verb: 'outreach.converted_to_deal',
+      occurredAt: new Date(),
+      objectId: dealId,
+      objectType: 'fuel_deal',
+      metadata: {
+        deal_ref: payload.dealRef,
+        product: payload.product,
+        line_of_business: payload.lineOfBusiness,
+        buyer_org_id: payload.buyerOrgId,
+        triggered_by_approval: approvalId,
+      },
+    });
+  }
+
   return { ok: true, appliedObjectId: dealId };
 }
 

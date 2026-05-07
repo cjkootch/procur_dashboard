@@ -12,6 +12,10 @@ import {
   organizations,
 } from '@procur/db';
 import { createId } from '../agents/id';
+import {
+  emitOutreachOutcome,
+  findRecentOutreachApprovalsByContact,
+} from './outreach-evidence';
 
 /**
  * Per-action executors for Phase 4 sales surfaces. Each function is
@@ -229,6 +233,16 @@ export async function applyCloseLead(
   payload: CloseLeadPayload,
 ): Promise<ExecutorResult> {
   if (await alreadyApplied(approvalId)) return { ok: true };
+  // Pull contactId before the update so the lead row still has it on
+  // hand for the disqualified attribution below — closes are typically
+  // 'lost' but we read regardless.
+  const leadRow = await db
+    .select({ contactId: leads.contactId })
+    .from(leads)
+    .where(eq(leads.id, payload.leadId))
+    .limit(1);
+  const contactId = leadRow[0]?.contactId ?? null;
+
   await db
     .update(leads)
     .set({ status: payload.outcome })
@@ -236,6 +250,28 @@ export async function applyCloseLead(
   await stampApplied(approvalId, payload.leadId, `lead.${payload.outcome}`, {
     reason: payload.reason,
   });
+
+  // Outreach lifecycle: lost leads with a known contact attribute
+  // back to the originating outreach approvals so the dashboard can
+  // compute true negative-outcome rates per pipeline rev.
+  if (payload.outcome === 'lost' && contactId) {
+    const recent = await findRecentOutreachApprovalsByContact(contactId);
+    for (const originatingApproval of recent) {
+      await emitOutreachOutcome({
+        approvalId: originatingApproval,
+        verb: 'outreach.disqualified',
+        occurredAt: new Date(),
+        objectId: payload.leadId,
+        objectType: 'lead',
+        metadata: {
+          reason: 'lead_lost',
+          lead_close_reason: payload.reason,
+          triggered_by_approval: approvalId,
+        },
+      });
+    }
+  }
+
   return { ok: true, appliedObjectId: payload.leadId };
 }
 
@@ -468,6 +504,27 @@ export async function applyContactOptOut(
   await stampApplied(approvalId, payload.contactId, 'contact.opted_out', {
     reason: payload.reason,
   });
+
+  // Outreach lifecycle: every recent comm approval (last 30d) that
+  // targeted this contact gets `outreach.disqualified`. Powers the
+  // Match Performance Dashboard's negative-outcome column. Idempotent
+  // on (originatingApproval, verb).
+  const recent = await findRecentOutreachApprovalsByContact(payload.contactId);
+  for (const originatingApproval of recent) {
+    await emitOutreachOutcome({
+      approvalId: originatingApproval,
+      verb: 'outreach.disqualified',
+      occurredAt: new Date(),
+      objectId: payload.contactId,
+      objectType: 'contact',
+      metadata: {
+        reason: 'contact_opted_out',
+        opt_out_reason: payload.reason,
+        triggered_by_approval: approvalId,
+      },
+    });
+  }
+
   return { ok: true, appliedObjectId: payload.contactId };
 }
 
