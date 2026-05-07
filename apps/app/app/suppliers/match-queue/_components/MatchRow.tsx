@@ -196,24 +196,35 @@ export function MatchRow(props: MatchRowProps) {
 
   return (
     <li
-      className={`group relative grid grid-cols-[3px_56px_88px_minmax(0,1fr)_72px_auto] items-center gap-3 border-b border-[color:var(--color-border)]/60 py-2.5 pl-0 pr-2 transition hover:bg-[color:var(--color-muted)]/30 ${focusRing} ${flashBg}`}
+      // Mobile (<lg): stacked layout — chips line, entity + rationale,
+      // observed-at + actions row that wraps. The dense 6-column grid
+      // ships on lg+ where horizontal real estate is fine.
+      className={`group relative flex flex-col gap-2 border-b border-[color:var(--color-border)]/60 px-3 py-3 transition hover:bg-[color:var(--color-muted)]/30 lg:grid lg:grid-cols-[3px_56px_88px_minmax(0,1fr)_72px_auto] lg:items-center lg:gap-3 lg:py-2.5 lg:pl-0 lg:pr-2 ${focusRing} ${flashBg}`}
     >
       <span className={`absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r ${style.strip}`} />
 
-      <span aria-hidden="true" />
+      {/* Chips row — score + signal pill + observed-at on mobile;
+          lg+ splits these into separate grid cells. */}
+      <span aria-hidden="true" className="hidden lg:block" />
 
-      <span className={scoreChipClass(props.score)} title="match score (0-9.99)">
-        {props.score.toFixed(1)}
-      </span>
+      <div className="flex items-center gap-2 lg:contents">
+        <span className={scoreChipClass(props.score)} title="match score (0-9.99)">
+          {props.score.toFixed(1)}
+        </span>
 
-      <span
-        className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${style.pillBg} ${style.pillFg}`}
-      >
-        {style.label}
-      </span>
+        <span
+          className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${style.pillBg} ${style.pillFg}`}
+        >
+          {style.label}
+        </span>
+
+        <span className="ml-auto text-[11px] tabular-nums text-[color:var(--color-muted-foreground)] lg:hidden">
+          {formatObserved(props.observedAt)}
+        </span>
+      </div>
 
       <div className="min-w-0">
-        <div className="flex items-baseline gap-1.5">
+        <div className="flex flex-wrap items-baseline gap-1.5">
           {props.entityProfileSlug ? (
             <Link
               href={`/entities/${props.entityProfileSlug}`}
@@ -236,7 +247,7 @@ export function MatchRow(props: MatchRowProps) {
           )}
         </div>
         {rationale && (
-          <p className="mt-0.5 line-clamp-1 text-xs text-[color:var(--color-muted-foreground)]">
+          <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)] lg:line-clamp-1">
             {rationale}
           </p>
         )}
@@ -245,15 +256,16 @@ export function MatchRow(props: MatchRowProps) {
         )}
       </div>
 
-      <span className="text-right text-[11px] tabular-nums text-[color:var(--color-muted-foreground)]">
+      <span className="hidden text-right text-[11px] tabular-nums text-[color:var(--color-muted-foreground)] lg:inline">
         {formatObserved(props.observedAt)}
       </span>
 
-      <div className="flex items-center gap-1">
+      <div className="flex flex-wrap items-center gap-1">
         {/* Pattern 1 feedback strip — shown when the parent
             MatchQueueList is wired in. Each button corresponds to
             the keyboard shortcut. Title attrs make the binding
-            discoverable without a help overlay. */}
+            discoverable without a help overlay. Touch targets bumped
+            from h-7 to h-8 for thumb-comfort on phones. */}
         {props.onFeedback && (
           <>
             <button
@@ -261,7 +273,7 @@ export function MatchRow(props: MatchRowProps) {
               onClick={() => props.onFeedback?.('positive')}
               title="Relevant — surface more like this  [f]"
               aria-label="Mark as relevant"
-              className="rounded-[var(--radius-sm)] border border-transparent px-1.5 py-1 text-[14px] leading-none hover:border-emerald-500/50 hover:text-emerald-700"
+              className="inline-flex h-8 min-w-[32px] items-center justify-center rounded-[var(--radius-sm)] border border-transparent px-1.5 text-[16px] leading-none hover:border-emerald-500/50 hover:text-emerald-700"
             >
               👍
             </button>
@@ -270,7 +282,7 @@ export function MatchRow(props: MatchRowProps) {
               onClick={() => props.onFeedback?.('negative')}
               title="Not relevant — surface less like this  [d]"
               aria-label="Mark as not relevant"
-              className="rounded-[var(--radius-sm)] border border-transparent px-1.5 py-1 text-[14px] leading-none hover:border-red-500/50 hover:text-red-700"
+              className="inline-flex h-8 min-w-[32px] items-center justify-center rounded-[var(--radius-sm)] border border-transparent px-1.5 text-[16px] leading-none hover:border-red-500/50 hover:text-red-700"
             >
               👎
             </button>
@@ -279,7 +291,7 @@ export function MatchRow(props: MatchRowProps) {
               onClick={() => props.onMute?.()}
               title="Mute this signal type for this entity  [m]"
               aria-label="Mute"
-              className="rounded-[var(--radius-sm)] border border-transparent px-1.5 py-1 text-[14px] leading-none hover:border-blue-500/50 hover:text-blue-700"
+              className="inline-flex h-8 min-w-[32px] items-center justify-center rounded-[var(--radius-sm)] border border-transparent px-1.5 text-[16px] leading-none hover:border-blue-500/50 hover:text-blue-700"
             >
               🔇
             </button>
@@ -288,7 +300,7 @@ export function MatchRow(props: MatchRowProps) {
               onClick={() => props.onFeedback?.('pin')}
               title="Pin for follow-up  [p]"
               aria-label="Pin"
-              className="rounded-[var(--radius-sm)] border border-transparent px-1.5 py-1 text-[14px] leading-none hover:border-amber-500/50 hover:text-amber-700"
+              className="inline-flex h-8 min-w-[32px] items-center justify-center rounded-[var(--radius-sm)] border border-transparent px-1.5 text-[16px] leading-none hover:border-amber-500/50 hover:text-amber-700"
             >
               📌
             </button>
@@ -300,16 +312,16 @@ export function MatchRow(props: MatchRowProps) {
           disabled={pending}
           onClick={qualifyAsLead}
           title="Qualify this signal as a lead with full match-queue context attached"
-          className="rounded-[var(--radius-sm)] bg-[color:var(--color-foreground)] px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-background)] hover:opacity-90 disabled:opacity-40"
+          className="inline-flex h-8 items-center rounded-[var(--radius-sm)] bg-[color:var(--color-foreground)] px-3 text-xs font-medium text-[color:var(--color-background)] hover:opacity-90 disabled:opacity-40"
         >
-          Qualify as lead
+          Qualify
         </button>
         <button
           type="button"
           disabled={pending}
           onClick={() => update('actioned')}
           title="Mark as handled"
-          className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-[11px] hover:border-[color:var(--color-foreground)] disabled:opacity-40"
+          className="inline-flex h-8 items-center rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2.5 text-xs hover:border-[color:var(--color-foreground)] disabled:opacity-40"
         >
           Actioned
         </button>
@@ -319,7 +331,7 @@ export function MatchRow(props: MatchRowProps) {
           onClick={() => update('dismissed')}
           title="Hide this row"
           aria-label="Dismiss"
-          className="rounded-[var(--radius-sm)] border border-transparent px-1.5 py-1 text-[14px] leading-none text-[color:var(--color-muted-foreground)] hover:border-[color:var(--color-border)] hover:text-[color:var(--color-foreground)] disabled:opacity-40"
+          className="inline-flex h-8 min-w-[32px] items-center justify-center rounded-[var(--radius-sm)] border border-transparent px-1.5 text-[18px] leading-none text-[color:var(--color-muted-foreground)] hover:border-[color:var(--color-border)] hover:text-[color:var(--color-foreground)] disabled:opacity-40"
         >
           ×
         </button>

@@ -23,7 +23,7 @@ export default async function PinnedMatchesPage() {
   const rows = await getPinnedMatches(user.id, 200);
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-10">
+    <div className="mx-auto max-w-5xl px-4 py-6 md:px-6 md:py-10">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">📌 Pinned matches</h1>
         <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
@@ -53,7 +53,7 @@ export default async function PinnedMatchesPage() {
             return (
               <li
                 key={r.feedbackEventId}
-                className="grid grid-cols-[88px_minmax(0,1fr)_72px_84px_88px] items-center gap-3 py-2.5"
+                className="flex flex-col gap-1.5 border-b border-[color:var(--color-border)]/40 py-3 last:border-b-0 md:grid md:grid-cols-[88px_minmax(0,1fr)_72px_84px_88px] md:items-center md:gap-3 md:py-2.5 md:border-b-0"
               >
                 <span className={pillClass(r.signalType)}>
                   {pillLabel(r.signalType)}

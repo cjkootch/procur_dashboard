@@ -55,7 +55,7 @@ export default async function MatchQueuePage({ searchParams }: Props) {
   const awardCount = items.filter((i) => i.signalType === 'new_award').length;
 
   return (
-    <div className="mx-auto max-w-7xl bg-[color:var(--color-muted)]/40 px-6 py-6 min-h-[calc(100vh-49px)]">
+    <div className="mx-auto max-w-7xl bg-[color:var(--color-muted)]/40 px-4 py-4 md:px-6 md:py-6 min-h-[calc(100vh-49px)]">
       <header className="mb-4">
         <h1 className="text-xl font-semibold tracking-tight">Match queue</h1>
         <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
