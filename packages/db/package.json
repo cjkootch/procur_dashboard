@@ -63,6 +63,8 @@
     "backfill-crude-grade-properties": "tsx src/backfill-crude-grade-properties.ts",
     "backfill-award-quantities": "tsx src/backfill-award-quantities.ts",
     "backfill-entity-coords": "tsx src/backfill-entity-coords.ts",
+    "backfill-known-entity-primary-domain": "tsx src/backfill-known-entity-primary-domain.ts",
+    "seed-uswc-refiners": "tsx src/seed-uswc-refiners.ts",
     "dedup-refineries": "tsx src/dedup-refineries.ts",
     "cleanup-cross-role-merges": "tsx src/cleanup-cross-role-merges.ts",
     "type-check": "tsc --noEmit",

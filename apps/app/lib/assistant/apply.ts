@@ -1,8 +1,15 @@
 import 'server-only';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql as sqlTag } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { draftSection, embedText, meter, meterEmbedding, MODELS } from '@procur/ai';
+import {
+  draftSection,
+  embedText,
+  EMBEDDING_MODEL,
+  meter,
+  meterEmbedding,
+  MODELS,
+} from '@procur/ai';
 import { enrichOrgsBatch } from '@procur/apollo';
 import {
   alertProfiles,
@@ -759,6 +766,72 @@ const createKnownEntitySchema = z.object({
 });
 
 /**
+ * Compose the identity-text payload for entity_text_embeddings —
+ * MUST match seed-entity-text-embeddings.ts's composeSourceText so
+ * the on-create write and the periodic backfill share a vector
+ * space. Tied to embeddingKind 'combined_v1'.
+ */
+function composeEntitySourceText(args: {
+  name: string;
+  aliases: string[];
+  country: string;
+  role: string;
+  categories: string[];
+  notes: string | null;
+}): string {
+  const parts: string[] = [args.name];
+  if (args.aliases.length > 0) parts.push(`aka: ${args.aliases.join(', ')}`);
+  parts.push(`country: ${args.country}`);
+  parts.push(`role: ${args.role}`);
+  if (args.categories.length > 0) {
+    parts.push(`categories: ${args.categories.join(', ')}`);
+  }
+  if (args.notes) parts.push(args.notes.slice(0, 500));
+  return parts.join('\n');
+}
+
+function vectorLiteral(values: number[]): string {
+  return `[${values.map((v) => v.toFixed(8)).join(',')}]`;
+}
+
+const TEXT_EMBEDDING_KIND_COMBINED_V1 = 'combined_v1';
+
+/**
+ * Embed the entity's identity text and upsert into
+ * entity_text_embeddings. Idempotent on (slug, kind, model_version).
+ * Caller is responsible for try/catch — failures must not roll back
+ * the parent insert.
+ */
+async function embedAndUpsertEntityText(args: {
+  slug: string;
+  name: string;
+  country: string;
+  role: string;
+  categories: string[];
+  aliases: string[];
+  notes: string | null;
+}): Promise<void> {
+  const sourceText = composeEntitySourceText(args);
+  const vec = await embedText(sourceText);
+  await db.execute(sqlTag`
+    INSERT INTO entity_text_embeddings (
+      entity_slug, embedding_kind, embedding, source_text, model_version
+    ) VALUES (
+      ${args.slug},
+      ${TEXT_EMBEDDING_KIND_COMBINED_V1},
+      ${vectorLiteral(vec)}::vector,
+      ${sourceText},
+      ${EMBEDDING_MODEL}
+    )
+    ON CONFLICT (entity_slug, embedding_kind, model_version)
+    DO UPDATE SET
+      embedding = EXCLUDED.embedding,
+      source_text = EXCLUDED.source_text,
+      created_at = now();
+  `);
+}
+
+/**
  * Strip protocol + path + leading "www." from a website URL so the
  * resulting string is a bare apex/subdomain suitable for the
  * `known_entities.primary_domain` column. Returns null on garbage.
@@ -847,6 +920,35 @@ const createKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
           }),
         );
       }
+    }
+
+    // Best-effort text embedding for ML mention-resolution. Mirrors
+    // the seed-entity-text-embeddings.ts source-text composition so
+    // backfill batches and on-create writes share an identity space.
+    // ~$0.0001 per row at text-embedding-3-small pricing. Failures
+    // (OpenAI rate limit, no API key in dev, Postgres congestion)
+    // must NEVER roll back the create — log and move on; the
+    // nightly seed script will pick up the gap.
+    try {
+      await embedAndUpsertEntityText({
+        slug: created.slug,
+        name: payload.name,
+        country: payload.country.toUpperCase(),
+        role: payload.role,
+        categories: payload.categories,
+        aliases: payload.aliases,
+        notes: payload.notes,
+      });
+    } catch (embedErr) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          service: 'assistant.apply.createKnownEntity',
+          msg: 'text-embedding upsert failed — continuing',
+          slug: created.slug,
+          error: embedErr instanceof Error ? embedErr.message : String(embedErr),
+        }),
+      );
     }
 
     return {
