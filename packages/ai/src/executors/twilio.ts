@@ -410,7 +410,15 @@ export async function applyOutboundCall(
   if (payload.goalHint) {
     twimlUrl.searchParams.set('goal', payload.goalHint.slice(0, 280));
   }
-  const statusUrl = new URL(`${APP_URL}/api/webhooks/twilio/status`);
+  // Status callbacks land on the same dispatcher endpoint as inbound
+  // messages — the route discriminates by `?kind=status`. Earlier this
+  // pointed at `/api/webhooks/twilio/status`, which doesn't exist;
+  // every lifecycle event (ringing/answered/completed/CallDuration)
+  // 404'd silently and never landed in events/touchpoints. Recording
+  // callbacks have a separate `?kind=recording` path that the TwiML
+  // route already configures correctly.
+  const statusUrl = new URL(`${APP_URL}/api/webhooks/twilio`);
+  statusUrl.searchParams.set('kind', 'status');
   statusUrl.searchParams.set('approval', approvalId);
   let callSid: string;
   try {
