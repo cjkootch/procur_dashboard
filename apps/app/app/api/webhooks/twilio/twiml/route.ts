@@ -5,26 +5,68 @@ export const dynamic = 'force-dynamic';
 
 /**
  * TwiML response endpoint Twilio fetches when an outbound call is
- * answered. Phase 7 v1 supports `mode=conference` only (operator
- * dials in to the conference; AI talkback ships in Phase 7.5 once
- * the voice-bridge Fly app is up).
+ * answered. Two modes per the `mode` query param:
+ *
+ *   conference — operator-join. Twilio dials the recipient, plays a
+ *     brief intro, then puts them in a conference room keyed on the
+ *     approval id. The operator joins via /voice when ready.
+ *   ai — Phase 7.5 voice-bridge. <Connect><Stream> shuttles audio
+ *     to procur-voice-bridge.fly.dev which proxies to OpenAI
+ *     Realtime for full AI talkback.
  *
  * Query params:
  *   approval — approval id this call is the side-effect of
- *   mode     — 'conference' (v1) | 'ai' (rejected; phase 7.5)
+ *   mode     — 'conference' (v1) | 'ai' (Phase 7.5)
  *   contactId / orgId — touchpoint linkage
  *   goal     — operator-friendly one-liner shown on the call card
+ *   aiInstructions — system-prompt text for the AI mode
  *
- * Auth: Twilio fetches the URL with no signed body. The URL is
- * generated server-side by the executor and includes the approval
- * id, which is unguessable. Future hardening: HMAC-sign the URL
- * ourselves OR validate X-Twilio-Signature.
+ * Auth: every request is signature-verified against TWILIO_AUTH_TOKEN
+ * via Twilio's HMAC-SHA1 spec — same path the main /api/webhooks/twilio
+ * dispatcher uses. Without it, anyone with a guessed approval id could
+ * fetch this route and read the AI instructions / goal hint we attached
+ * to the call (Finding #10 from the Phase 7 audit). ULIDs are
+ * unguessable in practice but the fix is cheap so verify.
  *
- * Both GET and POST are accepted — Twilio defaults to POST for
- * TwiML fetches, but Voice TwiML Apps (browser-client calls) and
- * the Twilio Console's "Test" tool may use GET.
+ * Twilio almost always POSTs for TwiML fetches; the GET handler exists
+ * for the Twilio Console's "Test" tool and TwiML Apps. Both are verified
+ * identically — for GET the signature is over the URL with no body
+ * params; for POST it's URL + sorted form-encoded params.
  */
+
+async function verifyTwilioSignature(
+  req: Request,
+  params: Record<string, string>,
+): Promise<boolean> {
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  if (!authToken) return false;
+  const signature = req.headers.get('x-twilio-signature');
+  if (!signature) return false;
+  return twilio.validateRequest(authToken, signature, req.url, params);
+}
+
 async function handleTwiml(req: Request): Promise<Response> {
+  // Read the body once (POST only) — the signature is computed over
+  // the form-encoded params, and we'd need to parse it anyway to use
+  // any of the call context Twilio sends.
+  let bodyParams: Record<string, string> = {};
+  if (req.method === 'POST') {
+    const rawBody = await req.text();
+    try {
+      bodyParams = Object.fromEntries(new URLSearchParams(rawBody)) as Record<
+        string,
+        string
+      >;
+    } catch {
+      return new Response('invalid body', { status: 400 });
+    }
+  }
+
+  const signatureValid = await verifyTwilioSignature(req, bodyParams);
+  if (!signatureValid) {
+    return new Response('invalid signature', { status: 401 });
+  }
+
   const url = new URL(req.url);
   const mode = url.searchParams.get('mode') ?? 'conference';
   const approvalId = url.searchParams.get('approval') ?? 'unknown';
@@ -54,7 +96,7 @@ async function handleTwiml(req: Request): Promise<Response> {
   } else {
     // Operator-join-conference. Twilio dials the recipient, plays a
     // brief intro, then puts them in a conference room keyed on the
-    // approval id. The operator joins via the calls UI when ready.
+    // approval id. The operator joins via the /voice UI when ready.
     twiml.say(
       { voice: 'Polly.Joanna' },
       'Please hold while we connect you to a team member.',
