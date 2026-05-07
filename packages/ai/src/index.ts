@@ -298,3 +298,13 @@ export {
   type DailyBrief,
   type DailyBriefInput,
 } from './agents/agents/daily-brief';
+// Communication templates executors — Cole's vex-parity request.
+// T1 metadata writes; no outbound side effects.
+export {
+  applyArchiveCommunicationTemplate,
+  applySaveCommunicationTemplate,
+  parseArchiveCommunicationTemplatePayload,
+  parseSaveCommunicationTemplatePayload,
+  type ArchiveCommunicationTemplatePayload,
+  type SaveCommunicationTemplatePayload,
+} from './executors/communication-templates';

@@ -523,6 +523,65 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
     targetId: z.string().min(1).max(256),
     rationale: z.string().min(1).max(1000),
   }),
+  /**
+   * `template.save` — create or update a communication template
+   * (email / sms / whatsapp / whatsapp_template / call). T1 because
+   * it's a metadata write only — no outbound side effect, no party
+   * disclosure. Operator approves at /approvals; on approve the
+   * template enters the library and chat can reference it by name.
+   */
+  z.object({
+    kind: z.literal('template.save'),
+    tier: z.literal(ApprovalTier.T1),
+    templateKind: z.enum([
+      'email',
+      'sms',
+      'whatsapp',
+      'whatsapp_template',
+      'call',
+    ]),
+    name: z
+      .string()
+      .regex(
+        /^[a-z0-9_-]{1,80}$/,
+        'name must be lowercase slug (a-z, 0-9, _, -; 1-80 chars)',
+      ),
+    displayName: z.string().min(1).max(200),
+    /** Email subject. Optional for non-email kinds. */
+    subject: z.string().max(500).optional(),
+    body: z.string().min(1).max(50_000),
+    /** Twilio Content Template SID (HX + 32 hex). Required for
+     *  kind=whatsapp_template; ignored for the others. */
+    contentSid: z
+      .string()
+      .regex(/^HX[a-fA-F0-9]{32}$/, 'contentSid must be HX + 32 hex chars')
+      .optional(),
+    variables: z
+      .array(
+        z.object({
+          name: z.string().min(1).max(80),
+          description: z.string().max(500).optional(),
+          required: z.boolean().optional(),
+          defaultValue: z.string().max(500).optional(),
+        }),
+      )
+      .max(40)
+      .optional(),
+    description: z.string().max(2000).optional(),
+    rationale: z.string().min(1).max(1000),
+  }),
+  /**
+   * `template.archive` — soft-delete a communication template by id.
+   * T1 — historical touchpoints that referenced the template stay
+   * readable; the unique slug index is partial on archived_at IS
+   * NULL so a new template with the same slug can be created later.
+   */
+  z.object({
+    kind: z.literal('template.archive'),
+    tier: z.literal(ApprovalTier.T1),
+    templateId: z.string().min(1).max(64),
+    rationale: z.string().min(1).max(1000),
+  }),
   z.object({
     kind: z.literal('deal.milestone'),
     tier: z.literal(ApprovalTier.T1),

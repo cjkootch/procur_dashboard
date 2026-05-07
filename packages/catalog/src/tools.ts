@@ -87,6 +87,10 @@ import {
   recommendCommunicationTargets,
   type RecommendCandidate,
 } from './communication-recommendations';
+import {
+  listCommunicationTemplates,
+  renderTemplate,
+} from './communication-templates';
 import { insertChatApproval } from './agent-runtime';
 import type { ActionDescriptorT } from '@procur/ai';
 import { SUPPLIER_APPROVAL_STATUSES } from '@procur/db';
@@ -486,6 +490,103 @@ export function buildCatalogTools(): ToolRegistry {
           entitySlug: pack.entity.slug,
           entityName: pack.entity.name,
           ...draft,
+        };
+      },
+    }),
+
+    // ========================================================================
+    // Communication templates — Cole's vex-parity request. The chat assistant
+    // calls list to discover, get to render with operator-supplied variables,
+    // then plugs the rendered body into propose_email_send / propose_sms_send /
+    // propose_whatsapp_send / propose_whatsapp_send_template / propose_outbound_call.
+    // Templates are operator-managed at /settings/templates; edits route through
+    // propose_save_template so every change has an audit trail.
+    // ========================================================================
+
+    list_communication_templates: defineTool({
+      name: 'list_communication_templates',
+      description:
+        "List operator-authored communication templates the chat can apply by name. Filter by " +
+        "`kind` (email / sms / whatsapp / whatsapp_template / call) when the user asked for a " +
+        "specific channel. Returns slug + display name + subject (for email) + variable manifest. " +
+        "Use this BEFORE proposing an outreach if the user said 'send X the welcome email' or " +
+        "similar — find the template, then render it via `get_communication_template`, then pass " +
+        "the rendered body verbatim into the matching propose_* send tool.",
+      kind: 'read',
+      schema: z.object({
+        kind: z
+          .enum(['email', 'sms', 'whatsapp', 'whatsapp_template', 'call'])
+          .optional(),
+        limit: z.number().int().min(1).max(200).optional(),
+      }),
+      handler: async (_ctx, input) => {
+        const rows = await listCommunicationTemplates({
+          ...(input.kind ? { kind: input.kind } : {}),
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        });
+        return {
+          ok: true as const,
+          count: rows.length,
+          templates: rows.map((t) => ({
+            id: t.id,
+            kind: t.kind,
+            name: t.name,
+            displayName: t.displayName,
+            subject: t.subject,
+            description: t.description,
+            contentSid: t.contentSid,
+            variableNames: (t.variables ?? []).map((v) => v.name),
+            requiredVariables: (t.variables ?? [])
+              .filter((v) => v.required)
+              .map((v) => v.name),
+            lastUsedAt: t.lastUsedAt,
+            // Body excerpt only — full body via get_communication_template.
+            bodyPreview: t.body.slice(0, 280),
+          })),
+        };
+      },
+    }),
+
+    get_communication_template: defineTool({
+      name: 'get_communication_template',
+      description:
+        "Fetch a communication template by (kind, name) and render it against operator-supplied " +
+        "variables. Returns the rendered subject + body ready to pass into propose_email_send (or " +
+        "the matching propose_* send tool). When required variables are missing, returns " +
+        "`ok: false` with a `missingVariables` list so the chat can ask the operator to fill them. " +
+        "Variable substitution is `{{variable_name}}` syntax for email/sms/whatsapp/call; " +
+        "whatsapp_template uses positional `{{1}}, {{2}}` to match Twilio's contentVariables format.",
+      kind: 'read',
+      schema: z.object({
+        kind: z.enum(['email', 'sms', 'whatsapp', 'whatsapp_template', 'call']),
+        name: z
+          .string()
+          .regex(/^[a-z0-9_-]{1,80}$/, 'expected template slug'),
+        variables: z.record(z.string(), z.string()).optional(),
+      }),
+      handler: async (_ctx, input) => {
+        const result = await renderTemplate(
+          input.kind,
+          input.name,
+          input.variables ?? {},
+        );
+        if (!result.ok) {
+          return {
+            ok: false as const,
+            reason: result.reason,
+            templateName: result.templateName ?? input.name,
+            missingVariables: result.missingVariables ?? [],
+          };
+        }
+        return {
+          ok: true as const,
+          templateId: result.templateId,
+          templateName: result.templateName,
+          kind: result.kind,
+          subject: result.subject,
+          body: result.body,
+          contentSid: result.contentSid,
+          variables: result.variables,
         };
       },
     }),

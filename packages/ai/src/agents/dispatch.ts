@@ -45,6 +45,12 @@ import {
   parseWhatsAppSendTemplatePayload,
   parseOutboundCallPayload,
 } from '../executors/twilio';
+import {
+  applyArchiveCommunicationTemplate,
+  applySaveCommunicationTemplate,
+  parseArchiveCommunicationTemplatePayload,
+  parseSaveCommunicationTemplatePayload,
+} from '../executors/communication-templates';
 
 /**
  * Approval row shape this dispatch table needs. Subset of the full
@@ -284,6 +290,22 @@ export async function dispatchApprovalExecutor(
     const payload = parseDealAttachPayload(row.proposedPayload);
     if (!payload) return;
     await applyDealAttach(row.id, payload);
+    return;
+  }
+
+  // ---- Communication templates -------------------------------------------
+  if (row.actionType === 'template.save') {
+    const payload = parseSaveCommunicationTemplatePayload(row.proposedPayload);
+    if (!payload) return;
+    await applySaveCommunicationTemplate(row.id, payload, reviewerId);
+    return;
+  }
+  if (row.actionType === 'template.archive') {
+    const payload = parseArchiveCommunicationTemplatePayload(
+      row.proposedPayload,
+    );
+    if (!payload) return;
+    await applyArchiveCommunicationTemplate(row.id, payload);
     return;
   }
 

@@ -56,6 +56,7 @@ export * from './entity-sanctions-screens';
 export * from './crude-assays';
 export * from './cargo-trips';
 export * from './deal-structure-templates';
+export * from './communication-templates';
 export * from './commission-structures';
 export * from './apollo';
 export * from './mcp';
