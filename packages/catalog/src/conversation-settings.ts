@@ -154,7 +154,11 @@ export async function getOrInitConversationSettings(input: {
     conversationKey: input.conversationKey,
     aiEnabled: false,
     authority: 'chitchat_only',
-    approvalMode: 'full_approval',
+    // Tiered, not full_approval — when the operator flips AI on, the
+    // sensible expectation is "auto-send the safe stuff, ask me on
+    // commitments." full_approval defeats the toggle's purpose. Schema
+    // column default + 0092 migration match this for legacy/raw inserts.
+    approvalMode: 'tiered',
     tone: 'brokerage_direct',
     language: 'auto',
     identityDisclosure: defaults.identityDisclosure,
