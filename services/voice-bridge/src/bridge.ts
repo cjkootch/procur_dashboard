@@ -99,15 +99,41 @@ export async function handleTwilioStream(
     }
     if (event.type === 'session.created') {
       // Session is up — push our system prompt + audio config.
+      // Realtime GA (`gpt-realtime`) needs explicit turn-detection
+      // tuning AND `create_response: true` for auto-response on
+      // VAD speech-stopped — without it the model goes mute after
+      // the caller speaks (the bug Cole hit on the smoke test).
+      // `interrupt_response: true` makes the model yield when the
+      // caller starts speaking instead of talking over them.
       openaiSocket.send(
         JSON.stringify({
           type: 'session.update',
           session: {
+            modalities: ['audio', 'text'],
             instructions: stats.systemPrompt,
             voice: 'alloy',
             input_audio_format: 'g711_ulaw',
             output_audio_format: 'g711_ulaw',
-            turn_detection: { type: 'server_vad' },
+            turn_detection: {
+              type: 'server_vad',
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 500,
+              create_response: true,
+              interrupt_response: true,
+            },
+          },
+        }),
+      );
+      // Kick off the conversation — the agent greets first instead
+      // of waiting silently for the caller to speak. Tone is short
+      // per the system prompt (one sentence). After this response
+      // completes, server-VAD takes over for turn-taking.
+      openaiSocket.send(
+        JSON.stringify({
+          type: 'response.create',
+          response: {
+            modalities: ['audio'],
           },
         }),
       );
