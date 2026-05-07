@@ -353,12 +353,13 @@ export async function POST(req: Request): Promise<Response> {
     entityId: null,
   });
 
-  // Conversation-agent auto-reply (Slice 3). Reads
-  // conversation_settings keyed on (email, threadId); if AI is on
-  // and not paused/over-budget/OOO/stop-keyworded, drafts a reply
-  // and queues it to /approvals. Fully no-op when AI is off (the
-  // default for every thread). Failures swallowed inside.
-  await maybeQueueAiEmailReply({
+  // Conversation-agent auto-reply (Slice 3). Fire-and-forget — the
+  // Anthropic draft call is multi-second and can stretch the
+  // webhook past its provider deadline, which causes Resend / Svix
+  // to retry the delivery and produces duplicate inbound rows. The
+  // helper already swallows its own errors; the .catch is defensive
+  // for a rejection that escapes its try/catch.
+  void maybeQueueAiEmailReply({
     threadId,
     inboundMessageId: newMessageId,
     inboundFromEmail: fromEmail,
@@ -366,6 +367,11 @@ export async function POST(req: Request): Promise<Response> {
     inboundBodyText: bodyText,
     inboundBodyHtml: bodyHtml,
     inboundOccurredAt: occurredAt,
+  }).catch((err) => {
+    console.error('[resend-inbound] AI draft enqueue failed', err, {
+      threadId,
+      inboundMessageId: newMessageId,
+    });
   });
 
   await db

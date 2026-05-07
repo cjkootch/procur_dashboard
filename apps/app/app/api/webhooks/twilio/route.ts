@@ -332,17 +332,26 @@ async function handleInboundMessage(
     link: fromPhone ? `/messages/${encodeURIComponent(fromPhone)}` : '/messages',
   });
 
-  // Conversation-agent auto-reply (Slice 2). Reads
-  // conversation_settings for the (channel, fromPhone) pair; if AI
-  // is on and not paused/over-budget/stop-keyworded, drafts a reply
-  // and queues it to /approvals. Fully no-op when AI is off (the
-  // default for every conversation). Failures swallowed inside.
+  // Conversation-agent auto-reply (Slice 2). Fire-and-forget — the
+  // Anthropic call inside is multi-second and would risk pushing the
+  // webhook past Twilio's 15s deadline, at which point Twilio retries
+  // on the Messaging Service Fallback URL (currently the vex
+  // deployment, which auto-acks "ok"). maybeQueueAiReply already
+  // swallows its own errors, so detaching it can't surface a rejection
+  // back to this handler. We attach a defensive .catch anyway so a
+  // bug inside the helper that escapes its try/catch doesn't crash the
+  // node process.
   if (fromPhone && body) {
-    await maybeQueueAiReply({
+    void maybeQueueAiReply({
       channel: isWhatsapp ? 'whatsapp' : 'sms',
       fromPhone,
       inboundBody: body,
       inboundOccurredAt: new Date(),
+    }).catch((err) => {
+      console.error('[twilio webhook] AI draft enqueue failed', err, {
+        phone: fromPhone,
+        channel: isWhatsapp ? 'whatsapp' : 'sms',
+      });
     });
   }
 }
