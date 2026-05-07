@@ -4,9 +4,69 @@ import {
   db,
   events,
   outreachFeatureSnapshots,
+  users,
 } from '@procur/db';
 import { createId } from '../agents/id';
 import type { MlEvidenceT } from '../agents/action-descriptor';
+
+/**
+ * Resolve the operator user id for gamification attribution. Single-
+ * user (Phase 0 lock-in) — pulls the oldest user with a non-null
+ * companyId. When multi-user lands, this should pull from
+ * approvals.reviewerId for the matching approvalId. Returns null if
+ * no operator exists yet (don't credit XP in that case).
+ */
+async function resolveOperatorUserId(): Promise<string | null> {
+  const [row] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(isNotNull(users.companyId))
+    .orderBy(users.createdAt)
+    .limit(1);
+  return row?.id ?? null;
+}
+
+/**
+ * Lazy-loaded awardXp from @procur/catalog. The import path is built
+ * via a string variable so tsc doesn't traverse the catalog module
+ * graph from inside @procur/ai — that direction would create a
+ * type-resolution cycle (catalog already imports from ai for
+ * executor entry points). At runtime the resolver finds the package
+ * just fine via the workspace.
+ */
+async function awardOutreachXp(args: {
+  eventId: string;
+  verb: string;
+  occurredAt: Date;
+}): Promise<void> {
+  try {
+    const userId = await resolveOperatorUserId();
+    if (!userId) return;
+    const catalogModule = '@procur/catalog';
+    const mod = (await import(/* @vite-ignore */ catalogModule)) as {
+      awardXp: (input: {
+        userId: string;
+        eventId?: string | null;
+        sourceTable?: string | null;
+        sourceId?: string | null;
+        verb: string;
+        occurredAt?: Date;
+      }) => Promise<unknown>;
+    };
+    await mod.awardXp({
+      userId,
+      eventId: args.eventId,
+      sourceTable: 'events',
+      sourceId: args.eventId,
+      verb: args.verb,
+      occurredAt: args.occurredAt,
+    });
+  } catch (err) {
+    console.error('[outreach-evidence] awardXp failed', err, {
+      verb: args.verb,
+    });
+  }
+}
 
 /**
  * Shared outreach-evidence handling for the email + Twilio executors.
@@ -162,10 +222,11 @@ export async function emitOutreachSent(args: {
 }): Promise<void> {
   if (!hasOutreachEvidence(args.evidence)) return;
   const { mlEvidence } = args.evidence;
+  const eventId = createId();
   await db
     .insert(events)
     .values({
-      id: createId(),
+      id: eventId,
       verb: 'outreach.sent',
       subjectType: 'approval',
       subjectId: args.approvalId,
@@ -198,6 +259,12 @@ export async function emitOutreachSent(args: {
     .onConflictDoNothing({
       target: [events.occurredAt, events.idempotencyKey],
     });
+
+  await awardOutreachXp({
+    eventId,
+    verb: 'outreach.sent',
+    occurredAt: args.occurredAt,
+  });
 }
 
 /**
@@ -263,10 +330,11 @@ export async function emitOutreachOutcome(args: {
   const sentMeta = (sent[0]?.metadata as Record<string, unknown> | null) ?? {};
 
   try {
+    const outcomeEventId = createId();
     await db
       .insert(events)
       .values({
-        id: createId(),
+        id: outcomeEventId,
         verb: args.verb,
         subjectType: 'approval',
         subjectId: args.approvalId,
@@ -298,6 +366,12 @@ export async function emitOutreachOutcome(args: {
       .onConflictDoNothing({
         target: [events.occurredAt, events.idempotencyKey],
       });
+
+    await awardOutreachXp({
+      eventId: outcomeEventId,
+      verb: args.verb,
+      occurredAt: args.occurredAt,
+    });
 
     // Outcome-label stamp on the LightGBM training table. Each
     // verb maps to a boolean column on outreach_feature_snapshots;
