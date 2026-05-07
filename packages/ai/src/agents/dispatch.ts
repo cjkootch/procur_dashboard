@@ -46,6 +46,10 @@ import {
   parseOutboundCallPayload,
 } from '../executors/twilio';
 import {
+  applyCreateMission,
+  parseCreateMissionPayload,
+} from '../executors/missions';
+import {
   applyArchiveCommunicationTemplate,
   applySaveCommunicationTemplate,
   parseArchiveCommunicationTemplatePayload,
@@ -340,6 +344,12 @@ export async function dispatchApprovalExecutor(
     const payload = parseOutboundCallPayload(row.proposedPayload);
     if (!payload) return;
     await applyOutboundCall(row.id, payload);
+    return;
+  }
+  if (row.actionType === 'mission.create') {
+    const payload = parseCreateMissionPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyCreateMission(row.id, payload, { reviewerId });
     return;
   }
 }

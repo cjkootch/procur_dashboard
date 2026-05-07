@@ -114,3 +114,4 @@ export * from './fuel-deal-market-context';
 export * from './fuel-deal-participants';
 export * from './xp-ledger';
 export * from './achievements-earned';
+export * from './mission-instances';

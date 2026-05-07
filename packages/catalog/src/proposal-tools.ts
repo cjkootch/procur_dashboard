@@ -274,6 +274,51 @@ export const proposeTools = {
     },
   }),
 
+  propose_create_mission: defineTool({
+    name: 'propose_create_mission',
+    description:
+      'Queue a custom gamification mission for operator approval. Use when the user asks to set up ' +
+      'a mission, checklist, or playbook for a specific objective ("set up a mission to onboard ' +
+      'Petrobras as a buyer", "make a mission for the Q3 RFP push", etc.). Stages are manual ' +
+      'checklist items the operator marks done from the home Brief; each earns its own xpReward ' +
+      'on completion plus a bonus when all stages finish. Tier T1 — scoped to the user, no ' +
+      'external side-effects. Pick 3-5 stages that map to the real workflow; xpReward 25-100 per ' +
+      'stage scales with effort.',
+    kind: 'write',
+    schema: z.object({
+      title: z.string().min(1).max(200),
+      description: z.string().max(1000).optional(),
+      stages: z
+        .array(
+          z.object({
+            key: z
+              .string()
+              .min(1)
+              .max(60)
+              .regex(/^[a-z0-9_]+$/, 'use lowercase snake_case for the stage key'),
+            title: z.string().min(1).max(200),
+            description: z.string().max(500).optional(),
+            xpReward: z.number().int().min(5).max(500),
+          }),
+        )
+        .min(2)
+        .max(8),
+      rationale: z.string().min(1).max(1000),
+    }),
+    handler: async (ctx, input): Promise<ProposeResult> => {
+      const action: ActionDescriptorT = {
+        kind: 'mission.create',
+        tier: 'T1',
+        title: input.title,
+        stages: input.stages,
+        rationale: input.rationale,
+        ...(input.description ? { description: input.description } : {}),
+      };
+      const row = await insertChatApproval(action, { userId: ctx.userId });
+      return chip(action, `Create mission: ${input.title}`, row.id);
+    },
+  }),
+
   propose_schedule_followup: defineTool({
     name: 'propose_schedule_followup',
     description:

@@ -13,6 +13,7 @@ import {
 } from '@procur/catalog';
 import { AppShell } from '../components/shell/AppShell';
 import { CommodityPriceTicker } from '../components/CommodityPriceTicker';
+import { MissionsCard } from '../components/gamification/MissionsCard';
 import { QuestsCard } from '../components/gamification/QuestsCard';
 import { formatDate, formatMoney } from '../lib/format';
 
@@ -182,6 +183,12 @@ export default async function BriefPage() {
         <CommodityPriceTicker />
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {/* Live missions — gamification slice 4. Per-deal mission
+              chains + chat-proposed custom missions. Renders nothing
+              when there are no active missions, so the card doesn't
+              consume space until you have a deal in flight. */}
+          <MissionsCard />
+
           {/* Today's quests — gamification slice 2. Spans full width
               of the grid (md:col-span-2 inside QuestsCard) so the 3
               quest tiles get room. Sits above the BriefCards because

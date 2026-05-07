@@ -143,14 +143,16 @@ export async function awardXp(
       levelUp,
     });
 
-    // Fire-and-forget achievement evaluation — every credit may
-    // unlock a new badge. Detached so achievement-predicate latency
-    // doesn't pile onto the parent action's response time.
-    // Skip when the awarding verb itself is an achievement credit
-    // to avoid recursion (achievement.* → evaluate → maybe unlock
-    // another → repeat). The achievement xp.gained toast is
-    // sufficient for the secondary unlock to surface.
-    if (!input.verb.startsWith('achievement.')) {
+    // Fire-and-forget achievement + mission evaluation — every credit
+    // may unlock a new badge or advance a mission stage. Detached so
+    // predicate latency doesn't pile onto the parent action's
+    // response time. Skip when the awarding verb is itself an
+    // achievement / mission credit to avoid recursion (the unlock's
+    // own xp_gained toast is enough for the secondary surface).
+    const isMetaCredit =
+      input.verb.startsWith('achievement.') ||
+      input.verb.startsWith('mission.');
+    if (!isMetaCredit) {
       void (async () => {
         try {
           const { evaluateAchievements } = await import('./achievements');
@@ -158,6 +160,17 @@ export async function awardXp(
         } catch (err) {
           console.error(
             '[gamification] post-award achievement eval failed',
+            err,
+          );
+        }
+      })();
+      void (async () => {
+        try {
+          const { evaluateAutomatedMissions } = await import('./missions');
+          await evaluateAutomatedMissions(input.userId);
+        } catch (err) {
+          console.error(
+            '[gamification] post-award mission eval failed',
             err,
           );
         }
