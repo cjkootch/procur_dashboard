@@ -19,3 +19,12 @@ export {
   backfillGamificationLedger,
   type BackfillSummary,
 } from './backfill';
+export {
+  QUEST_REGISTRY,
+  getDailyQuests,
+  listQuestHistory,
+  type QuestDefinition,
+  type QuestCategory,
+  type DailyQuest,
+  type QuestHistoryDay,
+} from './quests';
