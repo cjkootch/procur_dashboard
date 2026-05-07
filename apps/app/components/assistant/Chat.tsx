@@ -146,7 +146,24 @@ export function Chat({
         if (cancelled) return;
         lastHydratedRef.current = initialThreadId;
         setThreadId(initialThreadId);
-        setMessages(body.rendered ?? []);
+        // Race fix: the hydration fetch is fire-on-mount, but the
+        // user can type and hit Enter before it resolves. send()
+        // appends a `local-user-…` and `local-assistant-…` pair to
+        // messages and starts an SSE stream whose events target
+        // those local ids. If we naively `setMessages(rendered)`,
+        // we clobber the in-flight pair, the SSE updates can't
+        // find the assistant placeholder, and the user sees ONLY
+        // the user bubble (the bug Cole hit in the drawer). Skip
+        // the overwrite when in-flight local messages exist —
+        // they're more recent than anything in the DB at the time
+        // of the hydration query and the next page-load will
+        // reconcile from the server anyway.
+        setMessages((prev) => {
+          if (prev.some((m) => m.id.startsWith('local-'))) {
+            return prev;
+          }
+          return body.rendered ?? [];
+        });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
