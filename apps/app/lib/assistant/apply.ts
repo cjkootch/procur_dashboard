@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { draftSection, embedText, meter, meterEmbedding, MODELS } from '@procur/ai';
+import { enrichOrgsBatch } from '@procur/apollo';
 import {
   alertProfiles,
   auditLog,
@@ -758,13 +759,47 @@ const createKnownEntitySchema = z.object({
 });
 
 /**
+ * Strip protocol + path + leading "www." from a website URL so the
+ * resulting string is a bare apex/subdomain suitable for the
+ * `known_entities.primary_domain` column. Returns null on garbage.
+ *
+ *   https://www.motiva.com/         → motiva.com
+ *   http://klesch.com:8080/refining → klesch.com
+ *   not-a-url                       → null
+ */
+function deriveDomainFromUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || value.trim().length === 0) return null;
+  try {
+    const u = new URL(value.trim());
+    return u.hostname.replace(/^www\./i, '').toLowerCase() || null;
+  } catch {
+    // Bare-host fallback (e.g. metadata stored as "motiva.com" without scheme).
+    const m = value.trim().match(/^(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}$/);
+    return m ? value.trim().replace(/^www\./i, '').toLowerCase() : null;
+  }
+}
+
+/**
  * Insert a new analyst-rolodex row from the chat-curated path.
  * Conflict on slug returns the existing row's path so the operator
  * can navigate to it instead of getting a confusing duplicate error
  * (the proposal step already checks; this is the race-safe fallback).
+ *
+ * Domain-driven enrichment: when the proposal carries a website URL
+ * in metadata, populate `primary_domain` on the row AND fire a single
+ * Apollo `enrichOrgsBatch` so the entity is linked to its Apollo org
+ * before the next chat tool call (find_decision_makers_at_entity,
+ * getApolloEntityCache, etc.). Best-effort — Apollo failures must
+ * never roll back the create.
  */
 const createKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
   const payload = createKnownEntitySchema.parse(rawPayload);
+
+  const primaryDomain = deriveDomainFromUrl(
+    (payload.metadata as Record<string, unknown> | null | undefined)?.[
+      'website_url'
+    ],
+  );
 
   const row: NewKnownEntity = {
     slug: payload.slug,
@@ -778,6 +813,7 @@ const createKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
     metadata: payload.metadata,
     latitude: payload.latitude == null ? null : String(payload.latitude),
     longitude: payload.longitude == null ? null : String(payload.longitude),
+    primaryDomain,
   };
 
   try {
@@ -786,6 +822,33 @@ const createKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
       .values(row)
       .returning({ id: knownEntities.id, slug: knownEntities.slug });
     if (!created) return { ok: false, error: 'insert_failed' };
+
+    // Best-effort Apollo link. enrichOrgsBatch matches by domain via
+    // POST /mixed_companies/search and writes apollo_org_id + the
+    // thin snapshot back onto the row. Failures (rate limit, network,
+    // Apollo down) must NEVER roll back the create — log and move on.
+    // The next chat tool call (find_decision_makers_at_entity etc.)
+    // will then have a live apolloOrgId to filter by.
+    if (primaryDomain) {
+      try {
+        await enrichOrgsBatch({
+          domains: [primaryDomain],
+          targetTable: 'known_entities',
+        });
+      } catch (apolloErr) {
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            service: 'assistant.apply.createKnownEntity',
+            msg: 'apollo enrichOrgsBatch failed — continuing',
+            slug: created.slug,
+            primaryDomain,
+            error: apolloErr instanceof Error ? apolloErr.message : String(apolloErr),
+          }),
+        );
+      }
+    }
+
     return {
       ok: true,
       result: {
