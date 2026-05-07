@@ -747,11 +747,14 @@ export const proposeTools = {
       'aiMode=true connects to procur-voice-bridge for full AI talkback. When aiMode=true, ' +
       'aiInstructions becomes the system prompt for the AI conversation. Always include goalHint ' +
       'so the operator-review chip shows what the call is trying to accomplish. When sourced ' +
-      'from the recommendation pipeline, pass the evidence pack verbatim.',
+      'from the recommendation pipeline, pass the evidence pack verbatim. ' +
+      'contactId + orgId are optional: prefer to create a CRM contact first via ' +
+      'propose_create_contact when the user names a person, but if the user explicitly says ' +
+      'to call a raw number (no contact lookup, no contact creation), omit both fields.',
     kind: 'write',
     schema: z.object({
-      contactId: ulidString,
-      orgId: ulidString,
+      contactId: ulidString.optional(),
+      orgId: ulidString.optional(),
       toNumber: e164Phone,
       aiMode: z.boolean().optional(),
       aiInstructions: z.string().min(1).max(5000).optional(),
@@ -764,10 +767,10 @@ export const proposeTools = {
       const action: ActionDescriptorT = {
         kind: 'outbound_call',
         tier: 'T3',
-        contactId: input.contactId,
-        orgId: input.orgId,
         toNumber: input.toNumber,
         rationale: input.rationale,
+        ...(input.contactId ? { contactId: input.contactId } : {}),
+        ...(input.orgId ? { orgId: input.orgId } : {}),
         ...(input.aiMode !== undefined ? { aiMode: input.aiMode } : {}),
         ...(input.aiInstructions ? { aiInstructions: input.aiInstructions } : {}),
         ...(input.templateName ? { templateName: input.templateName } : {}),

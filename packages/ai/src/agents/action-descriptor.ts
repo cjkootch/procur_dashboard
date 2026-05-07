@@ -423,8 +423,15 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('outbound_call'),
     tier: z.literal(ApprovalTier.T3),
-    contactId: zUlid,
-    orgId: zUlid,
+    /** Both contactId and orgId are optional so the operator can
+     *  place an ad-hoc raw-number call (smoke tests, one-off intros
+     *  before a CRM record exists). Omitting them means no contact /
+     *  org linkage on the resulting touchpoint — the call still
+     *  records via approval id + provider call sid, just without the
+     *  CRM join. Prefer building a contact card first via
+     *  `propose_create_contact` when the user gives a name. */
+    contactId: zUlid.optional(),
+    orgId: zUlid.optional(),
     toNumber: z
       .string()
       .regex(
