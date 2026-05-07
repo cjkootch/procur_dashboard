@@ -2505,7 +2505,19 @@ export function buildCatalogTools(): ToolRegistry {
         'used here).\n' +
         '  • If apolloDegraded is true, the prospect list is empty ' +
         'but rolodex hits are still valid — acknowledge the partial ' +
-        "result rather than implying Apollo found nothing.",
+        "result rather than implying Apollo found nothing.\n" +
+        '  • BASIN DISCIPLINE — when the question is about a Pacific-' +
+        "basin destination (Pacific Latam ports e.g. Balboa / Acajutla " +
+        '/ Puerto Quetzal, Mexican Pacific, Hawaii, Far East / Asia), ' +
+        "set originBasin='uswc' so US results return only West-Coast " +
+        'refiners (no Panama Canal transit). For Atlantic-basin ' +
+        '(Caribbean, US East Coast, West Africa, NW Europe) the ' +
+        "default is 'usgc'. NEVER mix the two pools when sourcing for " +
+        'a Pacific destination — recommending a USGC refiner for a ' +
+        'Pacific Latam delivery means the freight leg either includes ' +
+        'a $300-500k canal transit + 3-7 days, or routes around Cape ' +
+        "Horn. Surface that trade-off explicitly if the operator " +
+        'wants USGC despite a Pacific destination.',
       kind: 'read',
       schema: z.object({
         role: z
@@ -2529,6 +2541,20 @@ export function buildCatalogTools(): ToolRegistry {
             'ISO-2 country code or full country name. Applied to ' +
               "both rolodex (exact ISO-2 match) and Apollo discovery " +
               "(organization headquarters location).",
+          ),
+        originBasin: z
+          .enum(['usgc', 'uswc', 'med', 'nwe'])
+          .optional()
+          .describe(
+            "Sub-country basin filter. Use this when country='US' AND " +
+              "the destination matters for freight: 'uswc' (US West " +
+              "Coast — California / PNW) loads direct to Pacific basin " +
+              "destinations and skips Panama Canal; 'usgc' (US Gulf " +
+              'Coast) is the Atlantic-basin default. ' +
+              "'med' / 'nwe' partition Europe similarly. Filter " +
+              "applies to the rolodex side only — Apollo discovery has " +
+              'no basin concept. Internally maps to the `region:<basin>` ' +
+              'tag set on rolodex rows.',
           ),
         apolloKeywordTags: z
           .array(z.string())
@@ -2573,6 +2599,14 @@ export function buildCatalogTools(): ToolRegistry {
               role: input.role,
               categoryTag: input.categoryTag,
               country: country ?? undefined,
+              // originBasin → region:<basin> tag on the rolodex side.
+              // The seed-uswc-refiners + chat-curated USGC seeds tag
+              // each row with `region:uswc` / `region:usgc`; this
+              // filter makes that taxonomy queryable from the chat
+              // tool without the model emitting raw tag strings.
+              tag: input.originBasin
+                ? `region:${input.originBasin}`
+                : undefined,
               apolloKeywordTags: input.apolloKeywordTags,
               apolloEmployeesMin: input.apolloEmployeesMin,
               companyId: ctx.companyId,
