@@ -27,10 +27,34 @@ interface MessagesShellProps {
 }
 
 export async function MessagesShell({ activePhone }: MessagesShellProps) {
-  const conversations = await listMessagingConversations({ limit: 100 });
-  const detail = activePhone
-    ? await getMessagingConversation(activePhone)
-    : null;
+  let conversations: MessagingConversation[] = [];
+  let detail: Awaited<ReturnType<typeof getMessagingConversation>> = null;
+  let loadError: string | null = null;
+  try {
+    conversations = await listMessagingConversations({ limit: 100 });
+    detail = activePhone ? await getMessagingConversation(activePhone) : null;
+  } catch (err) {
+    // Surface the real message on /messages instead of crashing into
+    // Next's generic error boundary — Cole hit a 500 here and the
+    // reference id alone isn't enough to debug.
+    loadError = err instanceof Error ? err.message : String(err);
+    console.error('[messages] load failed', err);
+  }
+
+  if (loadError) {
+    return (
+      <div className="p-6">
+        <div className="max-w-2xl rounded-[var(--radius-md)] border border-[color:var(--color-destructive)]/40 bg-[color:var(--color-destructive)]/5 px-4 py-3 text-sm">
+          <p className="font-medium text-[color:var(--color-destructive)]">
+            Couldn&rsquo;t load conversations.
+          </p>
+          <p className="mt-1 text-[color:var(--color-muted-foreground)]">
+            <span className="font-mono text-xs">{loadError}</span>
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="grid h-[calc(100vh-var(--shell-topbar-height)-1px)] grid-cols-1 lg:grid-cols-[360px_1fr]">

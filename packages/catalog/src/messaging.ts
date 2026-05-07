@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, desc, eq, like, sql } from 'drizzle-orm';
+import { and, desc, eq, like, or, sql } from 'drizzle-orm';
 import { contacts, db, touchpoints } from '@procur/db';
 
 /**
@@ -131,8 +131,11 @@ export async function listMessagingConversations(
 
   if (rows.rows.length === 0) return [];
 
-  // Hydrate contact names by phone. Contacts.phones is JSONB — the
-  // chosen access pattern (`@>`) uses the JSONB GIN index.
+  // Hydrate contact names by phone. Contacts.phones is JSONB — use
+  // OR-of-`@>` to leverage the GIN index. Earlier `?|` form blew up
+  // on Neon HTTP because the `?` is also Postgres's parameter marker
+  // outside numbered-parameter mode and the driver couldn't keep
+  // them straight.
   const phones = rows.rows.map((r) => r.phone);
   const contactRows = await db
     .select({
@@ -142,10 +145,11 @@ export async function listMessagingConversations(
     })
     .from(contacts)
     .where(
-      sql`${contacts.phones} ?| array[${sql.join(
-        phones.map((p) => sql`${p}`),
-        sql`, `,
-      )}]::text[]`,
+      or(
+        ...phones.map(
+          (p) => sql`${contacts.phones} @> ${JSON.stringify([p])}::jsonb`,
+        ),
+      ),
     );
 
   const contactByPhone = new Map<
