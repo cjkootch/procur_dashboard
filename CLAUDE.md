@@ -249,8 +249,13 @@ python -m procur_ml.embed_entity --graph single.json --upsert
 
 BGE-M3 workflow (multilingual text embeddings):
 ```sh
-# install the optional [bge] extra (FlagEmbedding + transformers)
-uv pip install -e .[bge]
+# install the optional [bge] extra (sentence-transformers; pulls
+# in transformers + huggingface-hub but not pyarrow). Either uv or
+# plain pip works:
+cd services/ml-training
+python -m venv .venv && source .venv/bin/activate
+pip install -e '.[bge]'         # zsh users: quote the brackets
+cd ../..
 # extract candidate texts: known_entities (name + aliases + combined)
 # + entity_web_summaries (per section_kind)
 pnpm extract-bge-texts --output bge-texts.json
@@ -470,8 +475,13 @@ python -m procur_ml.embed_entity --graph single.json --upsert
 
 BGE-M3 workflow (multilingual text embeddings):
 ```sh
-# install the optional [bge] extra (FlagEmbedding + transformers)
-uv pip install -e .[bge]
+# install the optional [bge] extra (sentence-transformers; pulls
+# in transformers + huggingface-hub but not pyarrow). Either uv or
+# plain pip works:
+cd services/ml-training
+python -m venv .venv && source .venv/bin/activate
+pip install -e '.[bge]'         # zsh users: quote the brackets
+cd ../..
 # extract candidate texts: known_entities (name + aliases + combined)
 # + entity_web_summaries (per section_kind)
 pnpm extract-bge-texts --output bge-texts.json

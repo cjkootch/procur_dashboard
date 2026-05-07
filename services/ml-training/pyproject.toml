@@ -24,16 +24,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Optional: BGE-M3 multilingual embeddings. Pulled in via the
-# `bge` extra so the GraphSAGE-only path doesn't drag transformers
-# + huggingface_hub by default. Install with:
-#   uv pip install -e .[bge]
+# Optional: BGE-M3 + BGE-reranker via sentence-transformers. Pulled
+# in via the `bge` extra so the GraphSAGE-only path doesn't drag
+# transformers + huggingface_hub by default. Install with:
+#   pip install -e '.[bge]'   (or `uv pip install -e '.[bge]'`)
+#
+# We use sentence-transformers rather than FlagEmbedding (BAAI's
+# reference impl) because FlagEmbedding's transitive deps include
+# `datasets` → `pyarrow`, which lacks a wheel for Python 3.12 on
+# Intel macOS in some configs and falls through to a from-source
+# build that needs Apache Arrow C++ libs. sentence-transformers
+# covers our two use cases (BGE-M3 dense embeddings via
+# SentenceTransformer; BGE-reranker via CrossEncoder) and keeps the
+# install path wheel-only on every Python+arch combo we care about.
+#
+# Trade-off: sentence-transformers exposes only BGE-M3's dense head,
+# not sparse / multi-vector. v1 only uses dense anyway; if we ever
+# need the other heads, swap back to FlagEmbedding behind a separate
+# `[bge-full]` extra and require users to install Arrow C++ first.
 bge = [
-    # FlagEmbedding is BAAI's reference impl with first-class BGE-M3
-    # + BGE-reranker support including the dense / sparse / multi-
-    # vector heads. Pulls in transformers + tokenizers + accelerate
-    # transitively.
-    "FlagEmbedding>=1.3,<2.0",
+    "sentence-transformers>=3.0,<5.0",
 ]
 # Experiment tracking — opt-in via `pip install -e .[mlflow]` since
 # mlflow drags in pyarrow + sqlalchemy/greenlet, which need a working

@@ -117,10 +117,10 @@ def embed(
     expects today.
     """
     try:
-        from FlagEmbedding import BGEM3FlagModel
+        from sentence_transformers import SentenceTransformer
     except ImportError as exc:
         raise click.ClickException(
-            "FlagEmbedding not installed. Install with `uv pip install -e .[bge]`."
+            "sentence-transformers not installed. Install with `pip install -e '.[bge]'`."
         ) from exc
 
     records = _load_records(input_path)
@@ -131,16 +131,16 @@ def embed(
         output_path.write_text("[]", encoding="utf-8")
         return
 
-    use_fp16 = device is None or device.startswith(("cuda", "mps"))
     click.echo(
-        f"loading BAAI/bge-m3 (device={device or 'auto'}, fp16={use_fp16})",
+        f"loading BAAI/bge-m3 (device={device or 'auto'})",
         err=True,
     )
-    model = BGEM3FlagModel(
-        "BAAI/bge-m3",
-        use_fp16=use_fp16,
-        device=device,
-    )
+    model = SentenceTransformer("BAAI/bge-m3", device=device)
+    # BGE-M3 supports up to 8192 tokens; sentence-transformers defaults
+    # to the model's stored max_seq_length (often 512). Override to
+    # match our --max-length flag so long documents aren't silently
+    # truncated.
+    model.max_seq_length = max_length
 
     texts = [r["text"] for r in records]
     out_records: list[dict[str, Any]] = []
@@ -149,15 +149,16 @@ def embed(
 
     for batch_start in range(0, total, batch_size):
         batch = texts[batch_start : batch_start + batch_size]
-        result = model.encode(
+        # encode returns a numpy array of shape (n, 1024). Normalize=True
+        # gives unit vectors so downstream cosine == dot-product (and
+        # plays well with pgvector's cosine_ops index).
+        dense = model.encode(
             batch,
             batch_size=batch_size,
-            max_length=max_length,
-            return_dense=True,
-            return_sparse=False,
-            return_colbert_vecs=False,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+            show_progress_bar=False,
         )
-        dense = result["dense_vecs"]
         for i, vec in enumerate(dense):
             record = records[batch_start + i]
             embedding = vec.tolist() if hasattr(vec, "tolist") else list(vec)
@@ -198,21 +199,19 @@ def query(text: str, device: str | None) -> None:
     a TS-side query needs an embedding without a separate API server.
     """
     try:
-        from FlagEmbedding import BGEM3FlagModel
+        from sentence_transformers import SentenceTransformer
     except ImportError as exc:
         raise click.ClickException(
-            "FlagEmbedding not installed. Install with `uv pip install -e .[bge]`."
+            "sentence-transformers not installed. Install with `pip install -e '.[bge]'`."
         ) from exc
 
-    use_fp16 = device is None or device.startswith(("cuda", "mps"))
-    model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=use_fp16, device=device)
-    result = model.encode(
+    model = SentenceTransformer("BAAI/bge-m3", device=device)
+    vec = model.encode(
         [text],
-        return_dense=True,
-        return_sparse=False,
-        return_colbert_vecs=False,
-    )
-    vec = result["dense_vecs"][0]
+        normalize_embeddings=True,
+        convert_to_numpy=True,
+        show_progress_bar=False,
+    )[0]
     embedding = vec.tolist() if hasattr(vec, "tolist") else list(vec)
     json.dump(embedding, sys.stdout)
     sys.stdout.write("\n")
