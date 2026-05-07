@@ -19,6 +19,7 @@ export * from './deals';
 export * from './signals';
 export * from './brief';
 export * from './calls';
+export * from './messaging';
 export {
   buildCatalogTools,
   buildFilterUrl,
