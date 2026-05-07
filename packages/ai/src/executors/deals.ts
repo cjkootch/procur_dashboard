@@ -8,6 +8,9 @@ import {
   fuelDeals,
 } from '@procur/db';
 import { createId } from '../agents/id';
+import { AgentRunner } from '../agents/agent-runner';
+import { DealEvaluatorAgent } from '../agents/agents/deal-evaluator';
+import { PostgresCostLedger } from '../cost-ledger';
 
 /**
  * Per-action executors for Phase 5 fuel-deal surfaces. Same pattern as
@@ -531,4 +534,65 @@ export async function applyDealHumanReview(
   if (await alreadyApplied(approvalId)) return { ok: true };
   await stampApplied(approvalId, dealId, 'fuel_deal.human_review_acknowledged');
   return { ok: true, appliedObjectId: dealId };
+}
+
+// ============================================================================
+// deal.evaluate — chat-driven invocation of DealEvaluatorAgent
+// ============================================================================
+
+export interface DealEvaluatePayload {
+  dealId: string;
+  scenarioId?: string;
+  rationale: string;
+}
+
+export function parseDealEvaluatePayload(
+  proposedPayload: Record<string, unknown> | null | undefined,
+): DealEvaluatePayload | null {
+  if (!proposedPayload || typeof proposedPayload !== 'object') return null;
+  const dealId = proposedPayload['dealId'];
+  const rationale = proposedPayload['rationale'];
+  if (typeof dealId !== 'string' || typeof rationale !== 'string') {
+    return null;
+  }
+  const out: DealEvaluatePayload = { dealId, rationale };
+  if (typeof proposedPayload['scenarioId'] === 'string') {
+    out.scenarioId = proposedPayload['scenarioId'] as string;
+  }
+  return out;
+}
+
+const dealEvaluateCostLedger = new PostgresCostLedger();
+
+/**
+ * Run DealEvaluatorAgent inline against the given deal+scenario. The
+ * agent itself is deterministic (calculator + writes), so wrapping it
+ * in AgentRunner mostly gives us the agent_runs row, the kill-switch
+ * gate, and the ApprovalGate routing for any spawned `deal.human_review`
+ * proposed action when the verdict is do_not_proceed.
+ *
+ * Stamping behaviour: idempotent on approval.applied_at like the other
+ * deal executors. The agent run gets its own row; this approval points
+ * at the dealId.
+ */
+export async function applyDealEvaluate(
+  approvalId: string,
+  payload: DealEvaluatePayload,
+): Promise<ExecutorResult> {
+  if (await alreadyApplied(approvalId)) return { ok: true };
+  const runner = new AgentRunner({ costLedger: dealEvaluateCostLedger });
+  const agent = new DealEvaluatorAgent({
+    dealId: payload.dealId,
+    ...(payload.scenarioId ? { scenarioId: payload.scenarioId } : {}),
+  });
+  const record = await runner.run(agent);
+  await stampApplied(approvalId, payload.dealId, 'fuel_deal.evaluated', {
+    deal_id: payload.dealId,
+    scenario_id: payload.scenarioId ?? null,
+    agent_run_id: record.agentRunId,
+    status: record.status,
+    approvals_created: record.approvalsCreated,
+    cost_usd: record.costUsd,
+  });
+  return { ok: true, appliedObjectId: payload.dealId };
 }

@@ -368,6 +368,33 @@ export const proposeTools = {
     },
   }),
 
+  propose_evaluate_deal: defineTool({
+    name: 'propose_evaluate_deal',
+    description:
+      "Run DealEvaluatorAgent against the named deal (and optionally a specific scenario). " +
+      'T1 — the calculator is deterministic and only writes scenario.results_json + a summary; ' +
+      'if the verdict is do_not_proceed it spawns a separate T2 deal.human_review approval. ' +
+      "Use when the user asks 'evaluate deal X' or 'is deal X a go'. Always include rationale " +
+      "(why now? what's driving the re-evaluation?).",
+    kind: 'write',
+    schema: z.object({
+      dealId: ulidString,
+      scenarioId: ulidString.optional(),
+      rationale: z.string().min(1).max(1000),
+    }),
+    handler: async (ctx, input): Promise<ProposeResult> => {
+      const action: ActionDescriptorT = {
+        kind: 'deal.evaluate',
+        tier: 'T1',
+        dealId: input.dealId,
+        rationale: input.rationale,
+        ...(input.scenarioId ? { scenarioId: input.scenarioId } : {}),
+      };
+      const row = await insertChatApproval(action, { userId: ctx.userId });
+      return chip(action, `Evaluate deal ${input.dealId}`, row.id);
+    },
+  }),
+
   // ==========================================================================
   // Phase 6 — sanctions
   // ==========================================================================

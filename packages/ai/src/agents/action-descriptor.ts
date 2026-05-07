@@ -395,6 +395,22 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
     assignedTo: z.string().max(200).optional(),
     rationale: z.string().max(500).optional(),
   }),
+  /**
+   * `deal.evaluate` — runs DealEvaluatorAgent against the named deal +
+   * scenario. T1 because it's a deterministic calculator with no
+   * destructive side effects (writes scenario.results_json + summaries
+   * + maybe spawns a `deal.human_review` if the verdict is
+   * do_not_proceed). The chat surface uses this when the operator
+   * asks "evaluate deal X"; the existing AgentRunner-driven invocation
+   * paths (cron, Trigger.dev tasks) continue to work unchanged.
+   */
+  z.object({
+    kind: z.literal('deal.evaluate'),
+    tier: z.literal(ApprovalTier.T1),
+    dealId: zUlid,
+    scenarioId: zUlid.optional(),
+    rationale: z.string().min(1).max(1000),
+  }),
   z.object({
     kind: z.literal('deal.milestone'),
     tier: z.literal(ApprovalTier.T1),
