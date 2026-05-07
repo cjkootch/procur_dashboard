@@ -35,7 +35,9 @@ const NAV: SidebarNavGroup[] = [
   },
   // Watch — things demanding attention. Approvals/signals/inbox land
   // first (vex execution-layer surfaces), then the legacy procur
-  // surfaces (match queue / alerts / pinned) sit below.
+  // surfaces (match queue / alerts / pinned / friction) sit below.
+  // Friction sits here (not under Settings) — it's an operator-feedback
+  // queue, not a configuration knob.
   {
     id: 'watch',
     heading: 'Watch',
@@ -50,6 +52,7 @@ const NAV: SidebarNavGroup[] = [
       { href: '/alerts', label: 'Alerts', iconName: 'bell' },
       { href: '/quests', label: 'Quests', iconName: 'sparkles' },
       { href: '/achievements', label: 'Achievements', iconName: 'sparkles' },
+      { href: '/friction', label: 'Friction log', iconName: 'inbox' },
     ],
   },
   // Pipeline — active work. Leads + Deals are the new vex-execution
@@ -103,10 +106,10 @@ const NAV: SidebarNavGroup[] = [
       { href: '/suppliers/vessels', label: 'Vessels', iconName: 'anchor' },
     ],
   },
-  // Settings — company profile + email defaults + integrations + the
-  // friction log + billing. Previously buried under "Account"; now
-  // a top-level group because /settings/email +
-  // /settings/integrations/mcp are higher-traffic post-merge.
+  // Settings — purely configuration (company profile + email/templates
+  // + notification prefs + integrations + billing). Previously had
+  // the friction log mixed in; that's a queue, not a config knob, so
+  // it moved up to Watch.
   {
     id: 'settings',
     heading: 'Settings',
@@ -114,9 +117,8 @@ const NAV: SidebarNavGroup[] = [
       { href: '/settings', label: 'Company profile', iconName: 'settings' },
       { href: '/settings/email', label: 'Email defaults', iconName: 'inbox' },
       { href: '/settings/templates', label: 'Templates', iconName: 'chat-bubble' },
-      { href: '/settings/notifications', label: 'Notifications', iconName: 'bell' },
+      { href: '/settings/notifications', label: 'Notification settings', iconName: 'bell' },
       { href: '/settings/integrations/mcp', label: 'Integrations', iconName: 'shield-check' },
-      { href: '/friction', label: 'Friction log', iconName: 'inbox' },
       { href: '/billing', label: 'Billing', iconName: 'credit-card' },
     ],
   },

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
@@ -8,7 +8,7 @@ import { SidebarNavLink } from './SidebarNavLink';
 import { QuickCreate } from './QuickCreate';
 import type { NavIconName } from './nav-icons';
 
-const COLLAPSED_KEY = 'procur.nav.collapsedGroups.v1';
+const COLLAPSED_KEY = 'procur.nav.collapsedGroups.v2';
 
 export type SidebarNavGroup = {
   /** Stable id for localStorage; null for top items that aren't a
@@ -29,23 +29,39 @@ export type SidebarCompany = {
   planTier: string;
 } | null;
 
-function loadCollapsed(): string[] {
+/**
+ * Persist set of group ids the operator has explicitly toggled. v2
+ * default is "all collapsed except the group containing the active
+ * route" — too many top-level rows otherwise. The persisted set is
+ * the operator's explicit pins (groups they want kept open across
+ * navigations); active-group expansion is computed per-pathname.
+ */
+type SavedState = { explicit: string[] };
+
+function loadExplicit(): string[] {
   if (typeof window === 'undefined') return [];
   try {
     const raw = window.localStorage.getItem(COLLAPSED_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === 'string') : [];
+    const parsed = JSON.parse(raw) as SavedState | string[] | null;
+    if (Array.isArray(parsed)) return parsed.filter((s): s is string => typeof s === 'string');
+    if (parsed && Array.isArray(parsed.explicit)) {
+      return parsed.explicit.filter((s): s is string => typeof s === 'string');
+    }
+    return [];
   } catch {
     return [];
   }
 }
 
-function saveCollapsed(ids: string[]): void {
+function saveExplicit(ids: string[]): void {
   try {
-    window.localStorage.setItem(COLLAPSED_KEY, JSON.stringify(ids));
+    window.localStorage.setItem(
+      COLLAPSED_KEY,
+      JSON.stringify({ explicit: ids } satisfies SavedState),
+    );
   } catch {
-    /* localStorage unavailable (private browsing) — collapse state is ephemeral. */
+    /* localStorage unavailable (private browsing) — pin state is ephemeral. */
   }
 }
 
@@ -65,18 +81,46 @@ function SidebarContent({
       auto-close on navigation. */
   onNavigate?: () => void;
 }) {
-  const [collapsed, setCollapsed] = useState<string[]>([]);
+  // `explicit` = groups the operator has explicitly toggled open (pins
+  // that persist across navigations). The active-route group is also
+  // open implicitly. Default is collapsed; HubSpot-style — fewer rows
+  // visible at rest.
+  const [explicit, setExplicit] = useState<string[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const pathname = usePathname();
 
   useEffect(() => {
-    setCollapsed(loadCollapsed());
+    setExplicit(loadExplicit());
     setHydrated(true);
   }, []);
 
+  // Find the group containing the active path so it auto-opens
+  // without the operator needing to click. Longest-prefix wins so
+  // `/settings/templates` resolves to the settings group rather than
+  // accidentally matching a shorter sibling.
+  const activeGroupId = useMemo(() => {
+    let bestId: string | null = null;
+    let bestLen = 0;
+    for (const group of nav) {
+      if (!group.id) continue;
+      for (const item of group.items) {
+        if (item.external) continue;
+        const matches =
+          pathname === item.href ||
+          (item.href !== '/' && pathname.startsWith(`${item.href}/`));
+        if (matches && item.href.length > bestLen) {
+          bestId = group.id;
+          bestLen = item.href.length;
+        }
+      }
+    }
+    return bestId;
+  }, [nav, pathname]);
+
   const toggleGroup = (id: string) => {
-    setCollapsed((prev) => {
+    setExplicit((prev) => {
       const next = prev.includes(id) ? prev.filter((g) => g !== id) : [...prev, id];
-      saveCollapsed(next);
+      saveExplicit(next);
       return next;
     });
   };
@@ -105,11 +149,17 @@ function SidebarContent({
       </div>
       <nav className="flex-1 overflow-y-auto px-2 pb-4">
         {nav.map((group, i) => {
-          // Pre-hydration: render every group expanded so SSR markup
-          // matches initial client render. After hydration, apply the
-          // saved collapsed state.
-          const isCollapsed = group.id != null && hydrated && collapsed.includes(group.id);
+          // Pre-hydration: render every group COLLAPSED so SSR markup
+          // matches the new default. After hydration, expand if (a) the
+          // operator pinned it open (in `explicit`) OR (b) it contains
+          // the active route.
           const isCollapsible = group.id != null && group.heading != null;
+          const isOpen =
+            !isCollapsible ||
+            (hydrated &&
+              group.id != null &&
+              (explicit.includes(group.id) || activeGroupId === group.id));
+          const isCollapsed = isCollapsible && !isOpen;
           return (
             <div key={group.id ?? `g-${i}`} className={i === 0 ? '' : 'mt-4'}>
               {isCollapsible && (
