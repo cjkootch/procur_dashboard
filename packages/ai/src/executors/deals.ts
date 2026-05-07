@@ -323,7 +323,11 @@ export async function applyCreateDeal(
     sellPricePerUsg: 0,
   });
 
-  await stampApplied(approvalId, dealId, 'fuel_deal.created', {
+  // `deal.*` not `fuel_deal.*` — the deals table now carries food-line
+  // commodities (powdered_milk, rice, etc.) and rendering "fuel_deal.created"
+  // on a powdered-milk activity feed is jarringly wrong. Old rows keep
+  // their historical verb; new emissions are commodity-neutral.
+  await stampApplied(approvalId, dealId, 'deal.created', {
     deal_ref: payload.dealRef,
     product: payload.product,
     line_of_business: payload.lineOfBusiness,
@@ -418,7 +422,7 @@ export async function applyDealStatusChange(
     .update(fuelDeals)
     .set({ status: payload.toStatus as DealStatus, updatedAt: new Date() })
     .where(eq(fuelDeals.id, payload.dealId));
-  await stampApplied(approvalId, payload.dealId, 'fuel_deal.status_changed', {
+  await stampApplied(approvalId, payload.dealId, 'deal.status_changed', {
     to_status: payload.toStatus,
     from_status: payload.fromStatus ?? null,
     rationale: payload.rationale,
@@ -515,7 +519,7 @@ export async function applyDealMilestone(
     .onConflictDoNothing({
       target: [events.occurredAt, events.idempotencyKey],
     });
-  await stampApplied(approvalId, payload.dealId, 'fuel_deal.milestone_recorded', {
+  await stampApplied(approvalId, payload.dealId, 'deal.milestone_recorded', {
     milestone: payload.milestone,
   });
   return { ok: true, appliedObjectId: payload.dealId };
@@ -585,7 +589,7 @@ export async function applyDealSetBroker(
     }
   }
   await db.update(fuelDeals).set(updates).where(eq(fuelDeals.id, payload.dealId));
-  await stampApplied(approvalId, payload.dealId, 'fuel_deal.broker_set', {
+  await stampApplied(approvalId, payload.dealId, 'deal.broker_set', {
     side: payload.side,
     broker_org_id: payload.brokerOrgId,
     commission_pct: payload.commissionPct ?? null,
@@ -612,7 +616,7 @@ export async function applyDealHumanReview(
   dealId: string,
 ): Promise<ExecutorResult> {
   if (await alreadyApplied(approvalId)) return { ok: true };
-  await stampApplied(approvalId, dealId, 'fuel_deal.human_review_acknowledged');
+  await stampApplied(approvalId, dealId, 'deal.human_review_acknowledged');
   return { ok: true, appliedObjectId: dealId };
 }
 
@@ -666,7 +670,7 @@ export async function applyDealEvaluate(
     ...(payload.scenarioId ? { scenarioId: payload.scenarioId } : {}),
   });
   const record = await runner.run(agent);
-  await stampApplied(approvalId, payload.dealId, 'fuel_deal.evaluated', {
+  await stampApplied(approvalId, payload.dealId, 'deal.evaluated', {
     deal_id: payload.dealId,
     scenario_id: payload.scenarioId ?? null,
     agent_run_id: record.agentRunId,
@@ -767,7 +771,7 @@ export async function applyDealAttach(
     void threads;
   }
 
-  await stampApplied(approvalId, payload.dealId, 'fuel_deal.attached', {
+  await stampApplied(approvalId, payload.dealId, 'deal.attached', {
     deal_id: payload.dealId,
     target_type: payload.targetType,
     target_id: payload.targetId,
