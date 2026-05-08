@@ -1,6 +1,7 @@
 import 'server-only';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import {
+  conversationSettings,
   db,
   marketProbeTargets,
   marketProbes,
@@ -362,6 +363,30 @@ export async function markProbeTaskStatus(
   return row ?? null;
 }
 
+/**
+ * Update the probe's status and cascade to any linked
+ * conversation_settings rows. The earlier shape just flipped
+ * marketProbes.status — leaving conversation_settings rows the
+ * autopilot had created (with linkedProbeId pointing at this probe)
+ * still aiEnabled and not paused. Result: probe finishes / is
+ * abandoned, but inbound replies on those threads keep triggering
+ * the AI auto-reply path as if the probe were still in flight.
+ *
+ * Cascade rules:
+ *   - 'completed' / 'abandoned' / 'paused' → pause every linked
+ *     conversation_settings (set pausedAt + pausedReason). Inbound
+ *     replies still arrive in the inbox; they just route to operator
+ *     review instead of triggering AI drafts.
+ *   - 'active' → no automatic resume. Operator manually resumes
+ *     any conversation they want to keep AI-driven, since a probe
+ *     coming back from 'paused' may be testing different angles
+ *     than the original convos that were active mid-probe.
+ *
+ * We don't unset linkedProbeId — it's a useful audit pointer
+ * regardless of probe state, and the conversation might still
+ * receive late-arriving replies that operators want routed to the
+ * probe-aware reply path (escalation classifier, etc.).
+ */
 export async function setProbeStatus(
   probeId: string,
   status: MarketProbe['status'],
@@ -370,6 +395,30 @@ export async function setProbeStatus(
     .update(marketProbes)
     .set({ status, updatedAt: new Date() })
     .where(eq(marketProbes.id, probeId));
+
+  const shouldPauseLinked =
+    status === 'completed' ||
+    status === 'abandoned' ||
+    status === 'paused';
+  if (shouldPauseLinked) {
+    await db
+      .update(conversationSettings)
+      .set({
+        pausedAt: new Date(),
+        pausedReason: `linked probe ${probeId} → ${status}`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(conversationSettings.linkedProbeId, probeId),
+          // Don't bump pausedAt timestamps on conversations the
+          // operator has already paused for an unrelated reason —
+          // their pausedReason captures the operator's intent and
+          // shouldn't be silently rewritten.
+          isNull(conversationSettings.pausedAt),
+        ),
+      );
+  }
 }
 
 export async function setProbeTier(
