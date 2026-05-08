@@ -13,7 +13,14 @@ import { requireCompany } from '@procur/auth';
  */
 export async function resolveAssistantContext(
   pageContext?: PageContext,
-): Promise<AssistantContext & { companyName: string; planTier: string; userFirstName: string | null }> {
+): Promise<
+  AssistantContext & {
+    companyName: string;
+    planTier: string;
+    userFirstName: string | null;
+    userLastName: string | null;
+  }
+> {
   const { user, company } = await requireCompany();
   return {
     companyId: company.id,
@@ -22,5 +29,6 @@ export async function resolveAssistantContext(
     companyName: company.name,
     planTier: company.planTier,
     userFirstName: user.firstName ?? null,
+    userLastName: user.lastName ?? null,
   };
 }
