@@ -166,6 +166,7 @@ export async function createProbeAction(formData: FormData): Promise<void> {
     blockedTerms: csv(formData, 'blockedTerms'),
     dailySendLimit: int(formData, 'dailySendLimit') ?? 10,
     totalSendLimit: int(formData, 'totalSendLimit') ?? 50,
+    domain: str(formData, 'domain'),
     createdBy: user.id,
   });
 
@@ -649,6 +650,11 @@ export async function generateStrategyProposalsAction(
   const priorReports = probe.country
     ? await listRecentLearningReportsByCountry({
         country: probe.country,
+        // Domain filter prevents cross-domain bleed (a Japan fuel
+        // probe's lessons feeding into a Japan M&A probe's prompt).
+        // Null domain falls back to country-only join — back-compat
+        // for probes that don't set the tag.
+        ...(probe.domain ? { domain: probe.domain } : {}),
         excludeProbeId: probeId,
         limit: 5,
       })
@@ -1015,6 +1021,11 @@ export async function generateLearningReportAction(
   const priorReports = probe.country
     ? await listRecentLearningReportsByCountry({
         country: probe.country,
+        // Domain filter prevents cross-domain bleed (a Japan fuel
+        // probe's lessons feeding into a Japan M&A probe's prompt).
+        // Null domain falls back to country-only join — back-compat
+        // for probes that don't set the tag.
+        ...(probe.domain ? { domain: probe.domain } : {}),
         excludeProbeId: probeId,
         limit: 5,
       })

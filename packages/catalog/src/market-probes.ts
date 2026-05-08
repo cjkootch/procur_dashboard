@@ -77,6 +77,9 @@ export interface CreateProbeInput {
   blockedEntitySlugs?: string[];
   dailySendLimit?: number;
   totalSendLimit?: number;
+  /** Free-text domain tag — see schema notes. Filters cross-probe
+   *  memory so different domains in the same country don't bleed. */
+  domain?: string | null;
   createdBy?: string | null;
 }
 
@@ -98,6 +101,7 @@ export async function createProbe(input: CreateProbeInput): Promise<MarketProbe>
     dailySendLimit: input.dailySendLimit ?? 10,
     totalSendLimit: input.totalSendLimit ?? 50,
     maxFollowupsPerContact: 1,
+    domain: input.domain ?? null,
     // Seed the plan with the default task checklist; the
     // plan-generation pass fills in hypothesis/segments/etc. later
     // and may add probe-specific tasks.

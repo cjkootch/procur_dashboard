@@ -128,6 +128,20 @@ export const marketProbes = pgTable(
     emailSignatureText: text('email_signature_text'),
     emailSignatureHtml: text('email_signature_html'),
 
+    /** Free-text domain tag for the probe — operator-defined slug
+     *  identifying the kind of bet this probe is testing. Examples:
+     *  'fuel_supply' (default for fuel-procurement probes),
+     *  'ma_matchmaking' (cross-border M&A), 'pe_buyers',
+     *  'succession_targets', 'food_distribution'. Used by
+     *  cross-probe memory (listRecentLearningReportsByCountry) to
+     *  filter prior reports — without this filter, a Japan fuel
+     *  probe's lessons would feed into a Japan M&A probe's
+     *  strategy-agent prompt. NULL means "no domain set"; the
+     *  cross-probe memory filter falls back to country-only join
+     *  (existing behavior — preserves zero impact on probes that
+     *  don't set this). */
+    domain: text('domain'),
+
     createdBy: text('created_by'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
