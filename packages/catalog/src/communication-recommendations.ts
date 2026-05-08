@@ -391,7 +391,7 @@ async function findEntitiesBySegmentLabels(input: {
          dd === 'curated_only'
            ? sql`AND ke.discovery_domain IS NULL`
            : dd
-             ? sql`AND (ke.discovery_domain IS NULL OR ke.discovery_domain = ${dd})`
+             ? sql`AND (ke.discovery_domain IS NULL OR ${dd} = ANY(ke.discovery_domain))`
              : sql``
        }
        AND (
