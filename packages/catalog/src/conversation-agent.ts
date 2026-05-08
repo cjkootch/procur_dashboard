@@ -236,6 +236,7 @@ async function runMaybeQueueAiReply(
           : `/messages/${encodeURIComponent(settings.conversationKey)}`,
         typeOverride: 'probe.escalation',
         titleOverride: `Probe reply needs review (${escalation})`,
+        scopeToUserId: settings.createdByUserId,
       });
       return {
         status: 'skipped_probe_escalation',
@@ -361,6 +362,7 @@ async function runMaybeQueueAiReply(
         channel,
         conversationKey: input.fromPhone,
         draftPreview: draft.body,
+        scopeToUserId: settings.createdByUserId,
       });
       return {
         status: 'skipped_draft_failed',
@@ -394,6 +396,7 @@ async function runMaybeQueueAiReply(
     channel,
     conversationKey: input.fromPhone,
     draftPreview: draft.body,
+    scopeToUserId: settings.createdByUserId,
   });
 
   await incrementConversationCounters(settings.id, 1000);
@@ -810,6 +813,7 @@ async function runMaybeQueueAiEmailReply(
           : `/inbox/${encodeURIComponent(input.threadId)}`,
         typeOverride: 'probe.escalation',
         titleOverride: `Probe reply needs review (${escalation})`,
+        scopeToUserId: settings.createdByUserId,
       });
       return {
         status: 'skipped_probe_escalation',
@@ -920,6 +924,7 @@ async function runMaybeQueueAiEmailReply(
         channel: 'email',
         conversationKey: input.threadId,
         draftPreview: draft.body,
+        scopeToUserId: settings.createdByUserId,
       });
       return {
         status: 'skipped_draft_failed',
@@ -948,6 +953,7 @@ async function runMaybeQueueAiEmailReply(
     channel: 'email',
     conversationKey: input.threadId,
     draftPreview: draft.body,
+    scopeToUserId: settings.createdByUserId,
   });
 
   await incrementConversationCounters(settings.id, 3000);
@@ -1597,12 +1603,38 @@ async function notifyOperatorsOfPendingApproval(input: {
    *  'approval.pending' / "AI <channel> draft awaiting approval". */
   typeOverride?: string;
   titleOverride?: string;
+  /** Tenant-scope the notification fan-out. The helper resolves this
+   *  user's company_id and filters operators to only that company.
+   *  Today every caller has a `conversation_settings` row in scope,
+   *  so the natural value is `settings.createdByUserId`. When omitted
+   *  (or when the user has no company_id), the helper falls back to
+   *  the legacy "every operator" fan-out — single-tenant deployments
+   *  retain prior behavior, multi-tenant deployments scope cleanly
+   *  once callers wire it. Approvals + conversation_settings don't
+   *  carry company_id directly, so resolving via the creator user
+   *  keeps the schema additions out of this surgery. */
+  scopeToUserId?: string | null;
 }): Promise<void> {
   try {
+    // Resolve scope company_id from the source user. Two-step instead
+    // of a JOIN so the no-scope path stays one round-trip.
+    let scopeCompanyId: string | null = null;
+    if (input.scopeToUserId) {
+      const [u] = await db
+        .select({ companyId: users.companyId })
+        .from(users)
+        .where(eq(users.id, input.scopeToUserId))
+        .limit(1);
+      scopeCompanyId = u?.companyId ?? null;
+    }
     const operators = await db
       .select({ id: users.id, companyId: users.companyId })
       .from(users)
-      .where(isNotNull(users.companyId));
+      .where(
+        scopeCompanyId
+          ? and(isNotNull(users.companyId), eq(users.companyId, scopeCompanyId))
+          : isNotNull(users.companyId),
+      );
     if (operators.length === 0) return;
     const channelLabel =
       input.channel === 'whatsapp'
