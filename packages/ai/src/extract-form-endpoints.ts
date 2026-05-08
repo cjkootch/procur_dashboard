@@ -169,12 +169,21 @@ export function extractFormEndpoints(input: {
 
     // Newsletter-only forms have ≤2 fields, none of which are
     // textarea-shaped. Treat as not-a-contact-form.
+    //
+    // Multilingual: textarea-type alone is the universal signal
+    // (HTML element type works regardless of UI language). Beyond
+    // that, check English `name=` patterns AND multilingual label
+    // keywords so a Japanese form whose textarea has name="message"
+    // OR label="お問い合わせ" both qualify.
     const hasMessageField = fields.some(
       (f) =>
         f.type === 'textarea' ||
         /message|comment|inquiry|enquiry|details|notes/i.test(f.name) ||
         (f.label != null &&
-          /message|comment|inquiry|enquiry|details|notes/i.test(f.label)),
+          labelMatchesAny(
+            f.label.toLowerCase(),
+            MULTILINGUAL_LABEL_KEYWORDS.message,
+          )),
     );
     if (!hasMessageField) return;
 
@@ -293,12 +302,116 @@ function resolveActionUrl(action: string, pageUrl: string): string {
   }
 }
 
+// English HTML `name=` attribute patterns. Devs conventionally use
+// English names (`name="email"`) even on non-English forms, so these
+// stay as the primary keyed-attribute match across all locales.
 const NAME_PATTERNS = /^(name|fname|first_?name|full_?name|your_?name|contact_?name)$/i;
 const EMAIL_PATTERNS = /^(email|e_?mail|email_?address|your_?email|contact_?email)$/i;
 const SUBJECT_PATTERNS = /^(subject|topic|reason|inquiry_?subject)$/i;
 const MESSAGE_PATTERNS = /^(message|comments?|inquiry|enquiry|details|body|description|notes)$/i;
 const COMPANY_PATTERNS = /^(company|company_?name|organization|organisation|business|firm)$/i;
 const PHONE_PATTERNS = /^(phone|tel|telephone|mobile|cell|contact_?phone)$/i;
+
+/**
+ * Multilingual label-text keywords for field-role inference. Substring-
+ * match (label.includes(keyword)) — word-boundary regex doesn't work
+ * uniformly across CJK / Arabic / Cyrillic, and form labels vary in
+ * formatting (colons, asterisks for required, decorations) so loose
+ * substring is more robust than strict matching.
+ *
+ * Coverage rationale: probes are experimental — operators may target
+ * any market. The original English-only patterns silently dropped
+ * Japanese / Korean / Chinese / Arabic / Cyrillic forms (the
+ * message_field never resolved, so pickAutopilotEligibleEndpoint
+ * filtered them out as ineligible). This list covers the major
+ * business languages outside English. Casing: Latin entries are
+ * lowercase (label is lowercased before matching); CJK / Arabic /
+ * Cyrillic don't have case so casing is irrelevant.
+ */
+const MULTILINGUAL_LABEL_KEYWORDS = {
+  name: [
+    // English (already covered by regex above; included for completeness)
+    'name', 'full name', 'your name', 'contact name',
+    // Japanese
+    'お名前', '名前', '氏名',
+    // Korean
+    '이름', '성함', '성명',
+    // Chinese (simplified + traditional)
+    '姓名', '名字', '稱呼', '称呼',
+    // Arabic
+    'الاسم', 'اسم',
+    // Cyrillic (Russian)
+    'имя', 'фио',
+    // Spanish, Portuguese
+    'nombre', 'nome',
+    // French
+    'nom', 'prénom', 'prenom',
+    // German
+    'vorname', 'nachname',
+  ],
+  email: [
+    'email', 'e-mail', 'mail',
+    'メール', 'メールアドレス', 'eメール',
+    '이메일', '메일',
+    '邮箱', '邮件', '电子邮件', '電郵', '郵件', '電子郵件',
+    'البريد', 'إيميل',
+    'почт', 'эл',
+    'correo', 'courriel',
+  ],
+  subject: [
+    'subject', 'topic',
+    '件名', 'タイトル',
+    '제목',
+    '主题', '主題', '标题', '標題',
+    'الموضوع',
+    'тема',
+    'asunto', 'assunto',
+    'sujet', 'objet',
+    'betreff',
+  ],
+  message: [
+    'message', 'comment', 'inquiry', 'enquiry', 'notes',
+    'お問い合わせ', '内容', 'メッセージ', 'ご相談', 'ご質問',
+    '문의', '내용', '메시지',
+    '留言', '咨询', '諮詢', '訊息', '信息',
+    'الرسالة', 'التعليق', 'الاستفسار',
+    'сообщение', 'комментарий', 'вопрос',
+    'mensaje', 'mensagem', 'consulta', 'comentario',
+    'message', 'commentaire', 'demande',
+    'nachricht', 'anliegen',
+  ],
+  company: [
+    'company', 'organization', 'organisation', 'business', 'firm',
+    '会社名', '企業名', '会社', '御社名',
+    '회사', '회사명', '기업',
+    '公司', '公司名称', '公司名稱', '企业',
+    'الشركة', 'المؤسسة',
+    'компания', 'организация',
+    'empresa', 'compañía', 'companhia',
+    'société', 'societe', 'entreprise',
+    'firma', 'unternehmen',
+  ],
+  phone: [
+    'phone', 'telephone', 'mobile', 'tel', 'cell',
+    '電話', '電話番号', 'tel',
+    '전화', '연락처', '휴대폰',
+    '电话', '手机', '聯絡方式', '联系方式',
+    'الهاتف', 'الجوال', 'رقم',
+    'телефон',
+    'teléfono', 'móvil', 'telefone',
+    'téléphone', 'telephone',
+    'telefon',
+  ],
+} as const;
+
+function labelMatchesAny(label: string, keywords: readonly string[]): boolean {
+  // label is already lowercased by the caller. CJK / Arabic / Cyrillic
+  // are case-invariant so toLowerCase is a no-op for them.
+  for (const kw of keywords) {
+    if (label.includes(kw)) return true;
+  }
+  return false;
+}
 
 function inferFieldRoles(fields: DetectedFormField[]): {
   nameField: string | null;
@@ -320,32 +433,59 @@ function inferFieldRoles(fields: DetectedFormField[]): {
     const ac = (f.autocomplete ?? '').toLowerCase();
     const lbl = (f.label ?? '').toLowerCase();
 
-    // autocomplete is the strongest signal when present (HTML5 spec)
+    // autocomplete is the strongest signal when present (HTML5 spec).
+    // Universal across locales — autocomplete tokens are spec-defined
+    // English regardless of UI language.
     if (!emailField && (ac === 'email' || f.type === 'email')) emailField = f.name;
-    if (!nameField && (ac === 'name' || ac === 'given-name')) nameField = f.name;
+    if (
+      !nameField &&
+      (ac === 'name' ||
+        ac === 'given-name' ||
+        ac === 'family-name' ||
+        ac === 'additional-name')
+    )
+      nameField = f.name;
     if (!phoneField && (ac === 'tel' || f.type === 'tel')) phoneField = f.name;
     if (!companyField && ac === 'organization') companyField = f.name;
 
-    // name + label heuristics
-    if (!nameField && (NAME_PATTERNS.test(n) || /\bname\b/.test(lbl)))
+    // English `name=` attribute patterns — devs use English names
+    // even on non-English forms, so these match across all locales.
+    if (!nameField && NAME_PATTERNS.test(n)) nameField = f.name;
+    if (!emailField && EMAIL_PATTERNS.test(n)) emailField = f.name;
+    if (!subjectField && SUBJECT_PATTERNS.test(n)) subjectField = f.name;
+    if (
+      !messageField &&
+      (f.type === 'textarea' || MESSAGE_PATTERNS.test(n))
+    )
+      messageField = f.name;
+    if (!companyField && COMPANY_PATTERNS.test(n)) companyField = f.name;
+    if (!phoneField && PHONE_PATTERNS.test(n)) phoneField = f.name;
+
+    // Multilingual label substring match — covers forms where the
+    // `name=` attribute is non-English (less common but exists,
+    // especially on legacy Japanese / Chinese / Korean corporate
+    // sites) AND forms where the `name=` is opaque (`field_47`)
+    // and the label is the only role signal.
+    if (!nameField && labelMatchesAny(lbl, MULTILINGUAL_LABEL_KEYWORDS.name))
       nameField = f.name;
-    if (!emailField && (EMAIL_PATTERNS.test(n) || /\bemail\b/.test(lbl)))
+    if (!emailField && labelMatchesAny(lbl, MULTILINGUAL_LABEL_KEYWORDS.email))
       emailField = f.name;
-    if (!subjectField && (SUBJECT_PATTERNS.test(n) || /\bsubject\b/.test(lbl)))
+    if (
+      !subjectField &&
+      labelMatchesAny(lbl, MULTILINGUAL_LABEL_KEYWORDS.subject)
+    )
       subjectField = f.name;
     if (
       !messageField &&
-      (f.type === 'textarea' ||
-        MESSAGE_PATTERNS.test(n) ||
-        /\b(message|comment|inquiry|enquiry|notes)\b/.test(lbl))
+      labelMatchesAny(lbl, MULTILINGUAL_LABEL_KEYWORDS.message)
     )
       messageField = f.name;
     if (
       !companyField &&
-      (COMPANY_PATTERNS.test(n) || /\b(company|organi[sz]ation)\b/.test(lbl))
+      labelMatchesAny(lbl, MULTILINGUAL_LABEL_KEYWORDS.company)
     )
       companyField = f.name;
-    if (!phoneField && (PHONE_PATTERNS.test(n) || /\b(phone|telephone)\b/.test(lbl)))
+    if (!phoneField && labelMatchesAny(lbl, MULTILINGUAL_LABEL_KEYWORDS.phone))
       phoneField = f.name;
   }
 
