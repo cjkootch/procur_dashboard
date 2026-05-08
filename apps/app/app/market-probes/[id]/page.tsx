@@ -4,6 +4,7 @@ import { requireCompany } from '@procur/auth';
 import {
   computeProbeScorecard,
   countTargetsByJustification,
+  getLatestLearningReport,
   getProbe,
   listAtlasFactsForProbe,
   listHypothesesForProbe,
@@ -16,6 +17,7 @@ import {
   LADDER_STAGES,
   PROBE_FEEDBACK_LABELS,
   PROBE_SIGNAL_KINDS,
+  type LearningReportPayload,
 } from '@procur/catalog';
 import { SignalFlagsForm } from '../_components/SignalFlagsForm';
 import {
@@ -27,12 +29,14 @@ import {
   approveStrategyProposalAction,
   discoverTargetsAction,
   findDecisionMakersAction,
+  generateLearningReportAction,
   generatePlanAction,
   generateStrategyProposalsAction,
   markTargetResearchOnlyAction,
   recordTargetFeedbackAction,
   rejectStrategyProposalAction,
   resolveHypothesisAction,
+  savePlaybookFromProbeAction,
   setProbeStatusAction,
   setTargetJustificationAction,
   setTaskSkippedAction,
@@ -96,6 +100,7 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
     listSegments(id),
     computeProbeScorecard(id),
   ]);
+  const latestReport = await getLatestLearningReport(id);
 
   const ladderIdx = LADDER_STAGES.indexOf(
     probe.ladderStage as (typeof LADDER_STAGES)[number],
@@ -1245,6 +1250,238 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
           </div>
         </section>
       )}
+
+      {/* Learning report — end-of-probe Sonnet synthesis. Stored as
+          a row so operator can re-read; playbook generator reads
+          payload.playbookUpdates for nominations. */}
+      <section className="mt-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Learning report
+          </h2>
+          <form action={generateLearningReportAction}>
+            <input type="hidden" name="probeId" value={probe.id} />
+            <button
+              type="submit"
+              className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[color:var(--color-muted)]/40"
+              title="Sonnet synthesizes scorecard + atlas + hypotheses + signals + feedback into a structured report."
+            >
+              {latestReport ? 'Regenerate report' : 'Generate report'}
+            </button>
+          </form>
+        </div>
+
+        {!latestReport ? (
+          <p className="text-sm text-[color:var(--color-muted-foreground)]">
+            No report yet. Click <strong>Generate report</strong> after
+            the probe has activity (sends + replies + atlas facts) — the
+            agent will diff what we believed at start vs what changed,
+            nominate playbook fields, and recommend the next probe.
+          </p>
+        ) : (
+          <div className="space-y-3 text-sm">
+            <p className="font-medium">{latestReport.summary}</p>
+            <p className="text-[10px] text-[color:var(--color-muted-foreground)]">
+              Generated {latestReport.generatedAt.toLocaleString()}
+              {latestReport.generatedByModel && ` · ${latestReport.generatedByModel}`}
+            </p>
+            <LearningReportPayloadView
+              payload={latestReport.payloadJson}
+            />
+
+            {/* Save-as-playbook form — pre-fills from report
+                nominations; operator edits and submits. */}
+            <details className="mt-4 rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] p-3">
+              <summary className="cursor-pointer text-xs font-medium">
+                Save as playbook
+              </summary>
+              <form
+                action={savePlaybookFromProbeAction}
+                className="mt-3 grid gap-2 text-xs"
+              >
+                <input type="hidden" name="probeId" value={probe.id} />
+                <input
+                  type="text"
+                  name="name"
+                  defaultValue={
+                    latestReport.payloadJson?.playbookUpdates?.name ?? ''
+                  }
+                  placeholder='e.g. "Caribbean Food Importer Playbook v1"'
+                  required
+                  className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+                />
+                <textarea
+                  name="description"
+                  rows={2}
+                  placeholder="Optional description"
+                  className="resize-y rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+                />
+                <input
+                  type="text"
+                  name="applicableCountries"
+                  defaultValue={
+                    latestReport.payloadJson?.playbookUpdates
+                      ?.applicableCountries?.join(', ') ??
+                    probe.country?.toUpperCase() ??
+                    ''
+                  }
+                  placeholder="comma-separated ISO-2 (e.g. BB, JM, BS)"
+                  className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+                />
+                <input
+                  type="text"
+                  name="recommendedSegments"
+                  defaultValue={
+                    latestReport.payloadJson?.playbookUpdates
+                      ?.recommendedSegments?.join(', ') ?? ''
+                  }
+                  placeholder="recommended segments (comma-separated)"
+                  className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+                />
+                <input
+                  type="text"
+                  name="bestContactTitles"
+                  defaultValue={
+                    latestReport.payloadJson?.playbookUpdates
+                      ?.bestContactTitles?.join(', ') ?? ''
+                  }
+                  placeholder="best contact titles (comma-separated)"
+                  className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+                />
+                <input
+                  type="text"
+                  name="bestFirstTouchAngle"
+                  defaultValue={
+                    latestReport.payloadJson?.playbookUpdates
+                      ?.bestFirstTouchAngle ?? ''
+                  }
+                  placeholder="best first-touch angle"
+                  className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+                />
+                <button
+                  type="submit"
+                  className="self-start rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-background)]"
+                >
+                  Save as draft playbook
+                </button>
+              </form>
+            </details>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function LearningReportPayloadView({
+  payload,
+}: {
+  payload: LearningReportPayload;
+}) {
+  return (
+    <div className="space-y-3">
+      {payload.whatWeBelievedAtStart && (
+        <ReportField label="What we believed at start" text={payload.whatWeBelievedAtStart} />
+      )}
+      {payload.whatChanged && (
+        <ReportField label="What changed" text={payload.whatChanged} />
+      )}
+      {payload.whatWorked && payload.whatWorked.length > 0 && (
+        <ReportList label="What worked" items={payload.whatWorked} />
+      )}
+      {payload.whatFailed && payload.whatFailed.length > 0 && (
+        <ReportList label="What failed" items={payload.whatFailed} />
+      )}
+      {payload.bestSegment && (
+        <ReportField
+          label="Best segment"
+          text={`${payload.bestSegment.name} — ${payload.bestSegment.evidence}`}
+        />
+      )}
+      {payload.worstSegment && (
+        <ReportField
+          label="Worst segment"
+          text={`${payload.worstSegment.name} — ${payload.worstSegment.evidence}`}
+        />
+      )}
+      {payload.bestContactTitle && (
+        <ReportField
+          label="Best contact title"
+          text={`${payload.bestContactTitle.title} — ${payload.bestContactTitle.evidence}`}
+        />
+      )}
+      {payload.strongestSignal && (
+        <ReportField
+          label="Strongest signal"
+          text={`${payload.strongestSignal.signal} (Δ ${Math.round(payload.strongestSignal.replyDelta * 100)}%) — ${payload.strongestSignal.evidence}`}
+        />
+      )}
+      {payload.noisySignals && payload.noisySignals.length > 0 && (
+        <ReportList label="Noisy signals" items={payload.noisySignals} />
+      )}
+      {payload.badTargetRules && payload.badTargetRules.length > 0 && (
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+            Bad-target rules (proposed atlas negative_rule entries)
+          </div>
+          <ul className="mt-1 list-disc pl-5 text-xs">
+            {payload.badTargetRules.map((r, i) => (
+              <li key={i}>
+                <strong>{r.rule}</strong> — {r.rationale}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {payload.recommendedNextProbe && (
+        <div className="rounded-[var(--radius-sm)] border border-dashed border-[color:var(--color-border)] p-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+            Recommended next probe
+          </div>
+          <p className="mt-1 text-xs">
+            <strong>Country:</strong>{' '}
+            {payload.recommendedNextProbe.country ?? '(unspecified)'}
+          </p>
+          {payload.recommendedNextProbe.segments &&
+            payload.recommendedNextProbe.segments.length > 0 && (
+              <p className="text-xs">
+                <strong>Segments:</strong>{' '}
+                {payload.recommendedNextProbe.segments.join(', ')}
+              </p>
+            )}
+          {payload.recommendedNextProbe.rationale && (
+            <p className="mt-1 text-xs">
+              {payload.recommendedNextProbe.rationale}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReportField({ label, text }: { label: string; text: string }) {
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+        {label}
+      </div>
+      <p className="mt-0.5 text-xs">{text}</p>
+    </div>
+  );
+}
+
+function ReportList({ label, items }: { label: string; items: string[] }) {
+  return (
+    <div>
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+        {label}
+      </div>
+      <ul className="mt-0.5 list-disc pl-5 text-xs">
+        {items.map((item, i) => (
+          <li key={i}>{item}</li>
+        ))}
+      </ul>
     </div>
   );
 }
