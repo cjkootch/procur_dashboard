@@ -32,6 +32,7 @@ export * from './market-probes';
 export * from './market-probes-discovery';
 export * from './market-atlas';
 export * from './market-probe-strategy';
+export * from './market-probe-hypotheses';
 export {
   recommendCommunicationTargets,
   buildCommunicationContextPack,

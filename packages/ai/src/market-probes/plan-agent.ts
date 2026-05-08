@@ -2,6 +2,24 @@ import { getClient, MODELS } from '../client';
 import type { ProbePlan } from '@procur/db';
 
 /**
+ * Hypotheses the plan-gen agent emits alongside the plan. Caller
+ * (the createProbe action) inserts these into market_probe_hypotheses.
+ * Kept in this file (not exported) since the storage layer lives
+ * in @procur/catalog and would create a circular dep.
+ */
+export interface ProposedHypothesis {
+  hypothesisType: string;
+  statement: string;
+  confidenceStart: number;
+  testMethod?: string;
+}
+
+export interface ProbePlanResult {
+  plan: ProbePlan;
+  hypotheses: ProposedHypothesis[];
+}
+
+/**
  * Plan generation for a Market Probe. Single Sonnet pass: given the
  * market name, country, product thesis, and operator's risk tolerance,
  * emit a structured plan with hypothesis, segments, outreach angle,
@@ -25,6 +43,15 @@ export interface ProbeContextForPlan {
   allowedChannels: string[];
   dailySendLimit: number;
   totalSendLimit: number;
+  /** Probe ladder stage. Constrains what kind of plan the agent
+   *  emits — a probe at `market_structure` is doing rolodex-building,
+   *  not commercial outreach. */
+  ladderStage?:
+    | 'market_structure'
+    | 'routing'
+    | 'pain_discovery'
+    | 'commercial_qualification'
+    | 'deal_room_conversion';
   /** Operator-rejected strategy proposals from prior runs of THIS
    *  probe. Riding into the next plan-generation pass as constraints
    *  is the loop that lets the system learn from rejection without
@@ -35,35 +62,55 @@ export interface ProbeContextForPlan {
     feedback: string | null;
     rejectedAt: string;
   }>;
+  /** Negative rules (atlas fact_type='negative_rule') that apply to
+   *  this market — prescriptive constraints from prior probes
+   *  ("never target generic info@ addresses for fuel distributors").
+   *  Empty when no prior probe has run in this country. */
+  negativeRules?: string[];
 }
 
 const SYSTEM_PROMPT = `You are designing a bounded autonomous market-prospecting probe for a commodity trading desk.
 
 Your job: given a market + product thesis, return a structured plan an operator will review and approve before any outreach starts. The probe is a CONTROLLED EXPERIMENT — you are testing whether the market has signal, not closing deals.
 
+The probe sits at one of five sequential ladder stages. Tailor the plan to the current stage:
+  market_structure         — building rolodex coverage. Plan focuses on identifying companies + segments. NO outreach yet.
+  routing                  — first-touch routing emails ("are you the right person?"). NO commercial language.
+  pain_discovery           — qualifying questions ("how do you currently handle X?"). Still no pricing.
+  commercial_qualification — pricing intent / volume indications.
+  deal_room_conversion     — formal LOI / NCNDA path. Hand off to the deal-room workflow.
+You CANNOT propose outreach if the probe is at market_structure. You CANNOT propose pricing language unless the probe is at commercial_qualification or later.
+
 Output a single JSON object with these fields:
 - "hypothesis": one sentence — what kind of activity might exist in this market that the desk could plug into.
+- "hypotheses": array of 3-7 falsifiable hypotheses we're testing. Each: {hypothesisType, statement, confidenceStart (0-1), testMethod}. Cover at least these kinds (drop one if the market doesn't warrant it):
+    target_segment   — which buyer cluster we believe will respond
+    contact_title    — which titles we believe respond more
+    message_angle    — which email angle we believe works (routing vs supplier-intro vs ...)
+    signal_quality   — which observable signals we believe predict interest (cold storage / serves hotels / Apollo presence / recent hiring)
+    market_demand    — whether the market has enough volume to justify the probe in the first place
 - "segments": array of 3-6 segment labels you propose targeting (e.g. "hotel/resort procurement", "marine bunker operators", "small fuel distributors").
-- "outreachAngle": one sentence — what shape of email the agent will send. Should be ROUTING-style ("are you the right person?"), NEVER pricing or commercial commitment.
+- "outreachAngle": one sentence — what shape of email the agent will send. Should be ROUTING-style ("are you the right person?") UNLESS the probe is past pain_discovery.
 - "successCriteria": 3-5 measurable outcomes the operator should expect at probe end (e.g. "5+ named procurement contacts identified", "3+ replies", "1+ qualified buying process").
-- "tasks": array of {id, label} representing the operator-visible checklist. Reuse these stable ids when applicable: generate_plan, identify_targets, find_contacts, draft_first_touch, send_first_touch, monitor_replies, summarize_findings. Add probe-specific tasks (e.g. "verify import licensing") if the thesis warrants it. Mark "generate_plan" as the FIRST task with status "done" since the act of returning this JSON IS that task.
+- "tasks": array of {id, label} representing the operator-visible checklist. Reuse stable ids: generate_plan, identify_targets, find_contacts, draft_first_touch, send_first_touch, monitor_replies, summarize_findings. Mark "generate_plan" as the FIRST task with status "done" since the act of returning this JSON IS that task.
 
 Constraints:
 - The probe is bounded by daily/total send caps the operator has already set. Don't propose volumes the caps can't sustain.
-- Don't propose commercial language. The agent's first-touch must be discovery-only ("who handles supplier inquiries?").
+- Don't propose commercial language at market_structure / routing / pain_discovery stages.
 - Don't propose channels outside the allowed list.
+- If negativeRules are provided (prescriptive rules from prior probes in this market), HONOR them — don't propose strategies the rules forbid.
 
 Return ONLY the JSON object — no preamble, no markdown fence.`;
 
 export async function generateProbePlan(
   ctx: ProbeContextForPlan,
-): Promise<ProbePlan> {
+): Promise<ProbePlanResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     // Without an API key, return a deterministic skeleton so the
     // operator can still see the probe shell and proceed manually.
     // The dashboard reads probe.plan_json — empty plan still renders.
-    return defaultPlan(ctx);
+    return { plan: defaultPlan(ctx), hypotheses: [] };
   }
 
   const client = getClient();
@@ -79,10 +126,15 @@ export async function generateProbePlan(
 - Product thesis: ${ctx.productThesis}
 - Risk level: ${ctx.riskLevel}
 - Objective: ${ctx.objective ?? '(unspecified)'}
+- Ladder stage: ${ctx.ladderStage ?? 'market_structure'}
 - Allowed channels: ${ctx.allowedChannels.join(', ')}
 - Daily send cap: ${ctx.dailySendLimit}
 - Total send cap: ${ctx.totalSendLimit}
 ${
+  ctx.negativeRules && ctx.negativeRules.length > 0
+    ? `\nNegative rules from prior probes in this market (HONOR — don't violate):\n${ctx.negativeRules.map((r) => `- ${r}`).join('\n')}\n`
+    : ''
+}${
   ctx.rejectionHistory && ctx.rejectionHistory.length > 0
     ? `\nOperator-rejected proposals from prior plan revisions on this probe (DO NOT re-propose these directions; the operator's feedback explains why):\n${ctx.rejectionHistory
         .map(
@@ -106,19 +158,19 @@ Produce the plan JSON.`,
     .replace(/```$/i, '')
     .trim();
 
-  let parsed: ProbePlan;
+  let parsed: ProbePlan & { hypotheses?: ProposedHypothesis[] };
   try {
-    parsed = JSON.parse(text) as ProbePlan;
+    parsed = JSON.parse(text);
   } catch {
     // Don't blow up the probe on a malformed response — fall back to
     // the default skeleton. Operator can edit + re-run.
-    return defaultPlan(ctx);
+    return { plan: defaultPlan(ctx), hypotheses: [] };
   }
 
   // Defensive coalesce — if any field missing, fill with default. The
   // model occasionally drops fields when it gets terse.
   const fallback = defaultPlan(ctx);
-  return {
+  const plan: ProbePlan = {
     hypothesis: parsed.hypothesis ?? fallback.hypothesis,
     segments:
       Array.isArray(parsed.segments) && parsed.segments.length > 0
@@ -131,6 +183,15 @@ Produce the plan JSON.`,
         : fallback.successCriteria,
     tasks: normalizeTasks(parsed.tasks ?? fallback.tasks ?? []),
   };
+  const hypotheses = Array.isArray(parsed.hypotheses)
+    ? parsed.hypotheses.filter(
+        (h): h is ProposedHypothesis =>
+          typeof h?.hypothesisType === 'string' &&
+          typeof h?.statement === 'string' &&
+          h.statement.length > 0,
+      )
+    : [];
+  return { plan, hypotheses };
 }
 
 function defaultPlan(ctx: ProbeContextForPlan): ProbePlan {

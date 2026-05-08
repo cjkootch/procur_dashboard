@@ -47,6 +47,13 @@ export const marketAtlasFacts = pgTable(
 
     description: text('description').notNull(),
 
+    /** Prescriptive rule (migration 0097). Pairs with
+     *  fact_type='negative_rule' or 'procurement_pattern' — turns the
+     *  descriptive fact into a reusable behavioral constraint
+     *  ("never target this segment without X qualifier"). Optional;
+     *  most fact types leave it null. */
+    ruleText: text('rule_text'),
+
     /** Source pointers. All optional — operator can write standalone. */
     sourceProbeId: text('source_probe_id'),
     sourceTargetId: text('source_target_id'),

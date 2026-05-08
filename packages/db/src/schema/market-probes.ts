@@ -40,6 +40,16 @@ export const marketProbes = pgTable(
      *  | 2 follow-up autopilot | 3 human-gated commercial drafting. */
     tier: integer('tier').notNull().default(0),
 
+    /** Probe ladder stage (migration 0097). Sequential 5-stage path:
+     *    market_structure → routing → pain_discovery →
+     *    commercial_qualification → deal_room_conversion
+     *  Hard discipline rule: agent cannot skip ahead — strategy
+     *  proposals to advance the stage are gated on evidence from
+     *  earlier stages. New probes start at market_structure. */
+    ladderStage: text('ladder_stage')
+      .notNull()
+      .default('market_structure'),
+
     objective: text('objective'),
     successCriteriaJson: jsonb('success_criteria_json')
       .$type<Record<string, unknown>>()
@@ -115,6 +125,28 @@ export const marketProbeTargets = pgTable(
       .notNull()
       .default({}),
 
+    /** Target justification (migration 0097). Operator (or agent)
+     *  fills these in before promoting a target to drafted/queued.
+     *  Phase 2H autopilot's daily-send queue filters on
+     *  justificationState='justified' — research_only targets are
+     *  never auto-drafted. */
+    whyThisCompany: text('why_this_company'),
+    whyThisPerson: text('why_this_person'),
+    whyNow: text('why_now'),
+    /** Array of evidence items the operator cites — { source, label,
+     *  url? }. Pulled from evidenceJson + Apollo + atlas. */
+    supportingSignals: jsonb('supporting_signals')
+      .$type<Array<{ source: string; label: string; url?: string }>>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /** The least-committal first ask. e.g. "are you the right person
+     *  for supplier inquiries?" — never pricing/quantity/terms. */
+    safestFirstAsk: text('safest_first_ask'),
+    /** 'pending' | 'research_only' | 'justified'. Promotion gate. */
+    justificationState: text('justification_state')
+      .notNull()
+      .default('pending'),
+
     /** 'pending' | 'drafted' | 'queued' | 'sent' | 'bounced' | 'skipped'. */
     sendStatus: text('send_status').notNull().default('pending'),
     lastTouchAt: timestamp('last_touch_at', { withTimezone: true }),
@@ -168,3 +200,39 @@ export interface ProbeTask {
   completedAt?: string;
   result?: string;
 }
+
+/**
+ * Probe ladder stages. Sequential 5-stage progression.
+ *
+ *   1. market_structure — who's here, who's the gatekeeper, what's
+ *      the segment shape. Prerequisite for everything else.
+ *   2. routing — first-touch routing emails ("are you the right
+ *      person?"). Generates named contacts + reply patterns.
+ *   3. pain_discovery — qualifying questions ("how do you currently
+ *      handle X?"). Surfaces operator-relevant pain.
+ *   4. commercial_qualification — pricing intent / volume
+ *      indications / payment terms appetite.
+ *   5. deal_room_conversion — formal LOI / NCNDA / fee discussions.
+ *      Routes positive replies into a deal room.
+ *
+ * Hard discipline rule: agent cannot propose advancing past
+ * `routing` until at least one routing-style reply has been received,
+ * past `pain_discovery` until at least one qualifying-conversation
+ * touchpoint exists, etc. Validation lives in the advance-stage
+ * action; schema just stores. */
+export const LADDER_STAGES = [
+  'market_structure',
+  'routing',
+  'pain_discovery',
+  'commercial_qualification',
+  'deal_room_conversion',
+] as const;
+export type LadderStage = (typeof LADDER_STAGES)[number];
+
+export const TARGET_JUSTIFICATION_STATES = [
+  'pending',
+  'research_only',
+  'justified',
+] as const;
+export type TargetJustificationState =
+  (typeof TARGET_JUSTIFICATION_STATES)[number];
