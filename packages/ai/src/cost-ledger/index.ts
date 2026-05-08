@@ -16,6 +16,7 @@ export type CostOperation =
   | 'pstn.minute'
   | 'pstn.call'
   | 'email.send'
+  | 'lead_form.submit'
   | 'sms.send'
   | 'whatsapp.send'
   | 'whatsapp.send_template'

@@ -208,6 +208,11 @@ export {
   type EmailSendPayload,
   type EmailSendResult,
 } from './executors/email-send';
+export {
+  applyLeadFormSubmit,
+  type LeadFormSubmitPayload,
+  type LeadFormSubmitResult,
+} from './executors/lead-form-submit';
 // Shared outreach-evidence handling — preserves recommendation
 // pipeline output through executors → touchpoints → events so
 // model-performance dashboards can join evidence ↔ outcomes.
