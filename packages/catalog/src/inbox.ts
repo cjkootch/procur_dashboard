@@ -130,6 +130,17 @@ export interface ThreadMessageRow {
   inReplyTo: string | null;
   bodyText: string | null;
   bodyHtml: string | null;
+  /** English translation of bodyText, or null when source was already
+   *  English (or translation hasn't run). Populated by the resend-
+   *  inbound webhook via translateInboundMessage. */
+  bodyTextEn: string | null;
+  /** English translation of subject when applicable. */
+  subjectEn: string | null;
+  /** ISO 639-1 (or 639-3 fallback) of the detected source language.
+   *  null when detection didn't run / failed. */
+  detectedLanguageCode: string | null;
+  /** Human-readable language name for the "Translated from …" chip. */
+  detectedLanguageName: string | null;
   metadata: Record<string, unknown>;
   createdAt: Date;
 }
@@ -199,6 +210,22 @@ export async function getThreadDetail(
         typeof meta['body_html'] === 'string'
           ? (meta['body_html'] as string)
           : null;
+      const bodyTextEn =
+        typeof meta['body_text_en'] === 'string'
+          ? (meta['body_text_en'] as string)
+          : null;
+      const subjectEn =
+        typeof meta['subject_en'] === 'string'
+          ? (meta['subject_en'] as string)
+          : null;
+      const detectedLanguageCode =
+        typeof meta['detected_language_code'] === 'string'
+          ? (meta['detected_language_code'] as string)
+          : null;
+      const detectedLanguageName =
+        typeof meta['detected_language_name'] === 'string'
+          ? (meta['detected_language_name'] as string)
+          : null;
       return {
         id: m.id,
         threadId: m.threadId,
@@ -209,6 +236,10 @@ export async function getThreadDetail(
         inReplyTo: m.inReplyTo ?? null,
         bodyText,
         bodyHtml,
+        bodyTextEn,
+        subjectEn,
+        detectedLanguageCode,
+        detectedLanguageName,
         metadata: meta,
         createdAt: m.createdAt,
       };

@@ -8,6 +8,7 @@ import {
 } from '@procur/catalog';
 import { draftReplyAction } from './actions';
 import { ConversationSettingsPanel } from '../../components/conversation/ConversationSettingsPanel';
+import { TranslatableText } from '../../components/translation/TranslatableText';
 
 /**
  * Outlook-style two-pane inbox shell. Reused by /inbox (no thread
@@ -288,6 +289,18 @@ function MessageCard({
   // long thread stays high. Operator can expand to see the original.
   const split = message.bodyText ? splitQuotedReply(message.bodyText) : null;
 
+  // Translation: when the inbound was non-English the webhook
+  // populated bodyTextEn / subjectEn / detectedLanguageName via
+  // translateInboundMessage. Default render is the EN version with
+  // a "Translated from …" chip; the chip toggles to the original.
+  // The quoted-history collapsible only shows when reading the
+  // original (Haiku's translation already strips quoted chains).
+  const hasBodyTranslation = Boolean(message.bodyTextEn);
+  const hasSubjectTranslation = Boolean(message.subjectEn);
+  const summaryText = hasBodyTranslation
+    ? message.bodyTextEn
+    : message.bodyText;
+
   return (
     <details
       open={defaultOpen}
@@ -315,16 +328,30 @@ function MessageCard({
           </time>
         </div>
         {message.subject && (
-          <p className="mt-1 text-sm">{message.subject}</p>
+          <TranslatableText
+            original={message.subject}
+            translation={hasSubjectTranslation ? message.subjectEn : null}
+            languageName={message.detectedLanguageName}
+            render={(text) => <p className="mt-1 text-sm">{text}</p>}
+          />
         )}
-        {!defaultOpen && message.bodyText && (
+        {!defaultOpen && summaryText && (
           <p className="mt-1 truncate text-xs text-[color:var(--color-muted-foreground)]">
-            {message.bodyText.slice(0, 200)}
+            {summaryText.slice(0, 200)}
           </p>
         )}
       </summary>
       <div className="border-t border-[color:var(--color-border)] px-4 py-4">
-        {split && split.body ? (
+        {hasBodyTranslation ? (
+          // Translated path: render Haiku's EN translation by default
+          // with the "Translated from …" toggle. Original (with
+          // quoted-history) lives behind the toggle.
+          <TranslatableText
+            original={split?.body ?? message.bodyText ?? ''}
+            translation={message.bodyTextEn}
+            languageName={message.detectedLanguageName}
+          />
+        ) : split && split.body ? (
           <>
             <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">
               {split.body}
