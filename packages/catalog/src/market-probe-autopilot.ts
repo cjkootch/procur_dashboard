@@ -23,6 +23,7 @@ import { computeProbeScorecard } from './market-probe-measurement';
 import { setProbeStatus } from './market-probes';
 import { listHypothesesForProbe } from './market-probe-hypotheses';
 import { pickVariantForTarget } from './market-probe-variants';
+import { pickAutopilotEligibleEndpoint } from './entity-contact-form-endpoints';
 
 /**
  * Phase 2H autopilot. Drafts + sends per-target outreach within probe
@@ -386,9 +387,9 @@ export async function autopilotSendBatch(
   let sent = 0;
   let queued = 0;
 
-  // Lazy import @procur/ai's executor — same pattern as the
+  // Lazy import @procur/ai's executors — same pattern as the
   // conversation-agent inline send path.
-  const { applyEmailSend } = await import('@procur/ai');
+  const { applyEmailSend, applyLeadFormSubmit } = await import('@procur/ai');
 
   for (const t of eligible) {
     drafted += 1;
@@ -399,14 +400,38 @@ export async function autopilotSendBatch(
     // the entity slug. Stub orgs (no contact) get skipped — we don't
     // outreach into the void.
     const recipient = await resolveRecipientEmail(t.entitySlug);
-    if (!recipient) {
+    const allowsLeadForm = (probe.allowedChannels ?? []).includes('lead_form');
+    // Lead-form fallback: when no email is available AND the probe
+    // allows lead_form, look for an autopilot-eligible contact-form
+    // endpoint. Eligibility check (CAPTCHA, http_post, message_field)
+    // lives in pickAutopilotEligibleEndpoint — single source of truth
+    // shared with the chat-tool path. Without an eligible endpoint
+    // we skip exactly as before (no recipient = no dispatch).
+    let leadFormEndpoint: Awaited<
+      ReturnType<typeof pickAutopilotEligibleEndpoint>
+    > = null;
+    if (!recipient && allowsLeadForm) {
+      leadFormEndpoint = await pickAutopilotEligibleEndpoint(t.entitySlug);
+    }
+    if (!recipient && !leadFormEndpoint) {
       skipped.push({
         targetId: t.id,
         entitySlug: t.entitySlug,
-        reason: 'no recipient email',
+        reason: allowsLeadForm
+          ? 'no recipient email + no autopilot-eligible lead-form endpoint'
+          : 'no recipient email',
       });
       continue;
     }
+    // Channel selection: email when available; lead_form fallback
+    // only when email is unavailable AND the probe allows it AND
+    // discovery surfaced an eligible endpoint. Email is preferred
+    // because it carries threading semantics + reply-rate signal,
+    // both of which lead_form lacks (form replies arrive via email
+    // separately, with no In-Reply-To linkage).
+    const channelKind: 'email' | 'lead_form' = recipient
+      ? 'email'
+      : 'lead_form';
 
     // Phase 2I.4 — variant picker. If the probe has active variants,
     // sample one (winner short-circuits; otherwise weighted-random
@@ -507,80 +532,193 @@ export async function autopilotSendBatch(
 
     // Insert approval row. tier=1 → decision='auto_approved'; tier=0
     // would queue manually but autopilot already gated tier>=1.
+    // actionType branches by selected channel; payload shape mirrors
+    // each executor's expected input so the calling server-action
+    // path (operator clicks "approve" in the queue UI) replays
+    // identically through the same executor.
     const approvalId = createId();
-    await db.insert(approvals).values({
-      id: approvalId,
-      agentRunId: null,
-      actionType: 'email.send',
-      proposedPayload: {
-        kind: 'email.send',
-        tier: 'T2',
+    if (channelKind === 'email' && recipient) {
+      await db.insert(approvals).values({
+        id: approvalId,
+        agentRunId: null,
+        actionType: 'email.send',
+        proposedPayload: {
+          kind: 'email.send',
+          tier: 'T2',
+          to: [recipient.email],
+          subject: draft.emailSubject,
+          body: draft.emailBody,
+          rationale: `Market Probe ${probe.id} autopilot (tier ${probe.tier}). Target ${t.id}; entity ${t.entitySlug}. Plan outreach angle: ${(probe.planJson?.outreachAngle ?? 'routing').slice(0, 200)}.`,
+          actor_source: 'market_probe_autopilot',
+          market_probe_id: probe.id,
+          market_probe_target_id: t.id,
+        },
+        decision: 'auto_approved',
+      });
+
+      // Phase 2I.2 — upsert conversation_settings on the recipient's
+      // email BEFORE the send so even if dispatch fails, an inbound
+      // that does land routes through the probe-aware reply path.
+      // Maps probe.tier → approvalMode:
+      //   tier 1: 'tiered'        — auto-send safe replies; queue
+      //                             commitments; probe-aware escalation
+      //                             classifier still gates inbounds
+      //   tier 2: 'tiered'        — same; Phase 2I.3 will widen for
+      //                             follow-up handling
+      //   tier 3: 'full_approval' — commercial draft mode = always queue
+      const probeApprovalMode: 'tiered' | 'full_approval' =
+        probe.tier >= 3 ? 'full_approval' : 'tiered';
+      const upsertRow: NewConversationSettings = {
+        channel: 'email',
+        conversationKey: recipient.email,
+        aiEnabled: true,
+        authority: 'chitchat_only',
+        approvalMode: probeApprovalMode,
+        tone: 'brokerage_direct',
+        language: 'auto',
+        identityDisclosure: 'on_request',
+        linkedProbeId: probe.id,
+        linkedEntitySlug: t.entitySlug,
+        responseDelayMinSec: 0,
+        responseDelayMaxSec: 0,
+        maxTurns: 6,
+        maxCostUsdCents: 100,
+        maxDurationHours: 168,
+        channelConfig: { source: 'market_probe_autopilot' },
+      };
+      await db
+        .insert(conversationSettings)
+        .values(upsertRow)
+        .onConflictDoUpdate({
+          target: [
+            conversationSettings.channel,
+            conversationSettings.conversationKey,
+          ],
+          set: {
+            // Preserve operator-set overrides when they exist; backfill
+            // probe-specific link + AI-enabled for a contact that
+            // already has manual settings.
+            aiEnabled: sql`${conversationSettings.aiEnabled} OR true`,
+            linkedProbeId: probe.id,
+            linkedEntitySlug: sql`COALESCE(${conversationSettings.linkedEntitySlug}, ${t.entitySlug})`,
+            updatedAt: new Date(),
+          },
+        });
+    } else if (channelKind === 'lead_form' && leadFormEndpoint) {
+      // Lead-form approval payload. The drafter (PR 4) will produce
+      // a form-shaped {name, email, message, ...} payload; for now
+      // we map the email draft's subject + body onto the form's
+      // resolved field roles — verbose but functional, replaced by
+      // the form-aware drafter when PR 4 lands.
+      const fieldValues: Record<string, string> = {};
+      if (leadFormEndpoint.messageField) {
+        fieldValues[leadFormEndpoint.messageField] = draft.emailBody;
+      }
+      if (leadFormEndpoint.subjectField) {
+        fieldValues[leadFormEndpoint.subjectField] = draft.emailSubject;
+      }
+      // Sender identity — pulled from the company's email defaults
+      // already used by the email path; cheap fallback here.
+      const senderEmail =
+        process.env.LEAD_FORM_SENDER_EMAIL ?? 'hello@procur.app';
+      const senderName =
+        process.env.LEAD_FORM_SENDER_NAME ?? 'Procur Outreach';
+      if (leadFormEndpoint.emailField) {
+        fieldValues[leadFormEndpoint.emailField] = senderEmail;
+      }
+      if (leadFormEndpoint.nameField) {
+        fieldValues[leadFormEndpoint.nameField] = senderName;
+      }
+      if (leadFormEndpoint.companyField && process.env.LEAD_FORM_SENDER_COMPANY) {
+        fieldValues[leadFormEndpoint.companyField] =
+          process.env.LEAD_FORM_SENDER_COMPANY;
+      }
+      await db.insert(approvals).values({
+        id: approvalId,
+        agentRunId: null,
+        actionType: 'lead_form.submit',
+        proposedPayload: {
+          kind: 'lead_form.submit',
+          tier: 'T2',
+          entity_slug: t.entitySlug,
+          form_url: leadFormEndpoint.url,
+          field_values: fieldValues,
+          drafted_fields: {
+            subject: draft.emailSubject,
+            message: draft.emailBody,
+            email: senderEmail,
+            name: senderName,
+          },
+          rationale: `Market Probe ${probe.id} autopilot (tier ${probe.tier}). Target ${t.id}; entity ${t.entitySlug}. Channel=lead_form (no email recipient available; eligible form endpoint discovered).`,
+          actor_source: 'market_probe_autopilot',
+          market_probe_id: probe.id,
+          market_probe_target_id: t.id,
+        },
+        decision: 'auto_approved',
+      });
+      // No conversation_settings row for lead_form — form-side has
+      // no inbound channel; replies arrive via email if the
+      // recipient chooses to reply, and that path goes through the
+      // email conversation_settings as usual.
+    }
+
+    let result: { ok: boolean; error?: string };
+    if (channelKind === 'email' && recipient) {
+      result = await applyEmailSend(approvalId, {
         to: [recipient.email],
         subject: draft.emailSubject,
         body: draft.emailBody,
-        rationale: `Market Probe ${probe.id} autopilot (tier ${probe.tier}). Target ${t.id}; entity ${t.entitySlug}. Plan outreach angle: ${(probe.planJson?.outreachAngle ?? 'routing').slice(0, 200)}.`,
-        actor_source: 'market_probe_autopilot',
-        market_probe_id: probe.id,
-        market_probe_target_id: t.id,
-      },
-      decision: 'auto_approved',
-    });
-
-    // Phase 2I.2 — upsert conversation_settings on the recipient's
-    // email BEFORE the send so even if dispatch fails, an inbound
-    // that does land routes through the probe-aware reply path.
-    // Maps probe.tier → approvalMode:
-    //   tier 1: 'tiered'        — auto-send safe replies; queue
-    //                             commitments; probe-aware escalation
-    //                             classifier still gates inbounds
-    //   tier 2: 'tiered'        — same; Phase 2I.3 will widen for
-    //                             follow-up handling
-    //   tier 3: 'full_approval' — commercial draft mode = always queue
-    const probeApprovalMode: 'tiered' | 'full_approval' =
-      probe.tier >= 3 ? 'full_approval' : 'tiered';
-    const upsertRow: NewConversationSettings = {
-      channel: 'email',
-      conversationKey: recipient.email,
-      aiEnabled: true,
-      authority: 'chitchat_only',
-      approvalMode: probeApprovalMode,
-      tone: 'brokerage_direct',
-      language: 'auto',
-      identityDisclosure: 'on_request',
-      linkedProbeId: probe.id,
-      linkedEntitySlug: t.entitySlug,
-      responseDelayMinSec: 0,
-      responseDelayMaxSec: 0,
-      maxTurns: 6,
-      maxCostUsdCents: 100,
-      maxDurationHours: 168,
-      channelConfig: { source: 'market_probe_autopilot' },
-    };
-    await db
-      .insert(conversationSettings)
-      .values(upsertRow)
-      .onConflictDoUpdate({
-        target: [
-          conversationSettings.channel,
-          conversationSettings.conversationKey,
-        ],
-        set: {
-          // Preserve operator-set overrides when they exist; backfill
-          // probe-specific link + AI-enabled for a contact that
-          // already has manual settings.
-          aiEnabled: sql`${conversationSettings.aiEnabled} OR true`,
-          linkedProbeId: probe.id,
-          linkedEntitySlug: sql`COALESCE(${conversationSettings.linkedEntitySlug}, ${t.entitySlug})`,
-          updatedAt: new Date(),
-        },
+        rationale: `Market Probe ${probe.id} autopilot dispatch.`,
       });
-
-    const result = await applyEmailSend(approvalId, {
-      to: [recipient.email],
-      subject: draft.emailSubject,
-      body: draft.emailBody,
-      rationale: `Market Probe ${probe.id} autopilot dispatch.`,
-    });
+    } else if (channelKind === 'lead_form' && leadFormEndpoint) {
+      const fieldValues: Record<string, string> = {};
+      if (leadFormEndpoint.messageField) {
+        fieldValues[leadFormEndpoint.messageField] = draft.emailBody;
+      }
+      if (leadFormEndpoint.subjectField) {
+        fieldValues[leadFormEndpoint.subjectField] = draft.emailSubject;
+      }
+      const senderEmail =
+        process.env.LEAD_FORM_SENDER_EMAIL ?? 'hello@procur.app';
+      const senderName =
+        process.env.LEAD_FORM_SENDER_NAME ?? 'Procur Outreach';
+      if (leadFormEndpoint.emailField) {
+        fieldValues[leadFormEndpoint.emailField] = senderEmail;
+      }
+      if (leadFormEndpoint.nameField) {
+        fieldValues[leadFormEndpoint.nameField] = senderName;
+      }
+      if (
+        leadFormEndpoint.companyField &&
+        process.env.LEAD_FORM_SENDER_COMPANY
+      ) {
+        fieldValues[leadFormEndpoint.companyField] =
+          process.env.LEAD_FORM_SENDER_COMPANY;
+      }
+      result = await applyLeadFormSubmit(approvalId, {
+        entitySlug: t.entitySlug,
+        formUrl: leadFormEndpoint.url,
+        fieldValues,
+        draftedFields: {
+          subject: draft.emailSubject,
+          message: draft.emailBody,
+          email: senderEmail,
+          name: senderName,
+        },
+        rationale: `Market Probe ${probe.id} autopilot dispatch via lead_form.`,
+      });
+    } else {
+      // Should be unreachable — channelKind is set by the eligibility
+      // branch above and either recipient or leadFormEndpoint is
+      // guaranteed non-null when channelKind is set. Defensive skip
+      // so the type system doesn't have to encode that invariant.
+      skipped.push({
+        targetId: t.id,
+        entitySlug: t.entitySlug,
+        reason: 'channel selection failed (defensive)',
+      });
+      continue;
+    }
 
     if (!result.ok) {
       // Rollback the atomic claim — flip target back to 'pending'
