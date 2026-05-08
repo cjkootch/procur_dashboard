@@ -461,6 +461,30 @@ export async function setProbeIdentity(
     .where(eq(marketProbes.id, probeId));
 }
 
+/**
+ * Set the probe's drafter steering — formality level + domain hint.
+ * Both nullable; null clears and falls back to the drafter's base
+ * behavior (professional tone, no domain framing). Used by the
+ * probe edit UI; autopilot dispatch + the submit_lead_form chat
+ * tool read these via getProbe and pipe them into the drafter call.
+ */
+export async function setProbeDrafterSteering(
+  probeId: string,
+  input: {
+    formalityLevel: 'high' | 'professional' | 'casual' | null;
+    domainHint: string | null;
+  },
+): Promise<void> {
+  await db
+    .update(marketProbes)
+    .set({
+      formalityLevel: input.formalityLevel,
+      domainHint: input.domainHint,
+      updatedAt: new Date(),
+    })
+    .where(eq(marketProbes.id, probeId));
+}
+
 export async function deleteProbeTargetsNotIn(
   probeId: string,
   keepIds: string[],

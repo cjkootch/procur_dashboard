@@ -142,6 +142,48 @@ export const marketProbes = pgTable(
      *  don't set this). */
     domain: text('domain'),
 
+    /** Per-probe formality level passed into the drafter prompt.
+     *  The base prompt is "professional, single ask" — that fits
+     *  most US/EU procurement contexts. For first-contact M&A
+     *  outreach to a 65-year-old Japanese factory owner, deference
+     *  + indirection matter. For warm-market follow-ups, a casual
+     *  tone reads better. The drafter respects this level when
+     *  set; null falls back to "professional" (existing behavior).
+     *
+     *  Levels:
+     *    'high'         — formal register; honorifics where the
+     *                     target language has them (e.g. 敬語 for
+     *                     Japanese, vous for French, Sie for
+     *                     German); indirect ask; "would you be
+     *                     open to..." not "let's get on a call"
+     *    'professional' — default. Direct but courteous; first-
+     *                     name basis where culturally appropriate
+     *    'casual'       — warm-market tone; first-name only;
+     *                     short; conversational
+     */
+    formalityLevel: text('formality_level'),
+
+    /** Free-text guidance the drafter receives in addition to the
+     *  intent. Captures the operator's domain-specific framing the
+     *  base prompt can't infer. Example for an M&A probe:
+     *  "You're proposing exploratory M&A conversation with a
+     *   succession-stage business owner. Lead with respect for
+     *   what they've built; do NOT lead with valuation; the goal
+     *   of first contact is to learn whether succession is on
+     *   their mind, not to make an offer." Example for a
+     *   procurement probe: "Standard supply-side first-touch — ask
+     *   if they're the right contact for X; do not discuss pricing
+     *   or terms."
+     *
+     *  NULL falls back to the base prompt's general framing
+     *  (existing behavior — fuel-procurement probes need no extra
+     *  hint since the base prompt was authored for them).
+     *
+     *  Capped at 1000 chars in the drafter to keep prompt size
+     *  bounded; the schema doesn't enforce a length so operators
+     *  can iterate. */
+    domainHint: text('domain_hint'),
+
     createdBy: text('created_by'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()

@@ -683,6 +683,19 @@ export function buildCatalogTools(): ToolRegistry {
           pack,
           intent: input.intent,
           ...(input.doNotMention ? { doNotMention: input.doNotMention } : {}),
+          // When the operator passed a probeId, the probe's drafter
+          // steering (formality + domain hint) shifts the prompt
+          // alongside the alias/signature applied below. Without
+          // probeId both are null and the drafter falls back to its
+          // base behavior — chat invocations without probe context
+          // behave exactly as before.
+          formalityLevel:
+            (probe?.formalityLevel as
+              | 'high'
+              | 'professional'
+              | 'casual'
+              | null) ?? null,
+          domainHint: probe?.domainHint ?? null,
           endpoint: {
             subjectField: endpoint.subjectField,
             companyField: endpoint.companyField,

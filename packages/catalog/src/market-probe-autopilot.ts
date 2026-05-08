@@ -507,6 +507,17 @@ export async function autopilotSendBatch(
             pack,
             intent,
             doNotMention: probe.blockedTerms ?? [],
+            // Per-probe drafter steering — formality + domain hint
+            // shift the drafter prompt without forking the system
+            // prompt. NULL falls back to the drafter's base
+            // (professional tone, no extra framing).
+            formalityLevel:
+              (probe.formalityLevel as
+                | 'high'
+                | 'professional'
+                | 'casual'
+                | null) ?? null,
+            domainHint: probe.domainHint,
           })
         : null;
 
@@ -643,6 +654,15 @@ export async function autopilotSendBatch(
         pack,
         intent,
         doNotMention: probe.blockedTerms ?? [],
+        // Mirror the email-path drafter steering — same per-probe
+        // formality + domain hint apply regardless of channel.
+        formalityLevel:
+          (probe.formalityLevel as
+            | 'high'
+            | 'professional'
+            | 'casual'
+            | null) ?? null,
+        domainHint: probe.domainHint,
         endpoint: {
           subjectField: leadFormEndpoint.subjectField,
           companyField: leadFormEndpoint.companyField,
