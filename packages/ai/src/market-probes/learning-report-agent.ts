@@ -56,6 +56,11 @@ export interface LearningReportContext {
     withoutSent: number;
     withoutReplied: number;
     replyDelta: number;
+    /** Sample-size-aware confidence on the delta. The agent must NOT
+     *  ground claims on rows with confidence = 'low' or 'unobserved' —
+     *  those deltas are forced to 0 upstream but the prompt also tells
+     *  the agent so explicitly. */
+    confidence: 'high' | 'medium' | 'low' | 'unobserved';
   }>;
   atlasFacts: Array<{
     factType: string;
@@ -104,6 +109,7 @@ Discipline:
 - For recommendedNextProbe, suggest a SPECIFIC next experiment — country + 2-4 segments + 2-3 hypotheses to test. Don't just say "explore Bahamas"; say "Bahamas hotel procurement, hypothesis: hotels source from regional distributor LBR Foods."
 - For playbookUpdates, only nominate fields the data supports. If contact-title evidence is thin, leave bestContactTitles empty.
 - HONOR cross-probe memory. When prior learning reports in this country exist, your report must SYNTHESIZE — reference what changed since the prior reports (confirmation, contradiction, new ground covered) rather than emitting an isolated take. When the prior reports already learned something this probe re-confirmed, say "this probe confirms probe X's finding that ..." instead of presenting it as new. The recommendedNextProbe in particular should NOT repeat segments / hypotheses tried in the prior reports.
+- HONOR signal confidence. Each topSignals row carries a confidence field ('high' | 'medium' | 'low' | 'unobserved'). DO NOT cite a signal in strongestSignal or noisySignals when its confidence is 'low' or 'unobserved' — the underlying sample is too small and any delta is noise. When all candidate signals are low-confidence, omit strongestSignal entirely rather than fabricating a finding.
 
 Output a single JSON object matching this shape (omit any field with no grounded evidence):
 {
