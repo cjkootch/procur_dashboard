@@ -64,6 +64,11 @@ export const conversationSettings = pgTable(
     linkedLeadId: text('linked_lead_id'),
     linkedDealId: text('linked_deal_id'),
     linkedEntitySlug: text('linked_entity_slug'),
+    /** Phase 2I.2 — Market Probe pointer (migration 0101). When
+     *  autopilot sends to a contact, it stamps this column so the
+     *  reply path reads probe-tier-aware approvalMode + runs the
+     *  probe-aware escalation classifier on inbound bodies. */
+    linkedProbeId: text('linked_probe_id'),
 
     responseDelayMinSec: integer('response_delay_min_sec').notNull().default(30),
     responseDelayMaxSec: integer('response_delay_max_sec').notNull().default(90),

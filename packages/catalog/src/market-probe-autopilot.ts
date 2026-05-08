@@ -4,6 +4,7 @@ import {
   approvals,
   contacts,
   contactOrgMemberships,
+  conversationSettings,
   db,
   knownEntities,
   marketProbeTargets,
@@ -11,6 +12,7 @@ import {
   organizations,
   type MarketProbe,
   type MarketProbeTarget,
+  type NewConversationSettings,
 } from '@procur/db';
 import { createId } from '@procur/ai';
 import {
@@ -344,6 +346,55 @@ export async function autopilotSendBatch(
       },
       decision: 'auto_approved',
     });
+
+    // Phase 2I.2 — upsert conversation_settings on the recipient's
+    // email BEFORE the send so even if dispatch fails, an inbound
+    // that does land routes through the probe-aware reply path.
+    // Maps probe.tier → approvalMode:
+    //   tier 1: 'tiered'        — auto-send safe replies; queue
+    //                             commitments; probe-aware escalation
+    //                             classifier still gates inbounds
+    //   tier 2: 'tiered'        — same; Phase 2I.3 will widen for
+    //                             follow-up handling
+    //   tier 3: 'full_approval' — commercial draft mode = always queue
+    const probeApprovalMode: 'tiered' | 'full_approval' =
+      probe.tier >= 3 ? 'full_approval' : 'tiered';
+    const upsertRow: NewConversationSettings = {
+      channel: 'email',
+      conversationKey: recipient.email,
+      aiEnabled: true,
+      authority: 'chitchat_only',
+      approvalMode: probeApprovalMode,
+      tone: 'brokerage_direct',
+      language: 'auto',
+      identityDisclosure: 'on_request',
+      linkedProbeId: probe.id,
+      linkedEntitySlug: t.entitySlug,
+      responseDelayMinSec: 0,
+      responseDelayMaxSec: 0,
+      maxTurns: 6,
+      maxCostUsdCents: 100,
+      maxDurationHours: 168,
+      channelConfig: { source: 'market_probe_autopilot' },
+    };
+    await db
+      .insert(conversationSettings)
+      .values(upsertRow)
+      .onConflictDoUpdate({
+        target: [
+          conversationSettings.channel,
+          conversationSettings.conversationKey,
+        ],
+        set: {
+          // Preserve operator-set overrides when they exist; backfill
+          // probe-specific link + AI-enabled for a contact that
+          // already has manual settings.
+          aiEnabled: sql`${conversationSettings.aiEnabled} OR true`,
+          linkedProbeId: probe.id,
+          linkedEntitySlug: sql`COALESCE(${conversationSettings.linkedEntitySlug}, ${t.entitySlug})`,
+          updatedAt: new Date(),
+        },
+      });
 
     const result = await applyEmailSend(approvalId, {
       to: [recipient.email],
