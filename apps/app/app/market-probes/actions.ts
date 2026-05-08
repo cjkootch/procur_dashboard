@@ -303,9 +303,31 @@ export async function discoverTargetsAction(formData: FormData): Promise<void> {
   }
   const filters = { country: probe.country.toUpperCase() };
 
+  // Cold-start segment seeding — when the probe has segment labels
+  // (most market_structure / routing probes do; the plan-agent
+  // populates plan.segments and the operator may add allowedSegments),
+  // pipe them as seedSegmentLabels so the recommender's keyword
+  // search layer surfaces semantically-relevant entities the country
+  // filter alone would miss. plan.segments + probe.allowedSegments
+  // are unioned and deduped — operators sometimes hand-edit either
+  // surface and the agent should see the full set.
+  const segmentLabels = Array.from(
+    new Set(
+      [
+        ...(probe.planJson?.segments ?? []),
+        ...(probe.allowedSegments ?? []),
+      ]
+        .map((s) => (typeof s === 'string' ? s.trim() : ''))
+        .filter((s) => s.length > 0),
+    ),
+  );
+
   let candidates = await recommendCommunicationTargets({
     limit: 25,
     filters,
+    ...(segmentLabels.length > 0
+      ? { seedSegmentLabels: segmentLabels }
+      : {}),
   });
 
   // Phase 2G safety net: drop any candidates flagged
