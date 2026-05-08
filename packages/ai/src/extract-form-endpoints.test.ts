@@ -210,6 +210,115 @@ describe('extractFormEndpoints — autocomplete attribute precedence', () => {
   });
 });
 
+describe('extractFormEndpoints — false-positive guards on multilingual matcher', () => {
+  it('does not false-tag a "Email frequency" newsletter-shaped field as the email field', () => {
+    // Newsletter forms with a textarea-shaped "comments" field qualify
+    // as contact-form-shaped (hasMessageField=true via textarea), so
+    // they pass the gate. The risk is the "Email frequency" preference
+    // field substring-matching the english `email` keyword and getting
+    // mistakenly tagged as the email_field. Word-boundary matching
+    // for ASCII keywords prevents this.
+    const html = buildPage(`
+      <label for="a">Your email</label>
+      <input type="email" id="a" name="user_email" />
+      <label for="b">Email frequency</label>
+      <select id="b" name="email_freq">
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+      </select>
+      <label for="c">Comments</label>
+      <textarea id="c" name="comments"></textarea>
+    `);
+    const [endpoint] = extractFormEndpoints({
+      html,
+      pageUrl: 'https://acme.example/contact',
+    });
+    assert.ok(endpoint);
+    // emailField should be the actual email input (resolved via
+    // type='email' autocomplete, then `name=user_email` regex)
+    assert.equal(endpoint.emailField, 'user_email');
+    assert.equal(endpoint.messageField, 'comments');
+  });
+
+  it('Korean form does not let `mail` substring leak across to English match', () => {
+    // 이메일 (Korean for email) — the multilingual keyword set
+    // includes 'mail' for English 'mail' fields. Lowercased Korean
+    // doesn't include 'mail' as a substring of 이메일 so this is
+    // safe by construction, but locking the test pins the behavior.
+    const html = buildPage(
+      `
+      <label for="a">이메일</label>
+      <input type="text" id="a" name="kr_email_field" />
+      <label for="b">메시지</label>
+      <textarea id="b" name="kr_message"></textarea>
+    `,
+      'ko',
+    );
+    const [endpoint] = extractFormEndpoints({
+      html,
+      pageUrl: 'https://example.co.kr/contact',
+    });
+    assert.ok(endpoint);
+    assert.equal(endpoint.emailField, 'kr_email_field');
+    assert.equal(endpoint.messageField, 'kr_message');
+  });
+});
+
+describe('extractFormEndpoints — multipart enctype refusal', () => {
+  it('classifies multipart/form-data POST as submitMethod=unknown', () => {
+    // Multipart forms accept our urlencoded POST silently but
+    // ignore the body. We classify as 'unknown' so the executor
+    // refuses; can be lifted later by teaching the executor to
+    // format multipart bodies.
+    const html = `<!doctype html><html lang="en"><body>
+      <form method="post" enctype="multipart/form-data" action="/contact">
+        <input type="text" name="name" />
+        <input type="email" name="email" />
+        <textarea name="message"></textarea>
+        <input type="file" name="attachment" />
+      </form>
+    </body></html>`;
+    const [endpoint] = extractFormEndpoints({
+      html,
+      pageUrl: 'https://acme.example/contact',
+    });
+    assert.ok(endpoint);
+    assert.equal(endpoint.submitMethod, 'unknown');
+  });
+
+  it('classifies application/x-www-form-urlencoded POST as http_post', () => {
+    const html = `<!doctype html><html lang="en"><body>
+      <form method="post" enctype="application/x-www-form-urlencoded" action="/contact">
+        <input type="text" name="name" />
+        <input type="email" name="email" />
+        <textarea name="message"></textarea>
+      </form>
+    </body></html>`;
+    const [endpoint] = extractFormEndpoints({
+      html,
+      pageUrl: 'https://acme.example/contact',
+    });
+    assert.ok(endpoint);
+    assert.equal(endpoint.submitMethod, 'http_post');
+  });
+
+  it('classifies POST without enctype as http_post (urlencoded is the spec default)', () => {
+    const html = `<!doctype html><html lang="en"><body>
+      <form method="post" action="/contact">
+        <input type="text" name="name" />
+        <input type="email" name="email" />
+        <textarea name="message"></textarea>
+      </form>
+    </body></html>`;
+    const [endpoint] = extractFormEndpoints({
+      html,
+      pageUrl: 'https://acme.example/contact',
+    });
+    assert.ok(endpoint);
+    assert.equal(endpoint.submitMethod, 'http_post');
+  });
+});
+
 describe('extractFormEndpoints — captcha detection still fires on multilingual forms', () => {
   it('flags reCAPTCHA on a Japanese form', () => {
     const html = buildPage(
