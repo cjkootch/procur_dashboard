@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
 import {
   computeProbeScorecard,
+  computeVariantPerformance,
   countTargetsByJustification,
   getLatestLearningReport,
   getProbe,
@@ -11,6 +12,7 @@ import {
   listSegments,
   listStrategyProposals,
   listTargetsForProbe,
+  listVariants,
   ATLAS_FACT_TYPES,
   HYPOTHESIS_TYPES,
   HYPOTHESIS_STATUSES,
@@ -30,12 +32,14 @@ import {
   discoverTargetsAction,
   findDecisionMakersAction,
   autopilotSendBatchAction,
+  createVariantAction,
   generateLearningReportAction,
   generatePlanAction,
   generateStrategyProposalsAction,
   setProbeKillCriteriaAction,
   setProbeModeAction,
   setProbeTierAction,
+  setVariantStatusAction,
   markTargetResearchOnlyAction,
   recordTargetFeedbackAction,
   rejectStrategyProposalAction,
@@ -89,6 +93,8 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
     justificationCounts,
     segments,
     scorecard,
+    variants,
+    variantPerformance,
   ] = await Promise.all([
     listTargetsForProbe(id),
     listAtlasFactsForProbe(id),
@@ -103,6 +109,8 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
     countTargetsByJustification(id),
     listSegments(id),
     computeProbeScorecard(id),
+    listVariants(id),
+    computeVariantPerformance(id),
   ]);
   const latestReport = await getLatestLearningReport(id);
 
@@ -1502,6 +1510,258 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
             </details>
           </div>
         )}
+      </section>
+
+      {/* Message variants — A/B framework. Operator authors 2-3
+          variants; autopilot picks per target via weighted sampling
+          among 'active' variants. Per-variant outcomes (sent /
+          replied / positive / bounce) aggregate via
+          computeVariantPerformance. */}
+      <section className="mt-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          Message variants ({variants.length})
+        </h2>
+
+        {variants.length === 0 ? (
+          <p className="mb-4 text-sm text-[color:var(--color-muted-foreground)]">
+            No variants yet. Authoring 2-3 variants lets the autopilot
+            sample across them and surface a winning template. Without
+            variants the autopilot falls back to the plan&apos;s outreach
+            angle.
+          </p>
+        ) : (
+          <div className="mb-4 overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-[color:var(--color-muted-foreground)]">
+                <tr>
+                  <th className="px-2 py-1 text-left">Variant</th>
+                  <th className="px-2 py-1 text-left">Status</th>
+                  <th className="px-2 py-1 text-right">Sent</th>
+                  <th className="px-2 py-1 text-right">Reply</th>
+                  <th className="px-2 py-1 text-right">Positive</th>
+                  <th className="px-2 py-1 text-right">Bounce</th>
+                  <th className="px-2 py-1 text-left">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {variants.map((v) => {
+                  const perf = variantPerformance.find(
+                    (p) => p.variantId === v.id,
+                  );
+                  const sent = perf?.sent ?? 0;
+                  const replyPct = perf
+                    ? Math.round(perf.replyRate * 100)
+                    : 0;
+                  const posPct = perf
+                    ? Math.round(perf.positiveReplyRate * 100)
+                    : 0;
+                  const bouncePct = perf
+                    ? Math.round(perf.bounceRate * 100)
+                    : 0;
+                  return (
+                    <tr
+                      key={v.id}
+                      className="border-t border-[color:var(--color-border)]"
+                    >
+                      <td className="px-2 py-1 font-medium">
+                        {v.variantName}
+                        {v.angle && (
+                          <span className="ml-2 text-[color:var(--color-muted-foreground)]">
+                            — {v.angle}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                            v.status === 'winner'
+                              ? 'bg-green-100 text-green-900'
+                              : v.status === 'active'
+                                ? 'bg-blue-100 text-blue-900'
+                                : v.status === 'paused'
+                                  ? 'bg-yellow-100 text-yellow-900'
+                                  : 'bg-[color:var(--color-muted)]/60'
+                          }`}
+                        >
+                          {v.status}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1 text-right font-mono">{sent}</td>
+                      <td className="px-2 py-1 text-right font-mono">
+                        {sent > 0 ? `${replyPct}%` : '—'}
+                      </td>
+                      <td className="px-2 py-1 text-right font-mono">
+                        {sent > 0 ? `${posPct}%` : '—'}
+                      </td>
+                      <td className="px-2 py-1 text-right font-mono">
+                        {sent > 0 ? `${bouncePct}%` : '—'}
+                      </td>
+                      <td className="px-2 py-1">
+                        <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                          {v.status !== 'winner' && (
+                            <form action={setVariantStatusAction}>
+                              <input
+                                type="hidden"
+                                name="probeId"
+                                value={probe.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="variantId"
+                                value={v.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="status"
+                                value="winner"
+                              />
+                              <button
+                                type="submit"
+                                className="hover:underline"
+                                title="Promote to winner — autopilot uses ONLY this variant; others move to archived."
+                              >
+                                promote winner
+                              </button>
+                            </form>
+                          )}
+                          {v.status === 'active' && (
+                            <form action={setVariantStatusAction}>
+                              <input
+                                type="hidden"
+                                name="probeId"
+                                value={probe.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="variantId"
+                                value={v.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="status"
+                                value="paused"
+                              />
+                              <button
+                                type="submit"
+                                className="hover:underline"
+                              >
+                                pause
+                              </button>
+                            </form>
+                          )}
+                          {v.status === 'paused' && (
+                            <form action={setVariantStatusAction}>
+                              <input
+                                type="hidden"
+                                name="probeId"
+                                value={probe.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="variantId"
+                                value={v.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="status"
+                                value="active"
+                              />
+                              <button
+                                type="submit"
+                                className="hover:underline"
+                              >
+                                resume
+                              </button>
+                            </form>
+                          )}
+                          {(v.status === 'active' || v.status === 'paused') && (
+                            <form action={setVariantStatusAction}>
+                              <input
+                                type="hidden"
+                                name="probeId"
+                                value={probe.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="variantId"
+                                value={v.id}
+                              />
+                              <input
+                                type="hidden"
+                                name="status"
+                                value="archived"
+                              />
+                              <button
+                                type="submit"
+                                className="text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
+                              >
+                                archive
+                              </button>
+                            </form>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <form
+          action={createVariantAction}
+          className="grid gap-2 rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] p-3 text-xs"
+        >
+          <input type="hidden" name="probeId" value={probe.id} />
+          <div className="grid gap-2 md:grid-cols-2">
+            <input
+              type="text"
+              name="variantName"
+              placeholder="variant name (e.g. routing-v1)"
+              required
+              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+            />
+            <input
+              type="text"
+              name="angle"
+              placeholder="angle (e.g. routing / supplier-intro / industry-question)"
+              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+            />
+          </div>
+          <input
+            type="text"
+            name="subjectTemplate"
+            placeholder="subject template (optional — agent draft uses this as seed)"
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+          />
+          <textarea
+            name="bodyTemplate"
+            rows={3}
+            placeholder="body template / direction (optional — agent uses this as intent. e.g. 'Are you the right person for supplier inquiries? routing tone, 2-3 sentences, no commercial language.')"
+            className="resize-y rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+          />
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1.5">
+              <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                weight
+              </span>
+              <input
+                type="number"
+                step="0.1"
+                name="weight"
+                defaultValue="1"
+                className="w-16 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+              />
+            </label>
+            <button
+              type="submit"
+              className="ml-auto rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1 font-medium hover:bg-[color:var(--color-muted)]/40"
+            >
+              Add variant
+            </button>
+          </div>
+        </form>
       </section>
     </div>
   );

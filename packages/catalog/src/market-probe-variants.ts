@@ -1,0 +1,228 @@
+import 'server-only';
+import { and, desc, eq, sql } from 'drizzle-orm';
+import {
+  db,
+  marketProbeMessageVariants,
+  marketProbeTargets,
+  type MarketProbeMessageVariant,
+  type NewMarketProbeMessageVariant,
+  type VariantStatus,
+  VARIANT_STATUSES,
+} from '@procur/db';
+import { createId } from '@procur/ai';
+
+export { VARIANT_STATUSES };
+export type { VariantStatus, MarketProbeMessageVariant };
+
+/**
+ * Phase 2I.4 — message variant testing helpers.
+ *
+ * Operator authors 2-3 variants per probe (different subject lines,
+ * outreach angles, tones); autopilot picks one per target via
+ * weighted sampling at draft time and stamps the assignment on
+ * market_probe_targets.variant_id. Per-variant outcomes aggregate
+ * via the scorecard's variant-performance pass.
+ *
+ * Discipline: variants are operator-authored. The agent doesn't
+ * propose new variants today (that's a future addition — the
+ * Learning Report could nominate variants for the next probe).
+ */
+
+export interface CreateVariantInput {
+  probeId: string;
+  variantName: string;
+  status?: VariantStatus;
+  subjectTemplate?: string | null;
+  bodyTemplate?: string | null;
+  angle?: string | null;
+  weight?: number;
+  notes?: string | null;
+  parentVariantId?: string | null;
+  createdByUserId?: string | null;
+}
+
+export async function createVariant(
+  input: CreateVariantInput,
+): Promise<MarketProbeMessageVariant> {
+  const row: NewMarketProbeMessageVariant = {
+    id: createId(),
+    probeId: input.probeId,
+    variantName: input.variantName,
+    status: input.status ?? 'active',
+    subjectTemplate: input.subjectTemplate ?? null,
+    bodyTemplate: input.bodyTemplate ?? null,
+    angle: input.angle ?? null,
+    weight: String(input.weight ?? 1),
+    notes: input.notes ?? null,
+    parentVariantId: input.parentVariantId ?? null,
+    createdByUserId: input.createdByUserId ?? null,
+  };
+  const [created] = await db
+    .insert(marketProbeMessageVariants)
+    .values(row)
+    .returning();
+  if (!created) throw new Error('createVariant: no row returned');
+  return created;
+}
+
+export async function listVariants(
+  probeId: string,
+): Promise<MarketProbeMessageVariant[]> {
+  return await db
+    .select()
+    .from(marketProbeMessageVariants)
+    .where(eq(marketProbeMessageVariants.probeId, probeId))
+    .orderBy(desc(marketProbeMessageVariants.createdAt));
+}
+
+export async function setVariantStatus(input: {
+  variantId: string;
+  status: VariantStatus;
+}): Promise<void> {
+  // 'winner' is mutually exclusive — promoting one demotes the rest
+  // to 'archived'. Without this, autopilot could keep sampling
+  // losing variants, defeating the operator's choice.
+  if (input.status === 'winner') {
+    const [v] = await db
+      .select({ probeId: marketProbeMessageVariants.probeId })
+      .from(marketProbeMessageVariants)
+      .where(eq(marketProbeMessageVariants.id, input.variantId))
+      .limit(1);
+    if (v) {
+      await db
+        .update(marketProbeMessageVariants)
+        .set({ status: 'archived', updatedAt: new Date() })
+        .where(
+          and(
+            eq(marketProbeMessageVariants.probeId, v.probeId),
+            sql`${marketProbeMessageVariants.id} <> ${input.variantId}`,
+            sql`${marketProbeMessageVariants.status} IN ('active','paused')`,
+          ),
+        );
+    }
+  }
+  await db
+    .update(marketProbeMessageVariants)
+    .set({ status: input.status, updatedAt: new Date() })
+    .where(eq(marketProbeMessageVariants.id, input.variantId));
+}
+
+/**
+ * Pick a variant for an outbound. Two paths:
+ *
+ *   1. If any 'winner' variant exists, return it directly. Operator
+ *      already declared the test over.
+ *   2. Otherwise weighted-sample among 'active' variants. Each row
+ *      contributes weight = its `weight` column; cumulative random
+ *      selection.
+ *
+ * Returns null when the probe has no eligible variants — caller
+ * (autopilot) falls back to the plan-derived intent string from
+ * Phase 2H. This preserves Phase 2H probes' behavior end-to-end.
+ */
+export async function pickVariantForTarget(
+  probeId: string,
+): Promise<MarketProbeMessageVariant | null> {
+  const variants = await db
+    .select()
+    .from(marketProbeMessageVariants)
+    .where(
+      and(
+        eq(marketProbeMessageVariants.probeId, probeId),
+        sql`${marketProbeMessageVariants.status} IN ('active','winner')`,
+      ),
+    );
+  if (variants.length === 0) return null;
+
+  // Winner short-circuit.
+  const winner = variants.find((v) => v.status === 'winner');
+  if (winner) return winner;
+
+  // Weighted sampling among active variants.
+  const active = variants.filter((v) => v.status === 'active');
+  if (active.length === 0) return null;
+  const totalWeight = active.reduce(
+    (acc, v) => acc + Math.max(0, Number(v.weight) || 0),
+    0,
+  );
+  if (totalWeight <= 0) return active[0]!;
+  let roll = Math.random() * totalWeight;
+  for (const v of active) {
+    roll -= Math.max(0, Number(v.weight) || 0);
+    if (roll <= 0) return v;
+  }
+  return active[active.length - 1]!;
+}
+
+export interface VariantPerformanceRow {
+  variantId: string;
+  variantName: string;
+  status: string;
+  sent: number;
+  replied: number;
+  positiveReplied: number;
+  bounced: number;
+  unsubscribed: number;
+  replyRate: number;
+  positiveReplyRate: number;
+  bounceRate: number;
+}
+
+/**
+ * Compute per-variant outcome rollup. Joined against
+ * market_probe_targets so the SQL is one grouped scan per probe.
+ * Surfaces in the probe scorecard (after Phase 2I.4 ships, the
+ * scorecard panel renders this as a separate "Variant performance"
+ * table). Phase 2I.4 ships the aggregator + UI; the existing
+ * computeProbeScorecard doesn't yet incorporate it (deferred so this
+ * PR stays additive — scorecard consumers update when they want).
+ */
+export async function computeVariantPerformance(
+  probeId: string,
+): Promise<VariantPerformanceRow[]> {
+  const variants = await listVariants(probeId);
+  if (variants.length === 0) return [];
+
+  const targets = await db
+    .select({
+      variantId: marketProbeTargets.variantId,
+      sendStatus: marketProbeTargets.sendStatus,
+      replyStatus: marketProbeTargets.replyStatus,
+    })
+    .from(marketProbeTargets)
+    .where(eq(marketProbeTargets.probeId, probeId));
+
+  return variants.map((v) => {
+    const mine = targets.filter((t) => t.variantId === v.id);
+    const sent = mine.filter(
+      (t) => t.sendStatus === 'sent' || t.sendStatus === 'queued',
+    ).length;
+    const bounced = mine.filter((t) => t.sendStatus === 'bounced').length;
+    const replied = mine.filter(
+      (t) =>
+        t.replyStatus &&
+        t.replyStatus !== 'none' &&
+        t.replyStatus !== 'unsubscribe',
+    ).length;
+    const positive = mine.filter(
+      (t) => t.replyStatus === 'positive' || t.replyStatus === 'routing',
+    ).length;
+    const unsubscribed = mine.filter(
+      (t) => t.replyStatus === 'unsubscribe',
+    ).length;
+    const div = (n: number, d: number) => (d > 0 ? n / d : 0);
+    return {
+      variantId: v.id,
+      variantName: v.variantName,
+      status: v.status,
+      sent,
+      replied,
+      positiveReplied: positive,
+      bounced,
+      unsubscribed,
+      replyRate: div(replied, sent),
+      positiveReplyRate: div(positive, sent),
+      bounceRate: div(bounced, sent),
+    };
+  });
+}

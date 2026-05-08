@@ -122,3 +122,4 @@ export * from './market-probe-hypotheses';
 export * from './market-map-segments';
 export * from './market-playbooks';
 export * from './market-probe-learning-reports';
+export * from './market-probe-message-variants';

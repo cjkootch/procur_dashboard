@@ -16,6 +16,9 @@ import {
   bulkInsertHypotheses,
   computeProbeScorecard,
   createProbe,
+  createVariant,
+  setVariantStatus,
+  type VariantStatus,
   findDecisionMakersForTarget,
   getProbe,
   insertHypothesis,
@@ -1110,6 +1113,46 @@ export async function setProbeTierAction(formData: FormData): Promise<void> {
     .update(marketProbes)
     .set({ tier, updatedAt: new Date() })
     .where(eq(marketProbes.id, probeId));
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+// ────────────────────────────────────────────────────────────────
+// Phase 2I.4 — message variant testing
+// ────────────────────────────────────────────────────────────────
+
+export async function createVariantAction(
+  formData: FormData,
+): Promise<void> {
+  const { user } = await requireCompany();
+  const probeId = str(formData, 'probeId');
+  const variantName = str(formData, 'variantName');
+  if (!probeId || !variantName) {
+    throw new Error('probeId + variantName required');
+  }
+  await createVariant({
+    probeId,
+    variantName,
+    subjectTemplate: str(formData, 'subjectTemplate'),
+    bodyTemplate: str(formData, 'bodyTemplate'),
+    angle: str(formData, 'angle'),
+    weight: Number(str(formData, 'weight') ?? '1'),
+    notes: str(formData, 'notes'),
+    createdByUserId: user.id,
+  });
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+export async function setVariantStatusAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const variantId = str(formData, 'variantId');
+  const probeId = str(formData, 'probeId');
+  const status = str(formData, 'status') as VariantStatus | null;
+  if (!variantId || !probeId || !status) {
+    throw new Error('variantId + probeId + status required');
+  }
+  await setVariantStatus({ variantId, status });
   revalidatePath(`/market-probes/${probeId}`);
 }
 

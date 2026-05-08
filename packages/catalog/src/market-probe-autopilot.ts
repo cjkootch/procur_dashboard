@@ -21,6 +21,7 @@ import {
 } from './communication-recommendations';
 import { computeProbeScorecard } from './market-probe-measurement';
 import { setProbeStatus } from './market-probes';
+import { pickVariantForTarget } from './market-probe-variants';
 
 /**
  * Phase 2H autopilot. Drafts + sends per-target outreach within probe
@@ -293,12 +294,22 @@ export async function autopilotSendBatch(
       continue;
     }
 
-    // Build context + draft. intent rides from
-    // probe.plan_json.outreachAngle so the draft tone reflects what
-    // the operator approved at plan time.
-    const intent =
-      (probe.planJson?.outreachAngle as string) ??
-      'first-touch routing email — ask if they are the right contact for supplier inquiries; do NOT discuss pricing or terms';
+    // Phase 2I.4 — variant picker. If the probe has active variants,
+    // sample one (winner short-circuits; otherwise weighted-random
+    // among 'active'). Falls back to the plan-derived outreach angle
+    // when no variants exist (legacy probes from Phase 2H).
+    const variant = await pickVariantForTarget(probe.id);
+    const intent = variant
+      ? [
+          variant.angle ?? variant.variantName,
+          variant.bodyTemplate
+            ? `Body template / direction: ${variant.bodyTemplate}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join('. ')
+      : ((probe.planJson?.outreachAngle as string) ??
+        'first-touch routing email — ask if they are the right contact for supplier inquiries; do NOT discuss pricing or terms');
     const pack = await buildCommunicationContextPack({
       entitySlug: t.entitySlug,
       intent,
@@ -432,6 +443,11 @@ export async function autopilotSendBatch(
       .set({
         sendStatus: 'sent',
         lastTouchAt: new Date(),
+        // Phase 2I.4 — record which variant produced this send so
+        // outcome aggregation by variant works. Null when the probe
+        // had no variants (Phase 2H probes); aggregator handles
+        // that bucket as "(unassigned)".
+        variantId: variant?.id ?? null,
         updatedAt: new Date(),
       })
       .where(eq(marketProbeTargets.id, t.id));
