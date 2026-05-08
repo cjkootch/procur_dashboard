@@ -49,6 +49,7 @@ export type StreamTurnInput = {
   attachments?: StreamTurnAttachment[];
   companyName: string;
   userFirstName?: string | null;
+  userLastName?: string | null;
   planTier: string;
   maxSteps?: number;
   /**
@@ -124,6 +125,7 @@ export async function* streamAgentTurn(
     const system = buildAssistantSystem({
       companyName: input.companyName,
       userFirstName: input.userFirstName,
+      userLastName: input.userLastName,
       planTier: input.planTier,
       pageContext: input.ctx.pageContext,
       surfaceContext: input.surfaceContext,

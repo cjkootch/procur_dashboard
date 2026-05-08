@@ -139,6 +139,7 @@ export async function POST(req: Request): Promise<Response> {
           attachments,
           companyName: ctx.companyName,
           userFirstName: ctx.userFirstName,
+          userLastName: ctx.userLastName,
           planTier: ctx.planTier,
         })) {
           send(event);

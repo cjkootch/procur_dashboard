@@ -4,6 +4,11 @@ import type { PageContext } from './types';
 export type SystemPromptInput = {
   companyName: string;
   userFirstName?: string | null;
+  /** Last name of the authenticated operator. Surfaced in the
+   *  per-turn context so voice/voicemail tools can identify the
+   *  human caller by name rather than "the AI assistant". Optional
+   *  because legacy seeded users may have first name only. */
+  userLastName?: string | null;
   planTier: string;
   pageContext?: PageContext;
   /**
@@ -164,6 +169,30 @@ DO NOT propose for vague exploration:
    For probe-scoped recurring RVM with operator-uploaded audio,
    still prefer \`propose_rvm_dispatch\` over this path; voicemail
    mode is for ad-hoc one-offs / tests.
+
+   **Voicemail script personalization (REQUIRED).** Voicemails
+   identify a HUMAN to a HUMAN — never let \`voicemailMessage\`
+   read like an AI/system message. Two requirements:
+   a. **Greet the recipient by first name when known.**
+      "Hi Cole, …" not "Hi there, …" or "Hello, …". The
+      recipient's name comes from the operator's prompt
+      ("voicemail for Cole at +1 …"), or from a prior
+      \`lookup_known_entities\` / contact lookup. If you genuinely
+      don't have a name, use a neutral opener ("Hi —") rather
+      than guessing.
+   b. **Identify the caller as the operator (a person), with the
+      company.** "…this is \\<Current user's first name\\> at
+      \\<Current company\\>…" — e.g. "this is Cole at Vector Trade
+      Capital" — NOT "this is the Procur AI assistant" and NOT
+      "this is Procur calling on behalf of …". The operator's
+      name is in your per-turn context as "Current user". Use the
+      full name the context shows (first + last when available)
+      on first identification, then the first name on subsequent
+      sentences. The point is the recipient hears a familiar
+      person, not a robot announcing itself. If the operator
+      explicitly tells you to phrase it differently (e.g. "say
+      it's the Procur assistant calling"), follow them — but
+      don't pick the AI framing on your own.
 
    **Contact linkage discipline.** \`propose_outbound_call\` accepts
    \`contactId\` + \`orgId\` as optional. The default flow when a user
@@ -1640,7 +1669,12 @@ a buyer-list recommendation.`;
     `Current company: ${input.companyName}`,
     `Plan tier: ${input.planTier}`,
   ];
-  if (input.userFirstName) contextLines.push(`Current user: ${input.userFirstName}`);
+  if (input.userFirstName) {
+    const fullName = input.userLastName
+      ? `${input.userFirstName} ${input.userLastName}`
+      : input.userFirstName;
+    contextLines.push(`Current user: ${fullName}`);
+  }
   if (input.pageContext) {
     if (input.pageContext.kind === 'rolodex') {
       const f = input.pageContext.filters;
