@@ -20,6 +20,8 @@ import {
   draftLeadFormSubmission,
   draftOutreachFromContext,
   mapDraftToFieldValues,
+  probeDomainHintGuidance,
+  probeFormalityGuidance,
 } from './communication-recommendations';
 import { computeProbeScorecard } from './market-probe-measurement';
 import { setProbeStatus } from './market-probes';
@@ -659,6 +661,28 @@ export async function autopilotSendBatch(
             aiEnabled: sql`${conversationSettings.aiEnabled} OR true`,
             linkedProbeId: probe.id,
             linkedEntitySlug: sql`COALESCE(${conversationSettings.linkedEntitySlug}, ${t.entitySlug})`,
+            // Language backfill: when this probe sets an outreach
+            // language AND the existing conversation_settings row is
+            // still on the default 'auto' (no operator override), upgrade
+            // to the probe's language. Without this branch, an existing
+            // row created by a previous English probe would stay on
+            // 'auto' and the reply path would use the recipient's
+            // detected language — which contradicts the probe's
+            // intentional language choice. CASE expression in SQL so we
+            // never overwrite an operator-set explicit language.
+            ...(probe.outreachLanguage
+              ? {
+                  language: sql`CASE WHEN ${conversationSettings.language} = 'auto' THEN ${probe.outreachLanguage} ELSE ${conversationSettings.language} END`,
+                }
+              : {}),
+            // Same shape for customPrompt — when the existing row has
+            // no customPrompt and the probe sets steering, upgrade.
+            // Operator-set customPrompt wins.
+            ...(probeCustomPrompt
+              ? {
+                  customPrompt: sql`COALESCE(${conversationSettings.customPrompt}, ${probeCustomPrompt})`,
+                }
+              : {}),
             updatedAt: new Date(),
           },
         });
@@ -712,11 +736,38 @@ export async function autopilotSendBatch(
       // no dedicated signature field so the message has to carry it
       // inline. Skip when the drafter refused (REFUSED: prefix) — no
       // point appending a signature to a refusal stub.
+      //
+      // Length safety: the drafter caps message at 800 chars assuming
+      // forms cap at 500-1000. Appending a signature pushes total
+      // over. Truncate the message body to leave room for the
+      // signature + separator within the 800-char ceiling. If the
+      // signature alone is too long (operator wrote a 900-char
+      // signature), we keep at least 200 chars of message body and
+      // truncate the signature instead.
       if (
         probe.emailSignatureText &&
         !formDraft.message.startsWith('REFUSED:')
       ) {
-        formDraft.message = `${formDraft.message}\n\n--\n${probe.emailSignatureText}`;
+        const FORM_BODY_CEILING = 800;
+        const SEPARATOR = '\n\n--\n';
+        const sig = probe.emailSignatureText;
+        const sigPlusSep = SEPARATOR.length + sig.length;
+        if (sigPlusSep + 200 > FORM_BODY_CEILING) {
+          // Pathological: signature itself exceeds budget. Keep a
+          // short message + truncated signature so the recipient
+          // still gets identifiable sender info.
+          const sigBudget = FORM_BODY_CEILING - 200 - SEPARATOR.length;
+          formDraft.message =
+            formDraft.message.slice(0, 200).trimEnd() +
+            SEPARATOR +
+            sig.slice(0, sigBudget);
+        } else {
+          const messageBudget = FORM_BODY_CEILING - sigPlusSep;
+          formDraft.message =
+            formDraft.message.slice(0, messageBudget).trimEnd() +
+            SEPARATOR +
+            sig;
+        }
       }
       const fieldValues = mapDraftToFieldValues({
         draft: formDraft,
@@ -1009,17 +1060,15 @@ function buildProbeCustomPrompt(input: {
   domainHint: string | null;
 }): string | null {
   const lines: string[] = [];
-  if (input.formalityLevel === 'high') {
-    lines.push(
-      'Formality: HIGH — deferential register; honorifics where the language has them (Japanese 敬語, French vous, German Sie, Korean 존댓말, Spanish usted). Indirect ask. Lead with respect for what the recipient has built.',
-    );
-  } else if (input.formalityLevel === 'casual') {
-    lines.push(
-      'Formality: CASUAL — warm-market tone; first-name basis; short, conversational; skip "Dear" / "Best regards" formalities.',
-    );
+  // Shared phrasing — same source of truth as the first-touch
+  // drafter's STEERING block, just with reply-path framing.
+  // Keeping these in lockstep prevents the historical drift bug
+  // where reply-path used different wording than first-touch.
+  const formality = probeFormalityGuidance(input.formalityLevel);
+  if (formality) {
+    lines.push(`Formality: ${input.formalityLevel?.toUpperCase()} — ${formality}`);
   }
-  if (input.domainHint && input.domainHint.trim().length > 0) {
-    lines.push(`Domain framing: ${input.domainHint.slice(0, 1000)}`);
-  }
+  const hint = probeDomainHintGuidance(input.domainHint);
+  if (hint) lines.push(`Domain framing: ${hint}`);
   return lines.length > 0 ? lines.join('\n') : null;
 }

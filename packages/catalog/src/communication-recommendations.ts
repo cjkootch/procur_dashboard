@@ -1143,29 +1143,53 @@ function buildDraftPrompt(input: DraftOutreachInput): string {
 }
 
 /**
+ * Single source of truth for the operator-facing phrasing of probe
+ * formality / domain hint. Used by:
+ *   - buildSteeringBlock (drafter user-message prompt; first touch)
+ *   - buildProbeReplySteering (conversation_settings.customPrompt;
+ *     reply path, in market-probe-autopilot.ts)
+ *
+ * Returns the same guidance text for the same input regardless of
+ * call site. Wrapper helpers add their own framing (STEERING — ...
+ * vs Formality: ...) but the body is shared so a register tweak
+ * here flows to both surfaces.
+ *
+ * Pure function — no I/O; safe to call from anywhere.
+ */
+export function probeFormalityGuidance(
+  level: FormalityLevel | null | undefined,
+): string | null {
+  if (level === 'high') {
+    return 'Deferential register. Indirect ask ("would you be open to a brief conversation about..." not "let\'s get on a call"). When the target language has honorific forms (Japanese 敬語, French vous, German Sie, Korean 존댓말, Spanish usted), use them — do NOT default to casual forms. Lead with respect for what the recipient has built; first contact is not the time to push.';
+  }
+  if (level === 'casual') {
+    return 'Warm-market tone. First-name basis. Short, conversational. Skip "Dear" / "Best regards" formalities; "Hi <name>" / "Cheers" registers fit. Single ask still applies — casual tone, not casual content.';
+  }
+  return null;
+}
+
+export function probeDomainHintGuidance(
+  hint: string | null | undefined,
+): string | null {
+  if (!hint || hint.trim().length === 0) return null;
+  return hint.slice(0, 1000);
+}
+
+export function probeLanguageGuidance(
+  language: string | null | undefined,
+): string | null {
+  if (!language || language === 'en') return null;
+  return `Write the message in ${language} (ISO 639-1). The operator's intent is in English; translate it naturally and idiomatically. Keep proper nouns (company names, vessel names, port names) in their original form. Do NOT default to English; the recipient is in a ${language}-language market.`;
+}
+
+/**
  * Steering block injected into the user-message prompt for both
  * drafters (email + lead-form). Lives outside the cached system
  * prompt so per-probe values don't bust the prompt-cache hit.
  *
- * Formality maps to register-specific guidance the model honors:
- *   - 'high'         → deferential, indirect, honorifics where the
- *                       target language has them
- *   - 'professional' → default behavior; emit nothing (no extra
- *                       block needed since system prompt already
- *                       says "professional")
- *   - 'casual'       → conversational, first-name only, short
- *
- * Domain hint is opaque operator text — passed through verbatim to
- * the model. Capped at 1000 chars to keep prompt size bounded.
- *
- * Language is ISO 639-1 (en, ja, fr, de, ko, zh, es, ...). When set
- * to non-English, the drafter writes the message in that language
- * regardless of the operator's English intent. Pairs with formality
- * — formality 'high' + language 'ja' triggers 敬語; formality 'high'
- * + language 'fr' triggers vous-form. Both drafters honor this
- * (the lead-form drafter's system prompt already had a language
- * rule from the form's HTML lang attribute; this overrides that
- * when set).
+ * Phrasing comes from probeFormalityGuidance / probeDomainHintGuidance
+ * / probeLanguageGuidance — shared helpers also used by the reply-
+ * path's customPrompt builder so the two surfaces can't drift.
  */
 function buildSteeringBlock(
   formalityLevel: FormalityLevel | null | undefined,
@@ -1173,25 +1197,14 @@ function buildSteeringBlock(
   outreachLanguage?: string | null,
 ): string {
   const lines: string[] = [];
-  if (outreachLanguage && outreachLanguage !== 'en') {
-    lines.push(
-      `STEERING — language: ${outreachLanguage}. Write the message in ${outreachLanguage} (ISO 639-1). The operator's intent is in English; translate it naturally and idiomatically. Keep proper nouns (company names, vessel names, port names) in their original form. Do NOT default to English; the recipient is in a ${outreachLanguage}-language market.`,
-    );
+  const lang = probeLanguageGuidance(outreachLanguage);
+  if (lang) lines.push(`STEERING — language: ${outreachLanguage}. ${lang}`);
+  const formality = probeFormalityGuidance(formalityLevel);
+  if (formality) {
+    lines.push(`STEERING — formality: ${formalityLevel?.toUpperCase()}. ${formality}`);
   }
-  if (formalityLevel === 'high') {
-    lines.push(
-      'STEERING — formality: HIGH. Use deferential register. Indirect ask ("would you be open to a brief conversation about..." not "let\'s get on a call"). When the target language has honorific forms (Japanese 敬語, French vous, German Sie, Korean 존댓말, Spanish usted), use them — do NOT default to casual forms. Lead with respect for what the recipient has built; first contact is not the time to push.',
-    );
-  } else if (formalityLevel === 'casual') {
-    lines.push(
-      'STEERING — formality: CASUAL. Warm-market tone. First-name basis. Short, conversational. Skip "Dear" / "Best regards" formalities; "Hi <name>" / "Cheers" registers fit. Single ask still applies — casual tone, not casual content.',
-    );
-  }
-  if (domainHint && domainHint.trim().length > 0) {
-    lines.push(
-      `STEERING — domain framing (operator-supplied): ${domainHint.slice(0, 1000)}`,
-    );
-  }
+  const dh = probeDomainHintGuidance(domainHint);
+  if (dh) lines.push(`STEERING — domain framing (operator-supplied): ${dh}`);
   return lines.length > 0 ? `${lines.join('\n')}\n` : '';
 }
 

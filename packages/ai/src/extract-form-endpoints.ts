@@ -192,10 +192,31 @@ export function extractFormEndpoints(input: {
       pageBaseUrl,
     );
     const method = ($form.attr('method') ?? 'get').toLowerCase();
+    const enctype = ($form.attr('enctype') ?? '')
+      .toLowerCase()
+      .split(';')[0]
+      ?.trim();
 
     let submitMethod: DetectedFormEndpoint['submitMethod'] = 'unknown';
     if (method === 'post') {
-      submitMethod = 'http_post';
+      // multipart/form-data forms accept our urlencoded POST but
+      // ignore the body — we'd think we submitted a contact request
+      // and the form-owner would never see anything. Classify as
+      // unknown so the executor refuses; can be lifted later by
+      // teaching the executor to format multipart bodies.
+      // application/x-www-form-urlencoded (default when enctype is
+      // missing or set to that) is what the executor handles today;
+      // text/plain is rare but acceptable since the body shape is
+      // similar enough that POST semantics still work.
+      if (
+        !enctype ||
+        enctype === 'application/x-www-form-urlencoded' ||
+        enctype === 'text/plain'
+      ) {
+        submitMethod = 'http_post';
+      } else {
+        submitMethod = 'unknown';
+      }
     } else if (
       // GET-method "forms" that are actually JS-driven send the data
       // via a JS handler instead of the action; we can't reliably
@@ -407,10 +428,38 @@ const MULTILINGUAL_LABEL_KEYWORDS = {
 function labelMatchesAny(label: string, keywords: readonly string[]): boolean {
   // label is already lowercased by the caller. CJK / Arabic / Cyrillic
   // are case-invariant so toLowerCase is a no-op for them.
+  //
+  // Match strategy depends on keyword script:
+  //   - ASCII-only keywords (English / Romance / German etc.) use
+  //     word-boundary regex. Avoids false positives like
+  //     `label="Email frequency"` matching keyword `email` on a
+  //     newsletter-shaped field, OR Korean `이메일` overlapping with
+  //     English `mail` substring.
+  //   - Non-ASCII keywords (CJK / Arabic / Cyrillic) use substring
+  //     because those scripts don't have whitespace word boundaries
+  //     and \b is meaningless.
   for (const kw of keywords) {
-    if (label.includes(kw)) return true;
+    if (isAsciiOnly(kw)) {
+      // Build a word-boundary regex once per keyword. The keyword set
+      // is small + static so we don't bother caching the RegExp.
+      const re = new RegExp(`\\b${escapeRegex(kw)}\\b`);
+      if (re.test(label)) return true;
+    } else {
+      if (label.includes(kw)) return true;
+    }
   }
   return false;
+}
+
+function isAsciiOnly(s: string): boolean {
+  for (let i = 0; i < s.length; i += 1) {
+    if (s.charCodeAt(i) > 127) return false;
+  }
+  return true;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function inferFieldRoles(fields: DetectedFormField[]): {

@@ -367,10 +367,21 @@ export async function translateApprovalField(input: {
   )
     ? (existing.proposedPayload['translation_audit'] as unknown[])
     : [];
+  // Cap audit history per field to keep payload size bounded.
+  // Operator iterating 50 times shouldn't balloon the row; the UI
+  // surfaces only the latest entry per field anyway. Keep last
+  // AUDIT_HISTORY_PER_FIELD entries per field; entries from other
+  // fields are unaffected. Most-recent-first within each field's
+  // window after pruning.
+  const AUDIT_HISTORY_PER_FIELD = 5;
+  const cappedAudit = capAuditHistory(
+    [...priorAudit, auditEntry],
+    AUDIT_HISTORY_PER_FIELD,
+  );
   const nextPayload = {
     ...existing.proposedPayload,
     [input.field]: result.translation,
-    translation_audit: [...priorAudit, auditEntry],
+    translation_audit: cappedAudit,
   };
   await db
     .update(approvals)
@@ -557,4 +568,38 @@ export async function insertChatApproval(
   }
 
   return row;
+}
+
+/**
+ * Cap translation_audit entries per field. Operator iterating
+ * (translate to JP, change mind, retranslate to KO, retranslate
+ * back to JP, …) shouldn't balloon the approval row's jsonb. The
+ * UI only surfaces the latest entry per field; older entries are
+ * historical-only and don't need to live forever.
+ *
+ * Strategy: keep the last `perField` entries for each distinct
+ * field. Entries are stored in chronological order; we walk the
+ * list in reverse, count per-field occurrences, drop entries that
+ * exceed the cap, and re-emit chronologically. Output preserves the
+ * original ordering for the entries that survive — UI relies on
+ * "latest entry" being last.
+ */
+function capAuditHistory(
+  entries: unknown[],
+  perField: number,
+): unknown[] {
+  const perFieldCount: Record<string, number> = {};
+  const keepReverse: unknown[] = [];
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (typeof entry !== 'object' || entry == null) continue;
+    const field = (entry as { field?: unknown }).field;
+    const key = typeof field === 'string' ? field : '__unknown__';
+    const count = perFieldCount[key] ?? 0;
+    if (count < perField) {
+      keepReverse.push(entry);
+      perFieldCount[key] = count + 1;
+    }
+  }
+  return keepReverse.reverse();
 }
