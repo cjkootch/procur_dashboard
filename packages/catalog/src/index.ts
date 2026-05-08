@@ -39,6 +39,7 @@ export * from './market-probe-autopilot';
 export * from './market-probe-variants';
 export * from './entity-contact-form-endpoints';
 export * from './lead-form-submission-tokens';
+export * from './rvm-audio-assets';
 export {
   recommendCommunicationTargets,
   buildCommunicationContextPack,
