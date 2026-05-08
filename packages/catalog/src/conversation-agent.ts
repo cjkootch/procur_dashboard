@@ -617,17 +617,26 @@ function identityToPromptLine(
   }
 }
 
-function matchStopKeyword(body: string, keywords: string[]): string | null {
+export function matchStopKeyword(body: string, keywords: string[]): string | null {
   const normalized = body.toLowerCase().trim();
+  if (!normalized) return null;
   // Built-in opt-out words that always count, even if not explicitly
   // configured — carrier-required (CTIA / GSMA) on SMS in the US.
   const builtin = ['stop', 'unsubscribe', 'opt out', 'optout', 'cancel'];
   const all = [...builtin, ...keywords.map((k) => k.toLowerCase())];
   for (const kw of all) {
-    // Match as standalone word at start of message (most common).
-    if (normalized === kw) return kw;
-    if (normalized.startsWith(`${kw} `)) return kw;
-    if (normalized.includes(` ${kw} `)) return kw;
+    // Word-bounded regex match. The earlier shape used three explicit
+    // string checks (equality, startsWith `${kw} `, includes ` ${kw} `)
+    // which together missed three real-world cases: trailing
+    // punctuation ("STOP." / "STOP!" — explicitly required by CTIA /
+    // GSMA), keywords at message-end position with no trailing space
+    // ("Please stop"), and operator-configured custom keywords in
+    // either of those positions. \b on both sides catches all three
+    // and still rejects substring hits like "stoplight". Regex
+    // metachars in operator-supplied keywords are escaped first so a
+    // keyword like "no!" or "(stop)" doesn't blow up the regex.
+    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`\\b${escaped}\\b`, 'i').test(normalized)) return kw;
   }
   return null;
 }
@@ -697,7 +706,12 @@ const OOO_SUBJECT_PATTERNS = [
   /out of office/i,
   /out of the office/i,
   /auto-reply/i,
-  /vacation/i,
+  // bare /vacation/i removed — false-positives on topical subjects
+  // ("Vacation rental supplier inquiry", "Vacation bunker quotas").
+  // The body patterns still catch genuine OOO replies that mention
+  // vacation; subject-only signals require an unambiguous OOO marker.
+  /\bon vacation\b/i,
+  /vacation reply/i,
   /resposta autom[aá]tica/i, // pt
   /respuesta autom[aá]tica/i, // es
 ];
@@ -1002,7 +1016,7 @@ async function loadEmailHistory(input: {
     .reverse(); // oldest → newest for prompting
 }
 
-function isOooReply(
+export function isOooReply(
   subject: string | null,
   body: string | null,
 ): boolean {
@@ -1020,7 +1034,7 @@ function isOooReply(
   return false;
 }
 
-function resolveEmailRecipients(input: {
+export function resolveEmailRecipients(input: {
   mode: string;
   fromEmail: string | null;
   history: EmailTurn[];
@@ -1050,11 +1064,14 @@ function resolveEmailRecipients(input: {
   return [input.fromEmail.toLowerCase()];
 }
 
-function buildReplySubject(originalSubject: string): string {
+export function buildReplySubject(originalSubject: string): string {
   const trimmed = originalSubject.trim();
   if (!trimmed) return '(no subject)';
-  // Preserve existing Re: chain — don't add a second "Re: Re:".
-  if (/^re:\s/i.test(trimmed)) return trimmed;
+  // Preserve existing Re: chain — don't add a second "Re: Re:". The
+  // \s* allows mobile mail apps that strip the space ("Re:Subject"),
+  // which previously slipped through and produced the double prefix
+  // "Re: Re:Subject".
+  if (/^re:\s*/i.test(trimmed)) return trimmed;
   return `Re: ${trimmed}`;
 }
 

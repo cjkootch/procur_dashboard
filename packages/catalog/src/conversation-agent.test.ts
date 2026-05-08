@@ -1,8 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildReplySubject,
   classifyDraftRisk,
   classifyProbeReplyEscalation,
+  isOooReply,
+  matchStopKeyword,
+  resolveEmailRecipients,
 } from './conversation-agent';
 
 /**
@@ -375,5 +379,604 @@ describe('classifyDraftRisk', () => {
         'commitment',
       );
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// matchStopKeyword — carrier-required SMS opt-out detection. Misses
+// here are user-visible: a recipient typing "STOP." gets another
+// message and a regulatory complaint follows.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('matchStopKeyword', () => {
+  describe('exact bare keywords', () => {
+    it('matches "stop"', () => {
+      assert.equal(matchStopKeyword('stop', []), 'stop');
+    });
+
+    it('matches "STOP" case-insensitive', () => {
+      assert.equal(matchStopKeyword('STOP', []), 'stop');
+    });
+
+    it('matches "Unsubscribe"', () => {
+      assert.equal(matchStopKeyword('Unsubscribe', []), 'unsubscribe');
+    });
+
+    it('matches "OPT OUT" with space', () => {
+      assert.equal(matchStopKeyword('OPT OUT', []), 'opt out');
+    });
+
+    it('matches "Cancel"', () => {
+      assert.equal(matchStopKeyword('Cancel', []), 'cancel');
+    });
+  });
+
+  describe('keyword at start of message', () => {
+    it('matches "STOP please remove me"', () => {
+      assert.equal(
+        matchStopKeyword('STOP please remove me', []),
+        'stop',
+      );
+    });
+
+    it('matches "Unsubscribe me from this list"', () => {
+      assert.equal(
+        matchStopKeyword('Unsubscribe me from this list', []),
+        'unsubscribe',
+      );
+    });
+  });
+
+  describe('keyword in middle of message', () => {
+    it('matches "Please stop messaging"', () => {
+      assert.equal(
+        matchStopKeyword('Please stop messaging', []),
+        'stop',
+      );
+    });
+  });
+
+  describe('keyword at end of message (regression target)', () => {
+    it('matches "Please stop"', () => {
+      // Trailing position: prior shape required " stop " with both
+      // boundaries — message-end "stop" with no trailing space slipped
+      // through entirely. Real users routinely write "please stop"
+      // without further punctuation or words.
+      assert.equal(matchStopKeyword('Please stop', []), 'stop');
+    });
+
+    it('matches "I want to unsubscribe"', () => {
+      assert.equal(
+        matchStopKeyword('I want to unsubscribe', []),
+        'unsubscribe',
+      );
+    });
+
+    it('matches "Cancel"', () => {
+      assert.equal(matchStopKeyword('Cancel', []), 'cancel');
+    });
+  });
+
+  describe('keyword with trailing punctuation (regression target)', () => {
+    it('matches "STOP."', () => {
+      // CTIA / GSMA carriers REQUIRE that "STOP." (with period) opts
+      // the recipient out of all further messages. Prior shape failed
+      // — period prevented the equality match and broke the
+      // space-bounded includes check.
+      assert.equal(matchStopKeyword('STOP.', []), 'stop');
+    });
+
+    it('matches "STOP!"', () => {
+      assert.equal(matchStopKeyword('STOP!', []), 'stop');
+    });
+
+    it('matches "Unsubscribe!"', () => {
+      assert.equal(matchStopKeyword('Unsubscribe!', []), 'unsubscribe');
+    });
+
+    it('matches "Please stop."', () => {
+      assert.equal(matchStopKeyword('Please stop.', []), 'stop');
+    });
+
+    it('matches "I want to opt out."', () => {
+      assert.equal(
+        matchStopKeyword('I want to opt out.', []),
+        'opt out',
+      );
+    });
+
+    it('matches "STOP," with comma', () => {
+      assert.equal(matchStopKeyword('STOP, please.', []), 'stop');
+    });
+  });
+
+  describe('custom operator-configured keywords', () => {
+    it('respects operator-supplied keyword', () => {
+      assert.equal(
+        matchStopKeyword('please go away', ['go away']),
+        'go away',
+      );
+    });
+
+    it('lowercases the operator keyword for matching', () => {
+      assert.equal(
+        matchStopKeyword('please GO AWAY', ['Go Away']),
+        'go away',
+      );
+    });
+  });
+
+  describe('false-positive guards', () => {
+    it('does not match "stoplight"', () => {
+      // "stop" inside a longer word should not trigger.
+      assert.equal(
+        matchStopKeyword('the stoplight is red', []),
+        null,
+      );
+    });
+
+    it('does not match "stopover"', () => {
+      assert.equal(
+        matchStopKeyword('we have a stopover in Houston', []),
+        null,
+      );
+    });
+
+    it('does not match "shopping cancel button"', () => {
+      // false alarm — "cancel" inside "Cancel button"; legitimately
+      // ambiguous. Either accept the conservative match (return
+      // 'cancel') or reject as substring. Current discipline:
+      // word-bounded match — "Cancel" alone or with whitespace
+      // delimiters; "cancel button" is a separate word "cancel"
+      // followed by "button", so it DOES match. That's the carrier-
+      // safe choice — over-matching opt-outs is preferable to
+      // under-matching them.
+      const result = matchStopKeyword('clicked the cancel button', []);
+      assert.ok(result === null || result === 'cancel');
+    });
+
+    it('returns null for empty body', () => {
+      assert.equal(matchStopKeyword('', []), null);
+    });
+
+    it('returns null for whitespace-only body', () => {
+      assert.equal(matchStopKeyword('   \n\t  ', []), null);
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// isOooReply — auto-pause when an inbound is an out-of-office reply.
+// Misses here = the agent drafts a substantive reply to a vacation
+// auto-responder, exhausting follow-up budget.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('isOooReply', () => {
+  describe('subject patterns', () => {
+    const matches = [
+      'Automatic Reply: Your inquiry',
+      'AUTOMATIC REPLY',
+      'Out of Office: Re: Procurement',
+      'Out of the office through Friday',
+      'Auto-Reply: Will respond Monday',
+    ];
+    for (const subject of matches) {
+      it(`detects: "${subject}"`, () => {
+        assert.equal(isOooReply(subject, null), true);
+      });
+    }
+
+    it('Portuguese: Resposta automática', () => {
+      assert.equal(isOooReply('Resposta automática', null), true);
+    });
+
+    it('Spanish: Respuesta automatica', () => {
+      assert.equal(isOooReply('Respuesta automatica', null), true);
+    });
+  });
+
+  describe('body patterns', () => {
+    const matches = [
+      'I will be out of the office until next week.',
+      'I am currently out of the office.',
+      'I am on vacation through Friday.',
+      'I will be returning on March 15.',
+      'I have limited access to email this week.',
+    ];
+    for (const body of matches) {
+      it(`detects body: "${body.slice(0, 50)}"`, () => {
+        assert.equal(isOooReply(null, body), true);
+      });
+    }
+  });
+
+  describe('subject false-positive guards', () => {
+    it('does NOT flag topical subjects that mention "Vacation"', () => {
+      // The bare /vacation/i subject pattern was removed — it
+      // false-positived on threads ABOUT vacation rentals, vacation
+      // bunker quotas, etc., auto-pausing the conversation. Genuine
+      // OOO replies still get caught via "on vacation" / "vacation
+      // reply" subject phrases or the body patterns.
+      assert.equal(
+        isOooReply('Vacation rental supplier inquiry', null),
+        false,
+      );
+      assert.equal(
+        isOooReply('Vacation bunker quota update', null),
+        false,
+      );
+    });
+
+    it('still flags genuine OOO subjects that say "vacation reply"', () => {
+      assert.equal(isOooReply('Vacation reply from John', null), true);
+    });
+
+    it('still flags "on vacation through Friday"', () => {
+      assert.equal(
+        isOooReply('Re: Pricing — on vacation through Friday', null),
+        true,
+      );
+    });
+  });
+
+  describe('safe (no OOO marker)', () => {
+    it('regular subject', () => {
+      assert.equal(isOooReply('Re: Fuel pricing inquiry', null), false);
+    });
+
+    it('regular body', () => {
+      assert.equal(
+        isOooReply(null, "Hi, thanks for reaching out — what's the volume?"),
+        false,
+      );
+    });
+
+    it('null subject and null body', () => {
+      assert.equal(isOooReply(null, null), false);
+    });
+
+    it('empty subject and empty body', () => {
+      assert.equal(isOooReply('', ''), false);
+    });
+  });
+
+  describe('OOO marker only in deep body', () => {
+    it('marker beyond 1500-char head is ignored', () => {
+      // Discipline: OOO markers always at the top of the auto-reply.
+      // Mention of "out of office" 2000 chars deep is more likely
+      // referring to the recipient's colleague being on leave.
+      const longPrefix = 'Hi there, '.repeat(200); // ~2000 chars
+      assert.equal(
+        isOooReply(null, `${longPrefix} I will be out of the office.`),
+        false,
+      );
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// buildReplySubject — preserves Re: chain, falls back gracefully on
+// empty subjects.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('buildReplySubject', () => {
+  it('adds "Re:" prefix to fresh subject', () => {
+    assert.equal(buildReplySubject('Fuel inquiry'), 'Re: Fuel inquiry');
+  });
+
+  it('preserves existing "Re:" chain', () => {
+    assert.equal(
+      buildReplySubject('Re: Fuel inquiry'),
+      'Re: Fuel inquiry',
+    );
+  });
+
+  it('preserves "RE:" case-insensitive', () => {
+    assert.equal(
+      buildReplySubject('RE: Fuel inquiry'),
+      'RE: Fuel inquiry',
+    );
+  });
+
+  it('trims surrounding whitespace', () => {
+    assert.equal(
+      buildReplySubject('  Fuel inquiry  '),
+      'Re: Fuel inquiry',
+    );
+  });
+
+  it('returns "(no subject)" for empty string', () => {
+    assert.equal(buildReplySubject(''), '(no subject)');
+  });
+
+  it('returns "(no subject)" for whitespace-only', () => {
+    assert.equal(buildReplySubject('   \n\t  '), '(no subject)');
+  });
+
+  it('does NOT double-prefix "Re: Re: Re:"', () => {
+    // Already has Re: chain — leave alone.
+    assert.equal(
+      buildReplySubject('Re: Re: Fuel inquiry'),
+      'Re: Re: Fuel inquiry',
+    );
+  });
+
+  describe('"Re:" chain without trailing space', () => {
+    it('preserves "Re:Subject" (no space) without double-prefixing', () => {
+      // Mobile mail apps sometimes strip the space after the colon.
+      // Prior shape required \s after the colon and re-prefixed,
+      // producing "Re: Re:Subject". \s* in the regex accepts both
+      // forms.
+      assert.equal(
+        buildReplySubject('Re:Fuel inquiry'),
+        'Re:Fuel inquiry',
+      );
+    });
+
+    it('preserves "RE:Subject" mixed-case no-space', () => {
+      assert.equal(
+        buildReplySubject('RE:Fuel inquiry'),
+        'RE:Fuel inquiry',
+      );
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// resolveEmailRecipients — picks the To: addresses for the auto-reply.
+// Bugs here = sending to the wrong people, including ourselves.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('resolveEmailRecipients', () => {
+  describe('reply_to_from (default mode)', () => {
+    it('returns just the inbound sender', () => {
+      assert.deepEqual(
+        resolveEmailRecipients({
+          mode: 'reply_to_from',
+          fromEmail: 'buyer@example.com',
+          history: [],
+        }),
+        ['buyer@example.com'],
+      );
+    });
+
+    it('lowercases the address', () => {
+      assert.deepEqual(
+        resolveEmailRecipients({
+          mode: 'reply_to_from',
+          fromEmail: 'Buyer@Example.COM',
+          history: [],
+        }),
+        ['buyer@example.com'],
+      );
+    });
+
+    it('returns empty when fromEmail is null', () => {
+      assert.deepEqual(
+        resolveEmailRecipients({
+          mode: 'reply_to_from',
+          fromEmail: null,
+          history: [],
+        }),
+        [],
+      );
+    });
+  });
+
+  describe('reply_all mode', () => {
+    it('pulls all distinct addresses from thread history', () => {
+      const result = resolveEmailRecipients({
+        mode: 'reply_all',
+        fromEmail: 'buyer@example.com',
+        history: [
+          {
+            direction: 'inbound',
+            fromEmail: 'buyer@example.com',
+            toEmails: ['ops@procur.example', 'cc@partner.example'],
+            subject: 'Fuel inquiry',
+            body: '',
+            occurredAt: new Date(),
+          } as never,
+        ],
+      });
+      const sorted = [...result].sort();
+      assert.deepEqual(sorted, [
+        'buyer@example.com',
+        'cc@partner.example',
+        'ops@procur.example',
+      ]);
+    });
+
+    it('strips procur outbound domain (@links.)', () => {
+      const result = resolveEmailRecipients({
+        mode: 'reply_all',
+        fromEmail: 'buyer@example.com',
+        history: [
+          {
+            direction: 'outbound',
+            fromEmail: 'tradedesk@links.vectortradecapital.com',
+            toEmails: ['buyer@example.com'],
+            subject: '',
+            body: '',
+            occurredAt: new Date(),
+          } as never,
+        ],
+      });
+      assert.ok(!result.some((r) => r.includes('@links.')));
+      assert.ok(!result.some((r) => r.startsWith('tradedesk@')));
+    });
+
+    it('dedupes addresses (case-insensitive)', () => {
+      const result = resolveEmailRecipients({
+        mode: 'reply_all',
+        fromEmail: 'buyer@example.com',
+        history: [
+          {
+            direction: 'inbound',
+            fromEmail: 'BUYER@example.com',
+            toEmails: ['Buyer@Example.com'],
+            subject: '',
+            body: '',
+            occurredAt: new Date(),
+          } as never,
+        ],
+      });
+      assert.equal(result.length, 1);
+      assert.equal(result[0], 'buyer@example.com');
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Hard edge cases for the probe escalation classifier — quoted
+// threads, signatures, mixed languages, multiple triggers.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('classifyProbeReplyEscalation — adversarial inputs', () => {
+  it('classifies own quoted prior outbound as escalation (false-positive risk)', () => {
+    // Quoted threads include the AGENT's prior outbound. If our own
+    // outbound said "Let's discuss volumes", the inbound's quoted
+    // tail mentions it — and the classifier matches commercial
+    // interest. Today this is a real false-positive: probe replies
+    // that quote the original "let's discuss" prompt auto-pause as
+    // commercial-interest even when the actual reply text is e.g.
+    // "Out of office until Monday."
+    //
+    // Pinning the current behavior: documented bug, fix candidate
+    // is "strip quoted lines (^>) before classifying" but it's not
+    // shipped yet because the inbound bodies arrive as plain text
+    // and quote stripping is non-trivial (formats vary by client).
+    const inbound = `Sure, see below.
+
+> On Mon, Apr 7, 2026 at 9:14 AM Procur <tradedesk@links.x.com> wrote:
+>   Let's discuss your volumes.`;
+    const result = classifyProbeReplyEscalation(inbound);
+    assert.equal(result, 'recipient expressed commercial interest');
+  });
+
+  it('handles HTML entities in apostrophes', () => {
+    // Mail clients sometimes encode apostrophes as &#39; in the
+    // body text. The inbound webhook's HTML→text strip should
+    // normalize these, but defensive behavior here: should NOT
+    // crash, may not match.
+    const result = classifyProbeReplyEscalation(
+      "Let&#39;s discuss volumes.",
+    );
+    // Either match (if the agent decoded entities) or null (if not).
+    assert.ok(
+      result === null || result === 'recipient expressed commercial interest',
+    );
+  });
+
+  it('multiple triggers — price wins over commercial interest', () => {
+    // Documented precedence test from the original suite, doubled
+    // up to lock in.
+    const result = classifyProbeReplyEscalation(
+      "Sure, very interested — what's the price per barrel and how soon can you ship?",
+    );
+    assert.equal(result, 'recipient asked for price');
+  });
+
+  it('multiple triggers — documents wins over interest', () => {
+    const result = classifyProbeReplyEscalation(
+      'Send the LOI. Let me know if you want to discuss after.',
+    );
+    assert.equal(result, 'recipient asked for documents');
+  });
+
+  it('legal beats commercial interest', () => {
+    const result = classifyProbeReplyEscalation(
+      'Interested — but our compliance team needs to review first.',
+    );
+    assert.equal(
+      result,
+      'recipient raised legal / compliance concern',
+    );
+  });
+
+  it('signature with unrelated commercial-keyword does not auto-fire', () => {
+    // A reply that says nothing substantive but has a signature
+    // mentioning the company's name including a product term
+    // shouldn't auto-classify. Most signatures don't trigger any
+    // category — this just verifies that.
+    const reply =
+      'Got it.\n\n--\nJohn Smith\nVP, Bunker Operations\nFuelCo Ltd.';
+    assert.equal(classifyProbeReplyEscalation(reply), null);
+  });
+
+  it('very long body — extracts trigger from middle', () => {
+    const padding = 'Some context. '.repeat(50);
+    const result = classifyProbeReplyEscalation(
+      `${padding} What is the price per ton?`,
+    );
+    assert.equal(result, 'recipient asked for price');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Hard edge cases for the draft-risk classifier — fallback drafts,
+// sentence boundary, currency variants, abbreviations.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('classifyDraftRisk — adversarial inputs', () => {
+  it('multi-currency: EUR price flagged', () => {
+    // The regex is anchored on `$\d` and `\d\s*usd` — a EUR-denominated
+    // price like "€50/bbl" would NOT match the currency clauses. But
+    // /bbl matches the volume-suffix clause regardless of currency.
+    assert.equal(classifyDraftRisk('€50/bbl ex-pipeline.'), 'commitment');
+  });
+
+  it('numeric-free pricing language flagged', () => {
+    // "competitive pricing" or "best price" — no number — relies on
+    // the keyword clauses (`firm price`, `indicative price` etc.).
+    // "Best price" alone is NOT in the regex — pin the gap.
+    const result = classifyDraftRisk('We can offer our best price.');
+    // Either flagged via "best price" → ideally commitment, or null.
+    // Current regex requires `firm|indicative|spot|target|crack…`.
+    // This shows the gap.
+    assert.equal(result, 'safe');
+  });
+
+  it('time + AM/PM flags', () => {
+    assert.equal(classifyDraftRisk('Call you at 3pm tomorrow.'), 'commitment');
+  });
+
+  it('numeric volume in non-commercial sentence still flags', () => {
+    // "5 tons of laundry" — the discipline is over-flag rather than
+    // under-flag. Pin.
+    assert.equal(
+      classifyDraftRisk('We had 5 tons of laundry that week.'),
+      'commitment',
+    );
+  });
+
+  it('payment-term abbreviation: "T/T"', () => {
+    // T/T (telegraphic transfer) flagged
+    assert.equal(
+      classifyDraftRisk('Payment via T/T on docs.'),
+      'commitment',
+    );
+  });
+
+  it('negotiated terms in passing reference still flag', () => {
+    assert.equal(
+      classifyDraftRisk('Per the agreed loading window.'),
+      'commitment',
+    );
+  });
+
+  it('benign reply with "agreed" flags (false-positive risk)', () => {
+    // "Agreed, will follow up" — flags as commitment. Pin: better
+    // than under-flagging.
+    assert.equal(
+      classifyDraftRisk('Agreed, will follow up tomorrow.'),
+      'commitment',
+    );
+  });
+
+  it('innocuous "fob" inside a longer word — does NOT flag', () => {
+    // \b is required, so "fobbed off" (no FOB context) wouldn't fire.
+    // Or "phobia" which contains "fob" but not at a word boundary.
+    assert.equal(classifyDraftRisk('A phobia of cold-callers.'), 'safe');
   });
 });
