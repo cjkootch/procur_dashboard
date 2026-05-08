@@ -881,27 +881,46 @@ export const proposeTools = {
   propose_outbound_call: defineTool({
     name: 'propose_outbound_call',
     description:
-      'Queue a Twilio outbound voice call for operator approval. T3 — the highest tier. Two ' +
-      "modes: aiMode=false (default) joins the recipient + operator in a Twilio conference; " +
-      'aiMode=true connects to procur-voice-bridge for full AI talkback. When aiMode=true, ' +
-      'aiInstructions becomes the system prompt for the AI conversation. Always include goalHint ' +
-      'so the operator-review chip shows what the call is trying to accomplish. When sourced ' +
-      'from the recommendation pipeline, pass the evidence pack verbatim. ' +
-      'contactId + orgId are optional: prefer to create a CRM contact first via ' +
+      'Queue a Twilio outbound voice call for operator approval. T3 — the highest tier. Three ' +
+      "modes via flags: " +
+      "(1) default (aiMode=false, voicemailMode=false) joins the recipient + operator in a " +
+      'Twilio conference; ' +
+      '(2) aiMode=true connects to procur-voice-bridge for full AI talkback; aiInstructions ' +
+      'becomes the system prompt for the live conversation. ' +
+      "(3) voicemailMode=true makes the call voicemail-aware via Twilio MachineDetection — when " +
+      "voicemail picks up Twilio plays voicemailMessage via <Say>, when a human answers it hangs " +
+      "up. Use this for explicit voicemail tests / one-off voicemail drops; probe-scoped RVM " +
+      "still flows through propose_rvm_dispatch. voicemailMessage is REQUIRED when " +
+      "voicemailMode=true (it's the verbatim text Twilio speaks; don't put 'leave a voicemail' " +
+      "instructions in aiInstructions). " +
+      'Always include goalHint so the operator-review chip shows what the call is trying to ' +
+      'accomplish. When sourced from the recommendation pipeline, pass the evidence pack ' +
+      'verbatim. contactId + orgId are optional: prefer to create a CRM contact first via ' +
       'propose_create_contact when the user names a person, but if the user explicitly says ' +
       'to call a raw number (no contact lookup, no contact creation), omit both fields.',
     kind: 'write',
-    schema: z.object({
-      contactId: ulidString.optional(),
-      orgId: ulidString.optional(),
-      toNumber: e164Phone,
-      aiMode: z.boolean().optional(),
-      aiInstructions: z.string().min(1).max(5000).optional(),
-      templateName: z.string().min(1).max(120).optional(),
-      goalHint: z.string().min(1).max(280).optional(),
-      rationale: z.string().min(1).max(1000),
-      ...mlOutreachFields,
-    }),
+    schema: z
+      .object({
+        contactId: ulidString.optional(),
+        orgId: ulidString.optional(),
+        toNumber: e164Phone,
+        aiMode: z.boolean().optional(),
+        aiInstructions: z.string().min(1).max(5000).optional(),
+        voicemailMode: z.boolean().optional(),
+        voicemailMessage: z.string().min(1).max(2000).optional(),
+        templateName: z.string().min(1).max(120).optional(),
+        goalHint: z.string().min(1).max(280).optional(),
+        rationale: z.string().min(1).max(1000),
+        ...mlOutreachFields,
+      })
+      .refine(
+        (v) => !v.voicemailMode || !!v.voicemailMessage,
+        {
+          message:
+            'voicemailMessage is required when voicemailMode=true. Pass the verbatim text Twilio should <Say> when voicemail picks up.',
+          path: ['voicemailMessage'],
+        },
+      ),
     handler: async (ctx, input): Promise<ProposeResult> => {
       const action: ActionDescriptorT = {
         kind: 'outbound_call',
@@ -912,14 +931,25 @@ export const proposeTools = {
         ...(input.orgId ? { orgId: input.orgId } : {}),
         ...(input.aiMode !== undefined ? { aiMode: input.aiMode } : {}),
         ...(input.aiInstructions ? { aiInstructions: input.aiInstructions } : {}),
+        ...(input.voicemailMode !== undefined
+          ? { voicemailMode: input.voicemailMode }
+          : {}),
+        ...(input.voicemailMessage
+          ? { voicemailMessage: input.voicemailMessage }
+          : {}),
         ...(input.templateName ? { templateName: input.templateName } : {}),
         ...(input.goalHint ? { goalHint: input.goalHint } : {}),
         ...mlOutreachIntoAction(input),
       };
       const row = await insertChatApproval(action, { userId: ctx.userId });
+      const modeLabel = input.voicemailMode
+        ? ' (voicemail)'
+        : input.aiMode
+          ? ' (AI)'
+          : '';
       return chip(
         action,
-        `Call ${input.toNumber}${input.aiMode ? ' (AI)' : ''}: ${input.goalHint ?? input.rationale.slice(0, 80)}`,
+        `Call ${input.toNumber}${modeLabel}: ${input.goalHint ?? input.rationale.slice(0, 80)}`,
         row.id,
       );
     },

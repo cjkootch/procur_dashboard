@@ -446,6 +446,15 @@ export interface OutboundCallPayload extends OutreachEvidenceFields {
   toNumber: string;
   aiMode?: boolean;
   aiInstructions?: string;
+  /** Voicemail-aware mode. Twilio dials with MachineDetection;
+   *  TwiML route's 'voicemail' branch <Say>s voicemailMessage on
+   *  machine_end_* and hangs up otherwise. Mutually exclusive with
+   *  aiMode in the executor — voicemailMode wins because it sets
+   *  the dialer flags Twilio needs at call-create time. */
+  voicemailMode?: boolean;
+  /** Verbatim TwiML <Say> body. Required when voicemailMode=true;
+   *  trimmed to 2000 chars at the schema layer. */
+  voicemailMessage?: string;
   templateName?: string;
   goalHint?: string;
   rationale: string;
@@ -471,6 +480,12 @@ export function parseOutboundCallPayload(
   if (typeof proposedPayload['aiInstructions'] === 'string') {
     out.aiInstructions = proposedPayload['aiInstructions'] as string;
   }
+  if (typeof proposedPayload['voicemailMode'] === 'boolean') {
+    out.voicemailMode = proposedPayload['voicemailMode'] as boolean;
+  }
+  if (typeof proposedPayload['voicemailMessage'] === 'string') {
+    out.voicemailMessage = proposedPayload['voicemailMessage'] as string;
+  }
   if (typeof proposedPayload['templateName'] === 'string') {
     out.templateName = proposedPayload['templateName'] as string;
   }
@@ -489,13 +504,26 @@ export async function applyOutboundCall(
   if (!FROM_PHONE) {
     return { ok: false, error: 'TWILIO_PHONE_NUMBER not configured' };
   }
-  // Phase 7.5: aiMode=true returns <Connect><Stream> pointing at
-  // the voice-bridge Fly app. aiMode=false returns <Dial><Conference>
-  // for operator-join. The TwiML route at /api/webhooks/twilio/twiml
-  // serves the right verb based on `?mode=`.
+  // Three TwiML modes via `?mode=`:
+  //   conference — <Dial><Conference> for operator-join (default)
+  //   ai         — <Connect><Stream> to procur-voice-bridge for AI
+  //                talkback (Phase 7.5)
+  //   voicemail  — voicemail-aware. Twilio invokes this AFTER
+  //                MachineDetection completes (AsyncAmd=false means
+  //                Twilio waits before fetching TwiML), so the route
+  //                reads AnsweredBy and either <Say>s the voicemail
+  //                body on machine_end_* or hangs up.
+  // voicemailMode wins over aiMode at the dialer level because
+  // MachineDetection is a call-create-time flag — once set, the
+  // TwiML branch is voicemail-only.
+  const twimlMode = payload.voicemailMode
+    ? 'voicemail'
+    : payload.aiMode
+      ? 'ai'
+      : 'conference';
   const twimlUrl = new URL(`${APP_URL}/api/webhooks/twilio/twiml`);
   twimlUrl.searchParams.set('approval', approvalId);
-  twimlUrl.searchParams.set('mode', payload.aiMode ? 'ai' : 'conference');
+  twimlUrl.searchParams.set('mode', twimlMode);
   // contactId/orgId are optional — set only when present so raw-number
   // calls (no CRM linkage) don't propagate empty strings into the
   // TwiML callback's touchpoint write.
@@ -505,6 +533,17 @@ export async function applyOutboundCall(
     twimlUrl.searchParams.set(
       'aiInstructions',
       payload.aiInstructions.slice(0, 4000),
+    );
+  }
+  if (payload.voicemailMessage) {
+    // Twilio TwiML URL has a practical ~4KB limit on query strings;
+    // schema caps voicemailMessage at 2000 chars so this fits with
+    // headroom. Encoded inline (rather than fetched from a separate
+    // store) so the TwiML route can render synchronously without a
+    // DB lookup — Twilio's fetch timeout is short.
+    twimlUrl.searchParams.set(
+      'voicemailMessage',
+      payload.voicemailMessage.slice(0, 2000),
     );
   }
   if (payload.goalHint) {
@@ -530,6 +569,20 @@ export async function applyOutboundCall(
       statusCallback: statusUrl.toString(),
       statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
       record: true,
+      // voicemailMode adds Twilio's MachineDetection. DetectMessageEnd
+      // means Twilio waits for the voicemail beep before invoking
+      // TwiML — the AnsweredBy body param then carries
+      // machine_end_beep / machine_end_silence / machine_end_other
+      // for voicemail and human / fax / unknown otherwise. We use
+      // synchronous AMD (the default — AsyncAmd=false) so the TwiML
+      // route only fires once with AnsweredBy in hand; async-AMD
+      // would TwiML twice and complicate the branch.
+      ...(payload.voicemailMode
+        ? {
+            machineDetection: 'DetectMessageEnd' as const,
+            machineDetectionTimeout: 30,
+          }
+        : {}),
     });
     callSid = call.sid;
   } catch (err) {
@@ -544,7 +597,11 @@ export async function applyOutboundCall(
     {
       provider_call_id: callSid,
       to_number: payload.toNumber,
-      mode: payload.aiMode ? 'ai' : 'conference',
+      mode: payload.voicemailMode
+        ? 'voicemail'
+        : payload.aiMode
+          ? 'ai'
+          : 'conference',
       template_name: payload.templateName ?? null,
       goal_hint: payload.goalHint ?? null,
       ...evidenceMeta,

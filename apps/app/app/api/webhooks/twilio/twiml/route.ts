@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 /**
  * TwiML response endpoint Twilio fetches when an outbound call is
- * answered. Two modes per the `mode` query param:
+ * answered. Four modes per the `mode` query param:
  *
  *   conference — operator-join. Twilio dials the recipient, plays a
  *     brief intro, then puts them in a conference room keyed on the
@@ -13,6 +13,16 @@ export const dynamic = 'force-dynamic';
  *   ai — Phase 7.5 voice-bridge. <Connect><Stream> shuttles audio
  *     to procur-voice-bridge.fly.dev which proxies to OpenAI
  *     Realtime for full AI talkback.
+ *   rvm — probe-scoped ringless voicemail. Twilio dials with
+ *     MachineDetection; this route reads AnsweredBy and <Play>s
+ *     a pre-recorded `audio` URL on machine_end_*, hangs up
+ *     otherwise. Audio comes from rvm_audio_assets.
+ *   voicemail — ad-hoc voicemail-aware call. Same MachineDetection
+ *     gating as rvm, but reads `voicemailMessage` from the URL
+ *     and uses Twilio <Say> rather than playing pre-recorded audio.
+ *     Used by propose_outbound_call(voicemailMode=true) for
+ *     one-off voicemail tests / drops outside the probe-scoped
+ *     RVM architecture.
  *
  * Query params:
  *   approval — approval id this call is the side-effect of
@@ -117,6 +127,29 @@ async function handleTwiml(req: Request): Promise<Response> {
     } else {
       // Human, fax, unknown — or audio URL missing. Hang up
       // immediately. We do NOT play audio to a human.
+      twiml.hangup();
+    }
+  } else if (mode === 'voicemail') {
+    // Ad-hoc voicemail mode. Same MachineDetection gating as rvm,
+    // but the spoken content comes from the inline `voicemailMessage`
+    // query param via Twilio <Say> rather than a pre-recorded
+    // <Play> URL. Used by propose_outbound_call(voicemailMode=true)
+    // for one-off voicemail tests outside the probe-scoped RVM
+    // architecture (which requires probe + audio-asset upload).
+    //
+    // Same human/fax/unknown discipline: never <Say> a
+    // voicemail-targeted message to a human ear; hang up instead.
+    const answeredBy = (bodyParams['AnsweredBy'] ?? '').trim();
+    const voicemailMessage = url.searchParams.get('voicemailMessage');
+    const isMachineEnd =
+      answeredBy === 'machine_end_beep' ||
+      answeredBy === 'machine_end_silence' ||
+      answeredBy === 'machine_end_other';
+    if (isMachineEnd && voicemailMessage) {
+      // Brief pause to ensure the beep has settled before speaking.
+      twiml.pause({ length: 1 });
+      twiml.say({ voice: 'Polly.Joanna' }, voicemailMessage);
+    } else {
       twiml.hangup();
     }
   } else {
