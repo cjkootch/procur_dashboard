@@ -236,9 +236,19 @@ export async function setTargetSendStatus(
 
 /**
  * Replace the probe's plan_json wholesale. Used after plan-generation
- * lands a fresh plan from the LLM. Preserves the existing tasks[]
- * array if the new plan didn't supply one (operator may have already
- * checked tasks off).
+ * lands a fresh plan from the LLM.
+ *
+ * Task-state preservation: the prior shape wrote planJson directly,
+ * which clobbered operator-edited task statuses on regeneration. An
+ * operator who marked identify_targets='done' last week and then
+ * regenerated the plan (e.g., after rejecting strategy proposals)
+ * watched the task flip back to 'pending' — losing the audit trail
+ * and forcing them to re-mark it. Now the merge is: for each task id
+ * in the new plan, if that id already exists in the current plan,
+ * carry over status / completedAt / result; the new label and
+ * incoming order win. New ids land as the new plan dictates; dropped
+ * ids are removed. The "generate_plan" task is the exception —
+ * regeneration always re-runs it, so its done timestamp updates.
  *
  * Status promotion gate: the probe flips planning → active ONLY when
  * the plan came back from a successful Sonnet pass
@@ -258,10 +268,32 @@ export async function setProbePlan(
 ): Promise<MarketProbe | null> {
   const isClean =
     plan.generationStatus === undefined || plan.generationStatus === 'ok';
+  // Preserve operator-edited task status across regeneration.
+  const existing = await getProbe(probeId);
+  const existingTasksById = new Map(
+    (existing?.planJson?.tasks ?? []).map((t) => [t.id, t]),
+  );
+  const mergedTasks = (plan.tasks ?? []).map((newT) => {
+    if (newT.id === 'generate_plan') {
+      // Regeneration always re-completes generate_plan with a fresh
+      // timestamp — the act of running setProbePlan IS that task.
+      return newT;
+    }
+    const prior = existingTasksById.get(newT.id);
+    if (!prior) return newT;
+    return {
+      ...newT,
+      status: prior.status,
+      ...(prior.completedAt ? { completedAt: prior.completedAt } : {}),
+      ...(prior.result ? { result: prior.result } : {}),
+    };
+  });
+  const mergedPlan: ProbePlan = { ...plan, tasks: mergedTasks };
+
   const [row] = await db
     .update(marketProbes)
     .set({
-      planJson: plan,
+      planJson: mergedPlan,
       ...(isClean ? { status: 'active' as const } : {}),
       updatedAt: new Date(),
     })
