@@ -214,6 +214,17 @@ export {
   type LeadFormSubmitPayload,
   type LeadFormSubmitResult,
 } from './executors/lead-form-submit';
+export {
+  applyRvmDispatch,
+  parseRvmDispatchPayload,
+  type RvmDispatchPayload,
+  type RvmDispatchResult,
+} from './executors/rvm-dispatch';
+export {
+  resolveCountryTimezone,
+  currentHourInCountry,
+  isWithinQuietHours,
+} from './lib/country-timezone';
 // Shared outreach-evidence handling — preserves recommendation
 // pipeline output through executors → touchpoints → events so
 // model-performance dashboards can join evidence ↔ outcomes.

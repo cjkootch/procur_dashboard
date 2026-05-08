@@ -163,6 +163,59 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
     ...mlOutreachAnnotations,
   }),
   z.object({
+    /** Ringless voicemail dispatch.
+     *
+     *  Twilio places a call with MachineDetection=DetectMessageEnd.
+     *  When voicemail beep is detected, TwiML <Play> renders the
+     *  pre-recorded audio asset (from rvm_audio_assets, picked at
+     *  dispatch time by pickActiveAudioAssetForDispatch). When a
+     *  human answers, we hang up — RVM is voicemail-only by intent.
+     *
+     *  Compliance gates the executor enforces:
+     *    - Quiet hours: 8am-6pm in the recipient's local timezone
+     *      (resolved from country code; multi-zone countries map
+     *      to the most-populous zone). Refuses outside that window.
+     *    - Per-recipient cooldown: 168h (one week) since last RVM
+     *      touch to the same number. Defensive against operator
+     *      iteration that would otherwise re-leave voicemails.
+     *    - Audio asset must exist for the (probe, variant?, language)
+     *      scope; refuses with audio_not_found otherwise.
+     *
+     *  Reasoning is REQUIRED on the descriptor — the agent must
+     *  justify why RVM is appropriate (per Cole's directive: never
+     *  default to RVM; always explain). System-prompt rule in
+     *  PR 4. */
+    kind: z.literal('rvm.dispatch'),
+    tier: z.literal(ApprovalTier.T2),
+    /** market_probes.id whose audio asset + drafter steering
+     *  govern this dispatch. */
+    probeId: z.string().min(1).max(64),
+    /** known_entities.slug or external_suppliers.id — for the
+     *  touchpoint linkage + audit. */
+    entitySlug: z.string().min(1).max(200),
+    /** Variant id when the asset was generated for a specific
+     *  variant; null falls back to the probe-default audio. */
+    variantId: z.string().min(1).max(64).optional().nullable(),
+    /** ISO 639-1 lowercase. Picks which audio asset to play. */
+    language: z.string().regex(/^[a-z]{2}$/, 'expected ISO 639-1'),
+    /** E.164 destination number. Validated by Twilio at dispatch
+     *  but we sanity-check the shape here so a malformed value
+     *  doesn't waste a Twilio API call. */
+    toNumber: z
+      .string()
+      .regex(/^\+[1-9]\d{6,14}$/, 'expected E.164 (+<countrycode><number>)'),
+    /** Recipient country (ISO-2). Drives the quiet-hours timezone
+     *  resolution at dispatch time. */
+    recipientCountry: z
+      .string()
+      .regex(/^[A-Z]{2}$/, 'expected ISO 3166-1 alpha-2 uppercase'),
+    contactId: zUlid.optional(),
+    /** Required: agent-supplied justification for choosing RVM
+     *  over email / lead_form. Surfaces on the approval card. */
+    rationale: z.string().min(20).max(1000),
+    ...mlOutreachAnnotations,
+  }),
+  z.object({
     kind: z.literal('crm.note'),
     tier: z.literal(ApprovalTier.T1),
     organizationId: zUlid,

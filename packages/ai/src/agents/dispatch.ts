@@ -4,6 +4,10 @@ import {
   parseLeadFormSubmitPayload,
 } from '../executors/lead-form-submit';
 import {
+  applyRvmDispatch,
+  parseRvmDispatchPayload,
+} from '../executors/rvm-dispatch';
+import {
   applyCreateCompany,
   applyCreateContact,
   applyCloseLead,
@@ -127,6 +131,21 @@ export async function dispatchApprovalExecutor(
     const payload = parseLeadFormSubmitPayload(row.proposedPayload);
     if (!payload) return;
     await applyLeadFormSubmit(
+      row.id,
+      payload,
+      options.companyId ? { companyId: options.companyId } : {},
+    );
+    return;
+  }
+
+  // Ringless voicemail dispatch. Operator approval flips this from
+  // 'pending' to 'approved' (or 'auto_approved' for tier-2 probes);
+  // executor re-checks compliance gates (quiet hours, cooldown,
+  // audio asset present) live before placing the Twilio call.
+  if (row.actionType === 'rvm.dispatch') {
+    const payload = parseRvmDispatchPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyRvmDispatch(
       row.id,
       payload,
       options.companyId ? { companyId: options.companyId } : {},

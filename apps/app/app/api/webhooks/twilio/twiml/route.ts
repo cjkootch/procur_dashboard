@@ -93,6 +93,32 @@ async function handleTwiml(req: Request): Promise<Response> {
     if (goalHint) {
       stream.parameter({ name: 'goalHint', value: goalHint });
     }
+  } else if (mode === 'rvm') {
+    // Ringless voicemail. Twilio fires this TwiML after MachineDetection
+    // returns. Body params include AnsweredBy ∈ {machine_start,
+    // machine_end_beep, machine_end_silence, machine_end_other,
+    // human, fax, unknown}.
+    //
+    // Discipline: RVM is voicemail-only by intent. We play the
+    // pre-recorded audio ONLY when AnsweredBy indicates the
+    // recipient's voicemail picked up + the beep has finished.
+    // For human / fax / unknown, hang up — we do not deliver
+    // voicemail-targeted audio to a human ear.
+    const answeredBy = (bodyParams['AnsweredBy'] ?? '').trim();
+    const audioUrl = url.searchParams.get('audio');
+    const isMachineEnd =
+      answeredBy === 'machine_end_beep' ||
+      answeredBy === 'machine_end_silence' ||
+      answeredBy === 'machine_end_other';
+    if (isMachineEnd && audioUrl) {
+      // Brief pause to ensure the beep has settled before playing.
+      twiml.pause({ length: 1 });
+      twiml.play(audioUrl);
+    } else {
+      // Human, fax, unknown — or audio URL missing. Hang up
+      // immediately. We do NOT play audio to a human.
+      twiml.hangup();
+    }
   } else {
     // Operator-join-conference. Twilio dials the recipient, plays a
     // brief intro, then puts them in a conference room keyed on the
