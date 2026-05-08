@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation';
 import {
   detectVoicebox,
   generateVoiceboxAudio,
+  isVoiceboxSupportedLanguage,
   listVoiceboxProfiles,
+  VOICEBOX_SUPPORTED_LANGUAGES,
   type VoiceboxHealth,
   type VoiceboxProfile,
 } from '../../../lib/voicebox-client';
@@ -106,9 +108,19 @@ export function RvmAudioPanel({
 
   // Active tab in the upload section. Default to 'manual' so the
   // panel works for operators without OpenAI / Voicebox configured.
+  // BUT: if the probe's outreach language is outside Voicebox's
+  // 10-language UI surface, prefer OpenAI TTS as the default since
+  // its model handles 50+ languages with consistent quality. Saves
+  // the operator from picking the wrong tab and getting degraded
+  // synthesis.
   const [genMode, setGenMode] = useState<
     'manual' | 'voicebox' | 'openai'
-  >('manual');
+  >(() =>
+    probeOutreachLanguage &&
+    !isVoiceboxSupportedLanguage(probeOutreachLanguage)
+      ? 'openai'
+      : 'manual',
+  );
 
   const activeAssets = assets.filter((a) => a.isActive);
   const retiredAssets = assets.filter((a) => !a.isActive);
@@ -727,6 +739,18 @@ function VoiceboxGenForm({
         {profiles.length} profile(s) available. Audio generates on
         your machine; only the resulting bytes upload to procur.
       </p>
+      {probeOutreachLanguage &&
+        !isVoiceboxSupportedLanguage(probeOutreachLanguage) && (
+          <p className="rounded-[var(--radius-sm)] border border-[color:var(--color-amber-border,#d97706)] bg-[color:var(--color-amber-bg,#fef3c7)] px-2 py-1 text-[10px] text-[color:var(--color-amber-foreground,#78350f)]">
+            Probe outreach language{' '}
+            <code>{probeOutreachLanguage}</code> isn&apos;t in
+            Voicebox&apos;s supported set (
+            {VOICEBOX_SUPPORTED_LANGUAGES.join(', ')}). Use the
+            OpenAI TTS tab instead — it handles 50+ languages with
+            consistent quality. We auto-default to it when the
+            probe&apos;s language falls outside Voicebox&apos;s 10.
+          </p>
+        )}
       <label className="grid gap-1">
         <span>Voice profile</span>
         <select
