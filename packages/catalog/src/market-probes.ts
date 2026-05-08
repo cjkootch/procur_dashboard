@@ -239,19 +239,30 @@ export async function setTargetSendStatus(
  * lands a fresh plan from the LLM. Preserves the existing tasks[]
  * array if the new plan didn't supply one (operator may have already
  * checked tasks off).
+ *
+ * Status promotion gate: the probe flips planning → active ONLY when
+ * the plan came back from a successful Sonnet pass
+ * (generationStatus === 'ok' or absent for back-compat with plans
+ * created before the field landed). When the plan is a fallback
+ * skeleton (no API key / parse error), status stays at 'planning' —
+ * the operator sees the failure banner, retries plan generation, OR
+ * explicitly accepts the hollow plan via approveFallbackPlanAction
+ * (which clears generationStatus and re-runs setProbePlan).
+ *
+ * Without this gate, a probe with no hypotheses would transition to
+ * active and autopilot could send outreach grounded in nothing.
  */
 export async function setProbePlan(
   probeId: string,
   plan: ProbePlan,
 ): Promise<MarketProbe | null> {
+  const isClean =
+    plan.generationStatus === undefined || plan.generationStatus === 'ok';
   const [row] = await db
     .update(marketProbes)
     .set({
       planJson: plan,
-      // Generating a plan means the probe is no longer 'planning' —
-      // it has a plan; status flips to 'active' so the dashboard reads
-      // "this is in flight" instead of "not yet started."
-      status: 'active',
+      ...(isClean ? { status: 'active' as const } : {}),
       updatedAt: new Date(),
     })
     .where(eq(marketProbes.id, probeId))
