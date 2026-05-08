@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
 import { getProbe, listTargetsForProbe } from '@procur/catalog';
 import {
+  addApolloLookalikesAction,
   discoverTargetsAction,
   generatePlanAction,
   setProbeStatusAction,
@@ -233,11 +234,39 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
               >
                 Discover targets
               </button>
-              {!probe.country && (
-                <p className="mt-1 text-[11px] text-[color:var(--color-muted-foreground)]">
-                  Set country (ISO-2) to enable discovery.
-                </p>
-              )}
+              <p className="mt-1 text-[11px] text-[color:var(--color-muted-foreground)]">
+                {probe.country
+                  ? 'Graph similarity + customs + web + Apollo presence + recency. Country-fenced.'
+                  : 'Set country (ISO-2) to enable discovery.'}
+              </p>
+            </form>
+
+            <form
+              action={addApolloLookalikesAction}
+              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] p-2"
+            >
+              <input type="hidden" name="probeId" value={probe.id} />
+              <label className="block text-[11px] font-medium uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                Apollo lookalikes
+              </label>
+              <input
+                type="text"
+                name="seedSlug"
+                placeholder="seed entity slug (e.g. caribbean-importers:wibisco)"
+                required
+                className="mt-1 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs focus:border-[color:var(--color-foreground)] focus:outline-none"
+              />
+              <button
+                type="submit"
+                className="mt-2 w-full rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[color:var(--color-muted)]/40"
+              >
+                Find lookalikes
+              </button>
+              <p className="mt-1 text-[10px] text-[color:var(--color-muted-foreground)]">
+                Seed must be in the rolodex AND already Apollo-enriched.
+                Pulls 25 attribute-similar orgs (industry / size / country),
+                creates rolodex stubs for those not yet on file.
+              </p>
             </form>
 
             {probe.status === 'active' && (

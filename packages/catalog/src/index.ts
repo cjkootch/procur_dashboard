@@ -29,6 +29,7 @@ export * from './conversation-settings';
 export * from './conversation-agent';
 export * from './gamification';
 export * from './market-probes';
+export * from './market-probes-discovery';
 export {
   recommendCommunicationTargets,
   buildCommunicationContextPack,
