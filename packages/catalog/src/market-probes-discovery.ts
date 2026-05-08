@@ -1,6 +1,13 @@
 import 'server-only';
-import { eq } from 'drizzle-orm';
-import { db, knownEntities, marketProbeTargets } from '@procur/db';
+import { eq, sql } from 'drizzle-orm';
+import {
+  contactOrgMemberships,
+  contacts,
+  db,
+  entityContactEnrichments,
+  knownEntities,
+  marketProbeTargets,
+} from '@procur/db';
 import {
   enrichOrgFromApollo,
   searchOrgs,
@@ -374,6 +381,18 @@ export type FindDecisionMakersResult =
       ok: true;
       entitySlug: string;
       candidatesFound: number;
+      /** When true, candidates came from the rolodex fallback rather
+       *  than Apollo — names + titles only, no Apollo seniority
+       *  ranking, no email-verification status. The autopilot's
+       *  outreach drafter and the dashboard's Decision-makers panel
+       *  should surface a "reduced precision" tag so the operator
+       *  knows. */
+      reducedPrecision?: boolean;
+      /** Source used to produce the candidates. 'apollo' is the
+       *  default high-precision path; 'rolodex' is the fallback
+       *  triggered when the entity has no Apollo id / domain or when
+       *  Apollo returned zero results. */
+      source?: 'apollo' | 'rolodex';
     }
   | { ok: false; error: string; degrade?: ApolloDegradeResult };
 
@@ -428,57 +447,166 @@ export async function findDecisionMakersForTarget(input: {
   // people search returns drastically better matches when scoped by
   // org id. Fall back to domain when the rolodex stub doesn't have
   // an apollo id yet (older stubs from before the lookalike pass).
+  // When BOTH are missing, fall through to the rolodex fallback
+  // below instead of hard-erroring — the prior shape returned
+  // ok:false here and the operator had no way to populate
+  // decision-makers for entities outside Apollo's coverage (regional
+  // distributors, mining adjacencies, emerging-market refineries).
   const orgFilter = entity.apolloOrgId
     ? { organizationIds: [entity.apolloOrgId] }
     : entity.primaryDomain
       ? { organizationDomainsList: [entity.primaryDomain] }
       : null;
-  if (!orgFilter) {
+
+  if (orgFilter) {
+    const result = await searchPeople({
+      filters: {
+        ...orgFilter,
+        personSeniorities: [
+          // Procurement / commercial-supply decision-makers: tighter
+          // than "everyone." Includes manager so smaller companies
+          // (where the manager IS the decision-maker) aren't excluded.
+          'owner',
+          'founder',
+          'c_suite',
+          'partner',
+          'vp',
+          'head',
+          'director',
+          'manager',
+        ],
+        // 'verified' only — drafting against an unverified address
+        // burns sender reputation. Phase 2C's draft step requires
+        // verified email anyway; filtering here saves a round-trip.
+        contactEmailStatus: ['verified'],
+      },
+      entitySlug: entity.slug,
+      companyId: input.companyId,
+      opts: { perPage: input.perPage ?? 25 },
+    });
+
+    if (!('people' in result)) {
+      // Apollo errored — fall through to the rolodex fallback rather
+      // than blocking the operator. Apollo outages shouldn't kill
+      // the whole find-contacts step.
+    } else if (result.people.length > 0) {
+      return {
+        ok: true,
+        entitySlug: entity.slug,
+        candidatesFound: result.people.length,
+        source: 'apollo',
+      };
+    }
+    // result.people.length === 0 — Apollo has the org but no verified
+    // decision-makers indexed. Fall through to rolodex fallback to
+    // surface anything we already know about this entity from prior
+    // CRM activity.
+  }
+
+  // Rolodex fallback — entities outside Apollo's coverage, OR Apollo
+  // returned zero verified decision-makers, OR Apollo errored. Pull
+  // contacts via organizations.external_keys.known_entity_slug →
+  // contact_org_memberships → contacts and persist as enrichment
+  // rows with source='rolodex' so the dashboard's Decision-makers
+  // panel surfaces them.
+  const rolodexCount = await populateFromRolodex(entity.slug);
+  if (rolodexCount > 0) {
     return {
-      ok: false,
-      error: `entity "${entity.name}" has no Apollo id and no primary_domain — Apollo people search needs at least one`,
+      ok: true,
+      entitySlug: entity.slug,
+      candidatesFound: rolodexCount,
+      reducedPrecision: true,
+      source: 'rolodex',
     };
   }
 
-  const result = await searchPeople({
-    filters: {
-      ...orgFilter,
-      personSeniorities: [
-        // Procurement / commercial-supply decision-makers: tighter
-        // than "everyone." Includes manager so smaller companies
-        // (where the manager IS the decision-maker) aren't excluded.
-        'owner',
-        'founder',
-        'c_suite',
-        'partner',
-        'vp',
-        'head',
-        'director',
-        'manager',
-      ],
-      // 'verified' only — drafting against an unverified address
-      // burns sender reputation. Phase 2C's draft step requires
-      // verified email anyway; filtering here saves a round-trip.
-      contactEmailStatus: ['verified'],
-    },
-    entitySlug: entity.slug,
-    companyId: input.companyId,
-    opts: { perPage: input.perPage ?? 25 },
+  // Truly empty — no Apollo coverage AND no rolodex contacts. Return
+  // a clear diagnostic so the operator knows whether to add the
+  // entity to the rolodex manually or move on.
+  return {
+    ok: false,
+    error: orgFilter
+      ? `Apollo found no verified decision-makers for "${entity.name}" and the rolodex has no contacts on file — add a contact via the entity profile or move on.`
+      : `entity "${entity.name}" has no Apollo id and no primary_domain, and the rolodex has no contacts on file — populate one or the other before running find-contacts.`,
+  };
+}
+
+/**
+ * Pull contacts already known about this entity from the rolodex
+ * (organizations → contact_org_memberships → contacts) and persist
+ * them as `entity_contact_enrichments` rows with source='rolodex'.
+ * Idempotent on the (entity_slug, source, contact_name_normalized)
+ * dedup index — re-running the fallback after the operator adds new
+ * contacts manually picks them up without duplicating prior rows.
+ *
+ * Returns the count of contacts found (whether newly inserted or
+ * already present). The operator's dashboard then renders them in
+ * the Decision-makers panel with a 'rolodex' source tag so it's
+ * visible they're CRM-derived rather than Apollo-verified.
+ */
+async function populateFromRolodex(entitySlug: string): Promise<number> {
+  // Resolve the entity slug to an organizations.id via external_keys.
+  const orgRow = await db.execute<{ org_id: string }>(sql`
+    SELECT id AS org_id
+      FROM organizations
+     WHERE external_keys->>'known_entity_slug' = ${entitySlug}
+     LIMIT 1
+  `);
+  const orgId = (orgRow.rows as Array<{ org_id?: string }>)[0]?.org_id;
+  if (!orgId) return 0;
+
+  const rows = await db
+    .select({
+      contactId: contacts.id,
+      fullName: contacts.fullName,
+      title: contacts.title,
+      emails: contacts.emails,
+      isPrimary: contactOrgMemberships.isPrimary,
+    })
+    .from(contactOrgMemberships)
+    .innerJoin(contacts, eq(contacts.id, contactOrgMemberships.contactId))
+    .where(eq(contactOrgMemberships.orgId, orgId));
+  if (rows.length === 0) return 0;
+
+  const enrichments = rows.map((r) => {
+    const firstEmail = (r.emails ?? []).find(
+      (e) => typeof e === 'string' && e.includes('@'),
+    );
+    return {
+      id: createId(),
+      entitySlug,
+      contactName: r.fullName,
+      contactNameNormalized: r.fullName
+        .toLowerCase()
+        .replace(/[^a-z0-9 ]+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+      email: firstEmail ?? null,
+      title: r.title ?? null,
+      source: 'rolodex' as const,
+      enrichedAt: new Date(),
+    };
   });
 
-  if (!('people' in result)) {
-    return {
-      ok: false,
-      error: `apollo people search failed: ${result.reason}`,
-      degrade: result,
-    };
-  }
-
-  return {
-    ok: true,
-    entitySlug: entity.slug,
-    candidatesFound: result.people.length,
-  };
+  // Idempotent insert — dedup index handles re-runs. updatedAt bumps
+  // on conflict so the dashboard's "last refreshed" rendering reflects
+  // the most recent fallback pass.
+  await db
+    .insert(entityContactEnrichments)
+    .values(enrichments)
+    .onConflictDoUpdate({
+      target: [
+        entityContactEnrichments.entitySlug,
+        entityContactEnrichments.source,
+        entityContactEnrichments.contactNameNormalized,
+      ],
+      set: {
+        email: sql`COALESCE(${entityContactEnrichments.email}, excluded.email)`,
+        title: sql`COALESCE(${entityContactEnrichments.title}, excluded.title)`,
+        updatedAt: new Date(),
+      },
+    });
+  return rows.length;
 }
 
 // ──────────────────────────────────────────────────────────────────
