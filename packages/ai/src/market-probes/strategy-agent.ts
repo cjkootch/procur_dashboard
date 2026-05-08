@@ -59,6 +59,17 @@ export interface ProbeContextForStrategy {
     feedback: string | null;
     rejectedAt: string;
   }>;
+  /** Cross-probe memory: learning reports from PRIOR probes in the
+   *  same country. The agent uses these to avoid re-proposing pivots
+   *  earlier probes already explored, and to ground "we've tried
+   *  this segment before" judgments. Empty when this is the country's
+   *  first probe. */
+  priorLearningReports?: Array<{
+    probeName: string;
+    generatedAt: string;
+    summary: string;
+    payloadDigest: string;
+  }>;
 }
 
 export interface ProbeStrategyProposal {
@@ -88,6 +99,7 @@ Discipline:
 - Each proposal must be grounded in a specific metric. "0 replies from fuel distributors after 8 sends" is concrete; "we should try a new angle" is not.
 - DO NOT re-propose the same change the operator already rejected unless the feedback specifically suggests adapting it.
 - DO NOT propose changes that would expand the probe scope (e.g. raising send caps, adding new countries, switching channels) — those require operator-initiated edits, not agent proposals.
+- HONOR cross-probe memory. When prior learning reports from this country show a segment / title / angle was already tested and underperformed, DO NOT propose it again. When prior reports identified a strong segment / contact title that this probe hasn't tried, surfacing it is fair game. The memory is YOUR competitive advantage over a fresh-eyed agent.
 - Return EMPTY proposals[] array when the probe is on track. Not every check-in needs a change.
 
 Proposal types:
@@ -177,7 +189,16 @@ ${
         )
         .join('\n')
 }
-
+${
+  ctx.priorLearningReports && ctx.priorLearningReports.length > 0
+    ? `\nPrior probes' learning reports in ${ctx.country ?? 'this country'} (most recent first) — TREAT AS CONSTRAINTS. Don't re-propose what these already learned:\n${ctx.priorLearningReports
+        .map(
+          (r) =>
+            `- [${r.generatedAt}] "${r.probeName}" — ${r.summary}\n  digest: ${r.payloadDigest}`,
+        )
+        .join('\n')}`
+    : ''
+}
 Emit your proposals JSON.`,
       },
     ],

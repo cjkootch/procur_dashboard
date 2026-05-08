@@ -74,6 +74,19 @@ export interface LearningReportContext {
     rationale: string;
     feedback: string | null;
   }>;
+  /** Cross-probe memory: prior learning reports in the same country.
+   *  The agent synthesizes cumulative market wisdom rather than
+   *  emitting an isolated report. When this is non-empty, the report
+   *  should reference what changed since prior probes (e.g.
+   *  "Confirms the segment ranking from probe #3 with new evidence
+   *  at higher volume"). Empty when this is the country's first
+   *  probe. */
+  priorLearningReports?: Array<{
+    probeName: string;
+    generatedAt: string;
+    summary: string;
+    payloadDigest: string;
+  }>;
 }
 
 export interface LearningReportResult {
@@ -90,6 +103,7 @@ Discipline:
 - For badTargetRules, propose CONCRETE prescriptive rules ("never target generic info@ inboxes for fuel distributors in BB"). These ride into the atlas as negative_rule facts after operator approval.
 - For recommendedNextProbe, suggest a SPECIFIC next experiment — country + 2-4 segments + 2-3 hypotheses to test. Don't just say "explore Bahamas"; say "Bahamas hotel procurement, hypothesis: hotels source from regional distributor LBR Foods."
 - For playbookUpdates, only nominate fields the data supports. If contact-title evidence is thin, leave bestContactTitles empty.
+- HONOR cross-probe memory. When prior learning reports in this country exist, your report must SYNTHESIZE — reference what changed since the prior reports (confirmation, contradiction, new ground covered) rather than emitting an isolated take. When the prior reports already learned something this probe re-confirmed, say "this probe confirms probe X's finding that ..." instead of presenting it as new. The recommendedNextProbe in particular should NOT repeat segments / hypotheses tried in the prior reports.
 
 Output a single JSON object matching this shape (omit any field with no grounded evidence):
 {
@@ -179,7 +193,16 @@ ${JSON.stringify(ctx.feedbackShortcuts.slice(0, 50), null, 2)}
 
 Strategy proposals the operator rejected (with feedback):
 ${JSON.stringify(ctx.rejectedStrategyProposals, null, 2)}
-
+${
+  ctx.priorLearningReports && ctx.priorLearningReports.length > 0
+    ? `\nPrior learning reports in ${ctx.country ?? 'this country'} (most recent first) — SYNTHESIZE against these. Reference confirmations, contradictions, new ground; don't re-state what they already taught:\n${ctx.priorLearningReports
+        .map(
+          (r) =>
+            `- [${r.generatedAt}] "${r.probeName}" — ${r.summary}\n  digest: ${r.payloadDigest}`,
+        )
+        .join('\n')}\n`
+    : ''
+}
 Synthesize the JSON report.`,
       },
     ],
