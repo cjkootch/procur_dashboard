@@ -450,16 +450,71 @@ export async function autopilotSendBatch(
 }
 
 /**
- * Resolve a recipient email for a probe target's entity. Looks up
- * the contact-org membership chain: known_entities.slug →
- * organizations row matched by external_keys.known_entity_slug →
- * primary contact via contact_org_memberships. Returns the first
- * contact email. Phase 2I will refine to pick the best decision-maker
- * by title + Apollo email_status='verified'.
+ * Resolve a recipient email for a probe target's entity. Two-stage
+ * lookup, decision-maker first:
+ *
+ *   1. (Phase 2I.3) entity_contact_enrichments — Apollo-sourced rows
+ *      written by Phase 2B's findDecisionMakersForTarget. Apollo's
+ *      searchPeople was already filtered with
+ *      contactEmailStatus=['verified'] at call time, so any persisted
+ *      apollo row with a non-null email is a verified-email
+ *      decision-maker. Order by seniority rank — owners/founders/
+ *      c_suite/vp/head/director/manager wins over senior/entry.
+ *
+ *   2. Fall back to the rolodex CRM chain: organizations
+ *      (external_keys.known_entity_slug) → contact_org_memberships →
+ *      contacts.emails. Used when no Apollo decision-makers have
+ *      been discovered yet (operator hasn't clicked "Find decision-
+ *      makers" on the target).
+ *
+ * Senior decision-makers reach probe replies cleaner than generic
+ * `info@` inboxes; that's the whole point of the Apollo people
+ * pass. Returning a contactId from this function is best-effort —
+ * Apollo enrichments don't have a canonical CRM contact id, so we
+ * return the entitySlug-derived sidecar id instead. The downstream
+ * approval row carries the email + entitySlug regardless.
  */
 async function resolveRecipientEmail(
   entitySlug: string,
 ): Promise<{ email: string; contactId: string } | null> {
+  // Stage 1 — verified Apollo decision-makers. CASE expression in
+  // ORDER BY ranks the seniority taxonomy explicitly so owner/founder
+  // beat manager, manager beats senior, etc.
+  const apolloRows = await db.execute<{
+    id: string;
+    email: string;
+    seniority: string | null;
+  }>(sql`
+    SELECT id, email, seniority
+      FROM entity_contact_enrichments
+     WHERE entity_slug = ${entitySlug}
+       AND source = 'apollo'
+       AND email IS NOT NULL
+       AND email <> ''
+     ORDER BY CASE seniority
+                WHEN 'owner'    THEN 1
+                WHEN 'founder'  THEN 2
+                WHEN 'c_suite'  THEN 3
+                WHEN 'partner'  THEN 4
+                WHEN 'vp'       THEN 5
+                WHEN 'head'     THEN 6
+                WHEN 'director' THEN 7
+                WHEN 'manager'  THEN 8
+                WHEN 'senior'   THEN 9
+                WHEN 'entry'    THEN 10
+                WHEN 'intern'   THEN 11
+                ELSE 99
+              END
+     LIMIT 1
+  `);
+  const apolloPick = (
+    apolloRows.rows as Array<{ id?: string; email?: string }>
+  )[0];
+  if (apolloPick?.email) {
+    return { email: apolloPick.email, contactId: apolloPick.id ?? entitySlug };
+  }
+
+  // Stage 2 — rolodex CRM chain fallback (existing path).
   const orgRow = await db.execute<{ org_id: string }>(sql`
     SELECT id AS org_id
       FROM organizations
