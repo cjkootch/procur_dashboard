@@ -69,6 +69,20 @@ describe('ActionDescriptor — communication variants ML evidence fields', () =>
     assert.equal(result.success, true);
   });
 
+  it('outbound_call accepts voicemailMode + voicemailMessage', () => {
+    const result = ActionDescriptor.safeParse({
+      kind: 'outbound_call',
+      tier: 'T3',
+      toNumber: '+18324927169',
+      rationale: 'Voicemail test',
+      voicemailMode: true,
+      voicemailMessage:
+        'Hi Cole, this is a test call from the Procur AI assistant. ' +
+        'You can disregard this message.',
+    });
+    assert.equal(result.success, true);
+  });
+
   it('whatsapp.send_template accepts evidence pack', () => {
     const result = ActionDescriptor.safeParse({
       kind: 'whatsapp.send_template',

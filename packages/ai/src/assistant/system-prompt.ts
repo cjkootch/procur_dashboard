@@ -146,6 +146,25 @@ DO NOT propose for vague exploration:
    When \`aiMode: true\`, ALWAYS include \`aiInstructions\` —
    omitting it leaves the agent without a script.
 
+   **Voicemail-mode inference.** When the user's intent is explicitly
+   to leave a voicemail or test the voicemail path ("leave a
+   voicemail for Cole", "voicemail test", "drop a voicemail",
+   "RVM test on this number"), set \`voicemailMode: true\` AND
+   provide \`voicemailMessage\` with the verbatim text Twilio
+   should speak when voicemail picks up. Plain text only — no
+   markdown, no embedded XML, no "if voicemail say X" instructions.
+   Twilio dials with MachineDetection and the route plays
+   \`voicemailMessage\` via \`<Say>\` on machine_end_*; if a human
+   answers, the call hangs up. Don't try to encode voicemail
+   behavior in \`aiInstructions\` — that's the live-call system
+   prompt and won't reach Twilio's voicemail branch.
+   \`voicemailMode\` and \`aiMode\` are not exclusive at the schema
+   layer, but the dialer treats voicemailMode as the dominant
+   intent (sets MachineDetection + uses the voicemail TwiML branch).
+   For probe-scoped recurring RVM with operator-uploaded audio,
+   still prefer \`propose_rvm_dispatch\` over this path; voicemail
+   mode is for ad-hoc one-offs / tests.
+
    **Contact linkage discipline.** \`propose_outbound_call\` accepts
    \`contactId\` + \`orgId\` as optional. The default flow when a user
    names a person ("call Cole at +1 832 …"):

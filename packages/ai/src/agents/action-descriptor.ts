@@ -555,6 +555,17 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
       ),
     aiMode: z.boolean().optional(),
     aiInstructions: z.string().min(1).max(5000).optional(),
+    /** When true, Twilio dials with MachineDetection=DetectMessageEnd
+     *  so the call is voicemail-aware. The TwiML route's 'voicemail'
+     *  branch reads AnsweredBy and either <Say>s `voicemailMessage`
+     *  on machine_end_* or hangs up on human/fax/unknown. Use for
+     *  ad-hoc voicemail tests — probe-scoped RVM still flows through
+     *  rvm.dispatch + rvm_audio_assets. */
+    voicemailMode: z.boolean().optional(),
+    /** Verbatim text Twilio's <Say> reads into the voicemail when the
+     *  call lands on a machine. Required when voicemailMode=true.
+     *  Plain text only — TwiML <Say> doesn't render markdown. */
+    voicemailMessage: z.string().min(1).max(2000).optional(),
     templateName: z.string().min(1).max(120).optional(),
     goalHint: z.string().min(1).max(280).optional(),
     rationale: z.string().min(1).max(1000),
