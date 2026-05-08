@@ -303,13 +303,13 @@ async function resolveOrCreateRolodexStubFromApollo(input: {
   name: string;
   primaryDomain: string | null;
   probeCountry: string | null;
-  /** Discovery domain — stamped onto new stubs so the fuel rolodex
-   *  doesn't get muddied with M&A / PE / non-fuel entities. NULL on
-   *  the operator-curated rolodex; non-null on probe-discovered
-   *  stubs. When this stub gets re-discovered by a different
-   *  domain's probe later, we DON'T overwrite — first-discovery wins
-   *  (later promotion to gold rolodex requires explicit operator
-   *  edit). */
+  /** Discovery domain — stamped onto new stubs and APPENDED onto
+   *  rediscovered stubs (migration 0110). The earlier shape used
+   *  text first-write-wins, which silently lost the loser's stamp
+   *  on race + made cross-domain rediscovery invisible to the new
+   *  domain's filter. Now: array accumulates per probe domain that
+   *  rediscovers an entity. Operator-promoted gold (NULL) is sticky
+   *  — we never re-stamp it. */
   discoveryDomain: string | null;
 }): Promise<{ slug: string; created: boolean } | null> {
   // Prefer apollo_org_id match (strongest), then primary_domain.
@@ -325,6 +325,7 @@ async function resolveOrCreateRolodexStubFromApollo(input: {
     .limit(1);
   if (byApollo) {
     if (byApollo.scoutProtection) return null;
+    await appendDiscoveryDomainIfMissing(byApollo.slug, input.discoveryDomain);
     return { slug: byApollo.slug, created: false };
   }
 
@@ -346,6 +347,7 @@ async function resolveOrCreateRolodexStubFromApollo(input: {
         .update(knownEntities)
         .set({ apolloOrgId: input.apolloOrgId, updatedAt: new Date() })
         .where(eq(knownEntities.slug, byDomain.slug));
+      await appendDiscoveryDomainIfMissing(byDomain.slug, input.discoveryDomain);
       return { slug: byDomain.slug, created: false };
     }
   }
@@ -365,25 +367,66 @@ async function resolveOrCreateRolodexStubFromApollo(input: {
       categories: [],
       primaryDomain: input.primaryDomain ?? null,
       apolloOrgId: input.apolloOrgId,
-      discoveryDomain: input.discoveryDomain,
+      discoveryDomain: input.discoveryDomain
+        ? [input.discoveryDomain]
+        : null,
     });
     return { slug, created: true };
   } catch (err) {
     // Race condition: another concurrent lookalike fetch created the
     // same stub. Re-read. The unique constraint is on `slug`, which
     // is deterministic from the apollo id, so this should resolve.
+    // Loser also appends its discoveryDomain so cross-domain races
+    // accumulate rather than first-write-wins.
     const [existing] = await db
       .select({ slug: knownEntities.slug })
       .from(knownEntities)
       .where(eq(knownEntities.slug, slug))
       .limit(1);
-    if (existing) return { slug: existing.slug, created: false };
+    if (existing) {
+      await appendDiscoveryDomainIfMissing(existing.slug, input.discoveryDomain);
+      return { slug: existing.slug, created: false };
+    }
     console.error(
       '[market-probes] failed to create rolodex stub from apollo',
       err,
     );
     return null;
   }
+}
+
+/**
+ * Append a discovery domain to a known_entities row's
+ * discovery_domain array — but only if the row hasn't been promoted
+ * to gold (NULL = sticky operator promotion) and the domain isn't
+ * already present. Single SQL pass with CASE so we don't race
+ * between SELECT-and-UPDATE.
+ *
+ * Called on every rediscovery path: existing-by-apollo, existing-by-
+ * domain, and the unique-constraint-loser race path. Migration 0110
+ * widened discovery_domain from text to text[] specifically so this
+ * append is well-defined — text would have been first-write-wins.
+ *
+ * No-op when the input domain is null (caller doesn't have a domain
+ * to stamp, e.g. probe with no domain set). No-op when the row is
+ * gold rolodex (NULL stays NULL — operator promotion is sticky).
+ * No-op when the domain is already in the array.
+ */
+async function appendDiscoveryDomainIfMissing(
+  slug: string,
+  domain: string | null,
+): Promise<void> {
+  if (!domain) return;
+  await db.execute(sql`
+    UPDATE known_entities
+       SET discovery_domain = CASE
+             WHEN discovery_domain IS NULL THEN NULL
+             WHEN ${domain} = ANY(discovery_domain) THEN discovery_domain
+             ELSE array_append(discovery_domain, ${domain})
+           END,
+           updated_at = now()
+     WHERE slug = ${slug}
+  `);
 }
 
 // ──────────────────────────────────────────────────────────────────

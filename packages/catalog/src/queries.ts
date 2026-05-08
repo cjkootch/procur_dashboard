@@ -2998,13 +2998,13 @@ export interface KnownEntityRow {
   metadata: Record<string, unknown> | null;
   latitude: number | null;
   longitude: number | null;
-  /** Compartmentalization tag. NULL = curated / fuel-era (the gold
-   *  rolodex). Non-null = stamped at probe-discovery time with the
-   *  domain of the probe that first discovered the entity. Surfaces
-   *  the compartment in the entity profile + lets fuel-side chat
-   *  tools filter to discoveryDomain IS NULL when they want to
-   *  exclude probe stubs. */
-  discoveryDomain: string | null;
+  /** Compartmentalization tags. NULL = curated / fuel-era (gold
+   *  rolodex; sticky once promoted). Non-null array = domain(s) of
+   *  probes that have discovered this entity. Multi-element when
+   *  multiple probes in different domains have rediscovered (the
+   *  array accumulates rather than first-write-wins per migration
+   *  0110). Filter pattern: `<my domain> = ANY(discoveryDomain)`. */
+  discoveryDomain: string[] | null;
   /** Per-tenant approval state. Populated only when KnownEntityFilters
    *  was called with companyId. Null = no approval row for this entity. */
   approvalStatus: SupplierApprovalStatusValue | null;
@@ -3099,7 +3099,7 @@ export async function lookupKnownEntities(
         discoveryDomainFilter === 'curated_only'
           ? sql`AND ke.discovery_domain IS NULL`
           : discoveryDomainFilter
-            ? sql`AND (ke.discovery_domain IS NULL OR ke.discovery_domain = ${discoveryDomainFilter})`
+            ? sql`AND (ke.discovery_domain IS NULL OR ${discoveryDomainFilter} = ANY(ke.discovery_domain))`
             : sql``
       }
       ${
@@ -3145,7 +3145,9 @@ export async function lookupKnownEntities(
     latitude: r.latitude != null ? Number.parseFloat(String(r.latitude)) : null,
     longitude: r.longitude != null ? Number.parseFloat(String(r.longitude)) : null,
     discoveryDomain:
-      r.discovery_domain == null ? null : String(r.discovery_domain),
+      r.discovery_domain == null
+        ? null
+        : (r.discovery_domain as string[]),
     approvalStatus: (r.approval_status as SupplierApprovalStatusValue | null) ?? null,
     approvalApprovedAt:
       r.approval_approved_at instanceof Date
@@ -3412,7 +3414,9 @@ export async function findEntitiesNearLocation(filters: {
     latitude: r.latitude != null ? Number.parseFloat(String(r.latitude)) : null,
     longitude: r.longitude != null ? Number.parseFloat(String(r.longitude)) : null,
     discoveryDomain:
-      r.discovery_domain == null ? null : String(r.discovery_domain),
+      r.discovery_domain == null
+        ? null
+        : (r.discovery_domain as string[]),
     distanceNm: Number.parseFloat(String(r.distance_nm)),
     // Approval state isn't fetched in this proximity query — callers
     // who need it should use lookupKnownEntities with companyId.
