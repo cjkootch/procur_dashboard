@@ -7,6 +7,7 @@ import {
   type MessagingMessage,
 } from '@procur/catalog';
 import { ConversationSettingsPanel } from '../../components/conversation/ConversationSettingsPanel';
+import { TranslatableText } from '../../components/translation/TranslatableText';
 
 /**
  * Outlook-style two-pane shell for SMS + WhatsApp conversations.
@@ -330,7 +331,14 @@ function Bubble({ message }: { message: MessagingMessage }) {
         }`}
       >
         {message.body ? (
-          <p className="whitespace-pre-wrap break-words">{message.body}</p>
+          <TranslatableText
+            original={message.body}
+            translation={message.bodyEn}
+            languageName={message.detectedLanguageName}
+            render={(text) => (
+              <p className="whitespace-pre-wrap break-words">{text}</p>
+            )}
+          />
         ) : (
           <p className="italic opacity-70">(no body)</p>
         )}

@@ -38,6 +38,12 @@ export interface MessagingMessage {
   direction: 'inbound' | 'outbound';
   occurredAt: Date;
   body: string | null;
+  /** English translation of body, or null when source was already
+   *  English (or translation hasn't run). Populated by the twilio
+   *  inbound webhook via translateInboundMessage. */
+  bodyEn: string | null;
+  detectedLanguageCode: string | null;
+  detectedLanguageName: string | null;
   /** Twilio MessageSid when known. */
   providerMessageId: string | null;
   /** Approval id when this message came from a recommendation-pipeline
@@ -260,12 +266,27 @@ export async function getMessagingConversation(
       typeof r.actor === 'string' && r.actor.startsWith('approval:')
         ? r.actor.slice('approval:'.length)
         : null;
+    const bodyEn =
+      typeof meta['body_text_en'] === 'string'
+        ? (meta['body_text_en'] as string)
+        : null;
+    const detectedLanguageCode =
+      typeof meta['detected_language_code'] === 'string'
+        ? (meta['detected_language_code'] as string)
+        : null;
+    const detectedLanguageName =
+      typeof meta['detected_language_name'] === 'string'
+        ? (meta['detected_language_name'] as string)
+        : null;
     return {
       id: r.id,
       channel: channelGroup,
       direction,
       occurredAt: r.occurredAt,
       body,
+      bodyEn,
+      detectedLanguageCode,
+      detectedLanguageName,
       providerMessageId,
       sourceApprovalId,
     };

@@ -7,7 +7,11 @@ import {
   rawEvents,
   touchpoints,
 } from '@procur/db';
-import { createId, emitOutreachOutcome } from '@procur/ai';
+import {
+  createId,
+  emitOutreachOutcome,
+  translateInboundMessage,
+} from '@procur/ai';
 import { maybeQueueAiReply } from '@procur/catalog';
 import { recordWebhookReceipt } from '../../../../lib/webhook-events';
 import { notifyAllOperators } from '../../../../lib/notification-queries';
@@ -251,6 +255,12 @@ async function handleInboundMessage(
     }
   }
 
+  // Detect language + translate to English when non-English. Single
+  // Haiku call; never throws. Stored alongside the verbatim body so
+  // the /messages bubble view can render EN by default with a
+  // "Translated from …" toggle.
+  const translation = await translateInboundMessage({ body });
+
   await db.insert(touchpoints).values({
     id: createId(),
     channel,
@@ -264,6 +274,16 @@ async function handleInboundMessage(
       to: toRaw.replace(/^whatsapp:/, ''),
       body_text: body.slice(0, 4_000),
       contact_matched: Boolean(contactId),
+      ...(translation
+        ? {
+            detected_language_code: translation.detectedLanguageCode,
+            detected_language_name: translation.detectedLanguageName,
+            language_confidence: translation.confidence,
+            ...(translation.translationEn
+              ? { body_text_en: translation.translationEn }
+              : {}),
+          }
+        : {}),
     },
   });
   await db

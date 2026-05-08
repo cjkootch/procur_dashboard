@@ -9,7 +9,11 @@ import {
   threads,
   touchpoints,
 } from '@procur/db';
-import { createId, emitOutreachOutcome } from '@procur/ai';
+import {
+  createId,
+  emitOutreachOutcome,
+  translateInboundMessage,
+} from '@procur/ai';
 import {
   findThreadIdByInReplyTo,
   normalizeRfcMessageId,
@@ -370,6 +374,18 @@ export async function POST(req: Request): Promise<Response> {
   // fields go in normalized so a later reply-to-this-reply can find
   // its parent without bracket / case mismatches.
   const newMessageId = createId();
+
+  // Detect language + translate to English when the inbound isn't
+  // already English. Single Haiku call; capped at 4000 chars; never
+  // throws (returns null on any failure). Stored alongside the
+  // verbatim body in metadata so the inbox UI can render the EN
+  // version by default with a "Translated from …" toggle to flip
+  // back to the original.
+  const translation = await translateInboundMessage({
+    body: bodyText ?? bodyHtml?.slice(0, 4000) ?? '',
+    subject,
+  });
+
   await db.insert(messages).values({
     id: newMessageId,
     threadId,
@@ -385,6 +401,19 @@ export async function POST(req: Request): Promise<Response> {
       contact_id: contactId,
       org_id: contactOrgId,
       provider_email_id: data.email_id ?? null,
+      ...(translation
+        ? {
+            detected_language_code: translation.detectedLanguageCode,
+            detected_language_name: translation.detectedLanguageName,
+            language_confidence: translation.confidence,
+            ...(translation.translationEn
+              ? { body_text_en: translation.translationEn }
+              : {}),
+            ...(translation.subjectTranslationEn
+              ? { subject_en: translation.subjectTranslationEn }
+              : {}),
+          }
+        : {}),
     },
   });
 

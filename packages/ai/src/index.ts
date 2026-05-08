@@ -346,3 +346,12 @@ export {
   type CreateMissionPayload,
   type CreateMissionResult,
 } from './executors/missions';
+// Inbound translation helper — detects language + translates to
+// English in one Haiku call. Used by the resend-inbound and
+// twilio webhooks to populate metadata.body_text_en /
+// metadata.subject_en / metadata.detected_language_* fields. Never
+// blocks the parent action.
+export {
+  translateInboundMessage,
+  type TranslatedInbound,
+} from './translate';
