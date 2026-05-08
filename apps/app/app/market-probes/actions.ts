@@ -11,18 +11,28 @@ import {
   advanceProbeLadder,
   approveStrategyProposal,
   bulkInsertHypotheses,
+  computeProbeScorecard,
   createProbe,
   findDecisionMakersForTarget,
   getProbe,
   insertHypothesis,
+  getLatestLearningReport,
+  insertLearningReport,
   insertStrategyProposal,
   listAtlasFacts,
+  listAtlasFactsForProbe,
+  listHypothesesForProbe,
+  listProbeFeedbackShortcuts,
   listRejectionHistory,
+  listSegments,
+  listStrategyProposals,
   listTargetsForProbe,
   markProbeTaskStatus,
   recordFeedbackShortcut,
   rejectStrategyProposal,
   resolveHypothesis,
+  savePlaybookFromProbe,
+  setPlaybookStatus,
   setProbePlan,
   setProbeStatus,
   setTargetJustification,
@@ -34,9 +44,11 @@ import {
   type AtlasFactType,
   type HypothesisStatus,
   type HypothesisType,
+  type LearningReportPayload,
   type ProbeFeedbackLabel,
 } from '@procur/catalog';
 import {
+  generateLearningReport,
   generateProbePlan,
   proposeProbeStrategyAdjustments,
   type ProbeMetricsSnapshot,
@@ -771,6 +783,203 @@ export async function recordTargetFeedbackAction(
     ...(str(formData, 'note') ? { note: str(formData, 'note')! } : {}),
   });
   revalidatePath(`/market-probes/${probeId}`);
+}
+
+// ────────────────────────────────────────────────────────────────
+// Phase 2F — synthesis layer
+// ────────────────────────────────────────────────────────────────
+
+/**
+ * Generate the end-of-probe Learning Report. Sonnet pass over
+ * scorecard + atlas + hypotheses + signals + feedback + rejected
+ * strategy proposals → structured synthesis. Stored as a row so
+ * the operator can re-read + the playbook generator can read the
+ * report's nominations.
+ *
+ * Cheap to re-run; operator can trigger anytime, especially before
+ * marking the probe completed.
+ */
+export async function generateLearningReportAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  if (!probeId) throw new Error('probeId required');
+
+  const probe = await getProbe(probeId);
+  if (!probe) throw new Error('probe not found');
+
+  const [scorecard, hypotheses, segments, atlasFacts, feedback, rejected] =
+    await Promise.all([
+      computeProbeScorecard(probeId),
+      listHypothesesForProbe(probeId),
+      listSegments(probeId),
+      listAtlasFactsForProbe(probeId),
+      listProbeFeedbackShortcuts(probeId),
+      listStrategyProposals(probeId, { status: 'rejected' }),
+    ]);
+  if (!scorecard) {
+    throw new Error('scorecard unavailable — probe has no targets yet');
+  }
+
+  const durationMs = Date.now() - new Date(probe.createdAt).getTime();
+  const durationDays = Math.max(1, Math.round(durationMs / 86_400_000));
+
+  const result = await generateLearningReport({
+    probeName: probe.marketName,
+    country: probe.country,
+    productThesis: probe.productThesis,
+    ladderStage: probe.ladderStage,
+    durationDays,
+    scorecard: {
+      targetsTotal: scorecard.targetsTotal,
+      sentCount: scorecard.sentCount,
+      repliedCount: scorecard.repliedCount,
+      positiveReplies: scorecard.positiveReplies,
+      bouncedCount: scorecard.bouncedCount,
+      replyRate: scorecard.replyRate,
+      routingRate: scorecard.routingRate,
+      qualifiedInterestRate: scorecard.qualifiedInterestRate,
+      bounceRate: scorecard.bounceRate,
+      atlasFactsCount: scorecard.atlasFactsCount,
+      atlasNegativeRulesCount: scorecard.atlasNegativeRulesCount,
+      hypothesesActive: scorecard.hypothesesActive,
+      hypothesesConfirmed: scorecard.hypothesesConfirmed,
+      hypothesesFalsified: scorecard.hypothesesFalsified,
+      overallLearning: scorecard.scores.overallLearning,
+    },
+    hypotheses: hypotheses.map((h) => ({
+      hypothesisType: h.hypothesisType,
+      statement: h.statement,
+      status: h.status,
+      confidenceStart: Number(h.confidenceStart),
+      confidenceCurrent: Number(h.confidenceCurrent),
+      result: h.result,
+    })),
+    segments: segments.map((s) => ({
+      name: s.segmentName,
+      estimatedTotal: s.estimatedTotal,
+      identified: s.identifiedCount,
+      contacted: s.contactedCount,
+      replied: s.repliedCount,
+    })),
+    topSignals: scorecard.topSignals.map((s) => ({
+      signal: s.signal,
+      withSent: s.withSignal.sent,
+      withReplied: s.withSignal.replied,
+      withoutSent: s.withoutSignal.sent,
+      withoutReplied: s.withoutSignal.replied,
+      replyDelta: s.replyDelta,
+    })),
+    atlasFacts: atlasFacts.map((f) => ({
+      factType: f.factType,
+      description: f.description,
+      ruleText: f.ruleText,
+    })),
+    feedbackShortcuts: feedback.map((f) => ({
+      label: String(
+        (f.payload as Record<string, unknown>)?.['label'] ?? '(unknown)',
+      ),
+      sentiment: f.sentiment ?? 'neutral',
+      payload: (f.payload as Record<string, unknown>) ?? {},
+    })),
+    rejectedStrategyProposals: rejected.map((p) => ({
+      proposalType: p.proposalType,
+      rationale: p.rationale,
+      feedback: p.reviewerFeedback,
+    })),
+  });
+
+  await insertLearningReport({
+    probeId,
+    summary: result.summary,
+    payload: result.payload,
+    scorecardSnapshot: scorecard as unknown as Record<string, unknown>,
+    generatedByModel: 'claude-sonnet',
+  });
+
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/**
+ * Save the probe's nominations (from latest learning report) as a
+ * new playbook. Operator picks a name + applicableCountries and
+ * confirms the report's recommended segments / titles / first-touch.
+ */
+export async function savePlaybookFromProbeAction(
+  formData: FormData,
+): Promise<void> {
+  const { user } = await requireCompany();
+  const probeId = str(formData, 'probeId');
+  const name = str(formData, 'name');
+  if (!probeId || !name) throw new Error('probeId + name required');
+
+  const probe = await getProbe(probeId);
+  if (!probe) throw new Error('probe not found');
+
+  const scorecard = await computeProbeScorecard(probeId);
+  if (!scorecard) throw new Error('scorecard unavailable');
+
+  // Read report nominations if present; operator can override via
+  // form fields.
+  let nominated: LearningReportPayload['playbookUpdates'] = {};
+  const recent = await getLatestLearningReport(probeId);
+  if (recent) {
+    nominated = recent.payloadJson?.playbookUpdates ?? {};
+  }
+
+  const applicableCountries = csv(formData, 'applicableCountries').length > 0
+    ? csv(formData, 'applicableCountries').map((c) => c.toUpperCase())
+    : (nominated?.applicableCountries ?? (probe.country ? [probe.country.toUpperCase()] : []));
+
+  const playbook = await savePlaybookFromProbe({
+    probeId,
+    name,
+    description: str(formData, 'description'),
+    parentPlaybookId: str(formData, 'parentPlaybookId'),
+    applicableCountries,
+    benchmarks: {
+      replyRate: scorecard.replyRate,
+      routingRate: scorecard.routingRate,
+      qualifiedInterestRate: scorecard.qualifiedInterestRate,
+      bounceRate: scorecard.bounceRate,
+    },
+    recommendedSegments:
+      csv(formData, 'recommendedSegments').length > 0
+        ? csv(formData, 'recommendedSegments')
+        : nominated?.recommendedSegments,
+    avoidedSegments:
+      csv(formData, 'avoidedSegments').length > 0
+        ? csv(formData, 'avoidedSegments')
+        : nominated?.avoidedSegments,
+    bestContactTitles:
+      csv(formData, 'bestContactTitles').length > 0
+        ? csv(formData, 'bestContactTitles')
+        : nominated?.bestContactTitles,
+    bestFirstTouchAngle:
+      str(formData, 'bestFirstTouchAngle') ?? nominated?.bestFirstTouchAngle,
+    createdByUserId: user.id,
+  });
+
+  revalidatePath(`/market-probes/${probeId}`);
+  revalidatePath('/market-playbooks');
+  revalidatePath(`/market-playbooks/${playbook.id}`);
+}
+
+export async function setPlaybookStatusAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const playbookId = str(formData, 'playbookId');
+  const status = str(formData, 'status') as
+    | 'draft'
+    | 'active'
+    | 'deprecated'
+    | null;
+  if (!playbookId || !status) throw new Error('playbookId + status required');
+  await setPlaybookStatus(playbookId, status);
+  revalidatePath('/market-playbooks');
+  revalidatePath(`/market-playbooks/${playbookId}`);
 }
 
 export async function setTaskSkippedAction(formData: FormData): Promise<void> {

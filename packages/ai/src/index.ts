@@ -126,6 +126,11 @@ export {
   type ProbeStrategyProposal,
 } from './market-probes/strategy-agent';
 export {
+  generateLearningReport,
+  type LearningReportContext,
+  type LearningReportResult,
+} from './market-probes/learning-report-agent';
+export {
   ClassifyOutput,
   SummaryOutput,
   LanguageOutput,

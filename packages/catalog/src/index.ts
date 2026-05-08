@@ -34,6 +34,7 @@ export * from './market-atlas';
 export * from './market-probe-strategy';
 export * from './market-probe-hypotheses';
 export * from './market-probe-measurement';
+export * from './market-playbooks';
 export {
   recommendCommunicationTargets,
   buildCommunicationContextPack,
