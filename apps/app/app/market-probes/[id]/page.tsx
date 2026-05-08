@@ -2,17 +2,22 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
 import {
+  computeProbeScorecard,
   countTargetsByJustification,
   getProbe,
   listAtlasFactsForProbe,
   listHypothesesForProbe,
+  listSegments,
   listStrategyProposals,
   listTargetsForProbe,
   ATLAS_FACT_TYPES,
   HYPOTHESIS_TYPES,
   HYPOTHESIS_STATUSES,
   LADDER_STAGES,
+  PROBE_FEEDBACK_LABELS,
+  PROBE_SIGNAL_KINDS,
 } from '@procur/catalog';
+import { SignalFlagsForm } from '../_components/SignalFlagsForm';
 import {
   addApolloLookalikesAction,
   addAtlasFactAction,
@@ -25,11 +30,13 @@ import {
   generatePlanAction,
   generateStrategyProposalsAction,
   markTargetResearchOnlyAction,
+  recordTargetFeedbackAction,
   rejectStrategyProposalAction,
   resolveHypothesisAction,
   setProbeStatusAction,
   setTargetJustificationAction,
   setTaskSkippedAction,
+  upsertSegmentAction,
 } from '../actions';
 
 export const dynamic = 'force-dynamic';
@@ -72,6 +79,8 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
     reviewedProposals,
     hypotheses,
     justificationCounts,
+    segments,
+    scorecard,
   ] = await Promise.all([
     listTargetsForProbe(id),
     listAtlasFactsForProbe(id),
@@ -84,6 +93,8 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
     )),
     listHypothesesForProbe(id),
     countTargetsByJustification(id),
+    listSegments(id),
+    computeProbeScorecard(id),
   ]);
 
   const ladderIdx = LADDER_STAGES.indexOf(
@@ -150,6 +161,35 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
           </p>
         )}
       </header>
+
+      {/* Scorecard — composite metrics. Computed on every page load
+          (cheap; reads + a refreshSegmentCounts pass). */}
+      {scorecard && (
+        <section className="mb-6 grid grid-cols-2 gap-3 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4 md:grid-cols-5">
+          <ScoreCell label="Reply rate" value={`${Math.round(scorecard.replyRate * 100)}%`} sub={`${scorecard.repliedCount} / ${scorecard.sentCount}`} />
+          <ScoreCell
+            label="Routing rate"
+            value={`${Math.round(scorecard.routingRate * 100)}%`}
+            sub="positive + routing replies"
+          />
+          <ScoreCell
+            label="Bounce rate"
+            value={`${Math.round(scorecard.bounceRate * 100)}%`}
+            sub={`${scorecard.bouncedCount} bounced`}
+            warn={scorecard.bounceRate > 0.08}
+          />
+          <ScoreCell
+            label="Atlas facts"
+            value={String(scorecard.atlasFactsCount)}
+            sub={`${scorecard.atlasNegativeRulesCount} negative rules`}
+          />
+          <ScoreCell
+            label="Overall learning"
+            value={String(scorecard.scores.overallLearning)}
+            sub="composite (0-100)"
+          />
+        </section>
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Plan + checklist */}
@@ -618,6 +658,46 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
                       </button>
                     </form>
                   </details>
+
+                  {/* Signal flags — checkbox grid. Operator marks
+                      observed signals; scorecard correlates against
+                      reply outcomes. */}
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-[11px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]">
+                      Signals (
+                      {Object.values(t.signalsPresent ?? {}).filter(Boolean)
+                        .length}{' '}
+                      / {PROBE_SIGNAL_KINDS.length})
+                    </summary>
+                    <SignalFlagsForm
+                      probeId={probe.id}
+                      targetId={t.id}
+                      current={(t.signalsPresent ?? {}) as Record<string, boolean>}
+                    />
+                  </details>
+
+                  {/* Feedback shortcuts — one-click labels, sentiment
+                      derived in the helper. Writes feedback_events rows. */}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {PROBE_FEEDBACK_LABELS.map((label) => (
+                      <form
+                        key={label}
+                        action={recordTargetFeedbackAction}
+                        className="inline"
+                      >
+                        <input type="hidden" name="probeId" value={probe.id} />
+                        <input type="hidden" name="targetId" value={t.id} />
+                        <input type="hidden" name="label" value={label} />
+                        <button
+                          type="submit"
+                          className="rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] hover:bg-[color:var(--color-muted)]/40"
+                          title={`Record feedback: ${label.replace(/_/g, ' ')}`}
+                        >
+                          {label.replace(/_/g, ' ')}
+                        </button>
+                      </form>
+                    ))}
+                  </div>
                 </li>
               );
             })}
@@ -1020,6 +1100,181 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
           </ul>
         )}
       </section>
+
+      {/* Market map — per-segment coverage. Operator sets
+          estimatedTotal; counts auto-aggregate from targets via
+          refreshSegmentCounts on scorecard read. */}
+      <section className="mt-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+          Market map ({segments.length} segment{segments.length === 1 ? '' : 's'})
+        </h2>
+
+        {segments.length === 0 ? (
+          <p className="text-sm text-[color:var(--color-muted-foreground)]">
+            No segments tracked yet. The scorecard auto-creates segment
+            rows as targets land with a `segment` value; or set an
+            estimated total below to track coverage explicitly.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-[color:var(--color-muted-foreground)]">
+                <tr>
+                  <th className="px-2 py-1 text-left">Segment</th>
+                  <th className="px-2 py-1 text-right">Identified</th>
+                  <th className="px-2 py-1 text-right">Contacted</th>
+                  <th className="px-2 py-1 text-right">Replied</th>
+                  <th className="px-2 py-1 text-right">Est. total</th>
+                  <th className="px-2 py-1 text-right">Coverage</th>
+                </tr>
+              </thead>
+              <tbody>
+                {segments.map((s) => {
+                  const cov =
+                    s.estimatedTotal && s.estimatedTotal > 0
+                      ? Math.round((s.contactedCount / s.estimatedTotal) * 100)
+                      : null;
+                  return (
+                    <tr key={s.id} className="border-t border-[color:var(--color-border)]">
+                      <td className="px-2 py-1 font-medium">{s.segmentName}</td>
+                      <td className="px-2 py-1 text-right font-mono">
+                        {s.identifiedCount}
+                      </td>
+                      <td className="px-2 py-1 text-right font-mono">
+                        {s.contactedCount}
+                      </td>
+                      <td className="px-2 py-1 text-right font-mono">
+                        {s.repliedCount}
+                      </td>
+                      <td className="px-2 py-1 text-right font-mono">
+                        {s.estimatedTotal ?? '—'}
+                      </td>
+                      <td className="px-2 py-1 text-right font-mono">
+                        {cov != null ? `${cov}%` : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <form
+          action={upsertSegmentAction}
+          className="mt-3 grid gap-2 rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] p-3 text-xs md:grid-cols-[1fr,140px,auto]"
+        >
+          <input type="hidden" name="probeId" value={probe.id} />
+          <input
+            type="text"
+            name="segmentName"
+            placeholder="segment name (e.g. hotel_procurement)"
+            required
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+          />
+          <input
+            type="number"
+            name="estimatedTotal"
+            placeholder="est. total"
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+          />
+          <button
+            type="submit"
+            className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1 font-medium hover:bg-[color:var(--color-muted)]/40"
+          >
+            Set / update
+          </button>
+        </form>
+      </section>
+
+      {/* Signal validation — top signals by reply correlation. */}
+      {scorecard && scorecard.topSignals.length > 0 && (
+        <section className="mt-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Signal validation
+            <span className="ml-2 text-xs normal-case text-[color:var(--color-muted-foreground)]">
+              top {scorecard.topSignals.length} by observation count
+            </span>
+          </h2>
+          <p className="mb-2 text-xs text-[color:var(--color-muted-foreground)]">
+            Reply rate <em>with</em> the signal vs <em>without</em>. Positive
+            delta = signal predicts reply; negative = signal is anti-predictive
+            or noise. Set per-target signal flags via the panel inside each
+            target row.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-[color:var(--color-muted-foreground)]">
+                <tr>
+                  <th className="px-2 py-1 text-left">Signal</th>
+                  <th className="px-2 py-1 text-right">w/ signal (sent / replied)</th>
+                  <th className="px-2 py-1 text-right">w/o signal (sent / replied)</th>
+                  <th className="px-2 py-1 text-right">Reply Δ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scorecard.topSignals.map((s) => {
+                  const wn = s.withSignal.sent;
+                  const wn2 = s.withoutSignal.sent;
+                  return (
+                    <tr key={s.signal} className="border-t border-[color:var(--color-border)]">
+                      <td className="px-2 py-1 font-mono">{s.signal}</td>
+                      <td className="px-2 py-1 text-right font-mono">
+                        {wn} / {s.withSignal.replied}
+                      </td>
+                      <td className="px-2 py-1 text-right font-mono">
+                        {wn2} / {s.withoutSignal.replied}
+                      </td>
+                      <td
+                        className={`px-2 py-1 text-right font-mono ${
+                          s.replyDelta > 0
+                            ? 'text-green-700'
+                            : s.replyDelta < 0
+                              ? 'text-red-700'
+                              : ''
+                        }`}
+                      >
+                        {s.replyDelta > 0 ? '+' : ''}
+                        {Math.round(s.replyDelta * 100)}%
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function ScoreCell({
+  label,
+  value,
+  sub,
+  warn,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  warn?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+        {label}
+      </span>
+      <span
+        className={`text-xl font-semibold ${warn ? 'text-red-700' : ''}`}
+      >
+        {value}
+      </span>
+      {sub && (
+        <span className="text-[10px] text-[color:var(--color-muted-foreground)]">
+          {sub}
+        </span>
+      )}
     </div>
   );
 }

@@ -20,17 +20,21 @@ import {
   listRejectionHistory,
   listTargetsForProbe,
   markProbeTaskStatus,
+  recordFeedbackShortcut,
   rejectStrategyProposal,
   resolveHypothesis,
   setProbePlan,
   setProbeStatus,
   setTargetJustification,
   setTargetResearchOnly,
+  setTargetSignals,
   upsertProbeTargets,
+  upsertSegment,
   recommendCommunicationTargets,
   type AtlasFactType,
   type HypothesisStatus,
   type HypothesisType,
+  type ProbeFeedbackLabel,
 } from '@procur/catalog';
 import {
   generateProbePlan,
@@ -693,6 +697,79 @@ export async function markTargetResearchOnlyAction(
   const probeId = str(formData, 'probeId');
   if (!targetId || !probeId) throw new Error('targetId + probeId required');
   await setTargetResearchOnly(targetId);
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+// ────────────────────────────────────────────────────────────────
+// Phase 2E — measurement layer
+// ────────────────────────────────────────────────────────────────
+
+/** Operator sets per-segment estimated total for the coverage map. */
+export async function upsertSegmentAction(formData: FormData): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  const segmentName = str(formData, 'segmentName');
+  if (!probeId || !segmentName) {
+    throw new Error('probeId + segmentName required');
+  }
+  await upsertSegment({
+    probeId,
+    segmentName,
+    estimatedTotal: int(formData, 'estimatedTotal'),
+    notes: str(formData, 'notes'),
+  });
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/** Operator (or agent) toggles per-target signal booleans. */
+export async function setTargetSignalsAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  const targetId = str(formData, 'targetId');
+  if (!probeId || !targetId) throw new Error('probeId + targetId required');
+  // Signal updates ride in as a JSON blob keyed signal → bool. Form
+  // can build this server-side by reading checkbox state per signal.
+  const raw = str(formData, 'signals');
+  if (!raw) return;
+  let signals: Record<string, boolean> = {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      signals = Object.fromEntries(
+        Object.entries(parsed)
+          .filter(([, v]) => typeof v === 'boolean')
+          .map(([k, v]) => [k, v as boolean]),
+      );
+    }
+  } catch {
+    return;
+  }
+  await setTargetSignals({ targetId, signals });
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/** One-click feedback shortcut on a probe target. Phase 2E writes
+ *  the feedback_events row; Phase 2F wires side effects (create_lead
+ *  → propose_create_lead, suppress → entity_dispositions, etc.). */
+export async function recordTargetFeedbackAction(
+  formData: FormData,
+): Promise<void> {
+  const { user } = await requireCompany();
+  const probeId = str(formData, 'probeId');
+  const targetId = str(formData, 'targetId');
+  const label = str(formData, 'label') as ProbeFeedbackLabel | null;
+  if (!probeId || !targetId || !label) {
+    throw new Error('probeId + targetId + label required');
+  }
+  await recordFeedbackShortcut({
+    probeId,
+    targetId,
+    label,
+    userId: user.id,
+    ...(str(formData, 'note') ? { note: str(formData, 'note')! } : {}),
+  });
   revalidatePath(`/market-probes/${probeId}`);
 }
 
