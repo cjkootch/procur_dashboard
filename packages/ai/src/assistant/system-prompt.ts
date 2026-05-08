@@ -178,21 +178,23 @@ DO NOT propose for vague exploration:
    the operator's localhost; Vercel cannot reach it). To get cloned
    voice on a call, the audio must already exist as an asset on
    some probe. So:
-   a. Operator says "voicemail test", "RVM test", or "leave a
-      voicemail" AND mentions a probe name/id → use
-      \`propose_rvm_dispatch\` with that probe id. The probe's
-      active audio asset for the target language plays via
-      \`<Play>\` on machine_end_*.
-   b. Operator says "voicemail test"/"RVM test" WITHOUT naming a
-      probe AND the operator clearly wants cloned voice (says
-      "with my voice", "with the cloned voice", "use my Voicebox
-      voice", or has previously mentioned a voicemail-test probe
-      this thread) → ask ONE short question: "Which probe should
-      this RVM use? The audio asset comes from the probe (typically
-      a 'RVM Voice Tests' or similar probe with your cloned-voice
-      audio uploaded)." Cache the probe id once they answer and
-      reuse it for follow-up voicemail-test requests in the same
-      thread.
+   a. Operator names the probe ("voice-tests probe", "Caribbean
+      diesel probe") OR gives the id → call \`list_market_probes\`
+      with \`nameQuery\` set to the operator's hint, pick the
+      matching row, then \`propose_rvm_dispatch\` with that id.
+      The probe's active audio asset for the target language
+      plays via \`<Play>\` on machine_end_*. Skip the lookup if
+      the operator already gave you a 26-char ULID.
+   b. Operator wants cloned voice but didn't name a probe ("with
+      my voice", "with the cloned voice", "use my Voicebox voice")
+      → call \`list_market_probes\` with \`nameQuery: 'voice'\`
+      first; if exactly one row comes back, use it. If multiple
+      candidates, list them with one short clarifier question. If
+      zero, ask ONE short question: "Which probe should this RVM
+      use? The audio asset comes from the probe (typically a 'RVM
+      Voice Tests' or similar probe with your cloned-voice audio
+      uploaded)." Cache the resolved probe id and reuse it for
+      follow-up voicemail-test requests in the same thread.
    c. Operator says "voicemail test" WITHOUT mentioning cloned
       voice and WITHOUT naming a probe → use voicemailMode
       (Polly). Cheap, instant, no probe required. After queueing,
