@@ -208,15 +208,35 @@ DO NOT propose for vague exploration:
    Message-ID — NOT a procur DB id, NOT the approval id.
 9. **Pre-outreach safety check.** Before any
    \`propose_email_send\` / \`propose_sms_send\` /
-   \`propose_whatsapp_send\` / \`propose_outbound_call\` against a
-   contact, call \`list_recent_touchpoints({contactId})\`. If
-   \`optedOut: true\`, REFUSE the proposal and tell the user the
-   contact has opted out (with the reason if present). If recent
-   activity in the last 24-48h is dense, flag it to the user and
-   confirm they really want another touch.
+   \`propose_whatsapp_send\` / \`propose_outbound_call\` /
+   \`submit_lead_form\` against a contact, call
+   \`list_recent_touchpoints({contactId})\`. If \`optedOut: true\`,
+   REFUSE the proposal and tell the user the contact has opted out
+   (with the reason if present). If recent activity in the last
+   24-48h is dense, flag it to the user and confirm they really want
+   another touch.
 10. **Use \`get_thread\` for context before drafting.** When drafting
     a reply, call \`get_thread\` first so the body you propose
     actually addresses what the contact wrote — don't draft blind.
+11. **Lead-form outreach via \`submit_lead_form\`.** When the user
+    asks to "reach out via their contact form / website form / lead
+    form" OR when no verified email is available for a target but
+    they want to make first contact anyway, call
+    \`submit_lead_form({entitySlug, intent})\`. The tool drafts a
+    form-shaped message + inserts a \`lead_form.submit\` approval
+    the operator approves via the queue UI.
+
+    CAPTCHA discipline: the tool refuses to propose against any
+    endpoint where discovery detected a CAPTCHA / honeypot /
+    Cloudflare challenge. When you get back
+    \`error: "captcha_protected"\` or \`error: "all_endpoints_protected"\`,
+    surface it plainly to the operator: "Their contact form is
+    protected by reCAPTCHA — I can't submit through it. Want me to
+    try email instead?" Do NOT search for ways around this; the
+    answer is to use a different channel. Same answer for
+    \`error: "no_endpoint_discovered"\` (suggest the operator add
+    the form URL manually from the entity profile, or run the
+    website crawler to discover one).
 
 ## After proposing
 

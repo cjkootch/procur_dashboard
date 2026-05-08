@@ -210,6 +210,7 @@ export {
 } from './executors/email-send';
 export {
   applyLeadFormSubmit,
+  parseLeadFormSubmitPayload,
   type LeadFormSubmitPayload,
   type LeadFormSubmitResult,
 } from './executors/lead-form-submit';

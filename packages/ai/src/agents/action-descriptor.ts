@@ -121,6 +121,48 @@ export const ActionDescriptor = z.discriminatedUnion('kind', [
     ...mlOutreachAnnotations,
   }),
   z.object({
+    /** Website lead-form submission. Outreach via a counterparty's
+     *  contact form when no email recipient is available (or when
+     *  the operator explicitly prefers form over email).
+     *
+     *  Submission discipline (load-bearing):
+     *    - The executor refuses to POST when the endpoint row's
+     *      detected_captcha_kind is non-null OR submit_method is
+     *      anything other than 'http_post'. Approvals can be
+     *      written for any (entity_slug, form_url) shape but the
+     *      executor is the safety net.
+     *    - We do NOT bypass CAPTCHA. The chat assistant must surface
+     *      that to the operator when proposing an action against a
+     *      protected form ("can't submit — CAPTCHA-protected; reach
+     *      out via email instead"). */
+    kind: z.literal('lead_form.submit'),
+    tier: z.literal(ApprovalTier.T2),
+    /** known_entities.slug OR external_suppliers.id. */
+    entitySlug: z.string().min(1).max(200),
+    /** The form's action URL. Must match a row in
+     *  entity_contact_form_endpoints. */
+    formUrl: z.string().url(),
+    /** Pre-resolved field-name → value map. The drafter
+     *  (draftLeadFormSubmission + mapDraftToFieldValues) computes
+     *  this once; the approval payload + executor POST body are
+     *  derived from the same record so they can't drift. */
+    fieldValues: z.record(z.string(), z.string()),
+    /** Drafter's structured payload for audit / chip preview. */
+    draftedFields: z
+      .object({
+        name: z.string().optional(),
+        email: z.string().optional(),
+        subject: z.string().optional(),
+        message: z.string().optional(),
+        company: z.string().optional(),
+        phone: z.string().optional(),
+      })
+      .optional(),
+    contactId: zUlid.optional(),
+    rationale: z.string().min(1).max(1000),
+    ...mlOutreachAnnotations,
+  }),
+  z.object({
     kind: z.literal('crm.note'),
     tier: z.literal(ApprovalTier.T1),
     organizationId: zUlid,
