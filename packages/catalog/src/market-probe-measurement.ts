@@ -77,9 +77,16 @@ export async function upsertSegment(
 
 /**
  * Recompute identified / contacted / replied counts from
- * market_probe_targets. Cheap (single grouped query). Called by the
- * scorecard helper before reading; also exposed as an action so the
- * operator can force-refresh.
+ * market_probe_targets. Two round-trips: one grouped SELECT, one
+ * batched INSERT … ON CONFLICT DO UPDATE. The earlier shape did the
+ * upsert per-segment in a JS for-loop — N round-trips per probe,
+ * which mattered at autopilot batch time (every send batch refreshes
+ * counts) and on the scorecard read path. Batched form references
+ * excluded.* in the SET clause so each conflicting row picks up its
+ * own newly-computed counts.
+ *
+ * Called by the scorecard helper before reading; also exposed as an
+ * action so the operator can force-refresh.
  */
 export async function refreshSegmentCounts(probeId: string): Promise<void> {
   const counts = await db
@@ -93,31 +100,33 @@ export async function refreshSegmentCounts(probeId: string): Promise<void> {
     .where(eq(marketProbeTargets.probeId, probeId))
     .groupBy(marketProbeTargets.segment);
 
-  for (const c of counts) {
-    if (!c.segment) continue;
-    await db
-      .insert(marketMapSegments)
-      .values({
-        id: createId(),
-        probeId,
-        segmentName: c.segment,
-        identifiedCount: c.identified,
-        contactedCount: c.contacted,
-        repliedCount: c.replied,
-      })
-      .onConflictDoUpdate({
-        target: [
-          marketMapSegments.probeId,
-          marketMapSegments.segmentName,
-        ],
-        set: {
-          identifiedCount: c.identified,
-          contactedCount: c.contacted,
-          repliedCount: c.replied,
-          updatedAt: new Date(),
-        },
-      });
-  }
+  const rows = counts
+    .filter((c): c is typeof c & { segment: string } => Boolean(c.segment))
+    .map((c) => ({
+      id: createId(),
+      probeId,
+      segmentName: c.segment,
+      identifiedCount: c.identified,
+      contactedCount: c.contacted,
+      repliedCount: c.replied,
+    }));
+  if (rows.length === 0) return;
+
+  await db
+    .insert(marketMapSegments)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [
+        marketMapSegments.probeId,
+        marketMapSegments.segmentName,
+      ],
+      set: {
+        identifiedCount: sql`excluded.identified_count`,
+        contactedCount: sql`excluded.contacted_count`,
+        repliedCount: sql`excluded.replied_count`,
+        updatedAt: new Date(),
+      },
+    });
 }
 
 export async function listSegments(
