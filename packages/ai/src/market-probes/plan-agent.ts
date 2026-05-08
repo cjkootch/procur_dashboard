@@ -110,7 +110,18 @@ export async function generateProbePlan(
     // Without an API key, return a deterministic skeleton so the
     // operator can still see the probe shell and proceed manually.
     // The dashboard reads probe.plan_json — empty plan still renders.
-    return { plan: defaultPlan(ctx), hypotheses: [] };
+    // Stamp generationStatus so the dashboard renders a fallback
+    // banner and autopilot refuses to send (the alternative is a
+    // probe that looks healthy but ships outreach grounded in
+    // nothing).
+    return {
+      plan: {
+        ...defaultPlan(ctx),
+        generationStatus: 'fallback_no_api_key',
+        generationError: 'ANTHROPIC_API_KEY is not set in this environment.',
+      },
+      hypotheses: [],
+    };
   }
 
   const client = getClient();
@@ -174,13 +185,21 @@ Produce the plan JSON.`,
       err: err instanceof Error ? err.message : String(err),
       rawSnippet: text.slice(0, 300),
     });
-    return { plan: defaultPlan(ctx), hypotheses: [] };
+    return {
+      plan: {
+        ...defaultPlan(ctx),
+        generationStatus: 'fallback_parse_error',
+        generationError: `Sonnet returned malformed JSON. Raw prefix: ${text.slice(0, 200)}`,
+      },
+      hypotheses: [],
+    };
   }
 
   // Defensive coalesce — if any field missing, fill with default. The
   // model occasionally drops fields when it gets terse.
   const fallback = defaultPlan(ctx);
   const plan: ProbePlan = {
+    generationStatus: 'ok',
     hypothesis: parsed.hypothesis ?? fallback.hypothesis,
     segments:
       Array.isArray(parsed.segments) && parsed.segments.length > 0

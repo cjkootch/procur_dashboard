@@ -235,6 +235,17 @@ export interface ProbePlan {
   outreachAngle?: string;
   successCriteria?: string[];
   tasks?: ProbeTask[];
+  /** Plan-generation status. Surfaces fallback paths so the operator
+   *  knows when a plan was synthesized from a deterministic skeleton
+   *  rather than the Sonnet pass — and so autopilot refuses to send
+   *  outreach grounded in a hollow plan. Absent on plans created
+   *  before this field landed; `setProbePlan` treats absent as 'ok'
+   *  for back-compat. */
+  generationStatus?: 'ok' | 'fallback_no_api_key' | 'fallback_parse_error';
+  /** Short error snippet (LLM raw output prefix or env-var diagnosis)
+   *  surfaced in the dashboard fallback banner. Only set when
+   *  generationStatus !== 'ok'. */
+  generationError?: string;
 }
 
 export interface ProbeTask {

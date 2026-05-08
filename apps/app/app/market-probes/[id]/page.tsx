@@ -28,6 +28,7 @@ import {
   addHypothesisAction,
   addThesisOrgsAction,
   advanceLadderAction,
+  approveFallbackPlanAction,
   approveStrategyProposalAction,
   discoverTargetsAction,
   findDecisionMakersAction,
@@ -197,6 +198,47 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
 
       {/* Scorecard — composite metrics. Computed on every page load
           (cheap; reads + a refreshSegmentCounts pass). */}
+      {plan.generationStatus && plan.generationStatus !== 'ok' && (
+        <section className="mb-6 rounded-[var(--radius-lg)] border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="mb-2 font-semibold">
+            Plan generation fell back to a deterministic skeleton.
+          </div>
+          <div className="mb-3">
+            {plan.generationStatus === 'fallback_no_api_key'
+              ? 'ANTHROPIC_API_KEY is not set in this environment — the Sonnet pass was skipped.'
+              : 'Sonnet returned malformed JSON and the parser fell through.'}{' '}
+            The probe is held at <code>planning</code> and autopilot is
+            blocked until the plan is regenerated or you explicitly
+            approve the hollow plan.
+          </div>
+          {plan.generationError && (
+            <div className="mb-3 max-h-24 overflow-auto rounded-[var(--radius-sm)] bg-white/60 px-2 py-1.5 font-mono text-[11px] text-amber-900/80">
+              {plan.generationError}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <form action={generatePlanAction}>
+              <input type="hidden" name="probeId" value={probe.id} />
+              <button
+                type="submit"
+                className="rounded-[var(--radius-md)] bg-amber-900 px-3 py-1.5 text-xs font-medium text-amber-50"
+              >
+                Retry plan generation
+              </button>
+            </form>
+            <form action={approveFallbackPlanAction}>
+              <input type="hidden" name="probeId" value={probe.id} />
+              <button
+                type="submit"
+                className="rounded-[var(--radius-md)] border border-amber-700 px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100"
+              >
+                Approve hollow plan anyway
+              </button>
+            </form>
+          </div>
+        </section>
+      )}
+
       {scorecard && (
         <section className="mb-6 grid grid-cols-2 gap-3 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-4 md:grid-cols-5">
           <ScoreCell label="Reply rate" value={`${Math.round(scorecard.replyRate * 100)}%`} sub={`${scorecard.repliedCount} / ${scorecard.sentCount}`} />

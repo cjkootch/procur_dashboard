@@ -201,6 +201,41 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
 }
 
 /**
+ * Operator acknowledges a fallback-generated plan and unblocks
+ * autopilot. Used when the plan came back from the deterministic
+ * skeleton path (no API key / parse error) and the operator has
+ * reviewed/edited the plan manually and wants to proceed anyway.
+ * Clears the generationStatus + generationError fields and flips
+ * status planning → active.
+ */
+export async function approveFallbackPlanAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  if (!probeId) throw new Error('probeId required');
+
+  const probe = await getProbe(probeId);
+  if (!probe) throw new Error('probe not found');
+  if (!probe.planJson?.generationStatus) {
+    // Already clean — no-op (idempotent so a stale UI button click
+    // doesn't error).
+    return;
+  }
+  // Strip the fallback markers and re-run setProbePlan, which now
+  // sees a clean plan and flips status to 'active'.
+  const {
+    generationStatus: _drop,
+    generationError: _drop2,
+    ...cleanPlan
+  } = probe.planJson;
+  void _drop;
+  void _drop2;
+  await setProbePlan(probeId, { ...cleanPlan, generationStatus: 'ok' });
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/**
  * Run target discovery for a probe. Reuses
  * `recommendCommunicationTargets` (the existing intelligence-graph
  * ranker) with the probe's market as a country filter. Inserts the

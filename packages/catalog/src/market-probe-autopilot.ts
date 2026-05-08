@@ -155,6 +155,25 @@ export async function autopilotSendBatch(
     };
   }
 
+  // Plan-generation gate. Refuse to send outreach grounded in a
+  // fallback skeleton (no API key / parse error). The plan-agent
+  // stamps generationStatus on its output; setProbePlan keeps the
+  // probe at 'planning' when it's a fallback, so this guard mostly
+  // catches the case where an operator explicitly flipped the probe
+  // to 'active' without resolving the plan-gen failure. Belt + braces.
+  const planStatus = probe.planJson?.generationStatus;
+  if (planStatus && planStatus !== 'ok') {
+    return {
+      ok: false,
+      reason: `probe.plan was generated via fallback (${planStatus}); regenerate the plan or explicitly approve before autopilot can send`,
+      attempted: 0,
+      drafted: 0,
+      sent: 0,
+      queued: 0,
+      skipped,
+    };
+  }
+
   // Kill criteria check via the scorecard (cheap; reads cached counts).
   const scorecard = await computeProbeScorecard(input.probeId);
   if (scorecard) {
