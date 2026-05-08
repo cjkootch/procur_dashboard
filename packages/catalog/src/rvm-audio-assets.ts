@@ -33,7 +33,12 @@ export interface CreateRvmAudioAssetInput {
   audioFormat?: string;
   durationMs?: number | null;
   voiceProfileId?: string | null;
-  generatedVia: 'voicebox' | 'manual_upload' | 'elevenlabs' | 'other';
+  generatedVia:
+    | 'voicebox'
+    | 'manual_upload'
+    | 'openai_tts'
+    | 'elevenlabs'
+    | 'other';
   generatedByUserId?: string | null;
 }
 

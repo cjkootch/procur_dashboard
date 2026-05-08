@@ -63,6 +63,7 @@ const FormSchema = z.object({
   generatedVia: z.enum([
     'voicebox',
     'manual_upload',
+    'openai_tts',
     'elevenlabs',
     'other',
   ]),
