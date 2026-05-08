@@ -691,6 +691,24 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
                   </select>
                 </label>
                 <label className="grid gap-1">
+                  <span>Outreach language (ISO 639-1)</span>
+                  <input
+                    type="text"
+                    name="outreachLanguage"
+                    defaultValue={probe.outreachLanguage ?? ''}
+                    placeholder="e.g. ja, fr, ko, es (blank = English)"
+                    maxLength={2}
+                    pattern="[a-zA-Z]{2}"
+                    className="w-24 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5 text-xs"
+                  />
+                  <span className="text-[10px] text-[color:var(--color-muted-foreground)]">
+                    When set, both drafters write first-touch in this
+                    language and the reply path stays in language across
+                    the thread (the inbox auto-translates inbound to
+                    English on display either way). Blank = English.
+                  </span>
+                </label>
+                <label className="grid gap-1">
                   <span>Domain hint (optional, max 1000 chars)</span>
                   <textarea
                     name="domainHint"
