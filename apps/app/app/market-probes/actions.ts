@@ -16,7 +16,9 @@ import {
   bulkInsertHypotheses,
   computeProbeScorecard,
   createProbe,
+  computeVariantPerformance,
   createVariant,
+  listVariants,
   setVariantStatus,
   type VariantStatus,
   findDecisionMakersForTarget,
@@ -59,6 +61,7 @@ import {
   generateLearningReport,
   generateProbePlan,
   proposeProbeStrategyAdjustments,
+  proposeVariantAdjustments,
   type ProbeMetricsSnapshot,
 } from '@procur/ai';
 
@@ -1300,6 +1303,88 @@ export async function setVariantStatusAction(
     throw new Error('variantId + probeId + status required');
   }
   await setVariantStatus({ variantId, status });
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/**
+ * Propose new message variants based on observed per-variant
+ * performance. The agent reads current variants + their reply rates
+ * + the plan's outreach angle, and emits 0-3 nominations
+ * (rationale-grounded). Each accepted nomination lands as a paused
+ * variant row — the operator activates it via the existing
+ * setVariantStatusAction flow.
+ *
+ * Discipline matches the strategy-agent pattern: the agent NEVER
+ * mutates active variants directly. Promotion / archival still flows
+ * through setVariantStatus. Variants are created in 'paused' state
+ * so they don't auto-dispatch on the next autopilot batch — operator
+ * reviews + activates first.
+ */
+export async function generateVariantProposalsAction(
+  formData: FormData,
+): Promise<void> {
+  const { user } = await requireCompany();
+  const probeId = str(formData, 'probeId');
+  if (!probeId) throw new Error('probeId required');
+
+  const probe = await getProbe(probeId);
+  if (!probe) throw new Error('probe not found');
+
+  const variants = await listVariants(probeId);
+  const performance = await computeVariantPerformance(probeId);
+  const perfBySlug = new Map(performance.map((p) => [p.variantId, p]));
+
+  const variantsForAgent = variants.map((v) => {
+    const perf = perfBySlug.get(v.id);
+    return {
+      variantId: v.id,
+      variantName: v.variantName,
+      status: v.status as 'active' | 'paused' | 'winner' | 'archived',
+      angle: v.angle,
+      subjectTemplate: v.subjectTemplate,
+      bodyTemplate: v.bodyTemplate,
+      sent: perf?.sent ?? 0,
+      replied: perf?.replied ?? 0,
+      positiveReplied: perf?.positiveReplied ?? 0,
+      bounced: perf?.bounced ?? 0,
+      unsubscribed: perf?.unsubscribed ?? 0,
+      replyRate: perf?.replyRate ?? 0,
+      positiveReplyRate: perf?.positiveReplyRate ?? 0,
+      bounceRate: perf?.bounceRate ?? 0,
+    };
+  });
+
+  const nominations = await proposeVariantAdjustments({
+    probeName: probe.marketName,
+    country: probe.country,
+    productThesis: probe.productThesis,
+    ladderStage: probe.ladderStage,
+    planOutreachAngle: probe.planJson?.outreachAngle ?? '',
+    currentVariants: variantsForAgent,
+    // rejectedNominations would ride here once we add a per-probe
+    // nomination-rejection table; today the operator's rejection
+    // mechanism for variants is "delete the paused row before
+    // activating it", which doesn't carry feedback. Future work.
+  });
+
+  // Insert each nomination as a paused variant. Operator activates
+  // via the existing setVariantStatusAction flow. notes carries the
+  // agent's rationale so the dashboard surfaces "why this variant
+  // was proposed" alongside the variant itself.
+  for (const n of nominations) {
+    await createVariant({
+      probeId,
+      variantName: n.variantName,
+      status: 'paused',
+      angle: n.angle,
+      subjectTemplate: n.subjectTemplate,
+      bodyTemplate: n.bodyTemplate,
+      weight: n.weight,
+      notes: `[agent-proposed] ${n.rationale}`,
+      createdByUserId: user.id,
+    });
+  }
+
   revalidatePath(`/market-probes/${probeId}`);
 }
 

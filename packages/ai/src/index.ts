@@ -126,6 +126,12 @@ export {
   type ProbeStrategyProposal,
 } from './market-probes/strategy-agent';
 export {
+  proposeVariantAdjustments,
+  type VariantAgentContext,
+  type VariantNomination,
+  type VariantPerformanceForAgent,
+} from './market-probes/variant-agent';
+export {
   generateLearningReport,
   type LearningReportContext,
   type LearningReportResult,
