@@ -2,8 +2,10 @@ import { Webhook } from 'svix';
 import { and, eq, sql } from 'drizzle-orm';
 import {
   contacts,
+  conversationSettings,
   db,
   events,
+  marketProbes,
   messages,
   rawEvents,
   threads,
@@ -16,11 +18,15 @@ import {
 } from '@procur/ai';
 import {
   findThreadIdByInReplyTo,
+  maybeQueueAiEmailReply,
   normalizeRfcMessageId,
+  parseSubAddressToken,
+  probeDomainHintGuidance,
+  probeFormalityGuidance,
+  resolveLeadFormSubmissionToken,
 } from '@procur/catalog';
 import { recordWebhookReceipt } from '../../../../lib/webhook-events';
 import { notifyAllOperators } from '../../../../lib/notification-queries';
-import { maybeQueueAiEmailReply } from '@procur/catalog';
 
 export const runtime = 'nodejs';
 
@@ -200,6 +206,35 @@ export async function POST(req: Request): Promise<Response> {
   const fromEmail = pickFirstEmail(data.from);
   const toEmails = pickAllEmails(data.to);
   const subject = data.subject ?? null;
+
+  // Lead-form reply attribution. When the autopilot submits a
+  // counterparty's contact form, the form's email field gets the
+  // sub-addressed sender (hello+<token>@DOMAIN). Recipients replying
+  // to the form acknowledgement send to that exact address. Scan
+  // To: addresses for any plus-addressed variant; resolve the token
+  // to (probe, target, entity_slug) so we can attach probe context
+  // to this inbound. Without this, the operator would see an
+  // unattributed inbound and the AI auto-reply path wouldn't know
+  // which probe persona to use.
+  let leadFormAttribution: {
+    token: string;
+    probeId: string;
+    targetId: string;
+    entitySlug: string;
+  } | null = null;
+  for (const candidate of toEmails) {
+    const token = parseSubAddressToken(candidate);
+    if (!token) continue;
+    const tokenRow = await resolveLeadFormSubmissionToken(token);
+    if (!tokenRow) continue;
+    leadFormAttribution = {
+      token: tokenRow.token,
+      probeId: tokenRow.probeId,
+      targetId: tokenRow.targetId,
+      entitySlug: tokenRow.entitySlug,
+    };
+    break; // first matching token wins
+  }
   let bodyText = data.text ?? null;
   let bodyHtml = data.html ?? null;
 
@@ -386,6 +421,104 @@ export async function POST(req: Request): Promise<Response> {
     subject,
   });
 
+  // Lead-form-attributed inbound: upsert conversation_settings on
+  // the sender's email so the reply path inherits the originating
+  // probe's persona (alias + signature flow through, formality +
+  // domain hint flow through customPrompt). Mirrors what the
+  // autopilot does at first-touch for email recipients — for
+  // lead_form there's no first-touch conversation_settings (form
+  // submissions are outbound-only), so this inbound is the FIRST
+  // moment we have a recipient email to key on.
+  if (leadFormAttribution && fromEmail) {
+    try {
+      const [probeRow] = await db
+        .select({
+          alias: marketProbes.alias,
+          formalityLevel: marketProbes.formalityLevel,
+          domainHint: marketProbes.domainHint,
+          outreachLanguage: marketProbes.outreachLanguage,
+          tier: marketProbes.tier,
+        })
+        .from(marketProbes)
+        .where(eq(marketProbes.id, leadFormAttribution.probeId))
+        .limit(1);
+      if (probeRow) {
+        const formality =
+          probeRow.formalityLevel === 'high' ||
+          probeRow.formalityLevel === 'professional' ||
+          probeRow.formalityLevel === 'casual'
+            ? probeRow.formalityLevel
+            : null;
+        const customPromptParts: string[] = [];
+        const fg = probeFormalityGuidance(formality);
+        if (fg) {
+          customPromptParts.push(`Formality: ${formality?.toUpperCase()} — ${fg}`);
+        }
+        const dh = probeDomainHintGuidance(probeRow.domainHint);
+        if (dh) customPromptParts.push(`Domain framing: ${dh}`);
+        const customPrompt =
+          customPromptParts.length > 0
+            ? customPromptParts.join('\n')
+            : null;
+        await db
+          .insert(conversationSettings)
+          .values({
+            channel: 'email',
+            conversationKey: fromEmail,
+            aiEnabled: true,
+            authority: 'chitchat_only',
+            approvalMode: probeRow.tier >= 3 ? 'full_approval' : 'tiered',
+            tone: 'brokerage_direct',
+            language: probeRow.outreachLanguage ?? 'auto',
+            identityDisclosure: 'on_request',
+            linkedProbeId: leadFormAttribution.probeId,
+            linkedEntitySlug: leadFormAttribution.entitySlug,
+            responseDelayMinSec: 0,
+            responseDelayMaxSec: 0,
+            maxTurns: 6,
+            maxCostUsdCents: 100,
+            maxDurationHours: 168,
+            channelConfig: {
+              source: 'lead_form_reply_attribution',
+              token: leadFormAttribution.token,
+            },
+            ...(customPrompt ? { customPrompt } : {}),
+          })
+          .onConflictDoUpdate({
+            target: [
+              conversationSettings.channel,
+              conversationSettings.conversationKey,
+            ],
+            set: {
+              aiEnabled: sql`${conversationSettings.aiEnabled} OR true`,
+              linkedProbeId: leadFormAttribution.probeId,
+              linkedEntitySlug: sql`COALESCE(${conversationSettings.linkedEntitySlug}, ${leadFormAttribution.entitySlug})`,
+              ...(probeRow.outreachLanguage
+                ? {
+                    language: sql`CASE WHEN ${conversationSettings.language} = 'auto' THEN ${probeRow.outreachLanguage} ELSE ${conversationSettings.language} END`,
+                  }
+                : {}),
+              ...(customPrompt
+                ? {
+                    customPrompt: sql`COALESCE(${conversationSettings.customPrompt}, ${customPrompt})`,
+                  }
+                : {}),
+              updatedAt: new Date(),
+            },
+          });
+      }
+    } catch (err) {
+      // Attribution upsert failure must NOT block the inbound. The
+      // message still gets persisted; operator sees it without probe
+      // linkage; manual recovery available.
+      console.error(
+        '[resend-inbound] lead-form attribution upsert failed',
+        err,
+        { token: leadFormAttribution.token },
+      );
+    }
+  }
+
   await db.insert(messages).values({
     id: newMessageId,
     threadId,
@@ -401,6 +534,16 @@ export async function POST(req: Request): Promise<Response> {
       contact_id: contactId,
       org_id: contactOrgId,
       provider_email_id: data.email_id ?? null,
+      ...(leadFormAttribution
+        ? {
+            lead_form_attribution: {
+              token: leadFormAttribution.token,
+              probe_id: leadFormAttribution.probeId,
+              target_id: leadFormAttribution.targetId,
+              entity_slug: leadFormAttribution.entitySlug,
+            },
+          }
+        : {}),
       ...(translation
         ? {
             detected_language_code: translation.detectedLanguageCode,
