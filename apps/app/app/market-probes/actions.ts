@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
 import { createId } from '@procur/ai';
 import {
+  addApolloLookalikesToProbe,
   createProbe,
   getProbe,
   markProbeTaskStatus,
@@ -212,6 +213,51 @@ export async function setProbeStatusAction(formData: FormData): Promise<void> {
   await setProbeStatus(probeId, status);
   revalidatePath(`/market-probes/${probeId}`);
   revalidatePath('/market-probes');
+}
+
+/**
+ * Apollo lookalikes — given an operator-picked seed (a known_entities
+ * slug already enriched from Apollo), find attribute-similar orgs via
+ * the Apollo search endpoint and add them as probe targets. Hard-fenced
+ * by probe.country so lookalikes don't drift outside the sandbox.
+ *
+ * The helper is idempotent on (probe_id, entity_slug) so re-running
+ * with the same seed just refreshes evidence.
+ */
+export async function addApolloLookalikesAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  const seedSlug = str(formData, 'seedSlug');
+  if (!probeId || !seedSlug) throw new Error('probeId + seedSlug required');
+
+  const result = await addApolloLookalikesToProbe({
+    probeId,
+    seedSlug,
+    limit: int(formData, 'limit') ?? 25,
+  });
+
+  // Whether ok or not, advance the identify_targets task so the
+  // operator sees the run was attempted. The task result text carries
+  // the status — successful runs name the count, failures name the
+  // reason. Operator can re-run anytime.
+  if (result.ok) {
+    await markProbeTaskStatus(
+      probeId,
+      'identify_targets',
+      result.targetsCreated > 0 ? 'done' : 'in_progress',
+      `Apollo lookalikes (seed ${seedSlug}): ${result.candidatesFound} candidate${result.candidatesFound === 1 ? '' : 's'} found, ${result.targetsCreated} added${result.stubsCreated > 0 ? ` (${result.stubsCreated} new rolodex stub${result.stubsCreated === 1 ? '' : 's'})` : ''}.`,
+    );
+  } else {
+    await markProbeTaskStatus(
+      probeId,
+      'identify_targets',
+      'in_progress',
+      `Apollo lookalikes (seed ${seedSlug}): ${result.error}`,
+    );
+  }
+  revalidatePath(`/market-probes/${probeId}`);
 }
 
 export async function setTaskSkippedAction(formData: FormData): Promise<void> {
