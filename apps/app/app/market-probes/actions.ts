@@ -29,6 +29,7 @@ import {
   listAtlasFactsForProbe,
   listHypothesesForProbe,
   listProbeFeedbackShortcuts,
+  listRecentLearningReportsByCountry,
   listRejectionHistory,
   listSegments,
   listStrategyProposals,
@@ -84,6 +85,43 @@ function int(formData: FormData, key: string): number | null {
   if (!v) return null;
   const n = Number.parseInt(v, 10);
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Compress a LearningReportPayload into a tight string the strategy
+ * + learning agents can scan without ballooning the prompt. Pulls
+ * the highest-leverage fields (segments, titles, prescriptive rules,
+ * next-probe recommendation) — the agent uses these to avoid
+ * re-proposing already-tested directions and to synthesize against
+ * prior wisdom rather than emit isolated reports.
+ */
+function digestLearningReportPayload(p: LearningReportPayload): string {
+  const parts: string[] = [];
+  if (p.bestSegment?.name) {
+    parts.push(`best segment: ${p.bestSegment.name}`);
+  }
+  if (p.worstSegment?.name) {
+    parts.push(`worst segment: ${p.worstSegment.name}`);
+  }
+  if (p.bestContactTitle?.title) {
+    parts.push(`best title: ${p.bestContactTitle.title}`);
+  }
+  if (p.strongestSignal?.signal) {
+    parts.push(
+      `strong signal: ${p.strongestSignal.signal} (delta ${p.strongestSignal.replyDelta?.toFixed?.(2) ?? '?'})`,
+    );
+  }
+  if (Array.isArray(p.badTargetRules) && p.badTargetRules.length > 0) {
+    parts.push(
+      `rules: ${p.badTargetRules.map((r) => r.rule).slice(0, 3).join(' | ')}`,
+    );
+  }
+  if (p.recommendedNextProbe?.rationale) {
+    parts.push(
+      `recommended next: ${p.recommendedNextProbe.rationale.slice(0, 140)}`,
+    );
+  }
+  return parts.length > 0 ? parts.join(' · ') : '(no payload digest)';
 }
 
 function csv(formData: FormData, key: string): string[] {
@@ -550,6 +588,19 @@ export async function generateStrategyProposalsAction(
   const targets = await listTargetsForProbe(probeId);
   const rejectionHistory = await listRejectionHistory(probeId);
 
+  // Cross-probe memory: prior learning reports from this country.
+  // The agent uses these to avoid re-proposing pivots earlier probes
+  // already explored. Empty when this is the country's first probe
+  // or when probe.country isn't set (multi-country probes skip the
+  // memory feed since the country filter wouldn't be meaningful).
+  const priorReports = probe.country
+    ? await listRecentLearningReportsByCountry({
+        country: probe.country,
+        excludeProbeId: probeId,
+        limit: 5,
+      })
+    : [];
+
   // Aggregate metrics from targets. Phase 2C reads from
   // market_probe_targets directly; Phase 2F will integrate touchpoint
   // events for sub-day freshness.
@@ -572,6 +623,12 @@ export async function generateStrategyProposalsAction(
       rationale: r.rationale,
       feedback: r.feedback,
       rejectedAt: r.rejectedAt.toISOString(),
+    })),
+    priorLearningReports: priorReports.map((r) => ({
+      probeName: r.probeName,
+      generatedAt: r.generatedAt.toISOString(),
+      summary: r.summary,
+      payloadDigest: digestLearningReportPayload(r.payload),
     })),
   });
 
@@ -899,6 +956,17 @@ export async function generateLearningReportAction(
     throw new Error('scorecard unavailable — probe has no targets yet');
   }
 
+  // Cross-probe memory: prior learning reports in this country. The
+  // agent uses these to synthesize cumulative wisdom rather than emit
+  // an isolated take. Empty for the country's first probe.
+  const priorReports = probe.country
+    ? await listRecentLearningReportsByCountry({
+        country: probe.country,
+        excludeProbeId: probeId,
+        limit: 5,
+      })
+    : [];
+
   const durationMs = Date.now() - new Date(probe.createdAt).getTime();
   const durationDays = Math.max(1, Math.round(durationMs / 86_400_000));
 
@@ -964,6 +1032,12 @@ export async function generateLearningReportAction(
       proposalType: p.proposalType,
       rationale: p.rationale,
       feedback: p.reviewerFeedback,
+    })),
+    priorLearningReports: priorReports.map((r) => ({
+      probeName: r.probeName,
+      generatedAt: r.generatedAt.toISOString(),
+      summary: r.summary,
+      payloadDigest: digestLearningReportPayload(r.payload),
     })),
   });
 

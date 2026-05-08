@@ -241,5 +241,70 @@ export async function getLatestLearningReport(
   return row ?? null;
 }
 
+/**
+ * Cross-probe memory feed for the strategy + learning agents. Returns
+ * the most recent learning reports from PRIOR probes in a given
+ * country, optionally excluding the current probe so an in-flight
+ * report doesn't reference itself.
+ *
+ * The strategy agent uses this to avoid re-proposing pivots that
+ * earlier probes in the same market already explored. The
+ * learning-report agent uses it to synthesize cumulative market
+ * wisdom rather than emitting isolated reports per probe.
+ *
+ * Country is the natural filter — Cole runs sequential probes in the
+ * same country exploring different angles, so country recency is the
+ * right windowing knob. `excludeProbeId` skips the current probe's
+ * own prior reports (regenerations) so the report doesn't tell the
+ * agent "consider what you said last time" — that's already in the
+ * rejection history.
+ */
+export async function listRecentLearningReportsByCountry(input: {
+  country: string;
+  excludeProbeId?: string;
+  limit?: number;
+}): Promise<
+  Array<{
+    probeId: string;
+    probeName: string;
+    country: string | null;
+    generatedAt: Date;
+    summary: string;
+    payload: LearningReportPayload;
+  }>
+> {
+  const limit = input.limit ?? 5;
+  const upper = input.country.toUpperCase();
+  const rows = await db.execute<{
+    probe_id: string;
+    probe_name: string;
+    country: string | null;
+    generated_at: Date;
+    summary: string;
+    payload_json: LearningReportPayload;
+  }>(sql`
+    SELECT lr.probe_id,
+           p.market_name AS probe_name,
+           p.country,
+           lr.generated_at,
+           lr.summary,
+           lr.payload_json
+      FROM market_probe_learning_reports lr
+      JOIN market_probes p ON p.id = lr.probe_id
+     WHERE UPPER(p.country) = ${upper}
+       ${input.excludeProbeId ? sql`AND lr.probe_id <> ${input.excludeProbeId}` : sql``}
+     ORDER BY lr.generated_at DESC
+     LIMIT ${limit}
+  `);
+  return (rows.rows as Array<Record<string, unknown>>).map((r) => ({
+    probeId: r.probe_id as string,
+    probeName: r.probe_name as string,
+    country: (r.country as string | null) ?? null,
+    generatedAt: r.generated_at as Date,
+    summary: r.summary as string,
+    payload: (r.payload_json as LearningReportPayload) ?? {},
+  }));
+}
+
 // Re-export the structural type so apps/app reads via @procur/catalog.
 export type { LearningReportPayload };
