@@ -116,6 +116,8 @@ export type { CacheUsage } from './prompt-blocks';
 export {
   generateProbePlan,
   type ProbeContextForPlan,
+  type ProbePlanResult,
+  type ProposedHypothesis,
 } from './market-probes/plan-agent';
 export {
   proposeProbeStrategyAdjustments,

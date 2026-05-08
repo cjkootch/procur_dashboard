@@ -2,23 +2,33 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
 import {
+  countTargetsByJustification,
   getProbe,
   listAtlasFactsForProbe,
+  listHypothesesForProbe,
   listStrategyProposals,
   listTargetsForProbe,
   ATLAS_FACT_TYPES,
+  HYPOTHESIS_TYPES,
+  HYPOTHESIS_STATUSES,
+  LADDER_STAGES,
 } from '@procur/catalog';
 import {
   addApolloLookalikesAction,
   addAtlasFactAction,
+  addHypothesisAction,
   addThesisOrgsAction,
+  advanceLadderAction,
   approveStrategyProposalAction,
   discoverTargetsAction,
   findDecisionMakersAction,
   generatePlanAction,
   generateStrategyProposalsAction,
+  markTargetResearchOnlyAction,
   rejectStrategyProposalAction,
+  resolveHypothesisAction,
   setProbeStatusAction,
+  setTargetJustificationAction,
   setTaskSkippedAction,
 } from '../actions';
 
@@ -55,18 +65,31 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
   const { id } = await params;
   const probe = await getProbe(id);
   if (!probe) notFound();
-  const [targets, atlasFacts, pendingProposals, reviewedProposals] =
-    await Promise.all([
-      listTargetsForProbe(id),
-      listAtlasFactsForProbe(id),
-      listStrategyProposals(id, { status: 'proposed' }),
-      Promise.all([
-        listStrategyProposals(id, { status: 'approved' }),
-        listStrategyProposals(id, { status: 'rejected' }),
-      ]).then(([a, r]) => [...a, ...r].sort((x, y) =>
-        (y.reviewedAt?.getTime() ?? 0) - (x.reviewedAt?.getTime() ?? 0),
-      )),
-    ]);
+  const [
+    targets,
+    atlasFacts,
+    pendingProposals,
+    reviewedProposals,
+    hypotheses,
+    justificationCounts,
+  ] = await Promise.all([
+    listTargetsForProbe(id),
+    listAtlasFactsForProbe(id),
+    listStrategyProposals(id, { status: 'proposed' }),
+    Promise.all([
+      listStrategyProposals(id, { status: 'approved' }),
+      listStrategyProposals(id, { status: 'rejected' }),
+    ]).then(([a, r]) => [...a, ...r].sort((x, y) =>
+      (y.reviewedAt?.getTime() ?? 0) - (x.reviewedAt?.getTime() ?? 0),
+    )),
+    listHypothesesForProbe(id),
+    countTargetsByJustification(id),
+  ]);
+
+  const ladderIdx = LADDER_STAGES.indexOf(
+    probe.ladderStage as (typeof LADDER_STAGES)[number],
+  );
+  const ladderNext = ladderIdx >= 0 ? LADDER_STAGES[ladderIdx + 1] : undefined;
 
   const plan = probe.planJson ?? {};
   const tasks = plan.tasks ?? [];
@@ -98,6 +121,24 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
           <span className="rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-xs">
             Tier {probe.tier}
           </span>
+          <span
+            className="rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-xs font-mono"
+            title="Probe ladder stage. Sequential: market_structure → routing → pain_discovery → commercial_qualification → deal_room_conversion. Hard discipline: agent cannot skip ahead."
+          >
+            stage: {probe.ladderStage}
+          </span>
+          {ladderNext && (
+            <form action={advanceLadderAction}>
+              <input type="hidden" name="probeId" value={probe.id} />
+              <button
+                type="submit"
+                className="rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-xs hover:bg-[color:var(--color-muted)]/40"
+                title={`Advance to ${ladderNext}. Gated on evidence from current stage.`}
+              >
+                advance →
+              </button>
+            </form>
+          )}
           <span className="text-xs text-[color:var(--color-muted-foreground)]">
             cap {probe.dailySendLimit}/day, {probe.totalSendLimit} total
           </span>
@@ -380,6 +421,14 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
           Targets ({targets.length})
         </h2>
+        <p className="mb-3 text-xs text-[color:var(--color-muted-foreground)]">
+          {justificationCounts.justified} justified ·{' '}
+          {justificationCounts.pending} pending ·{' '}
+          {justificationCounts.research_only} research-only.{' '}
+          <span className="italic">
+            Tier 1 autopilot only sends to justified targets (Phase 2H).
+          </span>
+        </p>
         {targets.length === 0 ? (
           <p className="text-sm text-[color:var(--color-muted-foreground)]">
             No targets yet. Run <strong>Discover targets</strong> to
@@ -446,24 +495,288 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
                       ))}
                     </ul>
                   )}
-                  <div className="mt-1.5 flex items-center gap-2">
+                  <div className="mt-1.5 flex items-center gap-2 text-[11px]">
                     <form action={findDecisionMakersAction}>
                       <input type="hidden" name="probeId" value={probe.id} />
                       <input type="hidden" name="targetId" value={t.id} />
                       <button
                         type="submit"
-                        className="text-[11px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
+                        className="text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
                         title="Run Apollo searchPeople for decision-makers at this org. Results land in the entity profile's Decision-makers panel."
                       >
                         Find decision-makers
                       </button>
                     </form>
+                    <span className="text-[color:var(--color-muted-foreground)]">
+                      ·
+                    </span>
+                    <form action={markTargetResearchOnlyAction}>
+                      <input type="hidden" name="probeId" value={probe.id} />
+                      <input type="hidden" name="targetId" value={t.id} />
+                      <button
+                        type="submit"
+                        className="text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
+                        title="Demote to research_only — never auto-drafted."
+                      >
+                        research only
+                      </button>
+                    </form>
+                    <span
+                      className={`ml-auto rounded-full px-2 py-0.5 font-medium ${
+                        t.justificationState === 'justified'
+                          ? 'bg-green-100 text-green-900'
+                          : t.justificationState === 'research_only'
+                            ? 'bg-[color:var(--color-muted)]/60'
+                            : 'bg-yellow-100 text-yellow-900'
+                      }`}
+                      title={
+                        t.justificationState === 'justified'
+                          ? 'Eligible for autopilot draft (Phase 2H).'
+                          : t.justificationState === 'research_only'
+                            ? 'Held back from outreach.'
+                            : 'Justification pending — fill in the why fields below to promote to justified.'
+                      }
+                    >
+                      {t.justificationState}
+                    </span>
                   </div>
+                  {/* Justification panel — collapsed by default; the
+                      operator opens to fill in the why-fields. Promotes
+                      to justification_state='justified' when all four
+                      narrative fields are populated. */}
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-[11px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]">
+                      Justification {t.justificationState === 'justified' ? '✓' : ''}
+                    </summary>
+                    <form
+                      action={setTargetJustificationAction}
+                      className="mt-2 grid gap-2 rounded-[var(--radius-sm)] border border-dashed border-[color:var(--color-border)] p-2 text-xs"
+                    >
+                      <input
+                        type="hidden"
+                        name="probeId"
+                        value={probe.id}
+                      />
+                      <input
+                        type="hidden"
+                        name="targetId"
+                        value={t.id}
+                      />
+                      <label className="flex flex-col gap-0.5">
+                        <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                          Why this company?
+                        </span>
+                        <input
+                          type="text"
+                          name="whyThisCompany"
+                          defaultValue={t.whyThisCompany ?? ''}
+                          placeholder="What evidence makes this a real candidate?"
+                          className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-0.5">
+                        <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                          Why this person?
+                        </span>
+                        <input
+                          type="text"
+                          name="whyThisPerson"
+                          defaultValue={t.whyThisPerson ?? ''}
+                          placeholder="Title / role / responsibility — why are we writing to THIS contact?"
+                          className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-0.5">
+                        <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                          Why now?
+                        </span>
+                        <input
+                          type="text"
+                          name="whyNow"
+                          defaultValue={t.whyNow ?? ''}
+                          placeholder="Trigger — recent imports, new tender, hiring, news event..."
+                          className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-0.5">
+                        <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                          Safest first ask
+                        </span>
+                        <input
+                          type="text"
+                          name="safestFirstAsk"
+                          defaultValue={t.safestFirstAsk ?? ''}
+                          placeholder="Most-deferential single question. NEVER pricing/quantity/terms."
+                          className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+                        />
+                      </label>
+                      <button
+                        type="submit"
+                        className="self-start rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1 font-medium hover:bg-[color:var(--color-muted)]/40"
+                      >
+                        Save justification
+                      </button>
+                    </form>
+                  </details>
                 </li>
               );
             })}
           </ul>
         )}
+      </section>
+
+      {/* Hypotheses — explicit pre-hoc commitments. Agent emits 3-7 at
+          plan-gen time; operator edits/adds/resolves. Each is a
+          falsifiable statement with confidence + test method + status. */}
+      <section className="mt-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Hypotheses ({hypotheses.length})
+          </h2>
+          <span className="text-xs text-[color:var(--color-muted-foreground)]">
+            {hypotheses.filter((h) => h.status === 'active').length} active ·{' '}
+            {hypotheses.filter((h) => h.status === 'confirmed').length} confirmed ·{' '}
+            {hypotheses.filter((h) => h.status === 'falsified').length} falsified
+          </span>
+        </div>
+
+        {hypotheses.length === 0 ? (
+          <p className="text-sm text-[color:var(--color-muted-foreground)]">
+            No hypotheses yet. The plan-gen agent emits 3-7 at probe
+            creation; click <strong>Generate plan</strong> (above) to
+            populate, or add one manually below.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {hypotheses.map((h) => {
+              const start = Math.round(Number(h.confidenceStart) * 100);
+              const current = Math.round(Number(h.confidenceCurrent) * 100);
+              const delta = current - start;
+              return (
+                <li
+                  key={h.id}
+                  className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] p-3"
+                >
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="rounded-full bg-[color:var(--color-muted)]/60 px-2 py-0.5 text-[10px] font-mono">
+                      {h.hypothesisType}
+                    </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                        h.status === 'confirmed'
+                          ? 'bg-green-100 text-green-900'
+                          : h.status === 'falsified'
+                            ? 'bg-red-100 text-red-900'
+                            : h.status === 'unclear' || h.status === 'abandoned'
+                              ? 'bg-yellow-100 text-yellow-900'
+                              : 'bg-[color:var(--color-muted)]/60'
+                      }`}
+                    >
+                      {h.status}
+                    </span>
+                    <span className="text-[10px] text-[color:var(--color-muted-foreground)]">
+                      confidence {start}% → {current}%
+                      {delta !== 0 && (
+                        <span
+                          className={`ml-1 ${delta > 0 ? 'text-green-700' : 'text-red-700'}`}
+                        >
+                          ({delta > 0 ? '+' : ''}
+                          {delta})
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-sm">{h.statement}</p>
+                  {h.testMethod && (
+                    <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+                      <strong>Test:</strong> {h.testMethod}
+                    </p>
+                  )}
+                  {h.result && (
+                    <p className="mt-1 text-xs">
+                      <strong>Result:</strong> {h.result}
+                    </p>
+                  )}
+                  {h.status === 'active' && (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-[11px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]">
+                        Resolve
+                      </summary>
+                      <form
+                        action={resolveHypothesisAction}
+                        className="mt-2 flex flex-wrap items-center gap-2"
+                      >
+                        <input type="hidden" name="probeId" value={probe.id} />
+                        <input
+                          type="hidden"
+                          name="hypothesisId"
+                          value={h.id}
+                        />
+                        <select
+                          name="status"
+                          defaultValue="confirmed"
+                          className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs"
+                        >
+                          {HYPOTHESIS_STATUSES.filter(
+                            (s) => s !== 'active',
+                          ).map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          name="result"
+                          placeholder="result note"
+                          className="flex-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs"
+                        />
+                        <button
+                          type="submit"
+                          className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1 text-xs hover:bg-[color:var(--color-muted)]/40"
+                        >
+                          Save
+                        </button>
+                      </form>
+                    </details>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {/* Manual add-hypothesis form */}
+        <form
+          action={addHypothesisAction}
+          className="mt-4 grid gap-2 rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] p-3 text-xs md:grid-cols-[160px,1fr,auto]"
+        >
+          <input type="hidden" name="probeId" value={probe.id} />
+          <select
+            name="hypothesisType"
+            required
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+          >
+            {HYPOTHESIS_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            name="statement"
+            placeholder='falsifiable statement — e.g. "Hotels reply more than fuel distributors at >20%"'
+            required
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+          />
+          <button
+            type="submit"
+            className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1 font-medium hover:bg-[color:var(--color-muted)]/40"
+          >
+            Add hypothesis
+          </button>
+        </form>
       </section>
 
       {/* Strategy proposals — agent-proposed plan changes for review. */}
@@ -664,6 +977,12 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
           >
             Add fact
           </button>
+          <input
+            type="text"
+            name="ruleText"
+            placeholder='Optional rule_text — for negative_rule / procurement_pattern, e.g. "never target generic info@ inboxes for fuel"'
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 md:col-span-5"
+          />
         </form>
 
         {atlasFacts.length === 0 ? (

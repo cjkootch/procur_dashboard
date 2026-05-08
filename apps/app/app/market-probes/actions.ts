@@ -8,20 +8,29 @@ import {
   addApolloLookalikesToProbe,
   addAtlasFact,
   addThesisDrivenApolloOrgsToProbe,
+  advanceProbeLadder,
   approveStrategyProposal,
+  bulkInsertHypotheses,
   createProbe,
   findDecisionMakersForTarget,
   getProbe,
+  insertHypothesis,
   insertStrategyProposal,
+  listAtlasFacts,
   listRejectionHistory,
   listTargetsForProbe,
   markProbeTaskStatus,
   rejectStrategyProposal,
+  resolveHypothesis,
   setProbePlan,
   setProbeStatus,
+  setTargetJustification,
+  setTargetResearchOnly,
   upsertProbeTargets,
   recommendCommunicationTargets,
   type AtlasFactType,
+  type HypothesisStatus,
+  type HypothesisType,
 } from '@procur/catalog';
 import {
   generateProbePlan,
@@ -118,7 +127,22 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
   // history; later regenerations carry the learning forward.
   const rejectionHistory = await listRejectionHistory(probeId);
 
-  const plan = await generateProbePlan({
+  // Pull negative rules from the atlas (any prior probe in this
+  // country that wrote prescriptive constraints). HONOR rules ride
+  // into the plan-gen prompt so the agent doesn't propose a
+  // strategy a prior probe already learned not to do.
+  const negativeRules = probe.country
+    ? (
+        await listAtlasFacts({
+          country: probe.country,
+          factType: 'negative_rule',
+        })
+      )
+        .map((f) => f.ruleText)
+        .filter((s): s is string => Boolean(s && s.trim().length > 0))
+    : [];
+
+  const result = await generateProbePlan({
     marketName: probe.marketName,
     country: probe.country,
     productThesis: probe.productThesis,
@@ -127,15 +151,29 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
     allowedChannels: probe.allowedChannels,
     dailySendLimit: probe.dailySendLimit,
     totalSendLimit: probe.totalSendLimit,
+    ladderStage: probe.ladderStage as
+      | 'market_structure'
+      | 'routing'
+      | 'pain_discovery'
+      | 'commercial_qualification'
+      | 'deal_room_conversion',
     rejectionHistory: rejectionHistory.map((r) => ({
       proposalType: r.proposalType,
       rationale: r.rationale,
       feedback: r.feedback,
       rejectedAt: r.rejectedAt.toISOString(),
     })),
+    negativeRules,
   });
 
-  await setProbePlan(probeId, plan);
+  await setProbePlan(probeId, result.plan);
+  if (result.hypotheses.length > 0) {
+    // First plan-gen: bulk-insert. Subsequent regenerations also
+    // append (operators rarely re-run with the same hypotheses
+    // surviving; if they want clean state they can resolve the old
+    // ones to 'abandoned' first).
+    await bulkInsertHypotheses(probeId, result.hypotheses);
+  }
   revalidatePath(`/market-probes/${probeId}`);
 }
 
@@ -550,6 +588,112 @@ function aggregateProbeMetrics(
     segmentBreakdown,
     tierBreakdown,
   };
+}
+
+// ────────────────────────────────────────────────────────────────
+// Phase 2D — discipline layer
+// ────────────────────────────────────────────────────────────────
+
+/**
+ * Operator adds a hypothesis manually (in addition to the 3-7 the
+ * plan-gen agent emits at probe creation).
+ */
+export async function addHypothesisAction(
+  formData: FormData,
+): Promise<void> {
+  const { user } = await requireCompany();
+  const probeId = str(formData, 'probeId');
+  const hypothesisType = str(formData, 'hypothesisType');
+  const statement = str(formData, 'statement');
+  if (!probeId || !hypothesisType || !statement) {
+    throw new Error('probeId + hypothesisType + statement required');
+  }
+  await insertHypothesis({
+    probeId,
+    hypothesisType: hypothesisType as HypothesisType,
+    statement,
+    confidenceStart: Number(str(formData, 'confidenceStart') ?? '0.5'),
+    testMethod: str(formData, 'testMethod'),
+    authoredBy: 'operator',
+    createdByUserId: user.id,
+  });
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+export async function resolveHypothesisAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  const hypothesisId = str(formData, 'hypothesisId');
+  const status = str(formData, 'status');
+  const result = str(formData, 'result') ?? '';
+  if (!probeId || !hypothesisId || !status) {
+    throw new Error('probeId + hypothesisId + status required');
+  }
+  await resolveHypothesis({
+    hypothesisId,
+    status: status as HypothesisStatus,
+    result,
+  });
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+export async function advanceLadderAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  const force = str(formData, 'force') === 'true';
+  if (!probeId) throw new Error('probeId required');
+  await advanceProbeLadder({
+    probeId,
+    authoredBy: 'operator',
+    force,
+  });
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+export async function setTargetJustificationAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const targetId = str(formData, 'targetId');
+  const probeId = str(formData, 'probeId');
+  if (!targetId || !probeId) throw new Error('targetId + probeId required');
+  // Optional supportingSignals stored as JSON in a hidden field.
+  let supportingSignals:
+    | Array<{ source: string; label: string; url?: string }>
+    | undefined;
+  const raw = str(formData, 'supportingSignals');
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) supportingSignals = parsed;
+    } catch {
+      /* ignore malformed; operator can re-edit */
+    }
+  }
+  await setTargetJustification({
+    targetId,
+    whyThisCompany: str(formData, 'whyThisCompany'),
+    whyThisPerson: str(formData, 'whyThisPerson'),
+    whyNow: str(formData, 'whyNow'),
+    safestFirstAsk: str(formData, 'safestFirstAsk'),
+    ...(supportingSignals !== undefined ? { supportingSignals } : {}),
+  });
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+export async function markTargetResearchOnlyAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const targetId = str(formData, 'targetId');
+  const probeId = str(formData, 'probeId');
+  if (!targetId || !probeId) throw new Error('targetId + probeId required');
+  await setTargetResearchOnly(targetId);
+  revalidatePath(`/market-probes/${probeId}`);
 }
 
 export async function setTaskSkippedAction(formData: FormData): Promise<void> {

@@ -32,6 +32,7 @@ export const ATLAS_FACT_TYPES = [
   'assumption_wrong',
   'procurement_pattern',
   'compliance_note',
+  'negative_rule',
 ] as const;
 export type AtlasFactType = (typeof ATLAS_FACT_TYPES)[number];
 
@@ -42,6 +43,11 @@ export interface AddAtlasFactInput {
   relatedEntitySlug?: string | null;
   factType: AtlasFactType | string;
   description: string;
+  /** Prescriptive rule (Phase 2D, migration 0097). Pairs with
+   *  fact_type='negative_rule' or 'procurement_pattern' — turns the
+   *  descriptive fact into a reusable behavioral constraint
+   *  ("never target this segment without X qualifier"). */
+  ruleText?: string | null;
   sourceProbeId?: string | null;
   sourceTargetId?: string | null;
   sourceEventId?: string | null;
@@ -62,6 +68,7 @@ export async function addAtlasFact(
     relatedEntitySlug: input.relatedEntitySlug ?? null,
     factType: input.factType,
     description: input.description,
+    ruleText: input.ruleText ?? null,
     sourceProbeId: input.sourceProbeId ?? null,
     sourceTargetId: input.sourceTargetId ?? null,
     sourceEventId: input.sourceEventId ?? null,
