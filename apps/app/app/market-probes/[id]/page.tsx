@@ -12,6 +12,7 @@ import {
   listSegments,
   listStrategyProposals,
   listTargetsForProbe,
+  listRvmAudioAssetsForProbe,
   listVariants,
   ATLAS_FACT_TYPES,
   HYPOTHESIS_TYPES,
@@ -21,6 +22,7 @@ import {
   PROBE_SIGNAL_KINDS,
   type LearningReportPayload,
 } from '@procur/catalog';
+import { RvmAudioPanel } from '../_components/RvmAudioPanel';
 import { SignalFlagsForm } from '../_components/SignalFlagsForm';
 import {
   addApolloLookalikesAction,
@@ -99,6 +101,7 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
     scorecard,
     variants,
     variantPerformance,
+    rvmAudioAssets,
   ] = await Promise.all([
     listTargetsForProbe(id),
     listAtlasFactsForProbe(id),
@@ -115,6 +118,7 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
     computeProbeScorecard(id),
     listVariants(id),
     computeVariantPerformance(id),
+    listRvmAudioAssetsForProbe(id, { activeOnly: false }),
   ]);
   const latestReport = await getLatestLearningReport(id);
 
@@ -1969,6 +1973,13 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
           </div>
         </form>
       </section>
+
+      <RvmAudioPanel
+        probeId={probe.id}
+        probeOutreachLanguage={probe.outreachLanguage}
+        variants={variants.map((v) => ({ id: v.id, name: v.variantName }))}
+        assets={rvmAudioAssets}
+      />
     </div>
   );
 }
