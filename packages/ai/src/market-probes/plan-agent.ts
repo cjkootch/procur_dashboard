@@ -125,9 +125,17 @@ export async function generateProbePlan(
   }
 
   const client = getClient();
+  // 2500 matches the learning-report agent. The plan JSON has 5
+  // arrays (hypotheses with statements + testMethods, segments,
+  // successCriteria, tasks) plus prose fields — the original 1200
+  // ceiling was tripping operators with malformed JSON whenever
+  // Sonnet got slightly verbose, because the response would cut off
+  // mid-string and JSON.parse blew up. The stop_reason check below
+  // catches the residual truncation case and routes to a clearer
+  // error than the generic parse-error fallback.
   const response = await client.messages.create({
     model: MODELS.sonnet,
-    max_tokens: 1200,
+    max_tokens: 2500,
     system: SYSTEM_PROMPT,
     messages: [
       {
@@ -169,6 +177,28 @@ Produce the plan JSON.`,
     .replace(/```$/i, '')
     .trim();
 
+  // Hitting max_tokens means the JSON was cut mid-string — JSON.parse
+  // would fail with a generic "unexpected end" that the operator
+  // can't act on. Surface the real cause so they know to bump the
+  // cap rather than chase phantom Sonnet shape regressions.
+  if (response.stop_reason === 'max_tokens') {
+    console.error('[probe-plan-agent] response truncated at max_tokens', {
+      market: ctx.marketName,
+      country: ctx.country,
+      maxTokens: 2500,
+      outputTokens: response.usage?.output_tokens,
+      rawSnippet: text.slice(0, 300),
+    });
+    return {
+      plan: {
+        ...defaultPlan(ctx),
+        generationStatus: 'fallback_parse_error',
+        generationError: `Sonnet response truncated at max_tokens=2500. Used ${response.usage?.output_tokens ?? '?'} output tokens before being cut. Bump the cap or shorten the prompt.`,
+      },
+      hypotheses: [],
+    };
+  }
+
   let parsed: ProbePlan & { hypotheses?: ProposedHypothesis[] };
   try {
     parsed = JSON.parse(text);
@@ -182,6 +212,7 @@ Produce the plan JSON.`,
     console.error('[probe-plan-agent] JSON parse failed; using skeleton', {
       market: ctx.marketName,
       country: ctx.country,
+      stopReason: response.stop_reason,
       err: err instanceof Error ? err.message : String(err),
       rawSnippet: text.slice(0, 300),
     });
@@ -189,7 +220,7 @@ Produce the plan JSON.`,
       plan: {
         ...defaultPlan(ctx),
         generationStatus: 'fallback_parse_error',
-        generationError: `Sonnet returned malformed JSON. Raw prefix: ${text.slice(0, 200)}`,
+        generationError: `Sonnet returned malformed JSON (stop_reason=${response.stop_reason}). Raw prefix: ${text.slice(0, 200)}`,
       },
       hypotheses: [],
     };
