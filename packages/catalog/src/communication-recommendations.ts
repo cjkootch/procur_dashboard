@@ -911,6 +911,11 @@ export interface DraftOutreachInput {
    *  (e.g. "exploratory M&A — lead with respect, do NOT lead with
    *  valuation"). Capped to 1000 chars so prompt stays bounded. */
   domainHint?: string | null;
+  /** ISO 639-1 outreach language. When set to non-English, the
+   *  drafter writes in that language. NULL falls back to English
+   *  (existing behavior). Pairs with formalityLevel — 'high' +
+   *  'ja' triggers 敬語; 'high' + 'fr' triggers vous. */
+  outreachLanguage?: string | null;
 }
 
 export async function draftOutreachFromContext(
@@ -1017,7 +1022,12 @@ Hard rules:
 3. Email: 60-120 words, professional, single ask. WhatsApp/SMS: under 30 words, single ask.
 4. Call goal: one sentence, what the call should accomplish.
 5. If the context shows the contact opted out OR has a sanctions hit, REFUSE — return
-   emailBody = "REFUSED: <reason>" and leave the others empty.`;
+   emailBody = "REFUSED: <reason>" and leave the others empty.
+6. When the user-message prompt carries a "STEERING — language: <code>" line, write the
+   email + WhatsApp + SMS bodies in that language (operator's intent is in English; translate
+   it naturally and idiomatically). Keep proper nouns (company names, vessel names, ports)
+   in their original form. The procur inbox auto-translates inbound replies to English on
+   display — outbound stays in the recipient's language.`;
 
 function buildDraftPrompt(input: DraftOutreachInput): string {
   const p = input.pack;
@@ -1083,7 +1093,11 @@ function buildDraftPrompt(input: DraftOutreachInput): string {
       ? `Note to drafter: ${p.signalHealth.failedSources.length} signal source(s) failed to fetch this run. Don't pretend the missing data means "no activity exists" — write copy that's safe under either interpretation, and lean on what DID fetch successfully.`
       : '',
     '',
-    buildSteeringBlock(input.formalityLevel, input.domainHint),
+    buildSteeringBlock(
+      input.formalityLevel,
+      input.domainHint,
+      input.outreachLanguage,
+    ),
     `Forbidden phrasing: ${(input.doNotMention ?? []).join(' | ') || '(none additional)'}`,
   ]
     .filter((s) => s !== null && s !== '')
@@ -1105,12 +1119,27 @@ function buildDraftPrompt(input: DraftOutreachInput): string {
  *
  * Domain hint is opaque operator text — passed through verbatim to
  * the model. Capped at 1000 chars to keep prompt size bounded.
+ *
+ * Language is ISO 639-1 (en, ja, fr, de, ko, zh, es, ...). When set
+ * to non-English, the drafter writes the message in that language
+ * regardless of the operator's English intent. Pairs with formality
+ * — formality 'high' + language 'ja' triggers 敬語; formality 'high'
+ * + language 'fr' triggers vous-form. Both drafters honor this
+ * (the lead-form drafter's system prompt already had a language
+ * rule from the form's HTML lang attribute; this overrides that
+ * when set).
  */
 function buildSteeringBlock(
   formalityLevel: FormalityLevel | null | undefined,
   domainHint: string | null | undefined,
+  outreachLanguage?: string | null,
 ): string {
   const lines: string[] = [];
+  if (outreachLanguage && outreachLanguage !== 'en') {
+    lines.push(
+      `STEERING — language: ${outreachLanguage}. Write the message in ${outreachLanguage} (ISO 639-1). The operator's intent is in English; translate it naturally and idiomatically. Keep proper nouns (company names, vessel names, port names) in their original form. Do NOT default to English; the recipient is in a ${outreachLanguage}-language market.`,
+    );
+  }
   if (formalityLevel === 'high') {
     lines.push(
       'STEERING — formality: HIGH. Use deferential register. Indirect ask ("would you be open to a brief conversation about..." not "let\'s get on a call"). When the target language has honorific forms (Japanese 敬語, French vous, German Sie, Korean 존댓말, Spanish usted), use them — do NOT default to casual forms. Lead with respect for what the recipient has built; first contact is not the time to push.',
@@ -1256,6 +1285,11 @@ export interface DraftLeadFormInput {
   /** Free-text framing the drafter receives alongside the intent.
    *  Same semantics as DraftOutreachInput.domainHint. */
   domainHint?: string | null;
+  /** ISO 639-1 outreach language override. When set, takes
+   *  precedence over the form's HTML lang attribute (endpoint.language)
+   *  — operator's per-probe choice wins over auto-detected page
+   *  language. Null falls back to endpoint.language → English. */
+  outreachLanguage?: string | null;
   /** Field-role map from the endpoint row. The drafter uses presence
    *  of subject_field to decide whether to draft a subject; presence
    *  of company_field / phone_field to know whether to provide
@@ -1495,7 +1529,14 @@ function buildLeadFormDraftPrompt(input: DraftLeadFormInput): string {
       : '',
     '',
     `Sender: ${input.endpoint.senderName} <${input.endpoint.senderEmail}>${input.endpoint.senderCompany ? ` from ${input.endpoint.senderCompany}` : ''}`,
-    buildSteeringBlock(input.formalityLevel, input.domainHint),
+    buildSteeringBlock(
+      input.formalityLevel,
+      input.domainHint,
+      // Operator's per-probe outreach language wins over the form's
+      // HTML lang attribute. Null falls back to endpoint.language
+      // which the lead-form system prompt already references.
+      input.outreachLanguage ?? input.endpoint.language ?? null,
+    ),
     `Forbidden phrasing: ${(input.doNotMention ?? []).join(' | ') || '(none additional)'}`,
   ]
     .filter((s) => s !== null && s !== '')

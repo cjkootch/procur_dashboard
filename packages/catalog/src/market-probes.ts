@@ -473,6 +473,11 @@ export async function setProbeDrafterSteering(
   input: {
     formalityLevel: 'high' | 'professional' | 'casual' | null;
     domainHint: string | null;
+    /** ISO 639-1 — outreach language for first-touch drafts. NULL
+     *  falls back to English (or to the form's HTML lang for the
+     *  lead-form drafter). Also seeds conversation_settings.language
+     *  on autopilot first-contact so reply path stays in language. */
+    outreachLanguage: string | null;
   },
 ): Promise<void> {
   await db
@@ -480,6 +485,7 @@ export async function setProbeDrafterSteering(
     .set({
       formalityLevel: input.formalityLevel,
       domainHint: input.domainHint,
+      outreachLanguage: input.outreachLanguage,
       updatedAt: new Date(),
     })
     .where(eq(marketProbes.id, probeId));

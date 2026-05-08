@@ -684,11 +684,13 @@ export function buildCatalogTools(): ToolRegistry {
           intent: input.intent,
           ...(input.doNotMention ? { doNotMention: input.doNotMention } : {}),
           // When the operator passed a probeId, the probe's drafter
-          // steering (formality + domain hint) shifts the prompt
-          // alongside the alias/signature applied below. Without
-          // probeId both are null and the drafter falls back to its
-          // base behavior — chat invocations without probe context
-          // behave exactly as before.
+          // steering (formality + domain hint + language) shifts the
+          // prompt alongside the alias/signature applied below.
+          // outreachLanguage from the probe takes precedence over
+          // the form's HTML lang attribute. Without probeId all
+          // three are null and the drafter falls back to its base
+          // behavior — chat invocations without probe context behave
+          // exactly as before.
           formalityLevel:
             (probe?.formalityLevel as
               | 'high'
@@ -696,6 +698,7 @@ export function buildCatalogTools(): ToolRegistry {
               | 'casual'
               | null) ?? null,
           domainHint: probe?.domainHint ?? null,
+          outreachLanguage: probe?.outreachLanguage ?? null,
           endpoint: {
             subjectField: endpoint.subjectField,
             companyField: endpoint.companyField,

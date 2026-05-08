@@ -469,10 +469,18 @@ export async function setProbeDrafterSteeringAction(
       ? formalityRaw
       : null;
   const domainHintRaw = str(formData, 'domainHint');
+  const langRaw = str(formData, 'outreachLanguage');
+  // ISO 639-1 — accept lowercase 2-letter codes only. Empty / 'auto'
+  // / invalid input clears the override.
+  const outreachLanguage =
+    langRaw && /^[a-z]{2}$/.test(langRaw.toLowerCase())
+      ? langRaw.toLowerCase()
+      : null;
   await setProbeDrafterSteering(probeId, {
     formalityLevel,
     domainHint:
       domainHintRaw && domainHintRaw.length > 0 ? domainHintRaw : null,
+    outreachLanguage,
   });
   revalidatePath(`/market-probes/${probeId}`);
 }

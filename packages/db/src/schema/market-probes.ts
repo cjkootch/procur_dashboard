@@ -184,6 +184,25 @@ export const marketProbes = pgTable(
      *  can iterate. */
     domainHint: text('domain_hint'),
 
+    /** ISO 639-1 outreach language for first-touch drafts. When
+     *  set, both the email drafter and lead-form drafter write
+     *  in this language regardless of the operator's intent (which
+     *  is in English). When the autopilot creates
+     *  conversation_settings on first contact, this also seeds
+     *  conversation_settings.language so the reply-draft path
+     *  stays in the same language across the thread. NULL falls
+     *  back to:
+     *    - Email drafter: English (existing behavior)
+     *    - Lead-form drafter: the form's HTML lang attribute (or
+     *      English if absent)
+     *    - conversation_settings.language: 'auto' (recipient's
+     *      reply language, existing behavior)
+     *  Pairs with formality_level — formality 'high' + language
+     *  'ja' triggers 敬語; formality 'high' + language 'fr' triggers
+     *  vous-form. Without language set, formality only steers
+     *  English register. */
+    outreachLanguage: text('outreach_language'),
+
     createdBy: text('created_by'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()

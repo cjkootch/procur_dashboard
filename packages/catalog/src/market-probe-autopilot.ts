@@ -518,6 +518,10 @@ export async function autopilotSendBatch(
                 | 'casual'
                 | null) ?? null,
             domainHint: probe.domainHint,
+            // Outreach-language override — when set, drafter writes
+            // in this language even though the operator's intent is
+            // English. NULL = English (existing behavior).
+            outreachLanguage: probe.outreachLanguage,
           })
         : null;
 
@@ -599,6 +603,24 @@ export async function autopilotSendBatch(
       //   tier 3: 'full_approval' — commercial draft mode = always queue
       const probeApprovalMode: 'tiered' | 'full_approval' =
         probe.tier >= 3 ? 'full_approval' : 'tiered';
+      // Build the per-conversation customPrompt from the probe's
+      // drafter steering. The reply-draft path
+      // (conversation-agent.draftReply) reads
+      // conversation_settings.customPrompt and appends it to its
+      // system prompt — this is the single bridge that lets per-
+      // probe formality + domain framing flow into reply generation
+      // the same way it flows into first-touch generation.
+      // Without this, replies revert to the default brokerage_direct
+      // tone with no domain framing, which mismatches the first
+      // touch the recipient just received.
+      const probeCustomPrompt = buildProbeCustomPrompt({
+        formalityLevel: probe.formalityLevel as
+          | 'high'
+          | 'professional'
+          | 'casual'
+          | null,
+        domainHint: probe.domainHint,
+      });
       const upsertRow: NewConversationSettings = {
         channel: 'email',
         conversationKey: recipient.email,
@@ -606,7 +628,11 @@ export async function autopilotSendBatch(
         authority: 'chitchat_only',
         approvalMode: probeApprovalMode,
         tone: 'brokerage_direct',
-        language: 'auto',
+        // Outreach-language seed: when probe sets a language, the
+        // reply path stays in that language across the thread.
+        // Otherwise 'auto' (recipient's reply language) — existing
+        // behavior, fine for English-default probes.
+        language: probe.outreachLanguage ?? 'auto',
         identityDisclosure: 'on_request',
         linkedProbeId: probe.id,
         linkedEntitySlug: t.entitySlug,
@@ -616,6 +642,7 @@ export async function autopilotSendBatch(
         maxCostUsdCents: 100,
         maxDurationHours: 168,
         channelConfig: { source: 'market_probe_autopilot' },
+        ...(probeCustomPrompt ? { customPrompt: probeCustomPrompt } : {}),
       };
       await db
         .insert(conversationSettings)
@@ -655,7 +682,9 @@ export async function autopilotSendBatch(
         intent,
         doNotMention: probe.blockedTerms ?? [],
         // Mirror the email-path drafter steering — same per-probe
-        // formality + domain hint apply regardless of channel.
+        // formality + domain hint + language apply regardless of
+        // channel. outreachLanguage takes precedence over the form's
+        // HTML lang attribute (operator override wins).
         formalityLevel:
           (probe.formalityLevel as
             | 'high'
@@ -663,6 +692,7 @@ export async function autopilotSendBatch(
             | 'casual'
             | null) ?? null,
         domainHint: probe.domainHint,
+        outreachLanguage: probe.outreachLanguage,
         endpoint: {
           subjectField: leadFormEndpoint.subjectField,
           companyField: leadFormEndpoint.companyField,
@@ -955,3 +985,41 @@ async function resolveRecipientEmail(
 
 // suppress unused-import lint on intentional re-exports
 void organizations;
+
+/**
+ * Build the per-conversation customPrompt the autopilot seeds onto
+ * conversation_settings at first contact. Translates the probe's
+ * drafter-steering (formalityLevel + domainHint) into reply-path-
+ * shaped guidance the conversation-agent's draftReply consumes.
+ *
+ * Single source of truth for "per-probe steering" — the first-touch
+ * drafter (communication-recommendations.buildSteeringBlock) and the
+ * reply drafter (conversation-agent.draftReply via customPrompt)
+ * both derive from the same probe columns. Without this connector,
+ * replies would silently drop back to the default brokerage_direct
+ * tone with no domain framing, mismatching the first touch the
+ * recipient just received.
+ *
+ * Returns null when the probe has no steering set — preserves the
+ * conversation-agent's existing behavior (no customPrompt = base
+ * system prompt only) for probes that don't customize.
+ */
+function buildProbeCustomPrompt(input: {
+  formalityLevel: 'high' | 'professional' | 'casual' | null;
+  domainHint: string | null;
+}): string | null {
+  const lines: string[] = [];
+  if (input.formalityLevel === 'high') {
+    lines.push(
+      'Formality: HIGH — deferential register; honorifics where the language has them (Japanese 敬語, French vous, German Sie, Korean 존댓말, Spanish usted). Indirect ask. Lead with respect for what the recipient has built.',
+    );
+  } else if (input.formalityLevel === 'casual') {
+    lines.push(
+      'Formality: CASUAL — warm-market tone; first-name basis; short, conversational; skip "Dear" / "Best regards" formalities.',
+    );
+  }
+  if (input.domainHint && input.domainHint.trim().length > 0) {
+    lines.push(`Domain framing: ${input.domainHint.slice(0, 1000)}`);
+  }
+  return lines.length > 0 ? lines.join('\n') : null;
+}
