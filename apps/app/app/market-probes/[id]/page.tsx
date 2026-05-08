@@ -40,6 +40,7 @@ import {
   generatePlanAction,
   generateVariantProposalsAction,
   generateStrategyProposalsAction,
+  setProbeAllowPaidEnrichmentAction,
   setProbeDrafterSteeringAction,
   setProbeIdentityAction,
   setProbeKillCriteriaAction,
@@ -733,6 +734,43 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
                 </button>
               </form>
             </details>
+
+            {probe.allowedChannels.includes('rvm') && (
+              <details>
+                <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider hover:text-[color:var(--color-foreground)]">
+                  RVM phone enrichment
+                </summary>
+                <form
+                  action={setProbeAllowPaidEnrichmentAction}
+                  className="mt-2 grid gap-1.5"
+                >
+                  <input type="hidden" name="probeId" value={probe.id} />
+                  <p className="text-[10px] text-[color:var(--color-muted-foreground)]">
+                    When the autopilot picks the RVM channel and the
+                    target&apos;s phone isn&apos;t already on file
+                    (rolodex / Apollo cache / external supplier), allow
+                    a paid Apollo <code>enrichPerson</code> call to
+                    resolve it. Counts against the tenant&apos;s daily
+                    enrichment cap. Off = skip the target on RVM
+                    rather than spend.
+                  </p>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      name="allowPaidEnrichment"
+                      defaultChecked={probe.allowPaidEnrichment}
+                    />
+                    <span>Allow paid Apollo phone enrichment</span>
+                  </label>
+                  <button
+                    type="submit"
+                    className="self-end rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-xs hover:bg-[color:var(--color-muted)]/40"
+                  >
+                    Save
+                  </button>
+                </form>
+              </details>
+            )}
 
             <div className="border-t border-[color:var(--color-border)] pt-3">
               <span className="text-[10px] font-semibold uppercase tracking-wider">

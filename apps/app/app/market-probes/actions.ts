@@ -42,6 +42,7 @@ import {
   resolveHypothesis,
   savePlaybookFromProbe,
   setPlaybookStatus,
+  setProbeAllowPaidEnrichment,
   setProbeDrafterSteering,
   setProbeIdentity,
   setProbePlan,
@@ -491,6 +492,24 @@ export async function setProbeDrafterSteeringAction(
       domainHintRaw && domainHintRaw.length > 0 ? domainHintRaw : null,
     outreachLanguage,
   });
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/**
+ * Toggle the per-probe opt-in for paid Apollo phone enrichment during
+ * autopilot RVM dispatch (migration 0112). When true, the autopilot's
+ * resolveRecipientPhone may call enrichPerson (paid; daily-capped) to
+ * resolve a target's phone. When false (default), targets without a
+ * cached phone are skipped on the RVM channel.
+ */
+export async function setProbeAllowPaidEnrichmentAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  if (!probeId) throw new Error('probeId required');
+  const allow = formData.get('allowPaidEnrichment') === 'on';
+  await setProbeAllowPaidEnrichment(probeId, allow);
   revalidatePath(`/market-probes/${probeId}`);
 }
 
@@ -1322,10 +1341,10 @@ export async function toggleScoutProtectionAction(
 export async function autopilotSendBatchAction(
   formData: FormData,
 ): Promise<void> {
-  await requireCompany();
+  const { company } = await requireCompany();
   const probeId = str(formData, 'probeId');
   if (!probeId) throw new Error('probeId required');
-  const result = await autopilotSendBatch({ probeId });
+  const result = await autopilotSendBatch({ probeId, companyId: company.id });
   // Revalidate even on refusal — operator sees the reason via probe
   // state (paused) or via the next page load. Phase 2I adds a
   // toast/notification surface for batch results.

@@ -491,6 +491,26 @@ export async function setProbeDrafterSteering(
     .where(eq(marketProbes.id, probeId));
 }
 
+/**
+ * Operator opt-in for paid Apollo phone enrichment during autopilot
+ * RVM dispatch. Defaults to false on insert; flipping to true allows
+ * the autopilot's resolveRecipientPhone to call Apollo's enrichPerson
+ * (paid; counts against the tenant's daily cap) when no cheaper
+ * phone source resolves. See migration 0112 for column rationale.
+ */
+export async function setProbeAllowPaidEnrichment(
+  probeId: string,
+  allow: boolean,
+): Promise<void> {
+  await db
+    .update(marketProbes)
+    .set({
+      allowPaidEnrichment: allow,
+      updatedAt: new Date(),
+    })
+    .where(eq(marketProbes.id, probeId));
+}
+
 export async function deleteProbeTargetsNotIn(
   probeId: string,
   keepIds: string[],
