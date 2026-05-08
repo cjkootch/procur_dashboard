@@ -8,6 +8,8 @@ import {
   getMatchQueue,
   listEntityNews,
   listOpportunities,
+  listProbes,
+  listStrategyProposals,
   type EntityNewsRow,
   type MacroSignalExposure,
 } from '@procur/catalog';
@@ -78,6 +80,7 @@ export default async function BriefPage() {
     recentOpps,
     counterpartyNews,
     fuelMarketNews,
+    activeProbes,
   ] = await Promise.all([
       // Counterparty rows only — actionable for lead qualification.
       // Macro/geo signals (Tuapse, Iran, Strait of Hormuz) get their
@@ -132,7 +135,26 @@ export default async function BriefPage() {
         daysBack: 3,
         limit: 8,
       }).catch(() => [] as EntityNewsRow[]),
+      // Active Market Probes — surfaces in-flight experiments + their
+      // headline metrics on the daily brief. Limited to status='active'
+      // so paused/completed/abandoned probes don't clutter; ordered
+      // recency-descending inside listProbes.
+      listProbes({ status: 'active', limit: 5 }).catch(() => []),
     ]);
+
+  // Per-probe pending-proposal counts — operator wants to see which
+  // probes have unread agent proposals before clicking through. One
+  // grouped query is cheap; we batch by probe id rather than the
+  // existing listStrategyProposals helper which is per-probe.
+  const probeProposalCounts = new Map<string, number>();
+  await Promise.all(
+    activeProbes.map(async (p) => {
+      const pending = await listStrategyProposals(p.id, {
+        status: 'proposed',
+      }).catch(() => []);
+      probeProposalCounts.set(p.id, pending.length);
+    }),
+  );
 
   // Walk each top-3 macro signal to its exposed rolodex refineries
   // (geo → affected countries → crude grades → slate-compatible
@@ -238,6 +260,86 @@ export default async function BriefPage() {
               Qualified leads from the match queue or chat assistant land in /deals
               with the originating commercial context attached.
             </p>
+          </BriefCard>
+
+          {/* Market Probes — at-a-glance card per active probe.
+              Headline metrics (sent / replied / bounce-rate) +
+              pending-proposal indicator + ladder stage. Renders
+              empty-state when no probes are active so the brief
+              doesn't show a hollow surface for operators who haven't
+              started one yet. Phase 2I — surfaces the autopilot
+              + adaptation activity Cole would otherwise have to
+              click through to /market-probes to see. */}
+          <BriefCard
+            title="Market probes"
+            count={activeProbes.length || null}
+            countLabel={activeProbes.length === 1 ? 'active' : 'active'}
+            href="/market-probes"
+            ctaLabel="Open Market Probes"
+            empty="No active probes. Start one from /market-probes/new — small market, fenced caps, agent reports back."
+          >
+            {activeProbes.length > 0 && (
+              <ul className="space-y-2 text-xs">
+                {activeProbes.slice(0, 3).map((p) => {
+                  const proposals = probeProposalCounts.get(p.id) ?? 0;
+                  // Signal heuristic — rough since we don't run the
+                  // full scorecard here: replied >= 2 = "good", any
+                  // sent without replies but volume low = "early",
+                  // sent without replies past 10 = "weak". Detail
+                  // page has the full computation.
+                  const sent = p.sentCount;
+                  const replied = p.replyCount;
+                  let signal: 'good' | 'early' | 'weak' = 'early';
+                  if (replied >= 2) signal = 'good';
+                  else if (sent >= 10 && replied === 0) signal = 'weak';
+                  const signalTone =
+                    signal === 'good'
+                      ? 'bg-green-100 text-green-900'
+                      : signal === 'weak'
+                        ? 'bg-yellow-100 text-yellow-900'
+                        : 'bg-[color:var(--color-muted)]/60';
+                  return (
+                    <li
+                      key={p.id}
+                      className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] p-2"
+                    >
+                      <div className="flex flex-wrap items-baseline gap-1.5">
+                        <Link
+                          href={`/market-probes/${p.id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {p.marketName}
+                        </Link>
+                        {p.country && (
+                          <span className="font-mono text-[10px] text-[color:var(--color-muted-foreground)]">
+                            {p.country.toUpperCase()}
+                          </span>
+                        )}
+                        <span
+                          className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${signalTone}`}
+                        >
+                          {signal}
+                        </span>
+                        {proposals > 0 && (
+                          <span className="rounded-full bg-yellow-100 px-1.5 py-0.5 text-[10px] font-medium text-yellow-900">
+                            {proposals} proposal{proposals === 1 ? '' : 's'}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-[color:var(--color-muted-foreground)]">
+                        {p.targetCount} targets · {sent} sent ·{' '}
+                        {replied} repl{replied === 1 ? 'y' : 'ies'}
+                      </p>
+                    </li>
+                  );
+                })}
+                {activeProbes.length > 3 && (
+                  <li className="text-[color:var(--color-muted-foreground)]">
+                    +{activeProbes.length - 3} more
+                  </li>
+                )}
+              </ul>
+            )}
           </BriefCard>
 
           <BriefCard
