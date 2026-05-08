@@ -733,9 +733,16 @@ function VoiceboxGenForm({
           name="profileId"
           required
           disabled={busy}
+          // Single-profile Voiceboxes (the common case for an
+          // operator with their own cloned voice) skip the picker —
+          // the lone profile becomes the default. Multi-profile
+          // setups still see the dropdown.
+          defaultValue={profiles.length === 1 ? profiles[0]!.id : ''}
           className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5"
         >
-          <option value="">— select profile —</option>
+          {profiles.length !== 1 && (
+            <option value="">— select profile —</option>
+          )}
           {profiles.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
