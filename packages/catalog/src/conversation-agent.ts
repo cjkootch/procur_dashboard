@@ -146,6 +146,7 @@ interface QueueAiReplyResult {
     | 'skipped_budget'
     | 'skipped_session_window'
     | 'skipped_draft_failed'
+    | 'skipped_superseded'
     | 'queued'
     | 'auto_executed';
   approvalId?: string;
@@ -275,7 +276,10 @@ async function runMaybeQueueAiReply(
   // volume / delivery / payment / meeting time / explicit yes — must
   // route through human approval. 'safe' = acks, qualifying questions,
   // generic info — auto-sendable when approvalMode === 'tiered'.
-  const riskKind = classifyDraftRisk(draft.body);
+  // Fallback drafts (no ANTHROPIC_API_KEY) always queue, never auto-
+  // send — the body is a robotic "Thanks for the message" and would
+  // otherwise leak verbatim during an Anthropic outage.
+  const riskKind = draft.fallback ? 'commitment' : classifyDraftRisk(draft.body);
   const channel = settings.channel as 'sms' | 'whatsapp';
 
   // Tiered + safe → auto-execute. Insert an approval row stamped
@@ -292,15 +296,47 @@ async function runMaybeQueueAiReply(
       settings.responseDelayMinSec,
       settings.responseDelayMaxSec,
     );
-    const approvalId = await autoExecuteReply({
+    // Stale-draft guard: if a fresh inbound arrived during the delay,
+    // the draft we built before the sleep is now stale — answering
+    // the OLD inbound instead of the NEW one. Bail out; the new
+    // inbound's webhook will fire its own draft pass and that'll be
+    // the right reply. Without this, the recipient sees us address
+    // their first message ~30-90s after they already sent a follow-up.
+    const supersededBy = await findInboundNewerThan({
+      channel,
+      fromPhone: input.fromPhone,
+      after: input.inboundOccurredAt,
+    });
+    if (supersededBy) {
+      return { status: 'skipped_superseded', reason: supersededBy };
+    }
+    const exec = await autoExecuteReply({
       channel,
       toPhone: input.fromPhone,
       body: draft.body,
       rationale: `AI auto-sent (tiered mode, classifier: safe) for ${channel} reply (conversation_settings ${settings.id}). Inbound: "${input.inboundBody.slice(0, 200)}". Authority: ${settings.authority}.`,
       settingsId: settings.id,
     });
+    if (!exec.ok) {
+      // Send failed; the approval was demoted back to pending inside
+      // autoExecuteReply so the operator can retry from the bell. We
+      // notify here too, since the auto-send branch normally skips
+      // notifyOperatorsOfPendingApproval — without this the operator
+      // has no breadcrumb that anything happened.
+      await notifyOperatorsOfPendingApproval({
+        approvalId: exec.approvalId,
+        channel,
+        conversationKey: input.fromPhone,
+        draftPreview: draft.body,
+      });
+      return {
+        status: 'skipped_draft_failed',
+        reason: `auto_send_failed: ${exec.error}`,
+        approvalId: exec.approvalId,
+      };
+    }
     await incrementConversationCounters(settings.id, 1000);
-    return { status: 'auto_executed', approvalId, riskKind };
+    return { status: 'auto_executed', approvalId: exec.approvalId, riskKind };
   }
 
   // Otherwise queue an approval. Includes:
@@ -335,6 +371,35 @@ interface ConversationTurn {
   direction: 'inbound' | 'outbound';
   body: string;
   occurredAt: Date;
+}
+
+/**
+ * Returns the timestamp of the newest INBOUND touchpoint from this
+ * phone strictly after `after`, or null when none. Used by the
+ * stale-draft guard: after sleepResponseDelay completes we re-check
+ * for a fresh inbound that landed during the sleep — if one did, the
+ * draft we built before the sleep is no longer addressing the latest
+ * message and we must skip the auto-send.
+ */
+async function findInboundNewerThan(input: {
+  channel: 'sms' | 'whatsapp';
+  fromPhone: string;
+  after: Date;
+}): Promise<string | null> {
+  const inboundChannel = `${input.channel}.received`;
+  const [row] = await db
+    .select({ occurredAt: touchpoints.occurredAt })
+    .from(touchpoints)
+    .where(
+      and(
+        eq(touchpoints.channel, inboundChannel),
+        sql`${touchpoints.metadata}->>'from' = ${input.fromPhone}`,
+        sql`${touchpoints.occurredAt} > ${input.after.toISOString()}`,
+      ),
+    )
+    .orderBy(desc(touchpoints.occurredAt))
+    .limit(1);
+  return row?.occurredAt ? row.occurredAt.toISOString() : null;
 }
 
 async function loadRecentHistory(input: {
@@ -380,13 +445,18 @@ async function draftReply(input: {
   settings: ConversationSettings;
   history: ConversationTurn[];
   inboundBody: string;
-}): Promise<{ body: string }> {
+}): Promise<{ body: string; fallback?: boolean }> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    // Fallback: a tame acknowledgment so the operator sees a
-    // proposal even without an LLM. Never auto-sends.
+    // Fallback: a tame acknowledgment so the operator sees a proposal
+    // even without an LLM. The fallback FLAG is what enforces "never
+    // auto-sends" — without it, the regex classifier would mark this
+    // body as 'safe' (no $/USG/etc.) and tiered mode would auto-send a
+    // robotic ack on every inbound during an Anthropic outage. Caller
+    // checks `draft.fallback` and forces approval-queue routing.
     return {
       body: `Thanks for the message — let me get back to you on this shortly.`,
+      fallback: true,
     };
   }
 
@@ -394,8 +464,11 @@ async function draftReply(input: {
   const language =
     input.settings.language === 'auto' ? 'the recipient' : input.settings.language;
   const authorityLine = authorityToPromptLine(input.settings.authority);
-  const identityLine = identityToPromptLine(input.settings.identityDisclosure);
   const persona = await resolveOperatorPersona();
+  const identityLine = identityToPromptLine(
+    input.settings.identityDisclosure,
+    persona.companyName,
+  );
 
   // Both occurrences of {COMPANY_NAME} in the prompt template — one in
   // the opening line, one in the "About ..." header — get the same
@@ -493,10 +566,15 @@ function authorityToPromptLine(
 
 function identityToPromptLine(
   disclosure: ConversationSettings['identityDisclosure'],
+  companyName: string,
 ): string {
   switch (disclosure) {
     case 'always':
-      return 'Disclose upfront on the first message that you are an AI assistant. Be direct: "Hi, I\'m an AI assistant from [company] —"';
+      // Earlier this carried a literal "[company]" placeholder; the
+      // outer prompt ALSO told the model not to emit bracketed
+      // placeholders, so the prompt was contradicting itself. Now the
+      // resolved company name rides in as a parameter.
+      return `Disclose upfront on the first message that you are an AI assistant. Be direct: "Hi, I'm an AI assistant from ${companyName} —"`;
     case 'on_request':
       return 'If the recipient asks "is this a person?" or "are you a bot?", say yes you are an AI assistant. Otherwise no need to volunteer it.';
     case 'never':
@@ -746,12 +824,14 @@ async function runMaybeQueueAiEmailReply(
   // Classify the draft body — same regex pass as SMS. Email drafts
   // are typically longer so the classifier sees more surface area
   // and tends to err toward 'commitment'; that's the safer side.
-  const riskKind = classifyDraftRisk(draft.body);
+  // Fallback drafts (no ANTHROPIC_API_KEY) skip the classifier and
+  // always route to manual approval — same discipline as SMS.
+  const riskKind = draft.fallback ? 'commitment' : classifyDraftRisk(draft.body);
   const inReplyTo = replyTarget?.latestMessageId ?? null;
 
   // Tiered + safe → auto-execute via applyEmailSend.
   if (settings.approvalMode === 'tiered' && riskKind === 'safe') {
-    const approvalId = await autoExecuteEmailReply({
+    const exec = await autoExecuteEmailReply({
       to: recipients,
       subject,
       body: draft.body,
@@ -759,8 +839,24 @@ async function runMaybeQueueAiEmailReply(
       rationale: `AI auto-sent (tiered mode, classifier: safe) for email reply (conversation_settings ${settings.id}, thread ${input.threadId}). Authority: ${settings.authority}.`,
       settingsId: settings.id,
     });
+    if (!exec.ok) {
+      // Send failed; approval was demoted to pending. Notify so the
+      // operator can act from the bell rather than discovering it on
+      // their next /approvals visit.
+      await notifyOperatorsOfPendingApproval({
+        approvalId: exec.approvalId,
+        channel: 'email',
+        conversationKey: input.threadId,
+        draftPreview: draft.body,
+      });
+      return {
+        status: 'skipped_draft_failed',
+        reason: `auto_send_failed: ${exec.error}`,
+        approvalId: exec.approvalId,
+      };
+    }
     await incrementConversationCounters(settings.id, 3000);
-    return { status: 'auto_executed', approvalId, riskKind };
+    return { status: 'auto_executed', approvalId: exec.approvalId, riskKind };
   }
 
   // Otherwise queue the email.send approval.
@@ -894,15 +990,18 @@ async function draftEmailReply(input: {
   settings: ConversationSettings;
   history: EmailTurn[];
   inboundBody: string;
-}): Promise<{ body: string }> {
+}): Promise<{ body: string; fallback?: boolean }> {
   const persona = await resolveOperatorPersona();
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    // No-key fallback signs as the resolved company. Earlier this
+    // No-key fallback signs as the resolved company. Flag carries
+    // through so the caller forces approval-queue routing — same
+    // discipline as the SMS/WhatsApp fallback. Earlier this body
     // hardcoded "Vector Trade Capital" — a leftover from an early
     // tester's profile that surfaced in production replies.
     return {
       body: `Hi,\n\nThanks for the message — let me get back to you on this shortly with a proper response.\n\nBest regards,\n${persona.companyName}`,
+      fallback: true,
     };
   }
 
@@ -912,7 +1011,10 @@ async function draftEmailReply(input: {
       ? 'the same language the recipient used'
       : input.settings.language;
   const authorityLine = authorityToPromptLine(input.settings.authority);
-  const identityLine = identityToPromptLine(input.settings.identityDisclosure);
+  const identityLine = identityToPromptLine(
+    input.settings.identityDisclosure,
+    persona.companyName,
+  );
 
   const lengthHint =
     ((input.settings.channelConfig as Record<string, unknown>)[
@@ -1160,7 +1262,7 @@ async function autoExecuteReply(input: {
   body: string;
   rationale: string;
   settingsId: string;
-}): Promise<string> {
+}): Promise<{ ok: true; approvalId: string } | { ok: false; error: string; approvalId: string }> {
   const { createId, applySmsSend, applyWhatsAppSend } = await import('@procur/ai');
 
   const id = createId();
@@ -1195,8 +1297,31 @@ async function autoExecuteReply(input: {
       input.channel,
       result.error,
     );
+    // Demote the approval back to pending so the operator can retry
+    // manually. The approval row stays — the proposed_payload picks up
+    // the dispatch error so the card explains what happened. Without
+    // this, the row reads decision=auto_approved + applied_at=null
+    // and looks like a stuck queue entry.
+    await db
+      .update(approvals)
+      .set({
+        decision: 'pending',
+        proposedPayload: {
+          kind: actionKind,
+          tier: 'T2',
+          to: input.toPhone,
+          body: input.body,
+          rationale: input.rationale,
+          actor_source: 'conversation_agent_auto',
+          conversation_settings_id: input.settingsId,
+          auto_execute_failed: true,
+          auto_execute_error: result.error ?? 'unknown',
+        },
+      })
+      .where(eq(approvals.id, id));
+    return { ok: false, error: result.error ?? 'send failed', approvalId: id };
   }
-  return id;
+  return { ok: true, approvalId: id };
 }
 
 /**
@@ -1210,7 +1335,7 @@ async function autoExecuteEmailReply(input: {
   inReplyTo: string | null;
   rationale: string;
   settingsId: string;
-}): Promise<string> {
+}): Promise<{ ok: true; approvalId: string } | { ok: false; error: string; approvalId: string }> {
   const { createId, applyEmailSend } = await import('@procur/ai');
 
   const id = createId();
@@ -1251,8 +1376,24 @@ async function autoExecuteEmailReply(input: {
       '[conversation-agent] auto-execute email failed',
       result.error,
     );
+    // Demote back to pending so the operator can retry from the bell —
+    // see autoExecuteReply for the same pattern. Without this the
+    // approval reads decision=auto_approved + applied_at=null and looks
+    // like a stuck queue entry rather than a recoverable failure.
+    await db
+      .update(approvals)
+      .set({
+        decision: 'pending',
+        proposedPayload: {
+          ...payload,
+          auto_execute_failed: true,
+          auto_execute_error: result.error ?? 'unknown',
+        },
+      })
+      .where(eq(approvals.id, id));
+    return { ok: false, error: result.error ?? 'send failed', approvalId: id };
   }
-  return id;
+  return { ok: true, approvalId: id };
 }
 
 /**
@@ -1310,9 +1451,17 @@ async function notifyOperatorsOfPendingApproval(input: {
         type: 'approval.pending',
         title: `AI ${channelLabel} draft awaiting approval`,
         body: input.draftPreview.slice(0, 240),
-        link: '/approvals',
+        // Link carries the approval id; entity_id stays null because
+        // notifications.entity_id is a uuid column and approvals.id is
+        // text (ULID). Earlier this passed the ULID into entity_id and
+        // every insert threw "invalid input syntax for type uuid",
+        // swallowed by the catch — silent loss of every pending-approval
+        // notification. Polymorphic ref via entity_ref_type/_id is the
+        // longer fix; for now the link suffices since the bell drops
+        // operators straight to /approvals/[id].
+        link: `/approvals/${input.approvalId}`,
         entityType: 'approval',
-        entityId: input.approvalId,
+        entityId: null,
       }));
     if (rows.length === 0) return;
     await db.insert(notifications).values(rows);

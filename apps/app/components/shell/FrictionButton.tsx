@@ -98,14 +98,18 @@ export function FrictionButton() {
         <span>Stuck?</span>
       </button>
 
+      {/* z-[1001] sits above the AssistantDrawer (z-[1000]) and its
+          launcher (z-[999]). Earlier z-50 left the friction popup
+          painting behind the Ask launcher when both rendered, so the
+          textarea was effectively unreachable. */}
       {confirmation && (
-        <div className="fixed bottom-32 right-4 z-50 rounded-md border border-emerald-500/40 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-800 shadow-sm">
+        <div className="fixed bottom-32 right-4 z-[1001] rounded-md border border-emerald-500/40 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-800 shadow-sm">
           ✓ Friction logged
         </div>
       )}
 
       {open && (
-        <div className="fixed bottom-32 right-4 z-50 w-[360px] rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-3 shadow-xl">
+        <div className="fixed bottom-32 right-4 z-[1001] w-[360px] rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-3 shadow-xl">
           <div className="mb-1.5 text-sm font-medium">What did you wish the system would do?</div>
           <textarea
             ref={textareaRef}

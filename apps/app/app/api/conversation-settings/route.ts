@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
+  getConversationSettings,
   getOrInitConversationSettings,
   updateConversationSettings,
 } from '@procur/catalog';
@@ -134,29 +135,42 @@ export async function PATCH(req: Request): Promise<Response> {
   // pauseConversation() in conversation-agent.ts (`max_turns (X)
   // reached`, `max_cost_usd_cents (X) reached`, `max_duration_hours
   // (X) reached`). Stop-keyword + manual pauses don't auto-resume.
+  //
+  // Race guard: re-read the row before clearing. Between the
+  // updateConversationSettings call above and this branch, an inbound
+  // webhook could fire pauseConversation() with a NEW reason (e.g.
+  // stop keyword). If we used the stale `settings` snapshot we'd
+  // blindly clear that new pause. Reading fresh and re-checking the
+  // current pausedReason against the budget-cap patterns prevents
+  // that.
   if (settings.pausedAt && settings.pausedReason) {
-    const reason = settings.pausedReason;
-    const ageHours =
-      (Date.now() - new Date(settings.createdAt).getTime()) / 3_600_000;
-    const costUsdCents = Math.round(
-      Number(settings.totalCostUsdMicros) / 10_000,
-    );
-    const turnsCleared =
-      reason.startsWith('max_turns') &&
-      settings.totalTurns < settings.maxTurns;
-    const costCleared =
-      reason.startsWith('max_cost_usd_cents') &&
-      costUsdCents < settings.maxCostUsdCents;
-    const durationCleared =
-      reason.startsWith('max_duration_hours') &&
-      ageHours < settings.maxDurationHours;
-    if (turnsCleared || costCleared || durationCleared) {
-      const resumed = await updateConversationSettings({
-        channel: parsed.data.channel,
-        conversationKey: parsed.data.conversation_key,
-        patch: { pausedAt: null, pausedReason: null },
-      });
-      return NextResponse.json({ settings: resumed ?? settings });
+    const fresh = await getConversationSettings({
+      channel: parsed.data.channel,
+      conversationKey: parsed.data.conversation_key,
+    });
+    if (fresh && fresh.pausedAt && fresh.pausedReason) {
+      const reason = fresh.pausedReason;
+      const ageHours =
+        (Date.now() - new Date(fresh.createdAt).getTime()) / 3_600_000;
+      const costUsdCents = Math.round(
+        Number(fresh.totalCostUsdMicros) / 10_000,
+      );
+      const turnsCleared =
+        reason.startsWith('max_turns') && fresh.totalTurns < fresh.maxTurns;
+      const costCleared =
+        reason.startsWith('max_cost_usd_cents') &&
+        costUsdCents < fresh.maxCostUsdCents;
+      const durationCleared =
+        reason.startsWith('max_duration_hours') &&
+        ageHours < fresh.maxDurationHours;
+      if (turnsCleared || costCleared || durationCleared) {
+        const resumed = await updateConversationSettings({
+          channel: parsed.data.channel,
+          conversationKey: parsed.data.conversation_key,
+          patch: { pausedAt: null, pausedReason: null },
+        });
+        return NextResponse.json({ settings: resumed ?? fresh });
+      }
     }
   }
 

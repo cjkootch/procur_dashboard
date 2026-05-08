@@ -114,11 +114,20 @@ export async function awardXp(
       occurredAt: input.occurredAt ?? new Date(),
     };
 
+    // The unique index on (source_table, source_id, verb) is PARTIAL —
+    // applies only when both source_table and source_id are NOT NULL
+    // (xp_ledger.ts). Postgres requires ON CONFLICT to carry the same
+    // predicate to match a partial index; without `where`, the query
+    // throws "no unique or exclusion constraint matching the ON
+    // CONFLICT specification" and the surrounding try/catch silently
+    // swallows it — every external-source XP credit was being eaten
+    // before this fix.
     const inserted = await db
       .insert(xpLedger)
       .values(row)
       .onConflictDoNothing({
         target: [xpLedger.sourceTable, xpLedger.sourceId, xpLedger.verb],
+        where: sql`${xpLedger.sourceTable} IS NOT NULL AND ${xpLedger.sourceId} IS NOT NULL`,
       })
       .returning({ id: xpLedger.id });
     if (inserted.length === 0) {

@@ -747,28 +747,52 @@ export async function applyDealAttach(
     return { ok: false, error: `deal ${payload.dealId} not found` };
   }
 
+  // Row-count check on every branch — silent UPDATE-affects-zero-rows
+  // is the bug the audit caught. The chat trace where neither the
+  // email touchpoint nor the assistant thread attached to the deal
+  // (the model passed an approval id where a touchpoint id was
+  // expected, plus the literal 'current' for assistant_thread) had no
+  // user-visible error because the UPDATE just matched zero rows and
+  // stampApplied happily recorded success.
+  let matchedCount = 0;
   if (payload.targetType === 'touchpoint') {
-    await db
+    const result = await db
       .update(touchpoints)
       .set({ dealId: payload.dealId })
-      .where(eq(touchpoints.id, payload.targetId));
+      .where(eq(touchpoints.id, payload.targetId))
+      .returning({ id: touchpoints.id });
+    matchedCount = result.length;
   } else if (payload.targetType === 'assistant_thread') {
-    await db
+    const result = await db
       .update(assistantThreads)
       .set({ dealId: payload.dealId })
-      .where(eq(assistantThreads.id, payload.targetId));
+      .where(eq(assistantThreads.id, payload.targetId))
+      .returning({ id: assistantThreads.id });
+    matchedCount = result.length;
   } else {
     // 'thread' — the threads table has no deal_id column today (kept
     // narrow per the migration). Stamp the deal_id on every touchpoint
     // currently linked to this thread instead, so the room's
     // communications query (which reads via touchpoints + thread_id)
-    // surfaces them.
-    await db.execute(sql`
+    // surfaces them. Touchpoints-via-thread can legitimately be 0
+    // when the thread has no messages yet — in that case we keep the
+    // attach on the thread record itself once a deal_id column lands;
+    // for now we error so the operator notices the no-op.
+    const result = await db.execute(sql`
       UPDATE touchpoints
          SET deal_id = ${payload.dealId}
        WHERE metadata->>'thread_id' = ${payload.targetId}
+       RETURNING id
     `);
+    matchedCount = Array.isArray(result.rows) ? result.rows.length : 0;
     void threads;
+  }
+
+  if (matchedCount === 0) {
+    return {
+      ok: false,
+      error: `${payload.targetType} "${payload.targetId}" did not match any rows — the deal was not attached. Check that the targetId came verbatim from a prior tool result (touchpoint id, not approval id; assistant_thread id, not the literal 'current').`,
+    };
   }
 
   await stampApplied(approvalId, payload.dealId, 'deal.attached', {
