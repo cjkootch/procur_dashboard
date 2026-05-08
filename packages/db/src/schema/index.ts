@@ -52,6 +52,7 @@ export * from './match-outcome-events';
 export * from './entity-documents';
 export * from './entity-contact-enrichments';
 export * from './entity-contact-form-endpoints';
+export * from './lead-form-submission-tokens';
 export * from './supplier-approvals';
 export * from './entity-sanctions-screens';
 export * from './crude-assays';

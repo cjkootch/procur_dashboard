@@ -28,6 +28,10 @@ import { setProbeStatus } from './market-probes';
 import { listHypothesesForProbe } from './market-probe-hypotheses';
 import { pickVariantForTarget } from './market-probe-variants';
 import { pickAutopilotEligibleEndpoint } from './entity-contact-form-endpoints';
+import {
+  buildSubAddressedEmail,
+  mintLeadFormSubmissionToken,
+} from './lead-form-submission-tokens';
 
 /**
  * Phase 2H autopilot. Drafts + sends per-target outreach within probe
@@ -701,6 +705,29 @@ export async function autopilotSendBatch(
       // shifts display name + signature only). probe.email_signature_text
       // gets appended to the form message body since forms have no
       // dedicated signature field.
+      //
+      // Reply attribution: mint a sub-address token + use the
+      // plus-addressed variant of the sender email so the
+      // recipient's reply (which goes to the email field they fill
+      // in their form acknowledgement) lands at hello+<token>@DOMAIN.
+      // The resend-inbound webhook parses the token and resolves to
+      // (probe, target) so the reply gets routed to this probe's
+      // conversation context. Without this, lead-form replies land
+      // at the bare sender address with NO probe linkage and the
+      // operator sees an unattributed inbound.
+      const tokenRow = await mintLeadFormSubmissionToken({
+        probeId: probe.id,
+        targetId: t.id,
+        entitySlug: t.entitySlug,
+        formUrl: leadFormEndpoint.url,
+        approvalId,
+      });
+      const senderBaseEmail =
+        process.env.LEAD_FORM_SENDER_EMAIL ?? 'hello@procur.app';
+      const senderEmail = buildSubAddressedEmail(
+        senderBaseEmail,
+        tokenRow.token,
+      );
       const formDraft = await draftLeadFormSubmission({
         pack,
         intent,
@@ -725,8 +752,7 @@ export async function autopilotSendBatch(
             probe.alias ??
             process.env.LEAD_FORM_SENDER_NAME ??
             'Procur Outreach',
-          senderEmail:
-            process.env.LEAD_FORM_SENDER_EMAIL ?? 'hello@procur.app',
+          senderEmail,
           senderCompany: process.env.LEAD_FORM_SENDER_COMPANY ?? null,
           senderPhone: process.env.LEAD_FORM_SENDER_PHONE ?? null,
           language: leadFormEndpoint.language,

@@ -38,10 +38,14 @@ export * from './market-playbooks';
 export * from './market-probe-autopilot';
 export * from './market-probe-variants';
 export * from './entity-contact-form-endpoints';
+export * from './lead-form-submission-tokens';
 export {
   recommendCommunicationTargets,
   buildCommunicationContextPack,
   draftOutreachFromContext,
+  probeDomainHintGuidance,
+  probeFormalityGuidance,
+  probeLanguageGuidance,
   type RecommendCandidate,
   type RecommendCommunicationTargetsInput,
   type CommunicationContextPack,
