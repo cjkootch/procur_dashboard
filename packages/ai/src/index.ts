@@ -118,6 +118,12 @@ export {
   type ProbeContextForPlan,
 } from './market-probes/plan-agent';
 export {
+  proposeProbeStrategyAdjustments,
+  type ProbeContextForStrategy,
+  type ProbeMetricsSnapshot,
+  type ProbeStrategyProposal,
+} from './market-probes/strategy-agent';
+export {
   ClassifyOutput,
   SummaryOutput,
   LanguageOutput,

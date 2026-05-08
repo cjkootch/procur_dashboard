@@ -30,6 +30,8 @@ export * from './conversation-agent';
 export * from './gamification';
 export * from './market-probes';
 export * from './market-probes-discovery';
+export * from './market-atlas';
+export * from './market-probe-strategy';
 export {
   recommendCommunicationTargets,
   buildCommunicationContextPack,
