@@ -162,6 +162,10 @@ export function RvmAudioPanel({
         profileId: input.profileId,
         ...(input.engine ? { engine: input.engine } : {}),
         ...(input.instruct ? { instruct: input.instruct } : {}),
+        // Voicebox /generate/stream supports a language param per
+        // the OpenAPI spec — passing it lets the qwen3-tts engine
+        // select the right phoneme model for non-English locales.
+        language: input.language,
       });
       const fd = new FormData();
       const ext = audio.contentType.includes('wav') ? 'wav' : 'mp3';

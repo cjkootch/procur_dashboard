@@ -30,11 +30,21 @@
 const VOICEBOX_BASE = 'http://127.0.0.1:17493';
 const HEALTH_TIMEOUT_MS = 2_000;
 
+/** Mirrors Voicebox's VoiceProfileResponse (per OpenAPI spec at
+ *  http://127.0.0.1:17493/docs). We only consume a subset; everything
+ *  else gets ignored. */
 export interface VoiceboxProfile {
   id: string;
   name: string;
+  /** Voicebox uses `default_engine`; we surface it as `engine` on
+   *  this consumer-side type for brevity. The UI doesn't need to
+   *  distinguish the field name from Voicebox's wire shape. */
   engine?: string;
   language?: string;
+  /** 'cloned' | 'preset' | 'designed' per the spec. Mostly cosmetic
+   *  for our UI; we'll surface it in the profile dropdown when
+   *  multiple profiles share a name. */
+  voiceType?: string;
 }
 
 export interface VoiceboxEngine {
@@ -72,29 +82,44 @@ export async function detectVoicebox(): Promise<VoiceboxHealth> {
 }
 
 /**
- * List the operator's voice profiles. The Voicebox /profiles
- * endpoint may return either a bare array OR `{ profiles: [...] }`
- * depending on the build — we accept both shapes.
+ * List the operator's voice profiles. Voicebox returns
+ * VoiceProfileResponse[] per the OpenAPI spec — we map to our
+ * narrower consumer-side shape.
  */
 export async function listVoiceboxProfiles(): Promise<VoiceboxProfile[]> {
   const res = await fetch(`${VOICEBOX_BASE}/profiles`);
   if (!res.ok) throw new Error(`profiles ${res.status}`);
-  const data = (await res.json()) as
-    | VoiceboxProfile[]
-    | { profiles?: VoiceboxProfile[] };
-  if (Array.isArray(data)) return data;
-  return data.profiles ?? [];
+  const raw = (await res.json()) as Array<{
+    id: string;
+    name: string;
+    default_engine?: string | null;
+    language?: string;
+    voice_type?: string;
+  }>;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((p) => ({
+    id: p.id,
+    name: p.name,
+    ...(p.default_engine ? { engine: p.default_engine } : {}),
+    ...(p.language ? { language: p.language } : {}),
+    ...(p.voice_type ? { voiceType: p.voice_type } : {}),
+  }));
 }
 
 export interface GenerateVoiceboxAudioInput {
   text: string;
   profileId: string;
-  /** Engine to use — Voicebox supports multiple (qwen_custom_voice,
-   *  chatterbox, kokoro, etc.). The profile may have a default
-   *  engine; passing one here overrides. */
+  /** Engine to use — Voicebox supports multiple
+   *  (qwen / qwen_custom_voice / luxtts / chatterbox /
+   *  chatterbox_turbo / tada / kokoro per the OpenAPI spec). The
+   *  profile may have a default engine; passing one here overrides. */
   engine?: string;
+  /** ISO 639-1 lowercase. Voicebox accepts: zh / en / ja / ko / de /
+   *  fr / ru / pt / es / it / he / ar / da / el / fi / hi / ms / nl /
+   *  no / pl / sv / sw / tr. */
+  language?: string;
   /** Voicebox-specific delivery instruction string ("warm, slow,
-   *  cinematic"). Engine-dependent. */
+   *  cinematic"). Engine-dependent — works with qwen-family engines. */
   instruct?: string;
 }
 
@@ -110,22 +135,36 @@ export interface GeneratedAudio {
 }
 
 /**
- * Generate audio via Voicebox. Returns the raw bytes as a Blob
- * (no auto-upload — caller decides whether to forward to procur's
- * /api/rvm/audio-assets endpoint). Caller is responsible for
- * managing the blob URL lifecycle (call URL.revokeObjectURL when
- * done previewing).
+ * Generate audio via Voicebox. Uses `POST /generate/stream` — a
+ * synchronous endpoint that streams WAV bytes directly without
+ * persisting to Voicebox's local generation history. We don't
+ * want server-side history clutter from probe-tier generations
+ * anyway; the operator's interest in version-control of recordings
+ * lives on procur's side via `rvm_audio_assets.is_active` history.
+ *
+ * The earlier shape used `POST /generate` which is ASYNC: returns
+ * GenerationResponse JSON with status='generating' + an id, then
+ * the caller polls `/generate/{id}/status` (SSE) until completed
+ * and fetches via `/audio/{id}`. Three round trips. /generate/stream
+ * collapses that to one — perfect for our "browser → bytes →
+ * upload to procur" flow.
+ *
+ * Returns the raw bytes as a Blob (no auto-upload — caller decides
+ * whether to forward to procur's /api/rvm/audio-assets endpoint).
+ * Caller is responsible for managing the blob URL lifecycle (call
+ * URL.revokeObjectURL when done previewing).
  */
 export async function generateVoiceboxAudio(
   input: GenerateVoiceboxAudioInput,
 ): Promise<GeneratedAudio> {
-  const res = await fetch(`${VOICEBOX_BASE}/generate`, {
+  const res = await fetch(`${VOICEBOX_BASE}/generate/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       text: input.text,
       profile_id: input.profileId,
       ...(input.engine ? { engine: input.engine } : {}),
+      ...(input.language ? { language: input.language } : {}),
       ...(input.instruct ? { instruct: input.instruct } : {}),
     }),
   });
@@ -133,6 +172,7 @@ export async function generateVoiceboxAudio(
     const bodyText = await res.text().catch(() => '');
     throw new Error(`generate ${res.status}: ${bodyText.slice(0, 200)}`);
   }
+  // /generate/stream returns audio/wav per the spec.
   const contentType = res.headers.get('content-type') ?? 'audio/wav';
   const blob = await res.blob();
   const durationMs = await probeDurationMs(blob);
