@@ -231,65 +231,77 @@ export async function advanceProbeLadder(input: {
     };
   }
 
-  if (!input.force) {
-    const targets = await db
-      .select({
-        sendStatus: marketProbeTargets.sendStatus,
-        replyStatus: marketProbeTargets.replyStatus,
-        disposition: marketProbeTargets.disposition,
-        justificationState: marketProbeTargets.justificationState,
-      })
-      .from(marketProbeTargets)
-      .where(eq(marketProbeTargets.probeId, input.probeId));
+  // Compute the evidence-based blocker for the current stage. Agent
+  // calls always honor the blocker (agent cannot force). Operator
+  // calls honor it unless `force=true`. Earlier shape gated the
+  // entire block on `!input.force`, which made the operator-with-
+  // force path skip the targets read AND the `!input.force` check
+  // inside redundant — dead code that read like override-capable
+  // logic but wasn't.
+  const targets = await db
+    .select({
+      sendStatus: marketProbeTargets.sendStatus,
+      replyStatus: marketProbeTargets.replyStatus,
+      disposition: marketProbeTargets.disposition,
+      justificationState: marketProbeTargets.justificationState,
+    })
+    .from(marketProbeTargets)
+    .where(eq(marketProbeTargets.probeId, input.probeId));
 
-    const justifiedCount = targets.filter(
-      (t) => t.justificationState === 'justified',
-    ).length;
-    const repliedCount = targets.filter(
-      (t) => t.replyStatus === 'positive' || t.replyStatus === 'routing',
-    ).length;
-    const positiveCount = targets.filter(
-      (t) => t.replyStatus === 'positive',
-    ).length;
-    const qualifiedCount = targets.filter(
-      (t) => t.disposition === 'qualified',
-    ).length;
+  const justifiedCount = targets.filter(
+    (t) => t.justificationState === 'justified',
+  ).length;
+  const repliedCount = targets.filter(
+    (t) => t.replyStatus === 'positive' || t.replyStatus === 'routing',
+  ).length;
+  const positiveCount = targets.filter(
+    (t) => t.replyStatus === 'positive',
+  ).length;
+  const qualifiedCount = targets.filter(
+    (t) => t.disposition === 'qualified',
+  ).length;
 
-    let blocker: string | null = null;
-    switch (fromStage) {
-      case 'market_structure':
-        if (justifiedCount === 0) {
-          blocker =
-            'no justified targets yet — fill in justification on at least one target before advancing to routing';
-        }
-        break;
-      case 'routing':
-        if (repliedCount === 0) {
-          blocker =
-            'no routing replies yet — wait for at least one positive/routing reply before advancing to pain_discovery';
-        }
-        break;
-      case 'pain_discovery':
-        if (positiveCount === 0) {
-          blocker =
-            'no positive replies yet — wait for at least one positive reply before advancing to commercial_qualification';
-        }
-        break;
-      case 'commercial_qualification':
-        if (qualifiedCount === 0) {
-          blocker =
-            'no targets marked qualified — set a target disposition to qualified before advancing to deal_room_conversion';
-        }
-        break;
-      default:
-        break;
-    }
-    if (blocker && input.authoredBy === 'agent') {
+  let blocker: string | null = null;
+  switch (fromStage) {
+    case 'market_structure':
+      if (justifiedCount === 0) {
+        blocker =
+          'no justified targets yet — fill in justification on at least one target before advancing to routing';
+      }
+      break;
+    case 'routing':
+      if (repliedCount === 0) {
+        blocker =
+          'no routing replies yet — wait for at least one positive/routing reply before advancing to pain_discovery';
+      }
+      break;
+    case 'pain_discovery':
+      if (positiveCount === 0) {
+        blocker =
+          'no positive replies yet — wait for at least one positive reply before advancing to commercial_qualification';
+      }
+      break;
+    case 'commercial_qualification':
+      if (qualifiedCount === 0) {
+        blocker =
+          'no targets marked qualified — set a target disposition to qualified before advancing to deal_room_conversion';
+      }
+      break;
+    default:
+      break;
+  }
+
+  if (blocker) {
+    // Agent cannot force; refuse outright.
+    if (input.authoredBy === 'agent') {
       return { ok: false, fromStage, toStage, reason: blocker };
     }
-    if (blocker && input.authoredBy === 'operator' && !input.force) {
+    // Operator can force; otherwise honor the blocker.
+    if (input.authoredBy === 'operator' && !input.force) {
       return { ok: false, fromStage, toStage, reason: blocker };
     }
+    // Fall through — operator-forced advance writes through with no
+    // additional check.
   }
 
   await db

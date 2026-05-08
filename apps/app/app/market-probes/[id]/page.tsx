@@ -156,16 +156,32 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
             stage: {probe.ladderStage}
           </span>
           {ladderNext && (
-            <form action={advanceLadderAction}>
-              <input type="hidden" name="probeId" value={probe.id} />
-              <button
-                type="submit"
-                className="rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-xs hover:bg-[color:var(--color-muted)]/40"
-                title={`Advance to ${ladderNext}. Gated on evidence from current stage.`}
-              >
-                advance →
-              </button>
-            </form>
+            <>
+              <form action={advanceLadderAction}>
+                <input type="hidden" name="probeId" value={probe.id} />
+                <button
+                  type="submit"
+                  className="rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-xs hover:bg-[color:var(--color-muted)]/40"
+                  title={`Advance to ${ladderNext}. Gated on evidence from current stage.`}
+                >
+                  advance →
+                </button>
+              </form>
+              {/* Operator force-advance escape hatch — bypasses the
+                  evidence gate. Use sparingly: skipping ahead defeats
+                  the point of ladder discipline. */}
+              <form action={advanceLadderAction}>
+                <input type="hidden" name="probeId" value={probe.id} />
+                <input type="hidden" name="force" value="true" />
+                <button
+                  type="submit"
+                  className="text-[10px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
+                  title={`Force-advance to ${ladderNext} regardless of evidence. Operator-only override.`}
+                >
+                  force
+                </button>
+              </form>
+            </>
           )}
           <span className="text-xs text-[color:var(--color-muted-foreground)]">
             cap {probe.dailySendLimit}/day, {probe.totalSendLimit} total

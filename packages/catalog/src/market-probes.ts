@@ -129,7 +129,12 @@ export async function listProbes(options: {
       probeId: marketProbeTargets.probeId,
       targetCount: sql<number>`COUNT(*)::int`,
       sentCount: sql<number>`COUNT(*) FILTER (WHERE ${marketProbeTargets.sendStatus} IN ('sent','queued'))::int`,
-      replyCount: sql<number>`COUNT(*) FILTER (WHERE ${marketProbeTargets.replyStatus} IS NOT NULL AND ${marketProbeTargets.replyStatus} <> 'none')::int`,
+      // Exclude 'unsubscribe' from the reply count — operators reading
+      // the brief card use this number as a "did anyone engage?" signal,
+      // and an unsubscribe is the opposite of engagement. The audit
+      // caught the inflated count flipping the brief's "good" signal
+      // badge for probes that only got opt-outs.
+      replyCount: sql<number>`COUNT(*) FILTER (WHERE ${marketProbeTargets.replyStatus} IS NOT NULL AND ${marketProbeTargets.replyStatus} NOT IN ('none', 'unsubscribe'))::int`,
     })
     .from(marketProbeTargets)
     .groupBy(marketProbeTargets.probeId);

@@ -161,9 +161,19 @@ Produce the plan JSON.`,
   let parsed: ProbePlan & { hypotheses?: ProposedHypothesis[] };
   try {
     parsed = JSON.parse(text);
-  } catch {
+  } catch (err) {
     // Don't blow up the probe on a malformed response — fall back to
-    // the default skeleton. Operator can edit + re-run.
+    // the default skeleton. Operator can edit + re-run. Log loudly
+    // so the operator can see WHY the probe came up with an empty
+    // plan (silent fallback was masking Sonnet shape regressions —
+    // operator saw an "active" probe with zero hypotheses and no
+    // explanation).
+    console.error('[probe-plan-agent] JSON parse failed; using skeleton', {
+      market: ctx.marketName,
+      country: ctx.country,
+      err: err instanceof Error ? err.message : String(err),
+      rawSnippet: text.slice(0, 300),
+    });
     return { plan: defaultPlan(ctx), hypotheses: [] };
   }
 
