@@ -2,7 +2,14 @@
 
 import { useState } from 'react';
 import { setTargetSignalsAction } from '../actions';
-import { PROBE_SIGNAL_KINDS } from '@procur/catalog';
+// Import directly from @procur/db/schema (pure Drizzle column +
+// constant declarations, no 'server-only' directive) rather than
+// @procur/catalog. The catalog barrel re-exports server-only modules
+// (agent-runtime, calls, brief, bge-*); even importing a constant
+// drags the entire chain into the client bundle, and Next.js fails
+// the build on the first 'server-only' it encounters in a pages/-
+// reachable graph.
+import { PROBE_SIGNAL_KINDS } from '@procur/db/schema';
 
 /**
  * Per-target signal flags form. Renders the canonical signal taxonomy
