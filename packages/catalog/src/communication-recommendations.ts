@@ -101,6 +101,26 @@ export interface RecommendCommunicationTargetsInput {
   /** Required to run touchpoint-recency dedupe per tenant. The chat
    *  tool resolves this from the requesting user's company. */
   companyId?: string;
+  /** Discovery-domain compartmentalization. Probes are experimental
+   *  — operators run them across very different domains. Without
+   *  this filter, an M&A probe's recommend pass would mix in fuel
+   *  rolodex stubs, and a fuel probe's recommend would pull in
+   *  cross-border-M&A SMBs.
+   *
+   *  Values:
+   *    - undefined / null   → no filter (back-compat; chat tool
+   *                           default — operator sees everything)
+   *    - 'curated_only'     → discovery_domain IS NULL only (gold
+   *                           rolodex; the safe default for fuel-side
+   *                           probes that pre-date the domain column)
+   *    - <domain string>    → discovery_domain IS NULL OR matches.
+   *                           Probe discovery passes the probe's own
+   *                           domain so the recommender stays inside
+   *                           the compartment.
+   *
+   *  Threaded into both the explicit filter pass and the segment-
+   *  label cold-start pass so they can't drift. */
+  discoveryDomain?: string | 'curated_only' | null;
 }
 
 /** Source identifiers for the per-signal fetch outcomes the pack
@@ -242,6 +262,9 @@ export async function recommendCommunicationTargets(
       ...(input.filters.country ? { country: input.filters.country } : {}),
       limit: limit * 2,
       ...(input.companyId ? { companyId: input.companyId } : {}),
+      ...(input.discoveryDomain
+        ? { discoveryDomain: input.discoveryDomain }
+        : {}),
     });
   }
 
@@ -259,6 +282,11 @@ export async function recommendCommunicationTargets(
       ),
       country: input.filters?.country,
       limit: limit * 3,
+      // Compartmentalization passes through to the segment search
+      // SQL too — without it a fuel-tagged probe doing cold-start
+      // segment match would surface M&A stubs whose categories
+      // happened to keyword-overlap.
+      discoveryDomain: input.discoveryDomain,
     });
   }
 
@@ -336,6 +364,8 @@ async function findEntitiesBySegmentLabels(input: {
   labels: string[];
   country?: string;
   limit?: number;
+  /** Compartmentalization filter — see RecommendCommunicationTargetsInput.discoveryDomain. */
+  discoveryDomain?: string | 'curated_only' | null;
 }): Promise<SegmentLabelMatch[]> {
   if (input.labels.length === 0) return [];
   const limit = input.limit ?? 50;
@@ -346,6 +376,7 @@ async function findEntitiesBySegmentLabels(input: {
     input.labels.map((l) => sql`${l}`),
     sql`, `,
   )}]::text[]`;
+  const dd = input.discoveryDomain;
   const result = await db.execute<{
     slug: string;
     matched_labels: string[];
@@ -356,6 +387,13 @@ async function findEntitiesBySegmentLabels(input: {
       CROSS JOIN unnest(${labelsArray}) AS lbl
      WHERE 1=1
        ${input.country ? sql`AND UPPER(ke.country) = UPPER(${input.country})` : sql``}
+       ${
+         dd === 'curated_only'
+           ? sql`AND ke.discovery_domain IS NULL`
+           : dd
+             ? sql`AND (ke.discovery_domain IS NULL OR ke.discovery_domain = ${dd})`
+             : sql``
+       }
        AND (
          ke.name ILIKE '%' || lbl || '%'
          OR EXISTS (SELECT 1 FROM unnest(ke.aliases) a WHERE a ILIKE '%' || lbl || '%')

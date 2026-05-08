@@ -328,12 +328,21 @@ export async function discoverTargetsAction(formData: FormData): Promise<void> {
     ),
   );
 
+  // Compartmentalization: when the probe has a domain, keep
+  // discovery inside that compartment (returns gold rolodex entries
+  // + same-domain stubs only). When the probe has no domain, default
+  // to 'curated_only' — the gold rolodex — so a domain-less probe
+  // can't accidentally surface stubs created by an unrelated probe.
+  // Operators who explicitly want cross-domain discovery should set
+  // probe.domain to the union/superset they want.
+  const discoveryScope = probe.domain ?? 'curated_only';
   let candidates = await recommendCommunicationTargets({
     limit: 25,
     filters,
     ...(segmentLabels.length > 0
       ? { seedSegmentLabels: segmentLabels }
       : {}),
+    discoveryDomain: discoveryScope,
   });
 
   // Phase 2G safety net: drop any candidates flagged

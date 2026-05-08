@@ -11,6 +11,7 @@ import {
   index,
   boolean,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 /**
  * Analyst-curated rolodex of buyers / sellers / traders relevant to
@@ -71,6 +72,27 @@ export const knownEntities = pgTable(
         'sweet-crude-runner', 'trading-house', 'state-refiner'. */
     tags: text('tags').array(),
 
+    /** Compartmentalization tag stamped at probe-discovery time
+     *  (migration 0108). Identifies the domain of the probe that
+     *  first discovered this entity:
+     *    NULL              — hand-curated / fuel-era. The gold rolodex.
+     *    'fuel_supply'     — fuel-procurement probe
+     *    'ma_matchmaking'  — cross-border M&A probe
+     *    'pe_buyers'       — PE-target sourcing
+     *    ...               — operator-defined per probe
+     *
+     *  Filterable via lookupKnownEntities — fuel-side chat tools
+     *  default to discovery_domain IS NULL OR domain='fuel_supply'
+     *  so M&A probe stubs don't surface as fuel-procurement
+     *  candidates. Without this column, a JP M&A probe's 25
+     *  discovered SMBs would appear in the same role='unknown'
+     *  bucket as fuel-side stubs, and graph-similarity / BGE
+     *  embedding training would silently mix the two domains.
+     *
+     *  Operator can override (promote a stub to the gold rolodex
+     *  by setting discovery_domain=NULL via the entity profile). */
+    discoveryDomain: text('discovery_domain'),
+
     /** Open metadata bucket — where the analyst pulled the data from,
         last review date, deal-specific flags, etc. */
     metadata: jsonb('metadata'),
@@ -129,6 +151,9 @@ export const knownEntities = pgTable(
     roleIdx: index('known_entities_role_idx').on(table.role),
     categoriesIdx: index('known_entities_categories_idx').using('gin', table.categories),
     tagsIdx: index('known_entities_tags_idx').using('gin', table.tags),
+    discoveryDomainIdx: index('known_entities_discovery_domain_idx')
+      .on(table.discoveryDomain)
+      .where(sql`${table.discoveryDomain} IS NOT NULL`),
     primaryDomainIdx: index('known_entities_primary_domain_idx').on(table.primaryDomain),
     apolloOrgIdIdx: index('known_entities_apollo_org_id_idx').on(table.apolloOrgId),
     apolloFundingStageIdx: index('known_entities_apollo_funding_stage_idx').on(
