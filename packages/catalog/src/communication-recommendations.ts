@@ -893,12 +893,24 @@ async function safeOutcome<T, S extends ContextSignalSource>(
 // draftOutreachFromContext — LLM-drafted copy from the context pack
 // ----------------------------------------------------------------------------
 
+export type FormalityLevel = 'high' | 'professional' | 'casual';
+
 export interface DraftOutreachInput {
   pack: CommunicationContextPack;
   /** Operator-supplied intent: "introduce, ask about Q3 jet supply", etc. */
   intent: string;
   /** Topics to refuse to surface (ML scores, internal labels, etc.). */
   doNotMention?: string[];
+  /** Per-probe register override. NULL falls back to 'professional'
+   *  (existing behavior). 'high' for first-contact M&A / succession
+   *  outreach where deference matters; 'casual' for warm-market
+   *  follow-ups. */
+  formalityLevel?: FormalityLevel | null;
+  /** Free-text framing the drafter receives alongside the intent.
+   *  Captures domain-specific guidance the base prompt can't infer
+   *  (e.g. "exploratory M&A — lead with respect, do NOT lead with
+   *  valuation"). Capped to 1000 chars so prompt stays bounded. */
+  domainHint?: string | null;
 }
 
 export async function draftOutreachFromContext(
@@ -1071,10 +1083,49 @@ function buildDraftPrompt(input: DraftOutreachInput): string {
       ? `Note to drafter: ${p.signalHealth.failedSources.length} signal source(s) failed to fetch this run. Don't pretend the missing data means "no activity exists" — write copy that's safe under either interpretation, and lean on what DID fetch successfully.`
       : '',
     '',
+    buildSteeringBlock(input.formalityLevel, input.domainHint),
     `Forbidden phrasing: ${(input.doNotMention ?? []).join(' | ') || '(none additional)'}`,
   ]
-    .filter((s) => s !== null)
+    .filter((s) => s !== null && s !== '')
     .join('\n');
+}
+
+/**
+ * Steering block injected into the user-message prompt for both
+ * drafters (email + lead-form). Lives outside the cached system
+ * prompt so per-probe values don't bust the prompt-cache hit.
+ *
+ * Formality maps to register-specific guidance the model honors:
+ *   - 'high'         → deferential, indirect, honorifics where the
+ *                       target language has them
+ *   - 'professional' → default behavior; emit nothing (no extra
+ *                       block needed since system prompt already
+ *                       says "professional")
+ *   - 'casual'       → conversational, first-name only, short
+ *
+ * Domain hint is opaque operator text — passed through verbatim to
+ * the model. Capped at 1000 chars to keep prompt size bounded.
+ */
+function buildSteeringBlock(
+  formalityLevel: FormalityLevel | null | undefined,
+  domainHint: string | null | undefined,
+): string {
+  const lines: string[] = [];
+  if (formalityLevel === 'high') {
+    lines.push(
+      'STEERING — formality: HIGH. Use deferential register. Indirect ask ("would you be open to a brief conversation about..." not "let\'s get on a call"). When the target language has honorific forms (Japanese 敬語, French vous, German Sie, Korean 존댓말, Spanish usted), use them — do NOT default to casual forms. Lead with respect for what the recipient has built; first contact is not the time to push.',
+    );
+  } else if (formalityLevel === 'casual') {
+    lines.push(
+      'STEERING — formality: CASUAL. Warm-market tone. First-name basis. Short, conversational. Skip "Dear" / "Best regards" formalities; "Hi <name>" / "Cheers" registers fit. Single ask still applies — casual tone, not casual content.',
+    );
+  }
+  if (domainHint && domainHint.trim().length > 0) {
+    lines.push(
+      `STEERING — domain framing (operator-supplied): ${domainHint.slice(0, 1000)}`,
+    );
+  }
+  return lines.length > 0 ? `${lines.join('\n')}\n` : '';
 }
 
 function templateFallback(
@@ -1198,6 +1249,13 @@ export interface DraftLeadFormInput {
   pack: CommunicationContextPack;
   intent: string;
   doNotMention?: string[];
+  /** Per-probe register override. Same semantics as the email
+   *  drafter's formalityLevel — see DraftOutreachInput for the
+   *  level taxonomy. */
+  formalityLevel?: FormalityLevel | null;
+  /** Free-text framing the drafter receives alongside the intent.
+   *  Same semantics as DraftOutreachInput.domainHint. */
+  domainHint?: string | null;
   /** Field-role map from the endpoint row. The drafter uses presence
    *  of subject_field to decide whether to draft a subject; presence
    *  of company_field / phone_field to know whether to provide
@@ -1437,9 +1495,10 @@ function buildLeadFormDraftPrompt(input: DraftLeadFormInput): string {
       : '',
     '',
     `Sender: ${input.endpoint.senderName} <${input.endpoint.senderEmail}>${input.endpoint.senderCompany ? ` from ${input.endpoint.senderCompany}` : ''}`,
+    buildSteeringBlock(input.formalityLevel, input.domainHint),
     `Forbidden phrasing: ${(input.doNotMention ?? []).join(' | ') || '(none additional)'}`,
   ]
-    .filter((s) => s !== null)
+    .filter((s) => s !== null && s !== '')
     .join('\n');
 }
 

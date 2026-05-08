@@ -42,6 +42,7 @@ import {
   resolveHypothesis,
   savePlaybookFromProbe,
   setPlaybookStatus,
+  setProbeDrafterSteering,
   setProbeIdentity,
   setProbePlan,
   setProbeStatus,
@@ -444,6 +445,34 @@ export async function setProbeIdentityAction(
       sigTextRaw && sigTextRaw.length > 0 ? sigTextRaw : null,
     emailSignatureHtml:
       sigHtmlRaw && sigHtmlRaw.length > 0 ? sigHtmlRaw : null,
+  });
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/**
+ * Update the probe's drafter steering — formality + domain hint
+ * threaded into both drafter prompts (email + lead-form). Empty
+ * strings clear the override; the drafter falls back to its base
+ * "professional, no extra framing" behavior.
+ */
+export async function setProbeDrafterSteeringAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  if (!probeId) throw new Error('probeId required');
+  const formalityRaw = str(formData, 'formalityLevel');
+  const formalityLevel: 'high' | 'professional' | 'casual' | null =
+    formalityRaw === 'high' ||
+    formalityRaw === 'professional' ||
+    formalityRaw === 'casual'
+      ? formalityRaw
+      : null;
+  const domainHintRaw = str(formData, 'domainHint');
+  await setProbeDrafterSteering(probeId, {
+    formalityLevel,
+    domainHint:
+      domainHintRaw && domainHintRaw.length > 0 ? domainHintRaw : null,
   });
   revalidatePath(`/market-probes/${probeId}`);
 }

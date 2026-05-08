@@ -38,6 +38,7 @@ import {
   generatePlanAction,
   generateVariantProposalsAction,
   generateStrategyProposalsAction,
+  setProbeDrafterSteeringAction,
   setProbeIdentityAction,
   setProbeKillCriteriaAction,
   setProbeModeAction,
@@ -643,6 +644,63 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
                     maxLength={4000}
                     placeholder="<div>Ana Martinez<br>Procur</div>"
                     className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-1 text-xs font-mono"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="self-end rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-xs hover:bg-[color:var(--color-muted)]/40"
+                >
+                  Save
+                </button>
+              </form>
+            </details>
+
+            <details>
+              <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider hover:text-[color:var(--color-foreground)]">
+                Drafter steering
+              </summary>
+              <form
+                action={setProbeDrafterSteeringAction}
+                className="mt-2 grid gap-1.5"
+              >
+                <input type="hidden" name="probeId" value={probe.id} />
+                <p className="text-[10px] text-[color:var(--color-muted-foreground)]">
+                  Per-probe formality + domain framing. Threaded into both
+                  email and lead-form drafter prompts. Use when the probe
+                  is operating outside the default professional-procurement
+                  shape (cross-border M&A, succession outreach, warm-market
+                  follow-ups).
+                </p>
+                <label className="grid gap-1">
+                  <span>Formality</span>
+                  <select
+                    name="formalityLevel"
+                    defaultValue={probe.formalityLevel ?? ''}
+                    className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5 text-xs"
+                  >
+                    <option value="">(default — professional)</option>
+                    <option value="high">
+                      High — deferential, indirect, honorifics
+                    </option>
+                    <option value="professional">
+                      Professional — direct but courteous
+                    </option>
+                    <option value="casual">
+                      Casual — warm-market, conversational
+                    </option>
+                  </select>
+                </label>
+                <label className="grid gap-1">
+                  <span>Domain hint (optional, max 1000 chars)</span>
+                  <textarea
+                    name="domainHint"
+                    defaultValue={probe.domainHint ?? ''}
+                    rows={5}
+                    maxLength={1000}
+                    placeholder={
+                      "e.g. \"Exploratory M&A conversation with a succession-stage business owner. Lead with respect for what they've built; do NOT lead with valuation; goal of first contact is to learn whether succession is on their mind, not to make an offer.\""
+                    }
+                    className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-1 text-xs"
                   />
                 </label>
                 <button
