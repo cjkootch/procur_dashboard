@@ -26,6 +26,7 @@ import {
 } from '@procur/catalog';
 import { RvmAudioPanel } from '../_components/RvmAudioPanel';
 import { SignalFlagsForm } from '../_components/SignalFlagsForm';
+import { TargetFeedbackChips } from '../_components/TargetFeedbackChips';
 import {
   addApolloLookalikesAction,
   addAtlasFactAction,
@@ -49,8 +50,9 @@ import {
   setProbeModeAction,
   setProbeTierAction,
   setVariantStatusAction,
+  addProbeTargetAction,
+  dismissAllPendingTargetsAction,
   markTargetResearchOnlyAction,
-  recordTargetFeedbackAction,
   rejectStrategyProposalAction,
   resolveHypothesisAction,
   savePlaybookFromProbeAction,
@@ -860,9 +862,23 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
 
       {/* Targets */}
       <section className="mt-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-          Targets ({targets.length})
-        </h2>
+        <div className="mb-3 flex items-baseline justify-between gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Targets ({targets.length})
+          </h2>
+          {justificationCounts.pending > 0 && (
+            <form action={dismissAllPendingTargetsAction}>
+              <input type="hidden" name="probeId" value={probe.id} />
+              <button
+                type="submit"
+                className="text-[11px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
+                title={`Flip all ${justificationCounts.pending} pending targets to research_only so autopilot skips them.`}
+              >
+                Dismiss all {justificationCounts.pending} pending
+              </button>
+            </form>
+          )}
+        </div>
         <p className="mb-3 text-xs text-[color:var(--color-muted-foreground)]">
           {justificationCounts.justified} justified ·{' '}
           {justificationCounts.pending} pending ·{' '}
@@ -871,6 +887,27 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
             Tier 1 autopilot only sends to justified targets (Phase 2H).
           </span>
         </p>
+        <form
+          action={addProbeTargetAction}
+          className="mb-3 flex items-center gap-1.5"
+        >
+          <input type="hidden" name="probeId" value={probe.id} />
+          <input
+            type="text"
+            name="entitySlug"
+            placeholder="entity slug (e.g. caribbean-importers:wibisco)"
+            required
+            maxLength={200}
+            className="flex-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs"
+          />
+          <button
+            type="submit"
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2.5 py-1 text-xs hover:bg-[color:var(--color-muted)]/40"
+            title="Add an entity from the rolodex as a target. Defaults to fitTier C; idempotent on the same slug."
+          >
+            Add target
+          </button>
+        </form>
         {targets.length === 0 ? (
           <p className="text-sm text-[color:var(--color-muted-foreground)]">
             No targets yet. Run <strong>Discover targets</strong> to
@@ -958,9 +995,9 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
                       <button
                         type="submit"
                         className="text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
-                        title="Demote to research_only — never auto-drafted."
+                        title="Dismiss — flips send_status to research_only so autopilot skips this target. Reversible via the feedback row."
                       >
-                        research only
+                        dismiss
                       </button>
                     </form>
                     <span
@@ -1078,43 +1115,14 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
                     />
                   </details>
 
-                  {/* Feedback shortcuts — one-click labels, sentiment
-                      derived in the helper. Writes feedback_events rows.
-                      Selected state (filled chip) reflects existing
-                      non-revoked feedback for this (target, label). */}
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    {PROBE_FEEDBACK_LABELS.map((label) => {
-                      const isSelected =
-                        feedbackByTargetId.get(t.id)?.has(label) ?? false;
-                      return (
-                        <form
-                          key={label}
-                          action={recordTargetFeedbackAction}
-                          className="inline"
-                        >
-                          <input type="hidden" name="probeId" value={probe.id} />
-                          <input type="hidden" name="targetId" value={t.id} />
-                          <input type="hidden" name="label" value={label} />
-                          <button
-                            type="submit"
-                            className={
-                              isSelected
-                                ? 'rounded-full border border-[color:var(--color-foreground)] bg-[color:var(--color-foreground)] px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-background)]'
-                                : 'rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] hover:bg-[color:var(--color-muted)]/40'
-                            }
-                            title={
-                              isSelected
-                                ? `Recorded: ${label.replace(/_/g, ' ')}`
-                                : `Record feedback: ${label.replace(/_/g, ' ')}`
-                            }
-                          >
-                            {isSelected ? '✓ ' : ''}
-                            {label.replace(/_/g, ' ')}
-                          </button>
-                        </form>
-                      );
-                    })}
-                  </div>
+                  <TargetFeedbackChips
+                    probeId={probe.id}
+                    targetId={t.id}
+                    labels={PROBE_FEEDBACK_LABELS}
+                    selectedLabels={[
+                      ...(feedbackByTargetId.get(t.id) ?? new Set<string>()),
+                    ]}
+                  />
                 </li>
               );
             })}
