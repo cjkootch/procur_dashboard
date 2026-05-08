@@ -42,6 +42,7 @@ import {
   resolveHypothesis,
   savePlaybookFromProbe,
   setPlaybookStatus,
+  setProbeIdentity,
   setProbePlan,
   setProbeStatus,
   setTargetJustification,
@@ -417,6 +418,33 @@ export async function setProbeStatusAction(formData: FormData): Promise<void> {
   await setProbeStatus(probeId, status);
   revalidatePath(`/market-probes/${probeId}`);
   revalidatePath('/market-probes');
+}
+
+/**
+ * Update the probe's outreach identity — alias + signature blocks.
+ * Empty strings clear the override (NULL falls back to the
+ * company-level defaults at /settings/email). Affects every
+ * subsequent autopilot dispatch + chat-tool submit_lead_form call
+ * that passes this probe's id; existing in-flight sends already
+ * dispatched are unaffected.
+ */
+export async function setProbeIdentityAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  if (!probeId) throw new Error('probeId required');
+  const aliasRaw = str(formData, 'alias');
+  const sigTextRaw = str(formData, 'emailSignatureText');
+  const sigHtmlRaw = str(formData, 'emailSignatureHtml');
+  await setProbeIdentity(probeId, {
+    alias: aliasRaw && aliasRaw.length > 0 ? aliasRaw : null,
+    emailSignatureText:
+      sigTextRaw && sigTextRaw.length > 0 ? sigTextRaw : null,
+    emailSignatureHtml:
+      sigHtmlRaw && sigHtmlRaw.length > 0 ? sigHtmlRaw : null,
+  });
+  revalidatePath(`/market-probes/${probeId}`);
 }
 
 /**

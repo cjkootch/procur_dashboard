@@ -38,6 +38,7 @@ import {
   generatePlanAction,
   generateVariantProposalsAction,
   generateStrategyProposalsAction,
+  setProbeIdentityAction,
   setProbeKillCriteriaAction,
   setProbeModeAction,
   setProbeTierAction,
@@ -586,6 +587,62 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
                     name="maxTotalNoSignalBeforeProbePause"
                     defaultValue={probe.maxTotalNoSignalBeforeProbePause}
                     className="w-16 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5 text-xs"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="self-end rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-xs hover:bg-[color:var(--color-muted)]/40"
+                >
+                  Save
+                </button>
+              </form>
+            </details>
+
+            <details>
+              <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider hover:text-[color:var(--color-foreground)]">
+                Outreach identity
+              </summary>
+              <form
+                action={setProbeIdentityAction}
+                className="mt-2 grid gap-1.5"
+              >
+                <input type="hidden" name="probeId" value={probe.id} />
+                <p className="text-[10px] text-[color:var(--color-muted-foreground)]">
+                  Per-probe alias + signature override the company defaults
+                  at /settings/email for autopilot dispatch and
+                  submit_lead_form. Leave blank to fall back.
+                </p>
+                <label className="grid gap-1">
+                  <span>Alias (sender display name)</span>
+                  <input
+                    type="text"
+                    name="alias"
+                    defaultValue={probe.alias ?? ''}
+                    placeholder="e.g. Ana Martinez or Procurement Desk"
+                    maxLength={120}
+                    className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5 text-xs"
+                  />
+                </label>
+                <label className="grid gap-1">
+                  <span>Email signature (text)</span>
+                  <textarea
+                    name="emailSignatureText"
+                    defaultValue={probe.emailSignatureText ?? ''}
+                    rows={4}
+                    maxLength={2000}
+                    placeholder={'Ana Martinez\nProcur • +1 555 0100'}
+                    className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-1 text-xs font-mono"
+                  />
+                </label>
+                <label className="grid gap-1">
+                  <span>Email signature (HTML, optional)</span>
+                  <textarea
+                    name="emailSignatureHtml"
+                    defaultValue={probe.emailSignatureHtml ?? ''}
+                    rows={3}
+                    maxLength={4000}
+                    placeholder="<div>Ana Martinez<br>Procur</div>"
+                    className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-1 text-xs font-mono"
                   />
                 </label>
                 <button
