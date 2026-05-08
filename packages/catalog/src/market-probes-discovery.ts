@@ -176,6 +176,11 @@ export async function addApolloLookalikesToProbe(input: {
       name: org.name,
       primaryDomain: org.primaryDomain,
       probeCountry: probe.country,
+      // Compartmentalization: stamp the probe's domain onto every
+      // newly-discovered stub so M&A / non-fuel discoveries don't
+      // muddy the fuel rolodex. NULL when the probe doesn't set a
+      // domain — preserves back-compat for fuel-era probes.
+      discoveryDomain: probe.domain ?? null,
     });
     if (!slug) continue;
     if (slug.created) stubsCreated += 1;
@@ -298,6 +303,14 @@ async function resolveOrCreateRolodexStubFromApollo(input: {
   name: string;
   primaryDomain: string | null;
   probeCountry: string | null;
+  /** Discovery domain — stamped onto new stubs so the fuel rolodex
+   *  doesn't get muddied with M&A / PE / non-fuel entities. NULL on
+   *  the operator-curated rolodex; non-null on probe-discovered
+   *  stubs. When this stub gets re-discovered by a different
+   *  domain's probe later, we DON'T overwrite — first-discovery wins
+   *  (later promotion to gold rolodex requires explicit operator
+   *  edit). */
+  discoveryDomain: string | null;
 }): Promise<{ slug: string; created: boolean } | null> {
   // Prefer apollo_org_id match (strongest), then primary_domain.
   // Phase 2G: scout_protection=true entities are off-limits to
@@ -352,6 +365,7 @@ async function resolveOrCreateRolodexStubFromApollo(input: {
       categories: [],
       primaryDomain: input.primaryDomain ?? null,
       apolloOrgId: input.apolloOrgId,
+      discoveryDomain: input.discoveryDomain,
     });
     return { slug, created: true };
   } catch (err) {
@@ -693,6 +707,11 @@ export async function addThesisDrivenApolloOrgsToProbe(input: {
       name: org.name,
       primaryDomain: org.primaryDomain,
       probeCountry: probe.country,
+      // Compartmentalization: stamp the probe's domain onto every
+      // newly-discovered stub so M&A / non-fuel discoveries don't
+      // muddy the fuel rolodex. NULL when the probe doesn't set a
+      // domain — preserves back-compat for fuel-era probes.
+      discoveryDomain: probe.domain ?? null,
     });
     if (!slug) continue;
     if (slug.created) stubsCreated += 1;

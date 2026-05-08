@@ -2956,6 +2956,30 @@ export interface KnownEntityFilters {
    *   - 'none'      — no approval row exists yet
    *  No-op when companyId is omitted. */
   approvalStatus?: 'approved' | 'pending' | 'rejected' | 'expired' | 'none';
+  /** Discovery-domain compartmentalization filter (migration 0108).
+   *  Probes are experimental — operators run them across very
+   *  different domains. Stub entities created by probe target
+   *  discovery get stamped with the probe's domain to keep the
+   *  fuel rolodex unmuddied.
+   *
+   *  Values:
+   *    - undefined / null            → no filter; returns all rows
+   *                                    (back-compat for callers that
+   *                                    don't care about compartments)
+   *    - 'curated_only'              → discovery_domain IS NULL only.
+   *                                    The gold rolodex; excludes
+   *                                    every probe-discovered stub.
+   *    - <specific domain string>    → discovery_domain IS NULL OR
+   *                                    discovery_domain = <value>.
+   *                                    Includes the gold rolodex AND
+   *                                    stubs discovered by probes
+   *                                    in this domain.
+   *
+   *  Fuel-side chat tools default to 'fuel_supply' (or 'curated_only'
+   *  on operator preference) so M&A / PE / non-fuel stubs don't
+   *  surface as candidates for fuel outreach. M&A-side tools pass
+   *  'ma_matchmaking' or whatever the probe's domain is. */
+  discoveryDomain?: string | 'curated_only' | null;
   /** Default 100, hard cap 500 to keep the page render bounded. */
   limit?: number;
 }
@@ -2974,6 +2998,13 @@ export interface KnownEntityRow {
   metadata: Record<string, unknown> | null;
   latitude: number | null;
   longitude: number | null;
+  /** Compartmentalization tag. NULL = curated / fuel-era (the gold
+   *  rolodex). Non-null = stamped at probe-discovery time with the
+   *  domain of the probe that first discovered the entity. Surfaces
+   *  the compartment in the entity profile + lets fuel-side chat
+   *  tools filter to discoveryDomain IS NULL when they want to
+   *  exclude probe stubs. */
+  discoveryDomain: string | null;
   /** Per-tenant approval state. Populated only when KnownEntityFilters
    *  was called with companyId. Null = no approval row for this entity. */
   approvalStatus: SupplierApprovalStatusValue | null;
@@ -3030,11 +3061,18 @@ export async function lookupKnownEntities(
   // hide every entity; passing through (filter ignored) matches the
   // existing "filter unmet, return rows" pattern of the other params.
   const approvalFilter = companyId ? filters.approvalStatus : undefined;
+  // Discovery-domain compartmentalization. Three modes:
+  //   - undefined / null   → no filter (back-compat)
+  //   - 'curated_only'     → discovery_domain IS NULL (gold rolodex)
+  //   - <domain string>    → discovery_domain IS NULL OR matches
+  // Centralized so the SQL doesn't sprinkle per-mode branches.
+  const discoveryDomainFilter = filters.discoveryDomain;
   const result = await db.execute(sql`
     SELECT
       ke.id, ke.slug, ke.name, ke.country, ke.role, ke.categories, ke.notes,
       ke.contact_entity, ke.aliases, ke.tags, ke.metadata,
       ke.latitude, ke.longitude,
+      ke.discovery_domain,
       ke.apollo_funding_stage, ke.apollo_latest_funding_at,
       ke.apollo_estimated_employees, ke.apollo_annual_revenue,
       ke.apollo_total_funding,
@@ -3057,6 +3095,13 @@ export async function lookupKnownEntities(
       ${filters.country ? sql`AND ke.country = ${filters.country}` : sql``}
       ${filters.role ? sql`AND ke.role = ${filters.role}` : sql``}
       ${filters.tag ? sql`AND ${filters.tag} = ANY(ke.tags)` : sql``}
+      ${
+        discoveryDomainFilter === 'curated_only'
+          ? sql`AND ke.discovery_domain IS NULL`
+          : discoveryDomainFilter
+            ? sql`AND (ke.discovery_domain IS NULL OR ke.discovery_domain = ${discoveryDomainFilter})`
+            : sql``
+      }
       ${
         filters.name
           ? sql`AND (
@@ -3099,6 +3144,8 @@ export async function lookupKnownEntities(
     metadata: r.metadata as Record<string, unknown> | null,
     latitude: r.latitude != null ? Number.parseFloat(String(r.latitude)) : null,
     longitude: r.longitude != null ? Number.parseFloat(String(r.longitude)) : null,
+    discoveryDomain:
+      r.discovery_domain == null ? null : String(r.discovery_domain),
     approvalStatus: (r.approval_status as SupplierApprovalStatusValue | null) ?? null,
     approvalApprovedAt:
       r.approval_approved_at instanceof Date
@@ -3330,6 +3377,7 @@ export async function findEntitiesNearLocation(filters: {
       SELECT
         id, slug, name, country, role, categories, notes,
         contact_entity, aliases, tags, metadata, latitude, longitude,
+        discovery_domain,
         3440.065 * 2 * asin(sqrt(
           power(sin(radians((latitude::float8 - ${lat}) / 2)), 2) +
           cos(radians(${lat})) * cos(radians(latitude::float8)) *
@@ -3363,6 +3411,8 @@ export async function findEntitiesNearLocation(filters: {
     metadata: (r.metadata as Record<string, unknown> | null) ?? null,
     latitude: r.latitude != null ? Number.parseFloat(String(r.latitude)) : null,
     longitude: r.longitude != null ? Number.parseFloat(String(r.longitude)) : null,
+    discoveryDomain:
+      r.discovery_domain == null ? null : String(r.discovery_domain),
     distanceNm: Number.parseFloat(String(r.distance_nm)),
     // Approval state isn't fetched in this proximity query — callers
     // who need it should use lookupKnownEntities with companyId.
