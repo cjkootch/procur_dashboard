@@ -566,8 +566,10 @@ export async function recordFeedbackShortcut(input: {
 
 /**
  * List recent feedback shortcuts for a probe — feeds the learning
- * report ("which targets the operator marked as bad") + future
- * playbook generation ("learn from operator's wrong_segment labels").
+ * report ("which targets the operator marked as bad"), the probe
+ * page row chips (selected state per (target, label)), and future
+ * playbook generation. Filters revoked rows so soft-deleted events
+ * don't drive UI state or learning synthesis.
  */
 export async function listProbeFeedbackShortcuts(probeId: string) {
   return await db
@@ -578,6 +580,7 @@ export async function listProbeFeedbackShortcuts(probeId: string) {
         eq(feedbackEvents.feedbackKind, 'match_quality'),
         eq(feedbackEvents.targetType, 'probe_target'),
         sql`${feedbackEvents.payload}->>'probe_id' = ${probeId}`,
+        sql`${feedbackEvents.revokedAt} IS NULL`,
       ),
     )
     .orderBy(desc(feedbackEvents.createdAt))

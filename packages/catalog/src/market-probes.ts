@@ -492,6 +492,71 @@ export async function setProbeDrafterSteering(
 }
 
 /**
+ * Bulk-dismiss every pending target on a probe — flip send_status
+ * to research_only so autopilot skips them. Used when discovery
+ * surfaces a batch of irrelevant entities (e.g. wrong region) and
+ * the operator wants a one-click cleanup instead of dismissing
+ * each row.
+ *
+ * Only flips rows currently at send_status='pending' so already-
+ * sent / queued / replied targets aren't affected.
+ */
+export async function dismissAllPendingProbeTargets(
+  probeId: string,
+): Promise<number> {
+  const updated = await db
+    .update(marketProbeTargets)
+    .set({ sendStatus: 'research_only', updatedAt: new Date() })
+    .where(
+      and(
+        eq(marketProbeTargets.probeId, probeId),
+        eq(marketProbeTargets.sendStatus, 'pending'),
+      ),
+    )
+    .returning({ id: marketProbeTargets.id });
+  return updated.length;
+}
+
+/**
+ * Manually add a single target to a probe by entity slug. Wraps
+ * upsertProbeTargets — same idempotency on (probe_id, entity_slug)
+ * so re-adding an existing target just refreshes evidence.
+ *
+ * Operator-friendly path for self-tests + edge cases where
+ * discovery missed a target the operator knows about. Default
+ * fitTier='C' (manual entries are weaker than discovery's measured
+ * fit) so the autopilot's A/B-only gate keeps these out unless
+ * the operator explicitly upgrades them.
+ */
+export async function addProbeTargetBySlug(input: {
+  probeId: string;
+  entitySlug: string;
+  segment?: string | null;
+  fitTier?: 'A' | 'B' | 'C' | 'D';
+  contactId?: string | null;
+}): Promise<void> {
+  const id = `mpt_${input.probeId}_${input.entitySlug}`.replace(
+    /[^a-zA-Z0-9_-]/g,
+    '_',
+  );
+  await upsertProbeTargets(input.probeId, [
+    {
+      id,
+      entitySlug: input.entitySlug,
+      ...(input.contactId !== undefined ? { contactId: input.contactId } : {}),
+      ...(input.segment !== undefined ? { segment: input.segment } : {}),
+      fitTier: input.fitTier ?? 'C',
+      confidence: 0.5,
+      evidenceJson: {
+        kind: 'manual_add',
+        summary: 'Operator manually added',
+        confidence: 0.5,
+      },
+    },
+  ]);
+}
+
+/**
  * Operator opt-in for paid Apollo phone enrichment during autopilot
  * RVM dispatch. Defaults to false on insert; flipping to true allows
  * the autopilot's resolveRecipientPhone to call Apollo's enrichPerson

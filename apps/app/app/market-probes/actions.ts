@@ -32,6 +32,8 @@ import {
   listHypothesesForProbe,
   listProbeFeedbackShortcuts,
   listRecentLearningReportsByCountry,
+  addProbeTargetBySlug,
+  dismissAllPendingProbeTargets,
   listRejectionHistory,
   listSegments,
   listStrategyProposals,
@@ -967,6 +969,38 @@ export async function markTargetResearchOnlyAction(
   const probeId = str(formData, 'probeId');
   if (!targetId || !probeId) throw new Error('targetId + probeId required');
   await setTargetResearchOnly(targetId);
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/**
+ * Bulk dismiss every pending target on a probe — flips send_status
+ * to research_only so autopilot skips them. Used to wipe a batch of
+ * irrelevant discovery results in one click.
+ */
+export async function dismissAllPendingTargetsAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  if (!probeId) throw new Error('probeId required');
+  await dismissAllPendingProbeTargets(probeId);
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/**
+ * Manually add a target by entity slug — text input on the probe
+ * page. Defaults to fitTier C since manual adds skip the measured-
+ * similarity gate. Idempotent on (probe_id, entity_slug); re-adding
+ * the same slug just refreshes timestamps.
+ */
+export async function addProbeTargetAction(formData: FormData): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  const entitySlug = str(formData, 'entitySlug')?.trim();
+  if (!probeId || !entitySlug) {
+    throw new Error('probeId + entitySlug required');
+  }
+  await addProbeTargetBySlug({ probeId, entitySlug });
   revalidatePath(`/market-probes/${probeId}`);
 }
 
