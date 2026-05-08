@@ -32,6 +32,8 @@ import {
   generateLearningReportAction,
   generatePlanAction,
   generateStrategyProposalsAction,
+  setProbeKillCriteriaAction,
+  setProbeModeAction,
   markTargetResearchOnlyAction,
   recordTargetFeedbackAction,
   rejectStrategyProposalAction,
@@ -446,10 +448,89 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
             )}
           </div>
 
-          <div className="mt-5 space-y-1 text-xs text-[color:var(--color-muted-foreground)]">
-            <p>
+          <div className="mt-5 space-y-3 text-xs text-[color:var(--color-muted-foreground)]">
+            <div>
+              <span className="text-[10px] font-semibold uppercase tracking-wider">
+                Mode
+              </span>
+              <form action={setProbeModeAction} className="mt-1 flex gap-1">
+                <input type="hidden" name="probeId" value={probe.id} />
+                <select
+                  name="mode"
+                  defaultValue={probe.mode}
+                  className="flex-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs"
+                >
+                  <option value="experiment">experiment (autopilot eligible)</option>
+                  <option value="relationship">relationship (manual only)</option>
+                </select>
+                <button
+                  type="submit"
+                  className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 text-xs hover:bg-[color:var(--color-muted)]/40"
+                >
+                  Set
+                </button>
+              </form>
+            </div>
+
+            <details>
+              <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider hover:text-[color:var(--color-foreground)]">
+                Kill criteria
+              </summary>
+              <form
+                action={setProbeKillCriteriaAction}
+                className="mt-2 grid gap-1.5"
+              >
+                <input type="hidden" name="probeId" value={probe.id} />
+                <label className="flex items-center justify-between gap-2">
+                  <span>max bounce rate %</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    name="maxBounceRatePct"
+                    defaultValue={Number(probe.maxBounceRatePct)}
+                    className="w-16 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5 text-xs"
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-2">
+                  <span>max complaint rate %</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    name="maxComplaintRatePct"
+                    defaultValue={Number(probe.maxComplaintRatePct)}
+                    className="w-16 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5 text-xs"
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-2">
+                  <span>no-reply / segment pause</span>
+                  <input
+                    type="number"
+                    name="maxNoReplyBeforeSegmentPause"
+                    defaultValue={probe.maxNoReplyBeforeSegmentPause}
+                    className="w-16 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5 text-xs"
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-2">
+                  <span>no-signal / probe pause</span>
+                  <input
+                    type="number"
+                    name="maxTotalNoSignalBeforeProbePause"
+                    defaultValue={probe.maxTotalNoSignalBeforeProbePause}
+                    className="w-16 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5 text-xs"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="self-end rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 text-xs hover:bg-[color:var(--color-muted)]/40"
+                >
+                  Save
+                </button>
+              </form>
+            </details>
+
+            <p className="pt-1">
               Tier {probe.tier} — Phase 1 ships research-only. Autopilot
-              graduation arrives in Phase 2.
+              graduation arrives in Phase 2H.
             </p>
             {probe.allowedChannels.length > 0 && (
               <p>Channels: {probe.allowedChannels.join(', ')}</p>
