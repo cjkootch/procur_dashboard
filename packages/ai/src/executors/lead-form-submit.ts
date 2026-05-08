@@ -110,6 +110,72 @@ export interface LeadFormSubmitOptions {
   companyId?: string;
 }
 
+/**
+ * Parse a stored approval payload into a LeadFormSubmitPayload. Used
+ * by the dispatcher when an operator approves a `lead_form.submit`
+ * action proposed via the chat tool. Mirrors parseEmailSendPayload's
+ * shape — returns null when the payload doesn't match the expected
+ * structure so the dispatcher can no-op rather than throw.
+ */
+export function parseLeadFormSubmitPayload(
+  raw: Record<string, unknown>,
+): LeadFormSubmitPayload | null {
+  const entitySlug =
+    typeof raw['entitySlug'] === 'string'
+      ? raw['entitySlug']
+      : typeof raw['entity_slug'] === 'string'
+        ? (raw['entity_slug'] as string)
+        : null;
+  const formUrl =
+    typeof raw['formUrl'] === 'string'
+      ? raw['formUrl']
+      : typeof raw['form_url'] === 'string'
+        ? (raw['form_url'] as string)
+        : null;
+  const fieldValuesRaw =
+    raw['fieldValues'] ?? raw['field_values'] ?? null;
+  if (!entitySlug || !formUrl) return null;
+  if (typeof fieldValuesRaw !== 'object' || fieldValuesRaw == null) return null;
+  const fieldValues: Record<string, string> = {};
+  for (const [k, v] of Object.entries(fieldValuesRaw as Record<string, unknown>)) {
+    if (typeof v === 'string') fieldValues[k] = v;
+  }
+  if (Object.keys(fieldValues).length === 0) return null;
+  const draftedRaw = raw['draftedFields'] ?? raw['drafted_fields'] ?? null;
+  const drafted =
+    typeof draftedRaw === 'object' && draftedRaw != null
+      ? (draftedRaw as Record<string, unknown>)
+      : {};
+  return {
+    entitySlug,
+    formUrl,
+    fieldValues,
+    draftedFields: {
+      name: typeof drafted['name'] === 'string' ? drafted['name'] : undefined,
+      email:
+        typeof drafted['email'] === 'string' ? drafted['email'] : undefined,
+      subject:
+        typeof drafted['subject'] === 'string' ? drafted['subject'] : undefined,
+      message:
+        typeof drafted['message'] === 'string' ? drafted['message'] : undefined,
+      company:
+        typeof drafted['company'] === 'string' ? drafted['company'] : undefined,
+      phone:
+        typeof drafted['phone'] === 'string' ? drafted['phone'] : undefined,
+    },
+    contactId:
+      typeof raw['contactId'] === 'string'
+        ? raw['contactId']
+        : typeof raw['contact_id'] === 'string'
+          ? (raw['contact_id'] as string)
+          : undefined,
+    rationale:
+      typeof raw['rationale'] === 'string'
+        ? (raw['rationale'] as string)
+        : undefined,
+  };
+}
+
 const PER_DOMAIN_COOLDOWN_MS = 60_000;
 const POST_TIMEOUT_MS = 15_000;
 const SUCCESS_TEXT_PATTERNS =

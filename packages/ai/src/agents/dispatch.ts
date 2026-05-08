@@ -1,5 +1,9 @@
 import { applyEmailSend, parseEmailSendPayload } from '../executors/email-send';
 import {
+  applyLeadFormSubmit,
+  parseLeadFormSubmitPayload,
+} from '../executors/lead-form-submit';
+import {
   applyCreateCompany,
   applyCreateContact,
   applyCloseLead,
@@ -108,6 +112,21 @@ export async function dispatchApprovalExecutor(
     const payload = parseEmailSendPayload(row.proposedPayload);
     if (!payload) return;
     await applyEmailSend(
+      row.id,
+      payload,
+      options.companyId ? { companyId: options.companyId } : {},
+    );
+    return;
+  }
+
+  // Lead-form submission. Operator approval flips this from 'pending'
+  // to 'approved' (or chat tool inserts as 'auto_approved' for tier-2
+  // probes); the dispatcher routes here and the executor re-verifies
+  // CAPTCHA / submit_method eligibility live before POSTing.
+  if (row.actionType === 'lead_form.submit') {
+    const payload = parseLeadFormSubmitPayload(row.proposedPayload);
+    if (!payload) return;
+    await applyLeadFormSubmit(
       row.id,
       payload,
       options.companyId ? { companyId: options.companyId } : {},

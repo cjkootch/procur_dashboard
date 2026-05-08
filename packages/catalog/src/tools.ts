@@ -84,10 +84,16 @@ import {
 import {
   buildCommunicationContextPack,
   candidateToMlEvidence,
+  draftLeadFormSubmission,
   draftOutreachFromContext,
+  mapDraftToFieldValues,
   recommendCommunicationTargets,
   type RecommendCandidate,
 } from './communication-recommendations';
+import {
+  listFormEndpointsForEntity,
+  pickAutopilotEligibleEndpoint,
+} from './entity-contact-form-endpoints';
 import {
   listCommunicationTemplates,
   renderTemplate,
@@ -493,6 +499,239 @@ export function buildCatalogTools(): ToolRegistry {
           entitySlug: pack.entity.slug,
           entityName: pack.entity.name,
           ...draft,
+        };
+      },
+    }),
+
+    submit_lead_form: defineTool({
+      name: 'submit_lead_form',
+      description:
+        'Propose an outbound contact-form submission to a counterparty. Use when the operator ' +
+        'asks to "reach out via their contact form / website form / lead form", OR when no ' +
+        'verified email is available for a target but the user wants to make first contact ' +
+        'anyway.\n\n' +
+        'BEHAVIOR:\n' +
+        "  • Looks up an autopilot-eligible form endpoint for the entity (discovered by the " +
+        'website crawler, or operator-added). When `formUrl` is supplied explicitly, uses that ' +
+        "row; otherwise picks the best one automatically.\n" +
+        "  • Drafts a form-shaped message via the same intelligence pack the chat's email " +
+        'drafter uses (web intel, fuel signals, customs, sanctions). Capped at 800 chars; ' +
+        'plain text; no signature.\n' +
+        '  • Inserts a `lead_form.submit` approval (tier T2). The operator approves via the ' +
+        'queue UI; the executor then POSTs the form. The chat does NOT auto-execute.\n\n' +
+        'CAPTCHA DISCIPLINE:\n' +
+        "  • Refuses to propose against any endpoint where discovery detected a CAPTCHA / " +
+        'honeypot / Cloudflare challenge. The tool returns a structured error in that case ' +
+        '(`error: "captcha_protected"` with the kind), and you should surface that to the ' +
+        'operator: "Their contact form is protected by reCAPTCHA — I can\'t submit through it. ' +
+        'Want me to try email instead?" Do NOT search for ways around this — the form is ' +
+        'gated, the answer is "use a different channel".\n' +
+        "  • Refuses when no eligible endpoint exists. Suggest the operator add the form URL " +
+        'manually via the entity profile, OR re-run the website crawler to discover one.',
+      kind: 'write',
+      schema: z.object({
+        entitySlug: z
+          .string()
+          .min(1)
+          .max(256)
+          .describe(
+            'Entity slug returned by lookup_known_entities. Pull from a prior tool result; ' +
+              'do NOT invent.',
+          ),
+        intent: z
+          .string()
+          .min(1)
+          .max(500)
+          .describe(
+            'Operator-stated goal in plain language ("introduce ourselves, ask about Q3 ' +
+              'distillates supply"). The drafter writes the message body from this.',
+          ),
+        formUrl: z
+          .string()
+          .url()
+          .optional()
+          .describe(
+            'Optional explicit form URL when the operator pointed at a specific page (e.g. ' +
+              '"submit via their /contact-procurement form"). When omitted, the tool picks ' +
+              'the best autopilot-eligible endpoint automatically.',
+          ),
+        contactId: z
+          .string()
+          .regex(/^[0-9A-HJKMNP-TV-Z]{26}$/, 'expected ULID')
+          .optional()
+          .describe(
+            'Optional CRM contact id to link the touchpoint to. The form has its own ' +
+              "name/email fields, so this doesn't gate submission — it's just for the " +
+              'audit trail when a CRM contact is the source of the outreach.',
+          ),
+        doNotMention: z
+          .array(z.string().min(1).max(200))
+          .max(20)
+          .optional()
+          .describe(
+            'Topics the drafter must NOT surface (internal labels, ML scores, etc.). The ' +
+              "tool always adds the standard 'do not mention' set; this extends it.",
+          ),
+      }),
+      handler: async (ctx, input) => {
+        // Resolve the endpoint. Explicit formUrl wins; otherwise
+        // auto-pick. Both paths feed through autopilotEligible
+        // gating — the chat tool can't propose against a CAPTCHA-
+        // protected endpoint, period.
+        let endpoint;
+        if (input.formUrl) {
+          const all = await listFormEndpointsForEntity(input.entitySlug);
+          endpoint = all.find((e) => e.url === input.formUrl) ?? null;
+          if (!endpoint) {
+            return {
+              ok: false as const,
+              error: 'endpoint_not_found',
+              message:
+                `No discovered form endpoint with that URL for ${input.entitySlug}. ` +
+                'The operator can add it manually from the entity profile, or you can ' +
+                'omit formUrl to auto-pick the best eligible endpoint.',
+            };
+          }
+          if (endpoint.detectedCaptchaKind != null) {
+            return {
+              ok: false as const,
+              error: 'captcha_protected',
+              captchaKind: endpoint.detectedCaptchaKind,
+              message:
+                `That form is protected by ${endpoint.detectedCaptchaKind} — I can't ` +
+                'submit through it. Want me to draft an email instead?',
+            };
+          }
+          if (endpoint.submitMethod !== 'http_post' || !endpoint.messageField) {
+            return {
+              ok: false as const,
+              error: 'endpoint_not_autopilot_eligible',
+              message:
+                `That endpoint isn't autopilot-eligible (submit_method=` +
+                `${endpoint.submitMethod}, message_field=${endpoint.messageField ?? 'unset'}). ` +
+                "The operator can fix the field-role assignments from the entity profile, " +
+                'or pick a different form.',
+            };
+          }
+        } else {
+          endpoint = await pickAutopilotEligibleEndpoint(input.entitySlug);
+          if (!endpoint) {
+            // Diagnose: is there an endpoint at all (just protected),
+            // or none discovered yet? Different operator response.
+            const all = await listFormEndpointsForEntity(input.entitySlug);
+            if (all.length === 0) {
+              return {
+                ok: false as const,
+                error: 'no_endpoint_discovered',
+                message:
+                  `No contact-form endpoint discovered for ${input.entitySlug} yet. ` +
+                  'The operator can add one manually from the entity profile, or run the ' +
+                  'website crawler to discover one.',
+              };
+            }
+            const protectedKinds = all
+              .map((r) => r.detectedCaptchaKind)
+              .filter((k): k is string => Boolean(k));
+            return {
+              ok: false as const,
+              error: 'all_endpoints_protected',
+              captchaKinds: protectedKinds,
+              message:
+                `All ${all.length} discovered form(s) for ${input.entitySlug} are ` +
+                `protected (${protectedKinds.join(', ') || 'unknown'}). Try email instead.`,
+            };
+          }
+        }
+
+        // Build context pack + draft. Single source of truth from
+        // PR 4: draftLeadFormSubmission + mapDraftToFieldValues.
+        const pack = await buildCommunicationContextPack({
+          entitySlug: input.entitySlug,
+          ...(input.contactId ? { contactId: input.contactId } : {}),
+          intent: input.intent,
+          companyId: ctx.companyId,
+          retrievalContext: { tool: 'submit_lead_form' },
+        });
+        if (!pack) {
+          return {
+            ok: false as const,
+            error: 'entity_not_found',
+            message: `Entity ${input.entitySlug} not found in known_entities.`,
+          };
+        }
+        const draft = await draftLeadFormSubmission({
+          pack,
+          intent: input.intent,
+          ...(input.doNotMention ? { doNotMention: input.doNotMention } : {}),
+          endpoint: {
+            subjectField: endpoint.subjectField,
+            companyField: endpoint.companyField,
+            phoneField: endpoint.phoneField,
+            senderName:
+              process.env.LEAD_FORM_SENDER_NAME ?? 'Procur Outreach',
+            senderEmail:
+              process.env.LEAD_FORM_SENDER_EMAIL ?? 'hello@procur.app',
+            senderCompany: process.env.LEAD_FORM_SENDER_COMPANY ?? null,
+            senderPhone: process.env.LEAD_FORM_SENDER_PHONE ?? null,
+            language: endpoint.language,
+          },
+        });
+
+        // Refuse propagation — when the drafter returned a
+        // 'REFUSED:' message (opted-out / sanctions hit), surface it
+        // upward instead of inserting an approval the operator would
+        // immediately reject.
+        if (draft.message.startsWith('REFUSED:')) {
+          return {
+            ok: false as const,
+            error: 'refused_by_drafter',
+            reason: draft.message,
+            riskWarnings: draft.riskWarnings,
+          };
+        }
+
+        const fieldValues = mapDraftToFieldValues({
+          draft,
+          endpoint: {
+            nameField: endpoint.nameField,
+            emailField: endpoint.emailField,
+            subjectField: endpoint.subjectField,
+            messageField: endpoint.messageField,
+            companyField: endpoint.companyField,
+            phoneField: endpoint.phoneField,
+          },
+        });
+
+        const action: ActionDescriptorT = {
+          kind: 'lead_form.submit',
+          tier: 'T2',
+          entitySlug: input.entitySlug,
+          formUrl: endpoint.url,
+          fieldValues,
+          draftedFields: {
+            ...(draft.subject ? { subject: draft.subject } : {}),
+            message: draft.message,
+            email: draft.senderEmail,
+            name: draft.senderName,
+            ...(draft.senderCompany ? { company: draft.senderCompany } : {}),
+            ...(draft.senderPhone ? { phone: draft.senderPhone } : {}),
+          },
+          ...(input.contactId ? { contactId: input.contactId } : {}),
+          rationale: input.intent,
+          doNotMention: draft.doNotMention,
+          riskWarnings: draft.riskWarnings,
+        } as ActionDescriptorT;
+
+        const row = await insertChatApproval(action, { userId: ctx.userId });
+        return {
+          ok: true as const,
+          approvalId: row.id,
+          entitySlug: input.entitySlug,
+          formUrl: endpoint.url,
+          messagePreview: draft.message.slice(0, 240),
+          subjectPreview: draft.subject || null,
+          reviewUrl: `/approvals/${row.id}`,
+          riskWarnings: draft.riskWarnings,
         };
       },
     }),
