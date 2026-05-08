@@ -631,6 +631,14 @@ export async function autopilotSendBatch(
       // markdown, optional subject only when the form has a
       // subject_field. Single source of truth for "draft → field
       // values" lives in mapDraftToFieldValues.
+      // probe.alias takes precedence over the LEAD_FORM_SENDER_NAME
+      // env default — the probe's outreach persona drives the form's
+      // name_field instead of the global fallback. Email +
+      // company + phone keep their env defaults (per-probe From
+      // address is intentionally out of scope; the probe identity
+      // shifts display name + signature only). probe.email_signature_text
+      // gets appended to the form message body since forms have no
+      // dedicated signature field.
       const formDraft = await draftLeadFormSubmission({
         pack,
         intent,
@@ -640,7 +648,9 @@ export async function autopilotSendBatch(
           companyField: leadFormEndpoint.companyField,
           phoneField: leadFormEndpoint.phoneField,
           senderName:
-            process.env.LEAD_FORM_SENDER_NAME ?? 'Procur Outreach',
+            probe.alias ??
+            process.env.LEAD_FORM_SENDER_NAME ??
+            'Procur Outreach',
           senderEmail:
             process.env.LEAD_FORM_SENDER_EMAIL ?? 'hello@procur.app',
           senderCompany: process.env.LEAD_FORM_SENDER_COMPANY ?? null,
@@ -648,6 +658,16 @@ export async function autopilotSendBatch(
           language: leadFormEndpoint.language,
         },
       });
+      // Append probe signature to the form message body. Forms have
+      // no dedicated signature field so the message has to carry it
+      // inline. Skip when the drafter refused (REFUSED: prefix) — no
+      // point appending a signature to a refusal stub.
+      if (
+        probe.emailSignatureText &&
+        !formDraft.message.startsWith('REFUSED:')
+      ) {
+        formDraft.message = `${formDraft.message}\n\n--\n${probe.emailSignatureText}`;
+      }
       const fieldValues = mapDraftToFieldValues({
         draft: formDraft,
         endpoint: {
@@ -699,12 +719,25 @@ export async function autopilotSendBatch(
 
     let result: { ok: boolean; error?: string };
     if (channelKind === 'email' && recipient && draft) {
-      result = await applyEmailSend(approvalId, {
-        to: [recipient.email],
-        subject: draft.emailSubject,
-        body: draft.emailBody,
-        rationale: `Market Probe ${probe.id} autopilot dispatch.`,
-      });
+      result = await applyEmailSend(
+        approvalId,
+        {
+          to: [recipient.email],
+          subject: draft.emailSubject,
+          body: draft.emailBody,
+          rationale: `Market Probe ${probe.id} autopilot dispatch.`,
+        },
+        {
+          // Per-probe outreach identity overrides the company-level
+          // sender display name + signatures. NULL fields fall back
+          // to companies.email_sender_display_name + signature_*.
+          probeIdentity: {
+            alias: probe.alias,
+            emailSignatureText: probe.emailSignatureText,
+            emailSignatureHtml: probe.emailSignatureHtml,
+          },
+        },
+      );
     } else if (
       channelKind === 'lead_form' &&
       leadFormEndpoint &&

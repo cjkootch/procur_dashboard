@@ -94,6 +94,7 @@ import {
   listFormEndpointsForEntity,
   pickAutopilotEligibleEndpoint,
 } from './entity-contact-form-endpoints';
+import { getProbe } from './market-probes';
 import {
   listCommunicationTemplates,
   renderTemplate,
@@ -564,6 +565,19 @@ export function buildCatalogTools(): ToolRegistry {
               "name/email fields, so this doesn't gate submission — it's just for the " +
               'audit trail when a CRM contact is the source of the outreach.',
           ),
+        probeId: z
+          .string()
+          .min(1)
+          .max(64)
+          .optional()
+          .describe(
+            'Optional Market Probe id whose outreach identity (alias + email signature) ' +
+              "should drive this submission. Pass when the operator's request is in the " +
+              'context of an active probe ("submit on behalf of the BB-refiners probe"). ' +
+              'When set, the probe.alias replaces the global LEAD_FORM_SENDER_NAME default ' +
+              'and probe.email_signature_text appends to the message body. NULL falls back ' +
+              'to the env defaults — chat tools without a probe context behave as before.',
+          ),
         doNotMention: z
           .array(z.string().min(1).max(200))
           .max(20)
@@ -659,6 +673,12 @@ export function buildCatalogTools(): ToolRegistry {
             message: `Entity ${input.entitySlug} not found in known_entities.`,
           };
         }
+        // Optional probe-identity override. When the operator passes
+        // probeId, the probe's alias replaces the global sender-name
+        // default and its signature appends to the message body.
+        // Without probeId the env defaults still apply — chat tools
+        // without probe context behave exactly as before.
+        const probe = input.probeId ? await getProbe(input.probeId) : null;
         const draft = await draftLeadFormSubmission({
           pack,
           intent: input.intent,
@@ -668,7 +688,9 @@ export function buildCatalogTools(): ToolRegistry {
             companyField: endpoint.companyField,
             phoneField: endpoint.phoneField,
             senderName:
-              process.env.LEAD_FORM_SENDER_NAME ?? 'Procur Outreach',
+              probe?.alias ??
+              process.env.LEAD_FORM_SENDER_NAME ??
+              'Procur Outreach',
             senderEmail:
               process.env.LEAD_FORM_SENDER_EMAIL ?? 'hello@procur.app',
             senderCompany: process.env.LEAD_FORM_SENDER_COMPANY ?? null,
@@ -688,6 +710,12 @@ export function buildCatalogTools(): ToolRegistry {
             reason: draft.message,
             riskWarnings: draft.riskWarnings,
           };
+        }
+        // Probe signature appends to the form message body — forms
+        // have no dedicated signature field. Mirrors the autopilot
+        // path so chat-driven submissions feel identical.
+        if (probe?.emailSignatureText) {
+          draft.message = `${draft.message}\n\n--\n${probe.emailSignatureText}`;
         }
 
         const fieldValues = mapDraftToFieldValues({

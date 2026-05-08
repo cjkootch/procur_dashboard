@@ -96,6 +96,20 @@ export interface EmailSendOptions {
    * compatible but a leak the moment a second tenant exists.
    */
   companyId?: string;
+  /**
+   * Per-probe outreach identity override. When the calling autopilot
+   * dispatches from a probe with `alias` / `email_signature_*` set,
+   * those values ride here and replace the company-level defaults.
+   * The underlying From address still comes from the company-level
+   * Resend setup; only the display name + signature shift per probe.
+   * NULL fields fall back to the company defaults (existing
+   * behavior — preserves zero-impact for probes that don't set
+   * these). */
+  probeIdentity?: {
+    alias?: string | null;
+    emailSignatureText?: string | null;
+    emailSignatureHtml?: string | null;
+  };
 }
 
 const costLedger = new PostgresCostLedger();
@@ -180,17 +194,33 @@ export async function applyEmailSend(
         .limit(1);
   const settings = companyRow[0];
 
+  // Per-probe identity overrides take precedence over company-level
+  // defaults when the autopilot dispatches from a probe. Only the
+  // display name + signature shift per probe; the underlying From
+  // address stays the company-default Resend address (no per-probe
+  // DNS / identity verification needed).
+  const displayName =
+    options.probeIdentity?.alias ?? settings?.displayName ?? null;
+  const signatureText =
+    options.probeIdentity?.emailSignatureText ??
+    settings?.signatureText ??
+    null;
+  const signatureHtml =
+    options.probeIdentity?.emailSignatureHtml ??
+    settings?.signatureHtml ??
+    null;
+
   // Decorate the From header with display name when configured.
-  const from = settings?.displayName
-    ? `${settings.displayName} <${stripBrackets(FROM_DEFAULT)}>`
+  const from = displayName
+    ? `${displayName} <${stripBrackets(FROM_DEFAULT)}>`
     : FROM_DEFAULT;
 
   // Append signature to body if configured.
-  const bodyText = settings?.signatureText
-    ? `${payload.body}\n\n--\n${settings.signatureText}`
+  const bodyText = signatureText
+    ? `${payload.body}\n\n--\n${signatureText}`
     : payload.body;
-  const bodyHtml = settings?.signatureHtml
-    ? `<div>${escapeHtml(payload.body).replace(/\n/g, '<br>')}</div><br>${settings.signatureHtml}`
+  const bodyHtml = signatureHtml
+    ? `<div>${escapeHtml(payload.body).replace(/\n/g, '<br>')}</div><br>${signatureHtml}`
     : undefined;
 
   // Resolve the contact's primary org once so each per-recipient

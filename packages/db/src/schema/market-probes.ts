@@ -114,6 +114,20 @@ export const marketProbes = pgTable(
       .notNull()
       .default(sql`'{}'::jsonb`),
 
+    /** Per-probe outreach identity. When set, autopilot dispatch
+     *  (and the chat-tool path when called with this probe's id)
+     *  override the company-level email sender display name +
+     *  signatures with these. The underlying From address stays
+     *  the company-default Resend address (avoids per-probe DNS /
+     *  identity verification); only the display name + signature
+     *  shift. NULL falls back to companies.email_sender_display_name
+     *  + email_signature_text/html (existing behavior). For
+     *  lead_form, alias also fills the form's name_field, replacing
+     *  the LEAD_FORM_SENDER_NAME env default. */
+    alias: text('alias'),
+    emailSignatureText: text('email_signature_text'),
+    emailSignatureHtml: text('email_signature_html'),
+
     createdBy: text('created_by'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()

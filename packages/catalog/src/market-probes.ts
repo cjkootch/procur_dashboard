@@ -431,6 +431,32 @@ export async function setProbeTier(
     .where(eq(marketProbes.id, probeId));
 }
 
+/**
+ * Set the probe's outreach identity — alias + signature. All three
+ * are nullable; passing null clears the override and falls back to
+ * the company-level defaults at /settings/email. Used by the probe
+ * edit UI; autopilot dispatch + the chat-tool path read these via
+ * getProbe.
+ */
+export async function setProbeIdentity(
+  probeId: string,
+  input: {
+    alias: string | null;
+    emailSignatureText: string | null;
+    emailSignatureHtml: string | null;
+  },
+): Promise<void> {
+  await db
+    .update(marketProbes)
+    .set({
+      alias: input.alias,
+      emailSignatureText: input.emailSignatureText,
+      emailSignatureHtml: input.emailSignatureHtml,
+      updatedAt: new Date(),
+    })
+    .where(eq(marketProbes.id, probeId));
+}
+
 export async function deleteProbeTargetsNotIn(
   probeId: string,
   keepIds: string[],
