@@ -148,9 +148,19 @@ export interface DraftOutreach {
 export async function recommendCommunicationTargets(
   input: RecommendCommunicationTargetsInput,
 ): Promise<RecommendCandidate[]> {
-  if (!input.seedEntitySlug && !input.seedSignalId) {
+  // Need either an ML seed or explicit filters. The ML branch ranks
+  // by graph similarity; the filters branch surfaces explicit matches
+  // (country/role/category) for cases like a fresh Market Probe where
+  // no prior touch exists to seed from. Pre-#553 this required a seed
+  // unconditionally and threw — Market Probes need filter-only mode.
+  const hasFilters =
+    !!input.filters &&
+    (!!input.filters.role ||
+      !!input.filters.category ||
+      !!input.filters.country);
+  if (!input.seedEntitySlug && !input.seedSignalId && !hasFilters) {
     throw new Error(
-      'recommendCommunicationTargets requires seedEntitySlug or seedSignalId',
+      'recommendCommunicationTargets requires seedEntitySlug, seedSignalId, or filters',
     );
   }
   const limit = Math.min(input.limit ?? 10, 50);

@@ -114,6 +114,10 @@ export {
 } from './assistant';
 export type { CacheUsage } from './prompt-blocks';
 export {
+  generateProbePlan,
+  type ProbeContextForPlan,
+} from './market-probes/plan-agent';
+export {
   ClassifyOutput,
   SummaryOutput,
   LanguageOutput,

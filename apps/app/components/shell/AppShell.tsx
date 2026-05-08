@@ -77,6 +77,7 @@ const NAV: SidebarNavGroup[] = [
     heading: 'Outreach',
     items: [
       { href: '/campaigns', label: 'Campaigns', iconName: 'megaphone' },
+      { href: '/market-probes', label: 'Market Probes', iconName: 'compass' },
       { href: '/calls', label: 'Calls & messaging', iconName: 'phone' },
       { href: '/agent-runs', label: 'Agent runs', iconName: 'sparkles' },
     ],

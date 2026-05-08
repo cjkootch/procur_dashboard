@@ -1,0 +1,343 @@
+import 'server-only';
+import { and, desc, eq, sql } from 'drizzle-orm';
+import {
+  db,
+  marketProbeTargets,
+  marketProbes,
+  type MarketProbe,
+  type MarketProbeTarget,
+  type NewMarketProbe,
+  type NewMarketProbeTarget,
+  type ProbePlan,
+  type ProbeTask,
+} from '@procur/db';
+
+/**
+ * Read/write helpers for the Market Probes feature. The probe is a
+ * bounded autonomous market-prospecting experiment — see migration
+ * 0095 for the full design rationale. Phase 1 ships:
+ *   - createProbe / listProbes / getProbe — CRUD
+ *   - upsertProbeTargets — used by the target-discovery action
+ *   - markTaskStatus — agent + operator both flip task status as the
+ *     plan's checklist crosses off
+ *   - listTargetsForProbe — feeds the dashboard
+ *
+ * Phase 2 will add: graduateTier, suppressionAdd, autopilotDispatch.
+ */
+
+export const PROBE_DEFAULT_TASKS: ProbeTask[] = [
+  {
+    id: 'generate_plan',
+    label: 'Generate market plan',
+    status: 'pending',
+  },
+  {
+    id: 'identify_targets',
+    label: 'Identify target companies',
+    status: 'pending',
+  },
+  {
+    id: 'find_contacts',
+    label: 'Find named contacts',
+    status: 'pending',
+  },
+  {
+    id: 'draft_first_touch',
+    label: 'Draft first-touch emails',
+    status: 'pending',
+  },
+  {
+    id: 'send_first_touch',
+    label: 'Send approved drafts',
+    status: 'pending',
+  },
+  {
+    id: 'monitor_replies',
+    label: 'Monitor replies + classify',
+    status: 'pending',
+  },
+  {
+    id: 'summarize_findings',
+    label: 'Summarize findings + recommend next step',
+    status: 'pending',
+  },
+];
+
+export interface CreateProbeInput {
+  id: string;
+  marketName: string;
+  country?: string | null;
+  productThesis: string;
+  riskLevel?: 'low' | 'medium' | 'high';
+  objective?: string | null;
+  allowedChannels?: string[];
+  allowedSegments?: string[];
+  blockedTerms?: string[];
+  blockedEntitySlugs?: string[];
+  dailySendLimit?: number;
+  totalSendLimit?: number;
+  createdBy?: string | null;
+}
+
+export async function createProbe(input: CreateProbeInput): Promise<MarketProbe> {
+  const row: NewMarketProbe = {
+    id: input.id,
+    marketName: input.marketName,
+    country: input.country ?? null,
+    productThesis: input.productThesis,
+    riskLevel: input.riskLevel ?? 'low',
+    status: 'planning',
+    tier: 0,
+    objective: input.objective ?? null,
+    successCriteriaJson: {},
+    allowedChannels: input.allowedChannels ?? ['email'],
+    allowedSegments: input.allowedSegments ?? [],
+    blockedTerms: input.blockedTerms ?? [],
+    blockedEntitySlugs: input.blockedEntitySlugs ?? [],
+    dailySendLimit: input.dailySendLimit ?? 10,
+    totalSendLimit: input.totalSendLimit ?? 50,
+    maxFollowupsPerContact: 1,
+    // Seed the plan with the default task checklist; the
+    // plan-generation pass fills in hypothesis/segments/etc. later
+    // and may add probe-specific tasks.
+    planJson: { tasks: PROBE_DEFAULT_TASKS },
+    createdBy: input.createdBy ?? null,
+  };
+  const [created] = await db.insert(marketProbes).values(row).returning();
+  if (!created) throw new Error('createProbe: insert returned no row');
+  return created;
+}
+
+export async function listProbes(options: {
+  status?: MarketProbe['status'];
+  limit?: number;
+} = {}): Promise<Array<MarketProbe & { targetCount: number; sentCount: number; replyCount: number }>> {
+  const limit = options.limit ?? 50;
+  const where = options.status ? eq(marketProbes.status, options.status) : undefined;
+  const probeRows = await db
+    .select()
+    .from(marketProbes)
+    .where(where)
+    .orderBy(desc(marketProbes.createdAt))
+    .limit(limit);
+  if (probeRows.length === 0) return [];
+  // One aggregate query for counts across all probes — cheaper than
+  // N round-trips even at small probe counts. GROUP BY probe_id with
+  // FILTER for the per-status sums.
+  const counts = await db
+    .select({
+      probeId: marketProbeTargets.probeId,
+      targetCount: sql<number>`COUNT(*)::int`,
+      sentCount: sql<number>`COUNT(*) FILTER (WHERE ${marketProbeTargets.sendStatus} IN ('sent','queued'))::int`,
+      replyCount: sql<number>`COUNT(*) FILTER (WHERE ${marketProbeTargets.replyStatus} IS NOT NULL AND ${marketProbeTargets.replyStatus} <> 'none')::int`,
+    })
+    .from(marketProbeTargets)
+    .groupBy(marketProbeTargets.probeId);
+  const countMap = new Map(counts.map((c) => [c.probeId, c]));
+  return probeRows.map((p) => {
+    const c = countMap.get(p.id);
+    return {
+      ...p,
+      targetCount: c?.targetCount ?? 0,
+      sentCount: c?.sentCount ?? 0,
+      replyCount: c?.replyCount ?? 0,
+    };
+  });
+}
+
+export async function getProbe(id: string): Promise<MarketProbe | null> {
+  const [row] = await db
+    .select()
+    .from(marketProbes)
+    .where(eq(marketProbes.id, id))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function listTargetsForProbe(
+  probeId: string,
+): Promise<MarketProbeTarget[]> {
+  return await db
+    .select()
+    .from(marketProbeTargets)
+    .where(eq(marketProbeTargets.probeId, probeId))
+    .orderBy(desc(marketProbeTargets.confidence));
+}
+
+/**
+ * Insert-or-update a batch of targets discovered for a probe. The
+ * (probe_id, entity_slug) unique index handles the dedupe — re-running
+ * target discovery on the same probe just refreshes evidence/confidence
+ * without resetting send_status (operator state is preserved).
+ */
+export async function upsertProbeTargets(
+  probeId: string,
+  targets: Array<{
+    id: string;
+    entitySlug: string;
+    contactId?: string | null;
+    segment?: string | null;
+    fitTier: 'A' | 'B' | 'C' | 'D';
+    confidence: number;
+    evidenceJson: Record<string, unknown>;
+  }>,
+): Promise<number> {
+  if (targets.length === 0) return 0;
+  const rows: NewMarketProbeTarget[] = targets.map((t) => ({
+    id: t.id,
+    probeId,
+    entitySlug: t.entitySlug,
+    contactId: t.contactId ?? null,
+    segment: t.segment ?? null,
+    fitTier: t.fitTier,
+    confidence: String(t.confidence),
+    evidenceJson: t.evidenceJson,
+    sendStatus: 'pending',
+  }));
+  // Doing onConflictDoUpdate so re-running target discovery refreshes
+  // evidence/confidence without resetting operator-managed columns
+  // (sendStatus, replyStatus, disposition).
+  const inserted = await db
+    .insert(marketProbeTargets)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [marketProbeTargets.probeId, marketProbeTargets.entitySlug],
+      set: {
+        fitTier: sql`excluded.fit_tier`,
+        confidence: sql`excluded.confidence`,
+        evidenceJson: sql`excluded.evidence_json`,
+        segment: sql`excluded.segment`,
+        contactId: sql`COALESCE(${marketProbeTargets.contactId}, excluded.contact_id)`,
+        updatedAt: new Date(),
+      },
+    })
+    .returning({ id: marketProbeTargets.id });
+  return inserted.length;
+}
+
+/**
+ * Mark a probe target's send_status. Used by the operator-approve flow
+ * (queued → sent), and Phase 2 will use it for autopilot.
+ */
+export async function setTargetSendStatus(
+  targetId: string,
+  status: MarketProbeTarget['sendStatus'],
+): Promise<void> {
+  await db
+    .update(marketProbeTargets)
+    .set({ sendStatus: status, lastTouchAt: new Date(), updatedAt: new Date() })
+    .where(eq(marketProbeTargets.id, targetId));
+}
+
+/**
+ * Replace the probe's plan_json wholesale. Used after plan-generation
+ * lands a fresh plan from the LLM. Preserves the existing tasks[]
+ * array if the new plan didn't supply one (operator may have already
+ * checked tasks off).
+ */
+export async function setProbePlan(
+  probeId: string,
+  plan: ProbePlan,
+): Promise<MarketProbe | null> {
+  const [row] = await db
+    .update(marketProbes)
+    .set({
+      planJson: plan,
+      // Generating a plan means the probe is no longer 'planning' —
+      // it has a plan; status flips to 'active' so the dashboard reads
+      // "this is in flight" instead of "not yet started."
+      status: 'active',
+      updatedAt: new Date(),
+    })
+    .where(eq(marketProbes.id, probeId))
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * Update one task in the probe's plan checklist — agent calls this as
+ * it advances ("identify_targets" → done with result="found 35 candidates").
+ * Operator calls this to skip a task ("don't bother finding named contacts;
+ * generic info@ addresses are fine").
+ */
+export async function markProbeTaskStatus(
+  probeId: string,
+  taskId: string,
+  status: ProbeTask['status'],
+  result?: string,
+): Promise<MarketProbe | null> {
+  const probe = await getProbe(probeId);
+  if (!probe) return null;
+  const tasks = probe.planJson?.tasks ?? [];
+  const updated = tasks.map((t) =>
+    t.id === taskId
+      ? {
+          ...t,
+          status,
+          completedAt:
+            status === 'done' || status === 'skipped'
+              ? new Date().toISOString()
+              : undefined,
+          result: result ?? t.result,
+        }
+      : t,
+  );
+  const [row] = await db
+    .update(marketProbes)
+    .set({
+      planJson: { ...probe.planJson, tasks: updated },
+      updatedAt: new Date(),
+    })
+    .where(eq(marketProbes.id, probeId))
+    .returning();
+  return row ?? null;
+}
+
+export async function setProbeStatus(
+  probeId: string,
+  status: MarketProbe['status'],
+): Promise<void> {
+  await db
+    .update(marketProbes)
+    .set({ status, updatedAt: new Date() })
+    .where(eq(marketProbes.id, probeId));
+}
+
+export async function setProbeTier(
+  probeId: string,
+  tier: 0 | 1 | 2 | 3,
+): Promise<void> {
+  await db
+    .update(marketProbes)
+    .set({ tier, updatedAt: new Date() })
+    .where(eq(marketProbes.id, probeId));
+}
+
+export async function deleteProbeTargetsNotIn(
+  probeId: string,
+  keepIds: string[],
+): Promise<number> {
+  // Used when the operator wants to refresh discovery and prune
+  // targets that no longer rank — Phase 2. Phase 1 ships the helper
+  // but the UI doesn't call it yet.
+  if (keepIds.length === 0) {
+    const removed = await db
+      .delete(marketProbeTargets)
+      .where(eq(marketProbeTargets.probeId, probeId))
+      .returning({ id: marketProbeTargets.id });
+    return removed.length;
+  }
+  const removed = await db
+    .delete(marketProbeTargets)
+    .where(
+      and(
+        eq(marketProbeTargets.probeId, probeId),
+        sql`${marketProbeTargets.id} NOT IN (${sql.join(
+          keepIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})`,
+      ),
+    )
+    .returning({ id: marketProbeTargets.id });
+  return removed.length;
+}

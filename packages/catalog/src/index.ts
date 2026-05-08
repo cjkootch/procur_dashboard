@@ -28,6 +28,19 @@ export * from './outreach-features';
 export * from './conversation-settings';
 export * from './conversation-agent';
 export * from './gamification';
+export * from './market-probes';
+export {
+  recommendCommunicationTargets,
+  buildCommunicationContextPack,
+  draftOutreachFromContext,
+  type RecommendCandidate,
+  type RecommendCommunicationTargetsInput,
+  type CommunicationContextPack,
+  type DraftOutreach,
+  type DraftOutreachInput,
+  type RecommendedChannel,
+  type NextBestAction,
+} from './communication-recommendations';
 export {
   buildCatalogTools,
   buildFilterUrl,
