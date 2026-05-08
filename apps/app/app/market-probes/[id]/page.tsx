@@ -1,13 +1,23 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
-import { getProbe, listTargetsForProbe } from '@procur/catalog';
+import {
+  getProbe,
+  listAtlasFactsForProbe,
+  listStrategyProposals,
+  listTargetsForProbe,
+  ATLAS_FACT_TYPES,
+} from '@procur/catalog';
 import {
   addApolloLookalikesAction,
+  addAtlasFactAction,
   addThesisOrgsAction,
+  approveStrategyProposalAction,
   discoverTargetsAction,
   findDecisionMakersAction,
   generatePlanAction,
+  generateStrategyProposalsAction,
+  rejectStrategyProposalAction,
   setProbeStatusAction,
   setTaskSkippedAction,
 } from '../actions';
@@ -45,7 +55,18 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
   const { id } = await params;
   const probe = await getProbe(id);
   if (!probe) notFound();
-  const targets = await listTargetsForProbe(id);
+  const [targets, atlasFacts, pendingProposals, reviewedProposals] =
+    await Promise.all([
+      listTargetsForProbe(id),
+      listAtlasFactsForProbe(id),
+      listStrategyProposals(id, { status: 'proposed' }),
+      Promise.all([
+        listStrategyProposals(id, { status: 'approved' }),
+        listStrategyProposals(id, { status: 'rejected' }),
+      ]).then(([a, r]) => [...a, ...r].sort((x, y) =>
+        (y.reviewedAt?.getTime() ?? 0) - (x.reviewedAt?.getTime() ?? 0),
+      )),
+    ]);
 
   const plan = probe.planJson ?? {};
   const tasks = plan.tasks ?? [];
@@ -441,6 +462,242 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
                 </li>
               );
             })}
+          </ul>
+        )}
+      </section>
+
+      {/* Strategy proposals — agent-proposed plan changes for review. */}
+      <section className="mt-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Strategy proposals
+            {pendingProposals.length > 0 && (
+              <span className="ml-2 rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-900">
+                {pendingProposals.length} pending
+              </span>
+            )}
+          </h2>
+          <form action={generateStrategyProposalsAction}>
+            <input type="hidden" name="probeId" value={probe.id} />
+            <button
+              type="submit"
+              className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[color:var(--color-muted)]/40"
+              title="Sonnet reviews probe metrics + rejection history; emits 0-3 proposals."
+            >
+              Ask agent for proposals
+            </button>
+          </form>
+        </div>
+
+        {pendingProposals.length === 0 ? (
+          <p className="text-sm text-[color:var(--color-muted-foreground)]">
+            No pending proposals. Click <strong>Ask agent for proposals</strong>{' '}
+            after the probe has activity (sends + replies); the agent reviews
+            metrics + rejection history and emits 0-3 changes for you to approve.
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {pendingProposals.map((p) => {
+              const before = (p.payloadJson?.before ?? {}) as Record<string, unknown>;
+              const after = (p.payloadJson?.after ?? {}) as Record<string, unknown>;
+              const summary = p.payloadJson?.summary;
+              return (
+                <li
+                  key={p.id}
+                  className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] p-3"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className="rounded-full bg-[color:var(--color-muted)]/60 px-2 py-0.5 text-xs font-mono">
+                      {p.proposalType}
+                    </span>
+                    {summary && (
+                      <span className="text-sm">{summary}</span>
+                    )}
+                  </div>
+                  <p className="mt-1.5 text-sm">{p.rationale}</p>
+                  {(Object.keys(before).length > 0 || Object.keys(after).length > 0) && (
+                    <div className="mt-2 grid grid-cols-2 gap-2 rounded-[var(--radius-sm)] bg-[color:var(--color-muted)]/30 p-2 text-xs font-mono">
+                      <div>
+                        <div className="mb-0.5 text-[10px] uppercase text-[color:var(--color-muted-foreground)]">
+                          before
+                        </div>
+                        <pre className="whitespace-pre-wrap break-words">
+                          {JSON.stringify(before, null, 2)}
+                        </pre>
+                      </div>
+                      <div>
+                        <div className="mb-0.5 text-[10px] uppercase text-[color:var(--color-muted-foreground)]">
+                          after
+                        </div>
+                        <pre className="whitespace-pre-wrap break-words">
+                          {JSON.stringify(after, null, 2)}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+                  <div className="mt-3 flex items-center gap-2">
+                    <form action={approveStrategyProposalAction}>
+                      <input type="hidden" name="proposalId" value={p.id} />
+                      <input type="hidden" name="probeId" value={probe.id} />
+                      <button
+                        type="submit"
+                        className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1 text-xs font-medium text-[color:var(--color-background)]"
+                      >
+                        Approve
+                      </button>
+                    </form>
+                    <form
+                      action={rejectStrategyProposalAction}
+                      className="flex flex-1 items-center gap-2"
+                    >
+                      <input type="hidden" name="proposalId" value={p.id} />
+                      <input type="hidden" name="probeId" value={probe.id} />
+                      <input
+                        type="text"
+                        name="feedback"
+                        placeholder="reason (rides into next plan-gen pass)"
+                        className="flex-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs focus:border-[color:var(--color-foreground)] focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1 text-xs font-medium hover:bg-[color:var(--color-muted)]/40"
+                      >
+                        Reject
+                      </button>
+                    </form>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {reviewedProposals.length > 0 && (
+          <details className="mt-4">
+            <summary className="cursor-pointer text-xs text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]">
+              History ({reviewedProposals.length})
+            </summary>
+            <ul className="mt-2 space-y-1.5 text-xs">
+              {reviewedProposals.slice(0, 10).map((p) => (
+                <li key={p.id} className="flex items-start gap-2">
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                      p.status === 'approved'
+                        ? 'bg-green-100 text-green-900'
+                        : 'bg-[color:var(--color-muted)]/60'
+                    }`}
+                  >
+                    {p.status}
+                  </span>
+                  <span className="font-mono">{p.proposalType}</span>
+                  <span className="flex-1 text-[color:var(--color-muted-foreground)]">
+                    {p.reviewerFeedback ?? p.rationale.slice(0, 120)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </section>
+
+      {/* Market atlas — facts about market structure that persist
+          across probes. Operator + agent both write here. */}
+      <section className="mt-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Market atlas
+            <span className="ml-2 text-xs text-[color:var(--color-muted-foreground)] normal-case">
+              {atlasFacts.length} fact{atlasFacts.length === 1 ? '' : 's'} from this probe
+            </span>
+          </h2>
+          {probe.country && (
+            <Link
+              href={`/market-atlas/${probe.country.toUpperCase()}`}
+              className="text-xs underline text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+            >
+              See all facts for {probe.country.toUpperCase()} →
+            </Link>
+          )}
+        </div>
+
+        {/* Add-fact form */}
+        <form
+          action={addAtlasFactAction}
+          className="mb-4 grid gap-2 rounded-[var(--radius-md)] border border-dashed border-[color:var(--color-border)] p-3 text-xs md:grid-cols-[140px,140px,140px,1fr,auto]"
+        >
+          <input type="hidden" name="probeId" value={probe.id} />
+          <input
+            type="text"
+            name="country"
+            defaultValue={probe.country?.toUpperCase() ?? ''}
+            placeholder="country (ISO-2)"
+            required
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+          />
+          <select
+            name="factType"
+            required
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+          >
+            {ATLAS_FACT_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            name="entitySlug"
+            placeholder="entity slug (optional)"
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+          />
+          <input
+            type="text"
+            name="description"
+            placeholder='e.g. "Vitol Caribbean handles all USVI fuel; reps direct queries to ops@..."'
+            required
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1"
+          />
+          <button
+            type="submit"
+            className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1 font-medium hover:bg-[color:var(--color-muted)]/40"
+          >
+            Add fact
+          </button>
+        </form>
+
+        {atlasFacts.length === 0 ? (
+          <p className="text-sm text-[color:var(--color-muted-foreground)]">
+            No facts captured for this probe yet. Write what you learn —
+            gatekeepers, dead ends, referrals, surprising assumptions —
+            so the next probe in this market starts smarter.
+          </p>
+        ) : (
+          <ul className="space-y-2 text-sm">
+            {atlasFacts.map((f) => (
+              <li
+                key={f.id}
+                className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] p-2.5"
+              >
+                <div className="flex items-baseline gap-2">
+                  <span className="rounded-full bg-[color:var(--color-muted)]/60 px-2 py-0.5 text-[10px] font-mono">
+                    {f.factType}
+                  </span>
+                  {f.entitySlug && (
+                    <Link
+                      href={`/entities/${encodeURIComponent(f.entitySlug)}`}
+                      className="text-xs font-medium hover:underline"
+                    >
+                      {f.entitySlug}
+                    </Link>
+                  )}
+                  <span className="ml-auto text-[10px] text-[color:var(--color-muted-foreground)]">
+                    {f.authoredBy} · {Math.round(Number(f.confidence) * 100)}%
+                  </span>
+                </div>
+                <p className="mt-1">{f.description}</p>
+              </li>
+            ))}
           </ul>
         )}
       </section>

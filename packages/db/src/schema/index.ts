@@ -116,3 +116,5 @@ export * from './xp-ledger';
 export * from './achievements-earned';
 export * from './mission-instances';
 export * from './market-probes';
+export * from './market-atlas-facts';
+export * from './market-probe-strategy-proposals';

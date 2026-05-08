@@ -25,6 +25,16 @@ export interface ProbeContextForPlan {
   allowedChannels: string[];
   dailySendLimit: number;
   totalSendLimit: number;
+  /** Operator-rejected strategy proposals from prior runs of THIS
+   *  probe. Riding into the next plan-generation pass as constraints
+   *  is the loop that lets the system learn from rejection without
+   *  retraining. Empty on first plan generation. */
+  rejectionHistory?: Array<{
+    proposalType: string;
+    rationale: string;
+    feedback: string | null;
+    rejectedAt: string;
+  }>;
 }
 
 const SYSTEM_PROMPT = `You are designing a bounded autonomous market-prospecting probe for a commodity trading desk.
@@ -72,7 +82,16 @@ export async function generateProbePlan(
 - Allowed channels: ${ctx.allowedChannels.join(', ')}
 - Daily send cap: ${ctx.dailySendLimit}
 - Total send cap: ${ctx.totalSendLimit}
-
+${
+  ctx.rejectionHistory && ctx.rejectionHistory.length > 0
+    ? `\nOperator-rejected proposals from prior plan revisions on this probe (DO NOT re-propose these directions; the operator's feedback explains why):\n${ctx.rejectionHistory
+        .map(
+          (r) =>
+            `- ${r.proposalType} [${r.rejectedAt}]: ${r.rationale}\n  operator feedback: ${r.feedback ?? '(no feedback given)'}`,
+        )
+        .join('\n')}\n`
+    : ''
+}
 Produce the plan JSON.`,
       },
     ],

@@ -6,17 +6,28 @@ import { requireCompany } from '@procur/auth';
 import { createId } from '@procur/ai';
 import {
   addApolloLookalikesToProbe,
+  addAtlasFact,
   addThesisDrivenApolloOrgsToProbe,
+  approveStrategyProposal,
   createProbe,
   findDecisionMakersForTarget,
   getProbe,
+  insertStrategyProposal,
+  listRejectionHistory,
+  listTargetsForProbe,
   markProbeTaskStatus,
+  rejectStrategyProposal,
   setProbePlan,
   setProbeStatus,
   upsertProbeTargets,
   recommendCommunicationTargets,
+  type AtlasFactType,
 } from '@procur/catalog';
-import { generateProbePlan } from '@procur/ai';
+import {
+  generateProbePlan,
+  proposeProbeStrategyAdjustments,
+  type ProbeMetricsSnapshot,
+} from '@procur/ai';
 
 /**
  * Server actions for the Market Probes UI. Each action returns void
@@ -101,6 +112,12 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
   const probe = await getProbe(probeId);
   if (!probe) throw new Error('probe not found');
 
+  // Pull rejection history so a regeneration after rejected proposals
+  // doesn't re-propose the same pivots — the agent sees the
+  // operator's feedback and adapts. First plan generation has empty
+  // history; later regenerations carry the learning forward.
+  const rejectionHistory = await listRejectionHistory(probeId);
+
   const plan = await generateProbePlan({
     marketName: probe.marketName,
     country: probe.country,
@@ -110,6 +127,12 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
     allowedChannels: probe.allowedChannels,
     dailySendLimit: probe.dailySendLimit,
     totalSendLimit: probe.totalSendLimit,
+    rejectionHistory: rejectionHistory.map((r) => ({
+      proposalType: r.proposalType,
+      rationale: r.rationale,
+      feedback: r.feedback,
+      rejectedAt: r.rejectedAt.toISOString(),
+    })),
   });
 
   await setProbePlan(probeId, plan);
@@ -335,6 +358,198 @@ export async function findDecisionMakersAction(
     );
   }
   revalidatePath(`/market-probes/${probeId}`);
+}
+
+// ────────────────────────────────────────────────────────────────
+// Phase 2C — market atlas + strategy adaptation
+// ────────────────────────────────────────────────────────────────
+
+/**
+ * Add an operator-written atlas fact. Authored_by='operator' →
+ * confidence defaults 0.9 in the catalog helper. The fact persists
+ * across probes — next Caribbean food probe sees this one's facts.
+ */
+export async function addAtlasFactAction(
+  formData: FormData,
+): Promise<void> {
+  const { user } = await requireCompany();
+  const probeId = str(formData, 'probeId');
+  const country = str(formData, 'country');
+  const factType = str(formData, 'factType');
+  const description = str(formData, 'description');
+  if (!country || !factType || !description) {
+    throw new Error('country + factType + description required');
+  }
+
+  await addAtlasFact({
+    country,
+    segment: str(formData, 'segment'),
+    entitySlug: str(formData, 'entitySlug'),
+    relatedEntitySlug: str(formData, 'relatedEntitySlug'),
+    factType: factType as AtlasFactType,
+    description,
+    sourceProbeId: probeId,
+    authoredBy: 'operator',
+    createdByUserId: user.id,
+  });
+
+  if (probeId) revalidatePath(`/market-probes/${probeId}`);
+  revalidatePath(`/market-atlas/${country.toUpperCase()}`);
+}
+
+/**
+ * Run the strategy-adaptation agent on a probe. Reads current plan +
+ * recent metrics + rejection history; emits 0-3 proposals into
+ * market_probe_strategy_proposals (status='proposed') for operator
+ * review on the probe detail page.
+ *
+ * Cheap to re-run (single Sonnet call); operators can ask the agent
+ * "what should I change?" anytime.
+ */
+export async function generateStrategyProposalsAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  if (!probeId) throw new Error('probeId required');
+
+  const probe = await getProbe(probeId);
+  if (!probe) throw new Error('probe not found');
+
+  const targets = await listTargetsForProbe(probeId);
+  const rejectionHistory = await listRejectionHistory(probeId);
+
+  // Aggregate metrics from targets. Phase 2C reads from
+  // market_probe_targets directly; Phase 2F will integrate touchpoint
+  // events for sub-day freshness.
+  const metrics = aggregateProbeMetrics(targets);
+
+  const proposals = await proposeProbeStrategyAdjustments({
+    marketName: probe.marketName,
+    country: probe.country,
+    productThesis: probe.productThesis,
+    status: probe.status,
+    currentPlan: {
+      hypothesis: probe.planJson?.hypothesis,
+      segments: probe.planJson?.segments,
+      outreachAngle: probe.planJson?.outreachAngle,
+      successCriteria: probe.planJson?.successCriteria,
+    },
+    metrics,
+    rejectionHistory: rejectionHistory.map((r) => ({
+      proposalType: r.proposalType,
+      rationale: r.rationale,
+      feedback: r.feedback,
+      rejectedAt: r.rejectedAt.toISOString(),
+    })),
+  });
+
+  for (const p of proposals) {
+    await insertStrategyProposal({
+      probeId,
+      proposalType: p.proposalType,
+      rationale: p.rationale,
+      payload: p.payload,
+      evidence: { metricsSnapshot: metrics },
+    });
+  }
+
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+export async function approveStrategyProposalAction(
+  formData: FormData,
+): Promise<void> {
+  const { user } = await requireCompany();
+  const proposalId = str(formData, 'proposalId');
+  const probeId = str(formData, 'probeId');
+  if (!proposalId || !probeId) throw new Error('proposalId + probeId required');
+
+  await approveStrategyProposal({
+    proposalId,
+    reviewedByUserId: user.id,
+  });
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+export async function rejectStrategyProposalAction(
+  formData: FormData,
+): Promise<void> {
+  const { user } = await requireCompany();
+  const proposalId = str(formData, 'proposalId');
+  const probeId = str(formData, 'probeId');
+  const feedback = str(formData, 'feedback') ?? '';
+  if (!proposalId || !probeId) throw new Error('proposalId + probeId required');
+
+  await rejectStrategyProposal({
+    proposalId,
+    reviewedByUserId: user.id,
+    feedback,
+  });
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/**
+ * Roll up probe.target rows into the metric snapshot the strategy
+ * agent reads. Per-segment + per-fit-tier breakdown lets the agent
+ * propose targeted shifts ("Hotel segment: 8 sent, 0 replies; Marine:
+ * 4 sent, 2 routing replies. Pivot.").
+ */
+function aggregateProbeMetrics(
+  targets: Awaited<ReturnType<typeof listTargetsForProbe>>,
+): ProbeMetricsSnapshot {
+  const segmentBreakdown: Record<
+    string,
+    { sent: number; replied: number; positiveReplies: number }
+  > = {};
+  const tierBreakdown: Record<
+    string,
+    { sent: number; replied: number; positiveReplies: number }
+  > = {};
+  let sentCount = 0;
+  let repliedCount = 0;
+  let bouncedCount = 0;
+  let unsubscribedCount = 0;
+  let positiveReplies = 0;
+
+  for (const t of targets) {
+    const isSent = t.sendStatus === 'sent' || t.sendStatus === 'queued';
+    const isBounced = t.sendStatus === 'bounced';
+    const replied = t.replyStatus && t.replyStatus !== 'none';
+    const positive =
+      t.replyStatus === 'positive' || t.replyStatus === 'routing';
+    const unsubscribed = t.replyStatus === 'unsubscribe';
+
+    if (isSent) sentCount += 1;
+    if (isBounced) bouncedCount += 1;
+    if (replied) repliedCount += 1;
+    if (positive) positiveReplies += 1;
+    if (unsubscribed) unsubscribedCount += 1;
+
+    const seg = t.segment ?? '(unsegmented)';
+    segmentBreakdown[seg] ??= { sent: 0, replied: 0, positiveReplies: 0 };
+    if (isSent) segmentBreakdown[seg]!.sent += 1;
+    if (replied) segmentBreakdown[seg]!.replied += 1;
+    if (positive) segmentBreakdown[seg]!.positiveReplies += 1;
+
+    const tier = t.fitTier ?? 'C';
+    tierBreakdown[tier] ??= { sent: 0, replied: 0, positiveReplies: 0 };
+    if (isSent) tierBreakdown[tier]!.sent += 1;
+    if (replied) tierBreakdown[tier]!.replied += 1;
+    if (positive) tierBreakdown[tier]!.positiveReplies += 1;
+  }
+
+  return {
+    asOf: new Date().toISOString(),
+    targetCount: targets.length,
+    sentCount,
+    repliedCount,
+    bouncedCount,
+    unsubscribedCount,
+    positiveReplies,
+    segmentBreakdown,
+    tierBreakdown,
+  };
 }
 
 export async function setTaskSkippedAction(formData: FormData): Promise<void> {

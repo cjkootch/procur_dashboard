@@ -78,6 +78,7 @@ const NAV: SidebarNavGroup[] = [
     items: [
       { href: '/campaigns', label: 'Campaigns', iconName: 'megaphone' },
       { href: '/market-probes', label: 'Market Probes', iconName: 'compass' },
+      { href: '/market-atlas', label: 'Market Atlas', iconName: 'map' },
       { href: '/calls', label: 'Calls & messaging', iconName: 'phone' },
       { href: '/agent-runs', label: 'Agent runs', iconName: 'sparkles' },
     ],
