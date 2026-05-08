@@ -223,10 +223,19 @@ async function runMaybeQueueAiReply(
         reason: `probe escalation: ${escalation}`,
       });
       await notifyOperatorsOfPendingApproval({
+        // No approval row exists at this point — the path skipped
+        // drafting BEFORE queuing one. settings.id rides through as
+        // an audit identifier; linkOverride sends the operator to
+        // the probe page where the paused conversation is visible.
         approvalId: settings.id,
         channel: settings.channel as 'sms' | 'whatsapp',
         conversationKey: settings.conversationKey,
         draftPreview: `Probe reply needs your eyes — ${escalation}.`,
+        linkOverride: settings.linkedProbeId
+          ? `/market-probes/${settings.linkedProbeId}`
+          : `/messages/${encodeURIComponent(settings.conversationKey)}`,
+        typeOverride: 'probe.escalation',
+        titleOverride: `Probe reply needs review (${escalation})`,
       });
       return {
         status: 'skipped_probe_escalation',
@@ -787,11 +796,20 @@ async function runMaybeQueueAiEmailReply(
         reason: `probe escalation: ${escalation}`,
       });
       // Surface in the bell so the operator picks up the thread fast.
+      // No approval row exists at this point (we skipped drafting
+      // before queuing one). thread id rides through as the audit
+      // identifier; linkOverride sends the operator to the probe
+      // detail page where the paused thread is visible.
       await notifyOperatorsOfPendingApproval({
-        approvalId: input.threadId, // thread-id ride-through; not a UUID, see notes in fn
+        approvalId: input.threadId,
         channel: 'email',
         conversationKey: input.threadId,
         draftPreview: `Probe reply needs your eyes — ${escalation}.`,
+        linkOverride: settings.linkedProbeId
+          ? `/market-probes/${settings.linkedProbeId}`
+          : `/inbox/${encodeURIComponent(input.threadId)}`,
+        typeOverride: 'probe.escalation',
+        titleOverride: `Probe reply needs review (${escalation})`,
       });
       return {
         status: 'skipped_probe_escalation',
@@ -1570,6 +1588,15 @@ async function notifyOperatorsOfPendingApproval(input: {
   channel: 'sms' | 'whatsapp' | 'email';
   conversationKey: string;
   draftPreview: string;
+  /** Override the bell link. Default is `/approvals/${approvalId}` —
+   *  use this when the caller doesn't have a real approval id (e.g.
+   *  Phase 2I.2 probe-escalation pauses where there's no approval
+   *  row, just a thread that needs operator eyes). */
+  linkOverride?: string;
+  /** Override the notification type/title. Default is
+   *  'approval.pending' / "AI <channel> draft awaiting approval". */
+  typeOverride?: string;
+  titleOverride?: string;
 }): Promise<void> {
   try {
     const operators = await db
@@ -1588,19 +1615,18 @@ async function notifyOperatorsOfPendingApproval(input: {
       .map((o) => ({
         userId: o.id,
         companyId: o.companyId as string,
-        type: 'approval.pending',
-        title: `AI ${channelLabel} draft awaiting approval`,
+        type: input.typeOverride ?? 'approval.pending',
+        title:
+          input.titleOverride ??
+          `AI ${channelLabel} draft awaiting approval`,
         body: input.draftPreview.slice(0, 240),
-        // Link carries the approval id; entity_id stays null because
+        // Link defaults to /approvals/<id> — entity_id stays null because
         // notifications.entity_id is a uuid column and approvals.id is
-        // text (ULID). Earlier this passed the ULID into entity_id and
-        // every insert threw "invalid input syntax for type uuid",
-        // swallowed by the catch — silent loss of every pending-approval
-        // notification. Polymorphic ref via entity_ref_type/_id is the
-        // longer fix; for now the link suffices since the bell drops
-        // operators straight to /approvals/[id].
-        link: `/approvals/${input.approvalId}`,
-        entityType: 'approval',
+        // text (ULID). Phase 2I.2's probe-escalation paths don't have a
+        // real approval row, so they pass linkOverride pointing at the
+        // probe instead.
+        link: input.linkOverride ?? `/approvals/${input.approvalId}`,
+        entityType: input.typeOverride ?? 'approval',
         entityId: null,
       }));
     if (rows.length === 0) return;

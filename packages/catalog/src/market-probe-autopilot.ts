@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
   approvals,
   contacts,
@@ -416,19 +416,29 @@ export async function autopilotSendBatch(
 
     if (!result.ok) {
       // Demote approval back to pending so the operator can retry —
-      // same pattern as the conversation-agent's
-      // autoExecuteReply post-PR #552 fix.
+      // same pattern as the conversation-agent's autoExecuteReply
+      // post-PR #552 fix.
+      //
+      // The earlier merge expression
+      //   `${approvals.proposedPayload} || ${sql`${JSON.stringify(...)}::jsonb`}`
+      // generated `proposed_payload || $1::jsonb` with $1 bound as
+      // text — text || jsonb is a type error (or, on Neon's coercion
+      // path, silently dropped the diagnostic). Replacing wholesale
+      // is simpler and atomic — preserves prior payload fields by
+      // reading then writing the merged object.
+      const [existing] = await db
+        .select({ proposedPayload: approvals.proposedPayload })
+        .from(approvals)
+        .where(eq(approvals.id, approvalId))
+        .limit(1);
+      const merged = {
+        ...((existing?.proposedPayload as Record<string, unknown>) ?? {}),
+        auto_execute_failed: true,
+        auto_execute_error: result.error ?? 'unknown',
+      };
       await db
         .update(approvals)
-        .set({
-          decision: 'pending',
-          proposedPayload: sql`${approvals.proposedPayload} || ${sql`${
-            JSON.stringify({
-              auto_execute_failed: true,
-              auto_execute_error: result.error ?? 'unknown',
-            })
-          }::jsonb`}`,
-        })
+        .set({ decision: 'pending', proposedPayload: merged })
         .where(eq(approvals.id, approvalId));
       skipped.push({
         targetId: t.id,
@@ -547,7 +557,10 @@ async function resolveRecipientEmail(
     })
     .from(contactOrgMemberships)
     .where(eq(contactOrgMemberships.orgId, orgId))
-    .orderBy(asc(contactOrgMemberships.isPrimary))
+    // desc on isPrimary so true (primary) sorts before false. Earlier
+    // this used asc() — Postgres orders false < true, so the non-
+    // primary contact won, defeating the "pick primary" intent.
+    .orderBy(desc(contactOrgMemberships.isPrimary))
     .limit(1);
   if (!membership) return null;
 

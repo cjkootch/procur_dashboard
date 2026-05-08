@@ -47,6 +47,7 @@ import {
   upsertProbeTargets,
   upsertSegment,
   recommendCommunicationTargets,
+  ATLAS_FACT_TYPES,
   type AtlasFactType,
   type HypothesisStatus,
   type HypothesisType,
@@ -459,6 +460,17 @@ export async function addAtlasFactAction(
   const description = str(formData, 'description');
   if (!country || !factType || !description) {
     throw new Error('country + factType + description required');
+  }
+  // Server-side validation against the canonical taxonomy. The form
+  // <select> already constrains operator clicks; this catches typos
+  // from alternate form posts (e.g. chat-tool emissions in the
+  // future, or bookmarks). Atlas reads filter on exact fact_type
+  // match, so a typo silently disappears from listings without this
+  // guard.
+  if (!ATLAS_FACT_TYPES.includes(factType as AtlasFactType)) {
+    throw new Error(
+      `factType "${factType}" not in canonical taxonomy: ${ATLAS_FACT_TYPES.join(', ')}`,
+    );
   }
 
   await addAtlasFact({

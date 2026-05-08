@@ -82,20 +82,26 @@ export async function listPlaybooks(options: {
   limit?: number;
 } = {}): Promise<MarketPlaybook[]> {
   const limit = options.limit ?? 100;
-  const conditions = [] as ReturnType<typeof eq>[];
-  if (options.status) conditions.push(eq(marketPlaybooks.status, options.status));
-  // applicableCountries is a text[] — use array overlap check.
-  let baseQuery = db.select().from(marketPlaybooks).$dynamic();
-  if (conditions.length > 0) {
-    baseQuery = baseQuery.where(and(...conditions));
+  // Collect all predicates and apply ONCE via and(...). Drizzle's
+  // $dynamic().where(a).where(b) REPLACES instead of AND'ing, so the
+  // earlier shape (one .where per condition) silently dropped the
+  // status filter when both options were set — caller filtering for
+  // "active playbooks in BB" got back ALL countries' active playbooks
+  // OR all-statuses BB depending on call order.
+  const predicates = [];
+  if (options.status) {
+    predicates.push(eq(marketPlaybooks.status, options.status));
   }
   if (options.country) {
     const c = options.country.toUpperCase();
-    baseQuery = baseQuery.where(
+    predicates.push(
       sql`${marketPlaybooks.applicableCountries} && ARRAY[${c}]::text[]`,
     );
   }
-  return await baseQuery
+  const baseQuery = db.select().from(marketPlaybooks).$dynamic();
+  const filtered =
+    predicates.length > 0 ? baseQuery.where(and(...predicates)) : baseQuery;
+  return await filtered
     .orderBy(desc(marketPlaybooks.updatedAt))
     .limit(limit);
 }
