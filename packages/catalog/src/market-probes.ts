@@ -264,6 +264,18 @@ export async function setProbePlan(
  * it advances ("identify_targets" → done with result="found 35 candidates").
  * Operator calls this to skip a task ("don't bother finding named contacts;
  * generic info@ addresses are fine").
+ *
+ * Race-safe via atomic SQL UPDATE. The earlier shape was a classic
+ * read-modify-write: read probe.planJson, mutate tasks[] in JS, write
+ * the whole planJson back. Two concurrent callers (agent advancing
+ * task A while operator skips task B) would each compute against the
+ * pre-write state — the second writer's full-object replacement
+ * clobbered the first writer's mutation. The SQL-level UPDATE here
+ * rebuilds tasks[] in-place: jsonb_array_elements unrolls the array,
+ * CASE rewrites only the row whose id matches, jsonb_agg reassembles.
+ * Postgres serializes UPDATEs on the same row, so a second concurrent
+ * call runs against the first writer's just-committed state and both
+ * mutations survive.
  */
 export async function markProbeTaskStatus(
   probeId: string,
@@ -271,30 +283,39 @@ export async function markProbeTaskStatus(
   status: ProbeTask['status'],
   result?: string,
 ): Promise<MarketProbe | null> {
-  const probe = await getProbe(probeId);
-  if (!probe) return null;
-  const tasks = probe.planJson?.tasks ?? [];
-  const updated = tasks.map((t) =>
-    t.id === taskId
-      ? {
-          ...t,
-          status,
-          completedAt:
-            status === 'done' || status === 'skipped'
-              ? new Date().toISOString()
-              : undefined,
-          result: result ?? t.result,
-        }
-      : t,
-  );
+  const isCompleted = status === 'done' || status === 'skipped';
+  const merge: Record<string, unknown> = { status };
+  if (isCompleted) merge.completedAt = new Date().toISOString();
+  if (result !== undefined) merge.result = result;
+  const mergeJson = JSON.stringify(merge);
+  // When reverting to pending/in_progress, drop the stale completedAt
+  // — matches the prior JS behavior, where setting `completedAt:
+  // undefined` in the spread caused JSON.stringify to drop the key.
+  const elemExpr = isCompleted ? sql`elem` : sql`(elem - 'completedAt')`;
+  await db.execute(sql`
+    UPDATE market_probes
+       SET plan_json = jsonb_set(
+             COALESCE(plan_json, '{}'::jsonb),
+             '{tasks}',
+             COALESCE(
+               (SELECT jsonb_agg(
+                  CASE
+                    WHEN elem->>'id' = ${taskId}
+                    THEN ${elemExpr} || ${mergeJson}::jsonb
+                    ELSE elem
+                  END
+                ) FROM jsonb_array_elements(plan_json->'tasks') elem),
+               '[]'::jsonb
+             )
+           ),
+           updated_at = NOW()
+     WHERE id = ${probeId}
+  `);
   const [row] = await db
-    .update(marketProbes)
-    .set({
-      planJson: { ...probe.planJson, tasks: updated },
-      updatedAt: new Date(),
-    })
+    .select()
+    .from(marketProbes)
     .where(eq(marketProbes.id, probeId))
-    .returning();
+    .limit(1);
   return row ?? null;
 }
 
