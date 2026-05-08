@@ -36,6 +36,7 @@ import {
   createVariantAction,
   generateLearningReportAction,
   generatePlanAction,
+  generateVariantProposalsAction,
   generateStrategyProposalsAction,
   setProbeKillCriteriaAction,
   setProbeModeAction,
@@ -1576,9 +1577,23 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
           replied / positive / bounce) aggregate via
           computeVariantPerformance. */}
       <section className="mt-6 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-          Message variants ({variants.length})
-        </h2>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Message variants ({variants.length})
+          </h2>
+          {variants.some((v) => v.status === 'active' || v.status === 'paused') && (
+            <form action={generateVariantProposalsAction}>
+              <input type="hidden" name="probeId" value={probe.id} />
+              <button
+                type="submit"
+                className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1 text-xs font-medium hover:bg-[color:var(--color-muted)]/40"
+                title="Sonnet pass — reads current variants + per-variant reply rates and emits 0-3 nominations as paused variants. Operator activates via Status."
+              >
+                Propose new variants
+              </button>
+            </form>
+          )}
+        </div>
 
         {variants.length === 0 ? (
           <p className="mb-4 text-sm text-[color:var(--color-muted-foreground)]">
