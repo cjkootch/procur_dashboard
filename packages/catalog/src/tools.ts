@@ -94,7 +94,7 @@ import {
   listFormEndpointsForEntity,
   pickAutopilotEligibleEndpoint,
 } from './entity-contact-form-endpoints';
-import { getProbe } from './market-probes';
+import { getProbe, listProbes } from './market-probes';
 import { probeHasActiveAudioForLanguage } from './rvm-audio-assets';
 import {
   listCommunicationTemplates,
@@ -809,6 +809,66 @@ export function buildCatalogTools(): ToolRegistry {
           subjectPreview: draft.subject || null,
           reviewUrl: `/approvals/${row.id}`,
           riskWarnings: draft.riskWarnings,
+        };
+      },
+    }),
+
+    list_market_probes: defineTool({
+      name: 'list_market_probes',
+      description:
+        'List the operator\'s market probes for resolution by name or status. Use BEFORE ' +
+        'propose_rvm_dispatch / autopilot triggers when the operator references a probe by ' +
+        'name ("the voice-tests probe", "Caribbean diesel probe") rather than id — find the ' +
+        'matching row and pass its `id` into the downstream tool. Filter by `nameQuery` ' +
+        '(case-insensitive substring on marketName) when the operator gave a hint, by ' +
+        '`status` when the conversation context narrows it (e.g. only `active` for live RVM ' +
+        'sends; include `planning`/`paused` when looking up a test probe that may be at tier 0). ' +
+        'Returns id + name + status + tier + country + allowedChannels + outreachLanguage so ' +
+        'you can pick the best match without a follow-up read.',
+      kind: 'read',
+      schema: z.object({
+        nameQuery: z
+          .string()
+          .min(1)
+          .max(120)
+          .optional()
+          .describe(
+            'Case-insensitive substring filter on marketName. Use when the operator named ' +
+              'the probe loosely ("voice tests" → matches "RVM Voice Tests").',
+          ),
+        status: z
+          .enum(['planning', 'active', 'paused', 'completed', 'abandoned'])
+          .optional()
+          .describe(
+            'Filter by probe status. Omit to include all statuses (default).',
+          ),
+        limit: z.number().int().min(1).max(50).optional(),
+      }),
+      handler: async (_ctx, input) => {
+        const rows = await listProbes({
+          ...(input.status ? { status: input.status } : {}),
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        });
+        const q = input.nameQuery?.toLowerCase();
+        const filtered = q
+          ? rows.filter((p) => p.marketName.toLowerCase().includes(q))
+          : rows;
+        return {
+          ok: true as const,
+          count: filtered.length,
+          probes: filtered.map((p) => ({
+            id: p.id,
+            marketName: p.marketName,
+            status: p.status,
+            tier: p.tier,
+            mode: p.mode,
+            country: p.country,
+            allowedChannels: p.allowedChannels,
+            outreachLanguage: p.outreachLanguage,
+            targetCount: p.targetCount,
+            sentCount: p.sentCount,
+            replyCount: p.replyCount,
+          })),
         };
       },
     }),
