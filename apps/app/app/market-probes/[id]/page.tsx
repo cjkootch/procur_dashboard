@@ -29,11 +29,13 @@ import {
   approveStrategyProposalAction,
   discoverTargetsAction,
   findDecisionMakersAction,
+  autopilotSendBatchAction,
   generateLearningReportAction,
   generatePlanAction,
   generateStrategyProposalsAction,
   setProbeKillCriteriaAction,
   setProbeModeAction,
+  setProbeTierAction,
   markTargetResearchOnlyAction,
   recordTargetFeedbackAction,
   rejectStrategyProposalAction,
@@ -528,9 +530,60 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
               </form>
             </details>
 
+            <div className="border-t border-[color:var(--color-border)] pt-3">
+              <span className="text-[10px] font-semibold uppercase tracking-wider">
+                Autopilot (Tier 1)
+              </span>
+              <p className="mt-1 text-[10px]">
+                Tier {probe.tier} —{' '}
+                {probe.tier === 0
+                  ? 'research-only; every send is operator-approved.'
+                  : `autopilot drafts + sends within caps. Mode: ${probe.mode}.`}
+              </p>
+              <div className="mt-2 flex flex-col gap-1.5">
+                {probe.tier === 0 && probe.mode === 'experiment' && (
+                  <form action={setProbeTierAction}>
+                    <input type="hidden" name="probeId" value={probe.id} />
+                    <input type="hidden" name="tier" value="1" />
+                    <button
+                      type="submit"
+                      className="w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-xs hover:bg-[color:var(--color-muted)]/40"
+                      title="Graduate to Tier 1 — autopilot drafts + sends to A/B-tier justified targets within daily caps."
+                    >
+                      Graduate to Tier 1
+                    </button>
+                  </form>
+                )}
+                {probe.tier >= 1 && (
+                  <>
+                    <form action={autopilotSendBatchAction}>
+                      <input type="hidden" name="probeId" value={probe.id} />
+                      <button
+                        type="submit"
+                        disabled={probe.mode !== 'experiment' || probe.status !== 'active'}
+                        className="w-full rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-background)] disabled:opacity-40"
+                        title="Drafts + dispatches the next eligible batch (justified A/B targets, scout-protection cleared, kill criteria not breached, within daily cap)."
+                      >
+                        Run autopilot batch
+                      </button>
+                    </form>
+                    <form action={setProbeTierAction}>
+                      <input type="hidden" name="probeId" value={probe.id} />
+                      <input type="hidden" name="tier" value="0" />
+                      <button
+                        type="submit"
+                        className="w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 text-[10px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+                      >
+                        Demote to Tier 0
+                      </button>
+                    </form>
+                  </>
+                )}
+              </div>
+            </div>
             <p className="pt-1">
-              Tier {probe.tier} — Phase 1 ships research-only. Autopilot
-              graduation arrives in Phase 2H.
+              Phase 1 = manual approval; Tier 1 graduates to autopilot
+              (Phase 2H).
             </p>
             {probe.allowedChannels.length > 0 && (
               <p>Channels: {probe.allowedChannels.join(', ')}</p>

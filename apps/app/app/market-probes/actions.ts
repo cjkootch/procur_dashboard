@@ -12,6 +12,7 @@ import {
   addThesisDrivenApolloOrgsToProbe,
   advanceProbeLadder,
   approveStrategyProposal,
+  autopilotSendBatch,
   bulkInsertHypotheses,
   computeProbeScorecard,
   createProbe,
@@ -1068,6 +1069,48 @@ export async function toggleScoutProtectionAction(
   // the parent layout segment.
   revalidatePath('/market-probes');
   revalidatePath(`/entities/${encodeURIComponent(slug)}`);
+}
+
+// ────────────────────────────────────────────────────────────────
+// Phase 2H — autopilot
+// ────────────────────────────────────────────────────────────────
+
+/**
+ * Trigger the autopilot send batch. All gates (mode, tier, kill
+ * criteria, scout protection, daily/total caps) are enforced inside
+ * `autopilotSendBatch` — the action just kicks it off + revalidates.
+ */
+export async function autopilotSendBatchAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  if (!probeId) throw new Error('probeId required');
+  const result = await autopilotSendBatch({ probeId });
+  // Revalidate even on refusal — operator sees the reason via probe
+  // state (paused) or via the next page load. Phase 2I adds a
+  // toast/notification surface for batch results.
+  revalidatePath(`/market-probes/${probeId}`);
+  if (!result.ok && result.killCriteriaTriggered) {
+    // Already paused inside the helper — nothing more to do.
+  }
+}
+
+/** Operator can also flip probe.tier 0 → 1 to enable autopilot. */
+export async function setProbeTierAction(formData: FormData): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  const tierRaw = str(formData, 'tier');
+  if (!probeId || tierRaw == null) throw new Error('probeId + tier required');
+  const tier = Number.parseInt(tierRaw, 10);
+  if (!Number.isFinite(tier) || tier < 0 || tier > 3) {
+    throw new Error(`invalid tier: ${tierRaw}`);
+  }
+  await db
+    .update(marketProbes)
+    .set({ tier, updatedAt: new Date() })
+    .where(eq(marketProbes.id, probeId));
+  revalidatePath(`/market-probes/${probeId}`);
 }
 
 export async function setTaskSkippedAction(formData: FormData): Promise<void> {
