@@ -95,6 +95,7 @@ import {
   pickAutopilotEligibleEndpoint,
 } from './entity-contact-form-endpoints';
 import { getProbe } from './market-probes';
+import { probeHasActiveAudioForLanguage } from './rvm-audio-assets';
 import {
   listCommunicationTemplates,
   renderTemplate,
@@ -808,6 +809,162 @@ export function buildCatalogTools(): ToolRegistry {
           subjectPreview: draft.subject || null,
           reviewUrl: `/approvals/${row.id}`,
           riskWarnings: draft.riskWarnings,
+        };
+      },
+    }),
+
+    propose_rvm_dispatch: defineTool({
+      name: 'propose_rvm_dispatch',
+      description:
+        'Propose a ringless voicemail (RVM) dispatch for an entity contact. Twilio places ' +
+        "a call with MachineDetection; when voicemail picks up, the recipient's voicemail " +
+        'box receives a pre-recorded audio asset (operator-uploaded or generated via Voicebox/OpenAI ' +
+        "TTS). When a human answers, the call hangs up immediately — RVM is voicemail-only by intent.\n\n" +
+        'WHEN TO USE RVM (do NOT default to it; always justify):\n' +
+        '  • The target\'s phone number is the strongest known contact AND email has been tried, ' +
+        'failed, or is otherwise unavailable.\n' +
+        '  • The probe explicitly prefers voice for relationship-building (e.g. high-formality M&A ' +
+        'first-touch where written outreach reads cold).\n' +
+        '  • Operator-led explicit ask ("send a voicemail to...").\n\n' +
+        'WHEN NOT TO USE RVM:\n' +
+        '  • Email is available and the probe doesn\'t explicitly prefer voice — email is cheaper, ' +
+        'higher-fidelity (text + threading + audit), and recipient-async by default.\n' +
+        '  • The probe has no active audio asset for the target language. Tool will refuse with ' +
+        '`audio_not_found`; suggest the operator upload audio first via the probe page.\n' +
+        '  • Compliance gates may block (quiet hours; per-recipient cooldown). Tool returns ' +
+        'structured errors so you can offer email instead.\n\n' +
+        'REASONING IS REQUIRED. The action descriptor enforces a minimum 20-char rationale. ' +
+        'Surface it on the approval card; operator reviews + approves.',
+      kind: 'write',
+      schema: z.object({
+        probeId: z
+          .string()
+          .min(1)
+          .max(64)
+          .describe(
+            'market_probes.id whose audio asset + drafter steering govern this RVM. The probe ' +
+              'must have an active audio asset for the target language.',
+          ),
+        entitySlug: z
+          .string()
+          .min(1)
+          .max(200)
+          .describe(
+            'Entity slug returned by lookup_known_entities. Pull from a prior tool result; do NOT invent.',
+          ),
+        toNumber: z
+          .string()
+          .regex(/^\+[1-9]\d{6,14}$/, 'expected E.164 (+<countrycode><number>)')
+          .describe(
+            'Recipient phone number in E.164 format. Pull from a prior contact / Apollo lookup.',
+          ),
+        recipientCountry: z
+          .string()
+          .regex(/^[A-Z]{2}$/, 'expected ISO 3166-1 alpha-2 uppercase')
+          .describe(
+            "Recipient's country (ISO-2 uppercase). Drives quiet-hours timezone resolution at " +
+              'dispatch time. Required so the executor can refuse outside the 8am-6pm window.',
+          ),
+        language: z
+          .string()
+          .regex(/^[a-z]{2}$/, 'expected 2-letter ISO 639-1 lowercase')
+          .describe(
+            'Audio language (ISO 639-1). Picks which active audio asset to play. Should match ' +
+              'probe.outreachLanguage when both are set.',
+          ),
+        variantId: z
+          .string()
+          .min(1)
+          .max(64)
+          .optional()
+          .describe(
+            'Optional variant id to scope the audio asset. Without this, falls back to the ' +
+              'probe-default audio.',
+          ),
+        contactId: z
+          .string()
+          .regex(/^[0-9A-HJKMNP-TV-Z]{26}$/, 'expected ULID')
+          .optional()
+          .describe('Optional CRM contact id for touchpoint linkage.'),
+        rationale: z
+          .string()
+          .min(20)
+          .max(1000)
+          .describe(
+            'REQUIRED. Specific, performance-grounded justification for choosing RVM over email ' +
+              'or lead_form. Surfaces on the approval card. Examples:\n' +
+              '  • "Email bounced twice on this contact; phone is the only verified channel."\n' +
+              '  • "M&A first-touch in JP; high-formality cold-write reads as spam, voicemail in ' +
+              'cloned voice carries respect."\n' +
+              '  • "Operator asked to send a voicemail to this contact specifically."',
+          ),
+      }),
+      handler: async (ctx, input) => {
+        // Probe must exist + be active. Same gate as submit_lead_form.
+        const probe = await getProbe(input.probeId);
+        if (!probe) {
+          return {
+            ok: false as const,
+            error: 'probe_not_found',
+            message: `Probe ${input.probeId} doesn't exist.`,
+          };
+        }
+        if (probe.status !== 'active' && probe.status !== 'planning') {
+          return {
+            ok: false as const,
+            error: 'probe_not_active',
+            probeStatus: probe.status,
+            message:
+              `Probe ${input.probeId} is ${probe.status}; RVM dispatches on its behalf are blocked.`,
+          };
+        }
+
+        // Refuse early when no audio exists for the (probe, language)
+        // scope. Variant-scoped check happens at executor-time too,
+        // but failing fast in the chat tool gives a cleaner signal
+        // ("upload audio first") instead of approval-card → reject.
+        const hasAudio = await probeHasActiveAudioForLanguage(
+          input.probeId,
+          input.language,
+        );
+        if (!hasAudio) {
+          return {
+            ok: false as const,
+            error: 'audio_not_found',
+            message:
+              `Probe ${input.probeId} has no active RVM audio for language '${input.language}'. ` +
+              'Upload audio first via the probe page (Voicebox / OpenAI TTS / manual upload), ' +
+              'then re-propose this RVM dispatch.',
+          };
+        }
+
+        // Build the action descriptor + insert as a pending approval.
+        // The executor (PR 3) re-checks compliance gates LIVE at
+        // dispatch (quiet hours, cooldown, audio asset still active)
+        // — this chat path doesn't second-guess them since the
+        // operator may approve hours later when conditions differ.
+        const action: ActionDescriptorT = {
+          kind: 'rvm.dispatch',
+          tier: 'T2',
+          probeId: input.probeId,
+          entitySlug: input.entitySlug,
+          toNumber: input.toNumber,
+          recipientCountry: input.recipientCountry,
+          language: input.language,
+          ...(input.variantId ? { variantId: input.variantId } : {}),
+          ...(input.contactId ? { contactId: input.contactId } : {}),
+          rationale: input.rationale,
+        } as ActionDescriptorT;
+        const row = await insertChatApproval(action, { userId: ctx.userId });
+        return {
+          ok: true as const,
+          approvalId: row.id,
+          probeId: input.probeId,
+          entitySlug: input.entitySlug,
+          toNumber: input.toNumber,
+          language: input.language,
+          reviewUrl: `/approvals/${row.id}`,
+          rationale: input.rationale,
         };
       },
     }),

@@ -237,6 +237,44 @@ DO NOT propose for vague exploration:
     \`error: "no_endpoint_discovered"\` (suggest the operator add
     the form URL manually from the entity profile, or run the
     website crawler to discover one).
+12. **Ringless voicemail via \`propose_rvm_dispatch\`.** Pre-recorded
+    audio drops into the recipient's voicemail box via Twilio
+    MachineDetection — when voicemail picks up, the audio plays;
+    when a human answers, we hang up. RVM is voicemail-only by
+    intent.
+
+    **NEVER default to RVM.** Always prefer email when available:
+    cheaper, threading + audit trail, recipient-async by default.
+    RVM is appropriate ONLY when:
+      a) The target's phone is the strongest known contact AND
+         email has been tried, failed, or is unavailable, OR
+      b) The probe explicitly prefers voice for relationship-
+         building (e.g. high-formality M&A first-touch where
+         written outreach reads cold), OR
+      c) Operator explicitly asks ("send a voicemail to...").
+
+    **Reasoning is REQUIRED.** The tool's \`rationale\` parameter
+    is min 20 chars and surfaces on the approval card. Don't paper
+    over with "RVM seems better here" — give the specific reason:
+    *"Email bounced twice; phone is the only verified channel,"*
+    or *"M&A first-touch in JP; cold-write reads as spam, voicemail
+    in cloned voice carries respect."*
+
+    **Failure modes** the tool surfaces:
+      - \`audio_not_found\` — probe has no active audio asset for
+        the language. Tell the operator: *"This probe has no \\<lang\\>
+        voicemail recorded. Want to upload one first via the probe
+        page, or send an email instead?"*
+      - \`probe_not_active\` — probe is paused / completed /
+        abandoned. Same gate as lead-form.
+      - At dispatch time the executor enforces quiet hours
+        (8am-6pm recipient-local) and per-recipient cooldown (168h).
+        These are silent until the executor refuses; the operator
+        approving outside business hours will see a refusal in the
+        approval queue's status.
+
+    Do NOT propose RVM as a "while we're at it" supplement to email
+    — that's noise. Pick one channel per first-touch attempt.
 
 ## After proposing
 
