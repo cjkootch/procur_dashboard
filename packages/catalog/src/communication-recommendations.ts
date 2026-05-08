@@ -1,4 +1,6 @@
 import 'server-only';
+import { sql } from 'drizzle-orm';
+import { db } from '@procur/db';
 import { getClient, MODELS } from '@procur/ai';
 import type { MlEvidenceItemT, MlEvidenceT } from '@procur/ai';
 import {
@@ -76,6 +78,16 @@ export interface RecommendCommunicationTargetsInput {
   /** Optional opportunity id (Discover catalog) for tender-driven
    *  outreach — credited as `sourceOpportunityId` on each candidate. */
   seedOpportunityId?: string;
+  /** Cold-start path for Market Probes that have no seed entity but
+   *  do have segment labels (e.g. "hotel procurement", "marine bunker
+   *  operators"). Each label runs a multi-column ILIKE across
+   *  known_entities (name / aliases / categories / tags / notes); the
+   *  scorer adds 0-25 pts based on how many labels matched. Closes
+   *  the cold-start friction where ML similarity returns 0 candidates
+   *  because there's no seed embedding to anchor on, and the explicit
+   *  role/category/country filters are too narrow to surface
+   *  semantically-relevant entities. */
+  seedSegmentLabels?: string[];
   /** Limit on returned candidates. Default 10, hard cap 50. */
   limit?: number;
   /** Optional explicit role / category / country filters layered on
@@ -195,9 +207,17 @@ export async function recommendCommunicationTargets(
     (!!input.filters.role ||
       !!input.filters.category ||
       !!input.filters.country);
-  if (!input.seedEntitySlug && !input.seedSignalId && !hasFilters) {
+  const hasSegmentLabels =
+    Array.isArray(input.seedSegmentLabels) &&
+    input.seedSegmentLabels.some((l) => l.trim().length > 0);
+  if (
+    !input.seedEntitySlug &&
+    !input.seedSignalId &&
+    !hasFilters &&
+    !hasSegmentLabels
+  ) {
     throw new Error(
-      'recommendCommunicationTargets requires seedEntitySlug, seedSignalId, or filters',
+      'recommendCommunicationTargets requires seedEntitySlug, seedSignalId, seedSegmentLabels, or filters',
     );
   }
   const limit = Math.min(input.limit ?? 10, 50);
@@ -225,15 +245,34 @@ export async function recommendCommunicationTargets(
     });
   }
 
+  // 2b. Cold-start segment-label search. When a Market Probe starts
+  //     from segment labels (no seed entity), ILIKE-fan across
+  //     name / aliases / categories / tags / notes catches
+  //     semantically-relevant entities the explicit role/country
+  //     filters miss. Each label is a separate match credit; the
+  //     scorer rewards multi-label matches more than single hits.
+  let segmentMatches: SegmentLabelMatch[] = [];
+  if (hasSegmentLabels) {
+    segmentMatches = await findEntitiesBySegmentLabels({
+      labels: (input.seedSegmentLabels ?? []).filter(
+        (l) => l.trim().length > 0,
+      ),
+      country: input.filters?.country,
+      limit: limit * 3,
+    });
+  }
+
   // 3. Build the union of candidate slugs, then hydrate each. ML
   //    similarity is the dominant ranker but explicit matches are
   //    not penalized for missing it.
   const candidateSlugs = new Set<string>();
   for (const s of similar) candidateSlugs.add(s.entitySlug);
   for (const e of explicit) candidateSlugs.add(e.slug);
+  for (const m of segmentMatches) candidateSlugs.add(m.slug);
   if (candidateSlugs.size === 0) return [];
 
   const similarBySlug = new Map(similar.map((s) => [s.entitySlug, s]));
+  const segmentMatchBySlug = new Map(segmentMatches.map((m) => [m.slug, m]));
 
   // 4. Hydrate every candidate with full known_entity context (role,
   //    country, categories, apollo).
@@ -249,9 +288,11 @@ export async function recommendCommunicationTargets(
     const entity = hydratedBySlug.get(slug);
     if (!entity) continue;
     const sim = similarBySlug.get(slug);
+    const segMatch = segmentMatchBySlug.get(slug);
     const candidate = await scoreCandidate({
       entity,
       similarity: sim?.similarity ?? null,
+      segmentLabelMatch: segMatch ?? null,
       seedEntitySlug: input.seedEntitySlug,
       seedSignalId: input.seedSignalId,
       seedOpportunityId: input.seedOpportunityId,
@@ -264,9 +305,78 @@ export async function recommendCommunicationTargets(
   return candidates.slice(0, limit);
 }
 
+interface SegmentLabelMatch {
+  slug: string;
+  matchedLabels: string[];
+}
+
+/**
+ * Cold-start segment-label search. For each label, ILIKE-match against
+ * name / aliases[] / categories[] / tags[] / notes on known_entities;
+ * aggregate per-slug counts so multi-label hits surface higher than
+ * single-label ones. The scorer in recommendCommunicationTargets
+ * grants 0-25 pts based on the match count — comparable to but
+ * weaker than graph similarity (0-30 pts), which reflects the
+ * weaker semantic precision of substring matching vs. embedding
+ * similarity.
+ *
+ * Country filter optional but recommended — most probes are scoped
+ * to a single country, and matching unconstrained against the global
+ * rolodex on a label like "operations" would be too noisy.
+ *
+ * Why phrase-substring rather than tokenized? Operators write segment
+ * labels as natural-language phrases ("hotel procurement", "marine
+ * bunker operators"). Substring matches naturally catch entities
+ * whose aliases / category tags / notes mention those phrases.
+ * Tokenization could broaden recall but inflates noise (every entity
+ * with "operations" in their notes would match a "marine bunker
+ * operators" label).
+ */
+async function findEntitiesBySegmentLabels(input: {
+  labels: string[];
+  country?: string;
+  limit?: number;
+}): Promise<SegmentLabelMatch[]> {
+  if (input.labels.length === 0) return [];
+  const limit = input.limit ?? 50;
+  // Use a CROSS JOIN against unnest(labels) so a single SQL pass
+  // produces (slug, label) match pairs. GROUP BY then aggregates
+  // into matched_labels per slug. Cheaper than N round-trips.
+  const labelsArray = sql`ARRAY[${sql.join(
+    input.labels.map((l) => sql`${l}`),
+    sql`, `,
+  )}]::text[]`;
+  const result = await db.execute<{
+    slug: string;
+    matched_labels: string[];
+  }>(sql`
+    SELECT ke.slug,
+           ARRAY_AGG(DISTINCT lbl) AS matched_labels
+      FROM known_entities ke
+      CROSS JOIN unnest(${labelsArray}) AS lbl
+     WHERE 1=1
+       ${input.country ? sql`AND UPPER(ke.country) = UPPER(${input.country})` : sql``}
+       AND (
+         ke.name ILIKE '%' || lbl || '%'
+         OR EXISTS (SELECT 1 FROM unnest(ke.aliases) a WHERE a ILIKE '%' || lbl || '%')
+         OR EXISTS (SELECT 1 FROM unnest(ke.categories) c WHERE c ILIKE '%' || lbl || '%')
+         OR EXISTS (SELECT 1 FROM unnest(ke.tags) t WHERE t ILIKE '%' || lbl || '%')
+         OR ke.notes ILIKE '%' || lbl || '%'
+       )
+     GROUP BY ke.slug
+     ORDER BY COUNT(DISTINCT lbl) DESC, ke.slug
+     LIMIT ${limit}
+  `);
+  return (result.rows as Array<Record<string, unknown>>).map((r) => ({
+    slug: String(r.slug),
+    matchedLabels: (r.matched_labels as string[] | null) ?? [],
+  }));
+}
+
 interface ScoreCandidateInput {
   entity: KnownEntityRow;
   similarity: number | null;
+  segmentLabelMatch: SegmentLabelMatch | null;
   seedEntitySlug: string | undefined;
   seedSignalId: string | undefined;
   seedOpportunityId: string | undefined;
@@ -291,6 +401,28 @@ async function scoreCandidate(
       sourceId: `${input.seedEntitySlug ?? 'unknown'}:${entity.slug}`,
       confidence: input.similarity,
       summary: `Graph-similar to seed (cosine ${input.similarity.toFixed(3)})`,
+    });
+  }
+
+  // Segment-label keyword match → up to 25 pts. Cold-start fallback
+  // for probes that have segment labels but no seed entity. 1 label
+  // matched = 12 pts; 2 = 18; 3+ = 25. Comparable to but capped below
+  // graph similarity since substring matching is weaker than embedding
+  // similarity. The evidence summary names the matched labels so the
+  // dashboard surfaces "matched: hotel procurement, marine bunker
+  // operators" rather than an opaque score.
+  if (
+    input.segmentLabelMatch &&
+    input.segmentLabelMatch.matchedLabels.length > 0
+  ) {
+    const n = input.segmentLabelMatch.matchedLabels.length;
+    const pts = n >= 3 ? 25 : n === 2 ? 18 : 12;
+    breakdown.segment_label_match = pts;
+    evidence.push({
+      kind: 'category_match',
+      sourceId: entity.slug,
+      confidence: Math.min(0.85, 0.5 + n * 0.15),
+      summary: `Matches ${n} probe segment label${n === 1 ? '' : 's'}: ${input.segmentLabelMatch.matchedLabels.join(', ')}`,
     });
   }
 
