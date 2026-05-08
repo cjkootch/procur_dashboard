@@ -10,8 +10,10 @@ import {
   PROBE_SIGNAL_KINDS,
   type ProbeFeedbackLabel,
 } from '@procur/catalog';
+import { CopyMarkdownToolbar } from '../../../_components/CopyMarkdownToolbar';
 import { SignalFlagsForm } from '../../_components/SignalFlagsForm';
 import { TargetFeedbackChips } from '../../_components/TargetFeedbackChips';
+import { formatTargetsMarkdown } from '../../_lib/markdown';
 import {
   addProbeTargetAction,
   dismissAllPendingTargetsAction,
@@ -58,8 +60,19 @@ export default async function ProbeTargetsPage({ params }: PageProps) {
     set.add(label as ProbeFeedbackLabel);
   }
 
+  const markdown = formatTargetsMarkdown(
+    probe,
+    targets,
+    justificationCounts,
+    feedbackByTargetId,
+  );
+
   return (
     <section className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
+      <CopyMarkdownToolbar
+        markdown={markdown}
+        slug={`probe-${probe.id}-targets`}
+      />
       <div className="mb-3 flex items-baseline justify-between gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
           Targets ({targets.length})

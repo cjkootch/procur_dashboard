@@ -1,6 +1,9 @@
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
-import { listProbeConversations } from '@procur/catalog';
+import { getProbe, listProbeConversations } from '@procur/catalog';
+import { CopyMarkdownToolbar } from '../../../_components/CopyMarkdownToolbar';
+import { formatConversationsMarkdown } from '../../_lib/markdown';
 
 const CHANNEL_TONE: Record<string, string> = {
   email: 'bg-blue-100 text-blue-900',
@@ -18,10 +21,17 @@ interface PageProps {
 export default async function ProbeCommunicationsPage({ params }: PageProps) {
   await requireCompany();
   const { id } = await params;
+  const probe = await getProbe(id);
+  if (!probe) notFound();
   const conversations = await listProbeConversations(id);
+  const markdown = formatConversationsMarkdown(probe, conversations);
 
   return (
     <section className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
+      <CopyMarkdownToolbar
+        markdown={markdown}
+        slug={`probe-${probe.id}-communications`}
+      />
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
           Conversations ({conversations.length})

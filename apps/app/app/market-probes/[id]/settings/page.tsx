@@ -5,6 +5,8 @@ import {
   listRvmAudioAssetsForProbe,
   listVariants,
 } from '@procur/catalog';
+import { CopyMarkdownToolbar } from '../../../_components/CopyMarkdownToolbar';
+import { formatSettingsMarkdown } from '../../_lib/markdown';
 import { RvmAudioPanel } from '../../_components/RvmAudioPanel';
 import {
   addApolloLookalikesAction,
@@ -36,8 +38,24 @@ export default async function ProbeSettingsPage({ params }: PageProps) {
     listRvmAudioAssetsForProbe(id, { activeOnly: false }),
   ]);
 
+  const markdown = formatSettingsMarkdown(probe, {
+    emailSignatureText: probe.emailSignatureText ?? null,
+    maxBounceRatePct: String(probe.maxBounceRatePct),
+    maxComplaintRatePct: String(probe.maxComplaintRatePct),
+    maxNoReplyBeforeSegmentPause: probe.maxNoReplyBeforeSegmentPause,
+    maxTotalNoSignalBeforeProbePause: probe.maxTotalNoSignalBeforeProbePause,
+    blockedTerms: probe.blockedTerms ?? [],
+    allowPaidEnrichment: probe.allowPaidEnrichment,
+    rvmAudioAssetCount: rvmAudioAssets.length,
+    rvmAudioAssetActiveCount: rvmAudioAssets.filter((a) => a.isActive).length,
+  });
+
   return (
     <>
+      <CopyMarkdownToolbar
+        markdown={markdown}
+        slug={`probe-${probe.id}-settings`}
+      />
 
         {/* Controls */}
         <aside className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">

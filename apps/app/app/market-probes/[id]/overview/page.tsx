@@ -1,6 +1,8 @@
 import { notFound } from 'next/navigation';
 import { requireCompany } from '@procur/auth';
 import { computeProbeScorecard, getProbe } from '@procur/catalog';
+import { CopyMarkdownToolbar } from '../../../_components/CopyMarkdownToolbar';
+import { formatOverviewMarkdown } from '../../_lib/markdown';
 import {
   approveFallbackPlanAction,
   generatePlanAction,
@@ -23,9 +25,18 @@ export default async function ProbeOverviewPage({ params }: PageProps) {
   const scorecard = await computeProbeScorecard(id);
 
   const plan = probe.planJson ?? {};
+  const markdown = formatOverviewMarkdown(probe, {
+    scorecard,
+    planGenerationStatus: plan.generationStatus,
+    planGenerationError: plan.generationError,
+  });
 
   return (
     <>
+      <CopyMarkdownToolbar
+        markdown={markdown}
+        slug={`probe-${probe.id}-overview`}
+      />
       {/* Scorecard — composite metrics. Computed on every page load
           (cheap; reads + a refreshSegmentCounts pass). */}
       {plan.generationStatus && plan.generationStatus !== 'ok' && (
