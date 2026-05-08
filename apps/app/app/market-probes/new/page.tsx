@@ -62,6 +62,12 @@ export default async function NewMarketProbePage() {
           name="objective"
           placeholder="e.g. identify 3+ named procurement contacts; surface 1+ active buying process"
         />
+        <Field
+          label="Domain (optional)"
+          name="domain"
+          placeholder="e.g. fuel_supply, ma_matchmaking, pe_buyers, succession_targets"
+          helper="Free-text tag identifying the kind of bet this probe is testing. Used by cross-probe memory to filter prior learning reports — without it, a Japan fuel probe's lessons would feed into a Japan M&A probe's strategy prompt. Pick a stable slug and reuse it across related probes; leave blank if you only run one kind."
+        />
         <Select
           label="Risk level"
           name="riskLevel"
