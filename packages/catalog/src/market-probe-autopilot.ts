@@ -32,6 +32,7 @@ import {
   buildSubAddressedEmail,
   mintLeadFormSubmissionToken,
 } from './lead-form-submission-tokens';
+import { probeHasActiveAudioForLanguage } from './rvm-audio-assets';
 
 /**
  * Phase 2H autopilot. Drafts + sends per-target outreach within probe
@@ -101,6 +102,14 @@ export interface AutopilotInput {
   /** Dry run — drafts but doesn't dispatch. Useful for the "preview
    *  next batch" UI in Phase 2I. */
   dryRun?: boolean;
+  /** Tenant id, required when the probe's allowedChannels includes
+   *  'rvm' AND probe.allowPaidEnrichment is true — Apollo's
+   *  enrichPerson enforces a per-tenant daily cap and writes to the
+   *  cost ledger keyed on companyId. Omit (or pass null) for cron
+   *  contexts that have no auth session; the autopilot then skips
+   *  the paid-enrichment path silently and falls through to the
+   *  next channel. */
+  companyId?: string | null;
 }
 
 export async function autopilotSendBatch(
@@ -409,25 +418,60 @@ export async function autopilotSendBatch(
     // outreach into the void.
     const recipient = await resolveRecipientEmail(t.entitySlug);
     const allowsLeadForm = (probe.allowedChannels ?? []).includes('lead_form');
+    const allowsRvm = (probe.allowedChannels ?? []).includes('rvm');
     // Lead-form fallback: when no email is available AND the probe
     // allows lead_form, look for an autopilot-eligible contact-form
     // endpoint. Eligibility check (CAPTCHA, http_post, message_field)
     // lives in pickAutopilotEligibleEndpoint — single source of truth
-    // shared with the chat-tool path. Without an eligible endpoint
-    // we skip exactly as before (no recipient = no dispatch).
+    // shared with the chat-tool path.
     let leadFormEndpoint: Awaited<
       ReturnType<typeof pickAutopilotEligibleEndpoint>
     > = null;
     if (!recipient && allowsLeadForm) {
       leadFormEndpoint = await pickAutopilotEligibleEndpoint(t.entitySlug);
     }
-    if (!recipient && !leadFormEndpoint) {
+    // RVM fallback: when neither email nor lead_form is available
+    // AND the probe allows rvm AND an active audio asset exists for
+    // the (probe, variant?, language) scope, resolve a phone +
+    // country for the target. The phone resolver tries the cheap
+    // paths (apollo cache, rolodex, external_supplier) before paid
+    // Apollo enrichment, which only fires when probe.allow_paid_
+    // enrichment is true. Country drives executor-time quiet-hours
+    // gating; missing country means we can't enforce 8am-6pm so we
+    // skip rather than dispatch to an unknowable timezone.
+    let rvmPhone: Awaited<ReturnType<typeof resolveRecipientPhone>> = null;
+    let rvmCountry: string | null = null;
+    let rvmAudioLanguage: string | null = null;
+    if (!recipient && !leadFormEndpoint && allowsRvm) {
+      rvmAudioLanguage = probe.outreachLanguage ?? 'en';
+      const hasAudio = await probeHasActiveAudioForLanguage(
+        probe.id,
+        rvmAudioLanguage,
+      );
+      if (hasAudio) {
+        rvmPhone = await resolveRecipientPhone(t.entitySlug, {
+          allowPaidEnrichment: probe.allowPaidEnrichment,
+          companyId: input.companyId ?? null,
+        });
+        if (rvmPhone) {
+          rvmCountry = await resolveRecipientCountry(t.entitySlug);
+        }
+      }
+    }
+    if (!recipient && !leadFormEndpoint && !(rvmPhone && rvmCountry)) {
+      const reason = allowsRvm
+        ? rvmPhone && !rvmCountry
+          ? 'no recipient email/form + RVM phone resolved but no country (cannot enforce quiet hours)'
+          : allowsLeadForm
+            ? 'no recipient email + no eligible lead-form + no RVM phone (or no audio asset)'
+            : 'no recipient email + no RVM phone (or no audio asset)'
+        : allowsLeadForm
+          ? 'no recipient email + no autopilot-eligible lead-form endpoint'
+          : 'no recipient email';
       skipped.push({
         targetId: t.id,
         entitySlug: t.entitySlug,
-        reason: allowsLeadForm
-          ? 'no recipient email + no autopilot-eligible lead-form endpoint'
-          : 'no recipient email',
+        reason,
       });
       continue;
     }
@@ -468,15 +512,18 @@ export async function autopilotSendBatch(
         continue;
       }
     }
-    // Channel selection: email when available; lead_form fallback
-    // only when email is unavailable AND the probe allows it AND
-    // discovery surfaced an eligible endpoint. Email is preferred
+    // Channel selection: email > lead_form > rvm. Email is preferred
     // because it carries threading semantics + reply-rate signal,
     // both of which lead_form lacks (form replies arrive via email
-    // separately, with no In-Reply-To linkage).
-    const channelKind: 'email' | 'lead_form' = recipient
+    // separately, with no In-Reply-To linkage). RVM is the last
+    // resort because it leaves a one-shot voicemail with no inline
+    // reply path — the recipient has to call back or email, which
+    // the per-conversation tracking can't link automatically.
+    const channelKind: 'email' | 'lead_form' | 'rvm' = recipient
       ? 'email'
-      : 'lead_form';
+      : leadFormEndpoint
+        ? 'lead_form'
+        : 'rvm';
 
     // Form-channel scratch state — populated inside the lead_form
     // branch below, read by the dispatch branch further down. Both
@@ -879,6 +926,43 @@ export async function autopilotSendBatch(
       // no inbound channel; replies arrive via email if the
       // recipient chooses to reply, and that path goes through the
       // email conversation_settings as usual.
+    } else if (
+      channelKind === 'rvm' &&
+      rvmPhone &&
+      rvmCountry &&
+      rvmAudioLanguage
+    ) {
+      // RVM channel: pre-recorded audio asset gets played via Twilio
+      // <Play> on machine_end_beep detection. The asset's text is
+      // chosen at upload time (operator-curated transcript); the
+      // dispatch-time payload only specifies which (probe, variant?,
+      // language) tuple to look up. No drafter call here — RVM
+      // doesn't have a per-target drafted message.
+      await db.insert(approvals).values({
+        id: approvalId,
+        agentRunId: null,
+        actionType: 'rvm.dispatch',
+        proposedPayload: {
+          kind: 'rvm.dispatch',
+          tier: 'T2',
+          probe_id: probe.id,
+          entity_slug: t.entitySlug,
+          variant_id: variant?.id ?? null,
+          language: rvmAudioLanguage,
+          to_number: rvmPhone.phone,
+          recipient_country: rvmCountry,
+          ...(rvmPhone.contactId ? { contact_id: rvmPhone.contactId } : {}),
+          rationale: `Market Probe ${probe.id} autopilot (tier ${probe.tier}). Target ${t.id}; entity ${t.entitySlug}. Channel=rvm (no email recipient + no eligible lead-form). Phone source=${rvmPhone.source}.`,
+          actor_source: 'market_probe_autopilot',
+          market_probe_id: probe.id,
+          market_probe_target_id: t.id,
+          phone_source: rvmPhone.source,
+        },
+        decision: 'auto_approved',
+      });
+      // No conversation_settings row for rvm — voicemail has no
+      // inbound channel. Recipient callbacks land outside any
+      // probe-aware reply context; operator handles them manually.
     }
 
     let result: { ok: boolean; error?: string };
@@ -922,6 +1006,40 @@ export async function autopilotSendBatch(
         },
         rationale: `Market Probe ${probe.id} autopilot dispatch via lead_form.`,
       });
+    } else if (
+      channelKind === 'rvm' &&
+      rvmPhone &&
+      rvmCountry &&
+      rvmAudioLanguage
+    ) {
+      const { applyRvmDispatch } = await import('@procur/ai');
+      const dispatchResult = await applyRvmDispatch(approvalId, {
+        probeId: probe.id,
+        entitySlug: t.entitySlug,
+        variantId: variant?.id ?? null,
+        language: rvmAudioLanguage,
+        toNumber: rvmPhone.phone,
+        recipientCountry: rvmCountry,
+        ...(rvmPhone.contactId ? { contactId: rvmPhone.contactId } : {}),
+        rationale: `Market Probe ${probe.id} autopilot dispatch via rvm.`,
+      });
+      // Compliance refusals (quiet hours / cooldown / missing audio)
+      // are not dispatch failures — they're "we declined to try" and
+      // should leave the target on `pending` so the next batch can
+      // retry within window. The downstream rollback already does
+      // exactly that, but its skip reason is generic; map refusal
+      // separately so the operator sees why.
+      result = {
+        ok: dispatchResult.ok,
+        ...(dispatchResult.error ? { error: dispatchResult.error } : {}),
+      };
+      if (
+        !dispatchResult.ok &&
+        dispatchResult.refusedAtDispatch &&
+        dispatchResult.error
+      ) {
+        result.error = `rvm refused at dispatch: ${dispatchResult.error}`;
+      }
     } else {
       // Should be unreachable — channelKind is set by the eligibility
       // branch above and either recipient or leadFormEndpoint is
@@ -1095,6 +1213,221 @@ async function resolveRecipientEmail(
   );
   if (!firstEmail) return null;
   return { email: firstEmail, contactId: contact.id };
+}
+
+/**
+ * Resolve a recipient phone for a probe target's RVM dispatch.
+ * Cheap-path-first fallback chain:
+ *
+ *   1. Apollo enrichment cache row with phone populated. Apollo's
+ *      directPhone is verified at enrichment time; prefer over
+ *      operator-curated rolodex when both exist.
+ *   2. Rolodex contact (organizations → contact_org_memberships →
+ *      contacts.phones[0]). Operator-curated; useful when no Apollo
+ *      pass has run on this entity.
+ *   3. external_suppliers.phone (when entitySlug is a UUID — i.e.
+ *      the entity came in from the external-suppliers ingest path
+ *      and has a contact-form-style phone on file).
+ *   4. Apollo enrichPerson (paid; gated). Only fires when the probe
+ *      has `allowPaidEnrichment=true` AND a tenant id is in scope.
+ *      Looks for an Apollo cache row with apolloPersonId populated
+ *      but phone null — i.e. the operator already confirmed this
+ *      person via the Decision-makers panel but didn't pay for the
+ *      direct phone. Highest seniority wins; cap and cost-ledger
+ *      enforcement live inside enrichPerson itself.
+ *
+ * Returns null when every path falls through. Caller is expected to
+ * skip the target on the RVM channel — the autopilot's three-way
+ * channel selection then drops back to lead_form, or skips entirely
+ * when no channel is viable.
+ */
+async function resolveRecipientPhone(
+  entitySlug: string,
+  options: {
+    allowPaidEnrichment: boolean;
+    companyId: string | null;
+  },
+): Promise<{
+  phone: string;
+  source: 'apollo_cache' | 'rolodex' | 'external_supplier' | 'apollo_enrich';
+  contactId?: string;
+  apolloPersonId?: string;
+} | null> {
+  // Stage 1 — Apollo cache, phone populated, highest seniority wins.
+  const apolloPhoneRows = await db.execute<{
+    id: string;
+    phone: string;
+    apollo_person_id: string | null;
+  }>(sql`
+    SELECT id, phone, apollo_person_id
+      FROM entity_contact_enrichments
+     WHERE entity_slug = ${entitySlug}
+       AND source = 'apollo'
+       AND phone IS NOT NULL
+       AND phone <> ''
+     ORDER BY CASE seniority
+                WHEN 'owner'    THEN 1
+                WHEN 'founder'  THEN 2
+                WHEN 'c_suite'  THEN 3
+                WHEN 'partner'  THEN 4
+                WHEN 'vp'       THEN 5
+                WHEN 'head'     THEN 6
+                WHEN 'director' THEN 7
+                WHEN 'manager'  THEN 8
+                WHEN 'senior'   THEN 9
+                WHEN 'entry'    THEN 10
+                WHEN 'intern'   THEN 11
+                ELSE 99
+              END
+     LIMIT 1
+  `);
+  const apolloPhone = (
+    apolloPhoneRows.rows as Array<{
+      id?: string;
+      phone?: string;
+      apollo_person_id?: string | null;
+    }>
+  )[0];
+  if (apolloPhone?.phone) {
+    return {
+      phone: apolloPhone.phone,
+      source: 'apollo_cache',
+      contactId: apolloPhone.id,
+      ...(apolloPhone.apollo_person_id
+        ? { apolloPersonId: apolloPhone.apollo_person_id }
+        : {}),
+    };
+  }
+
+  // Stage 2 — rolodex contact phones[0].
+  const orgRow = await db.execute<{ org_id: string }>(sql`
+    SELECT id AS org_id
+      FROM organizations
+     WHERE external_keys->>'known_entity_slug' = ${entitySlug}
+     LIMIT 1
+  `);
+  const orgId = (orgRow.rows as Array<{ org_id?: string }>)[0]?.org_id;
+  if (orgId) {
+    const [membership] = await db
+      .select({ contactId: contactOrgMemberships.contactId })
+      .from(contactOrgMemberships)
+      .where(eq(contactOrgMemberships.orgId, orgId))
+      .orderBy(desc(contactOrgMemberships.isPrimary))
+      .limit(1);
+    if (membership) {
+      const [contact] = await db
+        .select({ id: contacts.id, phones: contacts.phones })
+        .from(contacts)
+        .where(eq(contacts.id, membership.contactId))
+        .limit(1);
+      const firstPhone = (contact?.phones ?? []).find(
+        (p) => typeof p === 'string' && p.length > 0,
+      );
+      if (firstPhone) {
+        return { phone: firstPhone, source: 'rolodex', contactId: contact!.id };
+      }
+    }
+  }
+
+  // Stage 3 — external_suppliers.phone (slug-as-UUID path).
+  const externalRow = await db.execute<{ phone: string }>(sql`
+    SELECT phone
+      FROM external_suppliers
+     WHERE id::text = ${entitySlug}
+       AND phone IS NOT NULL
+       AND phone <> ''
+     LIMIT 1
+  `);
+  const externalPhone = (externalRow.rows as Array<{ phone?: string }>)[0]
+    ?.phone;
+  if (externalPhone) {
+    return { phone: externalPhone, source: 'external_supplier' };
+  }
+
+  // Stage 4 — paid Apollo enrichPerson, gated.
+  if (!options.allowPaidEnrichment || !options.companyId) {
+    return null;
+  }
+  const enrichablePersonRows = await db.execute<{
+    apollo_person_id: string;
+  }>(sql`
+    SELECT apollo_person_id
+      FROM entity_contact_enrichments
+     WHERE entity_slug = ${entitySlug}
+       AND source = 'apollo'
+       AND apollo_person_id IS NOT NULL
+       AND (phone IS NULL OR phone = '')
+     ORDER BY CASE seniority
+                WHEN 'owner'    THEN 1
+                WHEN 'founder'  THEN 2
+                WHEN 'c_suite'  THEN 3
+                WHEN 'partner'  THEN 4
+                WHEN 'vp'       THEN 5
+                WHEN 'head'     THEN 6
+                WHEN 'director' THEN 7
+                WHEN 'manager'  THEN 8
+                WHEN 'senior'   THEN 9
+                WHEN 'entry'    THEN 10
+                WHEN 'intern'   THEN 11
+                ELSE 99
+              END
+     LIMIT 1
+  `);
+  const enrichTarget = (
+    enrichablePersonRows.rows as Array<{ apollo_person_id?: string }>
+  )[0]?.apollo_person_id;
+  if (!enrichTarget) return null;
+
+  const { enrichPerson } = await import('@procur/apollo');
+  const result = await enrichPerson({
+    apolloPersonId: enrichTarget,
+    entitySlug,
+    companyId: options.companyId,
+  });
+  if (!('ok' in result) || result.ok === false) return null;
+  const phone = result.full.directPhone;
+  if (!phone) return null;
+  return {
+    phone,
+    source: 'apollo_enrich',
+    apolloPersonId: result.apolloPersonId,
+  };
+}
+
+/**
+ * Resolve a recipient country (ISO-3166-1 alpha-2) for an entity.
+ * Two-stage: known_entities.country (canonical slug path) →
+ * external_suppliers.country (UUID path). Returns null when neither
+ * lookup matches; caller skips the target on the RVM channel since
+ * quiet-hours enforcement requires a country.
+ */
+async function resolveRecipientCountry(
+  entitySlug: string,
+): Promise<string | null> {
+  const [knownEntity] = await db
+    .select({ country: knownEntities.country })
+    .from(knownEntities)
+    .where(eq(knownEntities.slug, entitySlug))
+    .limit(1);
+  if (knownEntity?.country) return knownEntity.country.toUpperCase();
+
+  const externalRow = await db.execute<{ country: string }>(sql`
+    SELECT country
+      FROM external_suppliers
+     WHERE id::text = ${entitySlug}
+       AND country IS NOT NULL
+       AND country <> ''
+     LIMIT 1
+  `);
+  const externalCountry = (externalRow.rows as Array<{ country?: string }>)[0]
+    ?.country;
+  if (!externalCountry) return null;
+  // external_suppliers.country can be a free-form string ("United
+  // States", "USA", "Côte d'Ivoire"). Normalize via the same
+  // shared resolver the chat tools use; bail when normalization
+  // fails rather than dispatching to an unknowable timezone.
+  const { normalizeCountryCode } = await import('./country-codes');
+  return normalizeCountryCode(externalCountry);
 }
 
 // suppress unused-import lint on intentional re-exports
