@@ -9,6 +9,7 @@ import {
   getProbe,
   listAtlasFactsForProbe,
   listHypothesesForProbe,
+  listProbeFeedbackShortcuts,
   listSegments,
   listStrategyProposals,
   listTargetsForProbe,
@@ -21,6 +22,7 @@ import {
   PROBE_FEEDBACK_LABELS,
   PROBE_SIGNAL_KINDS,
   type LearningReportPayload,
+  type ProbeFeedbackLabel,
 } from '@procur/catalog';
 import { RvmAudioPanel } from '../_components/RvmAudioPanel';
 import { SignalFlagsForm } from '../_components/SignalFlagsForm';
@@ -103,6 +105,7 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
     variants,
     variantPerformance,
     rvmAudioAssets,
+    feedbackShortcuts,
   ] = await Promise.all([
     listTargetsForProbe(id),
     listAtlasFactsForProbe(id),
@@ -120,7 +123,25 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
     listVariants(id),
     computeVariantPerformance(id),
     listRvmAudioAssetsForProbe(id, { activeOnly: false }),
+    listProbeFeedbackShortcuts(id),
   ]);
+
+  // Build a per-target feedback set so the chip render can show a
+  // selected state instead of firing silently. The same (target,
+  // label) tuple may have multiple events (operator clicked twice);
+  // the Set treats them as one for display purposes.
+  const feedbackByTargetId = new Map<string, Set<ProbeFeedbackLabel>>();
+  for (const event of feedbackShortcuts) {
+    if (!event.targetId) continue;
+    const label = (event.payload as { label?: unknown })?.label;
+    if (typeof label !== 'string') continue;
+    let set = feedbackByTargetId.get(event.targetId);
+    if (!set) {
+      set = new Set<ProbeFeedbackLabel>();
+      feedbackByTargetId.set(event.targetId, set);
+    }
+    set.add(label as ProbeFeedbackLabel);
+  }
   const latestReport = await getLatestLearningReport(id);
 
   const ladderIdx = LADDER_STAGES.indexOf(
@@ -1058,26 +1079,41 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
                   </details>
 
                   {/* Feedback shortcuts — one-click labels, sentiment
-                      derived in the helper. Writes feedback_events rows. */}
+                      derived in the helper. Writes feedback_events rows.
+                      Selected state (filled chip) reflects existing
+                      non-revoked feedback for this (target, label). */}
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    {PROBE_FEEDBACK_LABELS.map((label) => (
-                      <form
-                        key={label}
-                        action={recordTargetFeedbackAction}
-                        className="inline"
-                      >
-                        <input type="hidden" name="probeId" value={probe.id} />
-                        <input type="hidden" name="targetId" value={t.id} />
-                        <input type="hidden" name="label" value={label} />
-                        <button
-                          type="submit"
-                          className="rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] hover:bg-[color:var(--color-muted)]/40"
-                          title={`Record feedback: ${label.replace(/_/g, ' ')}`}
+                    {PROBE_FEEDBACK_LABELS.map((label) => {
+                      const isSelected =
+                        feedbackByTargetId.get(t.id)?.has(label) ?? false;
+                      return (
+                        <form
+                          key={label}
+                          action={recordTargetFeedbackAction}
+                          className="inline"
                         >
-                          {label.replace(/_/g, ' ')}
-                        </button>
-                      </form>
-                    ))}
+                          <input type="hidden" name="probeId" value={probe.id} />
+                          <input type="hidden" name="targetId" value={t.id} />
+                          <input type="hidden" name="label" value={label} />
+                          <button
+                            type="submit"
+                            className={
+                              isSelected
+                                ? 'rounded-full border border-[color:var(--color-foreground)] bg-[color:var(--color-foreground)] px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-background)]'
+                                : 'rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] hover:bg-[color:var(--color-muted)]/40'
+                            }
+                            title={
+                              isSelected
+                                ? `Recorded: ${label.replace(/_/g, ' ')}`
+                                : `Record feedback: ${label.replace(/_/g, ' ')}`
+                            }
+                          >
+                            {isSelected ? '✓ ' : ''}
+                            {label.replace(/_/g, ' ')}
+                          </button>
+                        </form>
+                      );
+                    })}
                   </div>
                 </li>
               );
