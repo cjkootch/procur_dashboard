@@ -679,6 +679,38 @@ export function buildCatalogTools(): ToolRegistry {
         // Without probeId the env defaults still apply — chat tools
         // without probe context behave exactly as before.
         const probe = input.probeId ? await getProbe(input.probeId) : null;
+        if (input.probeId && !probe) {
+          return {
+            ok: false as const,
+            error: 'probe_not_found',
+            message:
+              `Probe ${input.probeId} doesn't exist. Drop the probeId or correct it.`,
+          };
+        }
+        // Probe-status gate: refuse to propose for probes that aren't
+        // active. The autopilot's preflight already gates by status,
+        // but the chat path bypasses it. Without this check, an
+        // operator asking the assistant to "submit a lead form for
+        // ACME from probe X" would queue an approval against probe X
+        // even if probe X is paused for kill-criteria reasons —
+        // bypassing the safety gate that paused the probe in the
+        // first place.
+        if (
+          probe &&
+          probe.status !== 'active' &&
+          probe.status !== 'planning'
+        ) {
+          return {
+            ok: false as const,
+            error: 'probe_not_active',
+            probeStatus: probe.status,
+            message:
+              `Probe ${input.probeId} is ${probe.status}; lead-form submissions on its ` +
+              "behalf are blocked. The operator should resume the probe first if they " +
+              'want this submission to proceed under that probe context, or drop the ' +
+              'probeId to submit without probe attribution.',
+          };
+        }
         const draft = await draftLeadFormSubmission({
           pack,
           intent: input.intent,

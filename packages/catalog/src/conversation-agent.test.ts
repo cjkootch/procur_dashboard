@@ -980,3 +980,71 @@ describe('classifyDraftRisk — adversarial inputs', () => {
     assert.equal(classifyDraftRisk('A phobia of cold-callers.'), 'safe');
   });
 });
+
+// ─── multilingual stop-keyword detection ──────────────────────────
+//
+// Recipients in non-English markets reply with their local-language
+// "stop sending" — if we miss it we keep emailing. GDPR / CAN-SPAM
+// exposure regardless of source language.
+
+describe('matchStopKeyword — multilingual', () => {
+  it('Japanese: 配信停止 fires', () => {
+    assert.equal(matchStopKeyword('配信停止してください', []), '配信停止');
+  });
+
+  it('Japanese: 退会 (unsubscribe) fires', () => {
+    assert.equal(matchStopKeyword('退会お願いします', []), '退会');
+  });
+
+  it('Korean: 구독취소 fires', () => {
+    assert.equal(matchStopKeyword('구독취소 부탁드립니다', []), '구독취소');
+  });
+
+  it('Korean: 수신거부 fires', () => {
+    assert.equal(matchStopKeyword('수신거부합니다', []), '수신거부');
+  });
+
+  it('Simplified Chinese: 退订 fires', () => {
+    assert.equal(matchStopKeyword('请退订此邮件', []), '退订');
+  });
+
+  it('Traditional Chinese: 退訂 fires', () => {
+    assert.equal(matchStopKeyword('請退訂', []), '退訂');
+  });
+
+  it('Spanish: darse de baja fires', () => {
+    assert.equal(
+      matchStopKeyword('Por favor darse de baja de esta lista.', []),
+      'darse de baja',
+    );
+  });
+
+  it('French: désinscription fires', () => {
+    assert.equal(
+      matchStopKeyword('Demande de désinscription.', []),
+      'désinscription',
+    );
+  });
+
+  it('German: abmelden fires', () => {
+    assert.equal(
+      matchStopKeyword('Bitte abmelden von diesem Newsletter.', []),
+      'abmelden',
+    );
+  });
+
+  it('Russian: отписаться fires', () => {
+    assert.equal(matchStopKeyword('хочу отписаться', []), 'отписаться');
+  });
+
+  it('English STOP still fires (regression guard)', () => {
+    // Word-boundary path stays intact for ASCII keywords.
+    assert.equal(matchStopKeyword('STOP', []), 'stop');
+  });
+
+  it('English non-stop word does not false-match through CJK list', () => {
+    // Defensive: ensure adding CJK keywords doesn't accidentally
+    // trigger on English words that contain non-ASCII characters.
+    assert.equal(matchStopKeyword('This is a normal reply.', []), null);
+  });
+});

@@ -431,6 +431,43 @@ export async function autopilotSendBatch(
       });
       continue;
     }
+
+    // Cross-probe collision check. conversation_settings is keyed on
+    // (channel, conversationKey) — ONE row per recipient email. If
+    // this recipient already has a different active probe linked,
+    // dispatching here would either (a) clobber the existing probe's
+    // linkedProbeId on upsert (wrong: their replies would suddenly
+    // route to us) or (b) leave the linkage stale (wrong: our replies
+    // would route to the other probe's persona). Either way the
+    // operator gets confused mid-thread.
+    //
+    // Skip the target with a clear reason; operator gets visibility
+    // and can decide: continue contacting (manually unlink the other
+    // probe), share the recipient (operator-resolved), or accept the
+    // skip.
+    if (recipient) {
+      const [collisionRow] = await db
+        .select({ linkedProbeId: conversationSettings.linkedProbeId })
+        .from(conversationSettings)
+        .where(
+          and(
+            eq(conversationSettings.channel, 'email'),
+            eq(conversationSettings.conversationKey, recipient.email),
+          ),
+        )
+        .limit(1);
+      if (
+        collisionRow?.linkedProbeId &&
+        collisionRow.linkedProbeId !== probe.id
+      ) {
+        skipped.push({
+          targetId: t.id,
+          entitySlug: t.entitySlug,
+          reason: `recipient ${recipient.email} is linked to a different active probe (${collisionRow.linkedProbeId}); manually unlink or skip`,
+        });
+        continue;
+      }
+    }
     // Channel selection: email when available; lead_form fallback
     // only when email is unavailable AND the probe allows it AND
     // discovery surfaced an eligible endpoint. Email is preferred

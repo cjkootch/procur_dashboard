@@ -617,28 +617,93 @@ function identityToPromptLine(
   }
 }
 
+// Multilingual opt-out keywords. Recipients in non-English markets
+// reply with their local-language equivalent of "stop sending"; if
+// we only check English we miss the request entirely and keep
+// emailing — GDPR / CAN-SPAM exposure regardless of source language.
+//
+// Matching strategy mirrors the multilingual form-field matcher: ASCII
+// keywords use word-boundary regex (`\bstop\b` won't false-match
+// "stoplight"); non-ASCII keywords use substring (CJK / Arabic /
+// Cyrillic don't have whitespace word boundaries and \b is meaningless
+// for those scripts).
+const MULTILINGUAL_STOP_KEYWORDS = [
+  // English / Romance / German — covered by builtin English set
+  // already; included here for explicit cross-locale documentation.
+  // 'stop', 'unsubscribe', 'opt out', 'optout', 'cancel',
+  // Japanese
+  '配信停止',
+  '配信中止',
+  '解除',
+  '退会',
+  // Korean
+  '구독취소',
+  '수신거부',
+  // Chinese (simplified + traditional)
+  '退订',
+  '退訂',
+  '取消订阅',
+  '取消訂閱',
+  // Arabic
+  'إلغاء الاشتراك',
+  // Russian
+  'отписаться',
+  'отписать',
+  // Spanish, Portuguese
+  'darse de baja',
+  'baja',
+  'cancelar suscripción',
+  'descadastrar',
+  // French
+  'désinscription',
+  'désabonner',
+  'me désabonner',
+  // German
+  'abmelden',
+  'abbestellen',
+] as const;
+
 export function matchStopKeyword(body: string, keywords: string[]): string | null {
   const normalized = body.toLowerCase().trim();
   if (!normalized) return null;
   // Built-in opt-out words that always count, even if not explicitly
   // configured — carrier-required (CTIA / GSMA) on SMS in the US.
   const builtin = ['stop', 'unsubscribe', 'opt out', 'optout', 'cancel'];
-  const all = [...builtin, ...keywords.map((k) => k.toLowerCase())];
+  const all = [
+    ...builtin,
+    ...MULTILINGUAL_STOP_KEYWORDS,
+    ...keywords.map((k) => k.toLowerCase()),
+  ];
   for (const kw of all) {
-    // Word-bounded regex match. The earlier shape used three explicit
-    // string checks (equality, startsWith `${kw} `, includes ` ${kw} `)
-    // which together missed three real-world cases: trailing
-    // punctuation ("STOP." / "STOP!" — explicitly required by CTIA /
-    // GSMA), keywords at message-end position with no trailing space
-    // ("Please stop"), and operator-configured custom keywords in
-    // either of those positions. \b on both sides catches all three
-    // and still rejects substring hits like "stoplight". Regex
-    // metachars in operator-supplied keywords are escaped first so a
-    // keyword like "no!" or "(stop)" doesn't blow up the regex.
-    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (new RegExp(`\\b${escaped}\\b`, 'i').test(normalized)) return kw;
+    if (isAsciiOnly(kw)) {
+      // Word-bounded regex match. The earlier shape used three explicit
+      // string checks (equality, startsWith `${kw} `, includes ` ${kw} `)
+      // which together missed three real-world cases: trailing
+      // punctuation ("STOP." / "STOP!" — explicitly required by CTIA /
+      // GSMA), keywords at message-end position with no trailing space
+      // ("Please stop"), and operator-configured custom keywords in
+      // either of those positions. \b on both sides catches all three
+      // and still rejects substring hits like "stoplight". Regex
+      // metachars in operator-supplied keywords are escaped first so a
+      // keyword like "no!" or "(stop)" doesn't blow up the regex.
+      const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`\\b${escaped}\\b`, 'i').test(normalized)) return kw;
+    } else {
+      // Non-ASCII (CJK / Arabic / Cyrillic) — substring match.
+      // Word boundaries are meaningless for these scripts, and the
+      // common opt-out phrases are short enough that substring is
+      // safe (no false positives in normal business prose).
+      if (normalized.includes(kw)) return kw;
+    }
   }
   return null;
+}
+
+function isAsciiOnly(s: string): boolean {
+  for (let i = 0; i < s.length; i += 1) {
+    if (s.charCodeAt(i) > 127) return false;
+  }
+  return true;
 }
 
 async function pauseConversation(input: {
