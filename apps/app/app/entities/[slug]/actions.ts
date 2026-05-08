@@ -5,6 +5,7 @@ import { requireCompany } from '@procur/auth';
 import {
   SupplierApprovalEntityMissingError,
   resolveApolloEntityRef,
+  upsertFormEndpoint,
   upsertSupplierApproval,
 } from '@procur/catalog';
 import {
@@ -285,4 +286,99 @@ export async function searchApolloPeopleForEntityAction(input: {
     };
   }
   return { ok: false, reason: 'unknown', message: 'Unexpected response from Apollo.' };
+}
+
+/**
+ * Manual operator-add path for a contact-form endpoint. The crawler
+ * surfaces most forms automatically, but operators can paste in a
+ * URL + field-name resolutions when:
+ *   - The crawler missed a deeper / non-linked-from-homepage form
+ *   - The crawler misclassified a field role (e.g., wrong
+ *     message_field — a free-text "company" field got picked up
+ *     instead of the actual textarea)
+ *   - The form lives behind a JS-rendered page where the crawler
+ *     can't see the markup
+ *
+ * Operator submission ALWAYS sets source='operator' which wins over
+ * subsequent crawler updates per the upsert policy. CAPTCHA detection
+ * still runs against operator-supplied URLs on the next crawl pass —
+ * the operator can override the captcha decision with the dedicated
+ * action below if they're certain (e.g., an invisible reCAPTCHA that
+ * the form auto-passes for trusted referrers; rare but exists).
+ */
+export async function addLeadFormEndpointAction(
+  formData: FormData,
+): Promise<{ ok: boolean; message: string }> {
+  await requireCompany();
+  const entitySlug = String(formData.get('entitySlug') ?? '').trim();
+  const url = String(formData.get('url') ?? '').trim();
+  if (!entitySlug || !url) {
+    return { ok: false, message: 'entitySlug + url required' };
+  }
+  try {
+    new URL(url);
+  } catch {
+    return { ok: false, message: 'url must be a valid absolute URL' };
+  }
+  const messageField =
+    String(formData.get('messageField') ?? '').trim() || null;
+  const emailField =
+    String(formData.get('emailField') ?? '').trim() || null;
+  const nameField =
+    String(formData.get('nameField') ?? '').trim() || null;
+  const subjectField =
+    String(formData.get('subjectField') ?? '').trim() || null;
+  const companyField =
+    String(formData.get('companyField') ?? '').trim() || null;
+  const phoneField =
+    String(formData.get('phoneField') ?? '').trim() || null;
+
+  await upsertFormEndpoint({
+    entitySlug,
+    url,
+    submitMethod: 'http_post',
+    detectedCaptchaKind: null,
+    fields: [],
+    nameField,
+    emailField,
+    subjectField,
+    messageField,
+    companyField,
+    phoneField,
+    source: 'operator',
+  });
+  revalidatePath(`/entities/${entitySlug}`);
+  return {
+    ok: true,
+    message: messageField
+      ? 'Form endpoint saved.'
+      : 'Form endpoint saved. Set message_field before this endpoint can be autopilot-eligible.',
+  };
+}
+
+/**
+ * Operator-only action to retire an endpoint from autopilot
+ * eligibility — set submit_method='unknown' so pickAutopilotEligibleEndpoint
+ * filters it out. Used when an operator notices the form is no longer
+ * accepting submissions, has been migrated behind a CAPTCHA, etc.
+ * Doesn't delete the row — useful audit trail of what URLs we know
+ * about. Re-enable by re-running the manual add.
+ */
+export async function retireLeadFormEndpointAction(
+  formData: FormData,
+): Promise<{ ok: boolean; message: string }> {
+  await requireCompany();
+  const entitySlug = String(formData.get('entitySlug') ?? '').trim();
+  const url = String(formData.get('url') ?? '').trim();
+  if (!entitySlug || !url) {
+    return { ok: false, message: 'entitySlug + url required' };
+  }
+  await upsertFormEndpoint({
+    entitySlug,
+    url,
+    submitMethod: 'unknown',
+    source: 'operator',
+  });
+  revalidatePath(`/entities/${entitySlug}`);
+  return { ok: true, message: 'Endpoint retired from autopilot.' };
 }

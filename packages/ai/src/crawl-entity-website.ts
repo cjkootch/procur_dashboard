@@ -54,6 +54,8 @@ import {
   extractWebsiteIntelligence,
   type WebsiteIntelligenceOutputT,
 } from './tasks/extract-website-intelligence';
+import { extractFormEndpoints } from './extract-form-endpoints';
+import { entityContactFormEndpoints } from '@procur/db';
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -122,6 +124,9 @@ type FetchedPage = {
   title: string | null;
   contentHash: string;
   httpStatus: number;
+  /** Raw HTML kept in memory so the form-detection pass can run
+   *  alongside text extraction. Released after persistence. */
+  html: string;
 };
 
 type SkippedPage = {
@@ -412,7 +417,7 @@ async function crawlOne(
       continue;
     }
     const contentHash = sha256(text);
-    fetched.push({ url: c.url, kind: c.kind, text, title, contentHash, httpStatus });
+    fetched.push({ url: c.url, kind: c.kind, text, title, contentHash, httpStatus, html });
     console.log(`    ✓ ${c.url} — ${text.length} chars [${c.kind}]`);
   }
 
@@ -431,6 +436,80 @@ async function crawlOne(
     const blobUrl = await maybeUploadBlob(entity.slug, p.url, p.text);
     const id = await persistPage(entity.slug, p, blobUrl);
     pageIdByUrl.set(p.url, id);
+  }
+
+  // Form-endpoint discovery pass. Runs over each crawled page's raw
+  // HTML to surface contact-form endpoints with field maps + anti-bot
+  // detection. Persists to entity_contact_form_endpoints; the
+  // autopilot's lead_form executor reads them at dispatch time.
+  // Discipline: this pass SURFACES captcha kinds, never bypasses
+  // them — protected forms get stamped with detected_captcha_kind
+  // and the executor refuses to POST against them.
+  let formsDiscovered = 0;
+  for (const p of fetched) {
+    let endpoints;
+    try {
+      endpoints = extractFormEndpoints({ html: p.html, pageUrl: p.url });
+    } catch (err) {
+      console.error(
+        `    form-detect failed for ${p.url}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      continue;
+    }
+    for (const ep of endpoints) {
+      try {
+        await db
+          .insert(entityContactFormEndpoints)
+          .values({
+            entitySlug: entity.slug,
+            url: ep.url,
+            submitMethod: ep.submitMethod,
+            detectedCaptchaKind: ep.detectedCaptchaKind,
+            fields: ep.fields,
+            nameField: ep.nameField,
+            emailField: ep.emailField,
+            subjectField: ep.subjectField,
+            messageField: ep.messageField,
+            companyField: ep.companyField,
+            phoneField: ep.phoneField,
+            language: ep.language,
+            source: 'crawler',
+            lastVerifiedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: [
+              entityContactFormEndpoints.entitySlug,
+              entityContactFormEndpoints.url,
+            ],
+            set: {
+              submitMethod: sql`excluded.submit_method`,
+              detectedCaptchaKind: sql`excluded.detected_captcha_kind`,
+              fields: sql`excluded.fields`,
+              // Preserve operator-set field roles when a manual edit
+              // already populated them; only fill where null today.
+              nameField: sql`COALESCE(${entityContactFormEndpoints.nameField}, excluded.name_field)`,
+              emailField: sql`COALESCE(${entityContactFormEndpoints.emailField}, excluded.email_field)`,
+              subjectField: sql`COALESCE(${entityContactFormEndpoints.subjectField}, excluded.subject_field)`,
+              messageField: sql`COALESCE(${entityContactFormEndpoints.messageField}, excluded.message_field)`,
+              companyField: sql`COALESCE(${entityContactFormEndpoints.companyField}, excluded.company_field)`,
+              phoneField: sql`COALESCE(${entityContactFormEndpoints.phoneField}, excluded.phone_field)`,
+              language: sql`COALESCE(excluded.language, ${entityContactFormEndpoints.language})`,
+              lastVerifiedAt: new Date(),
+              updatedAt: new Date(),
+            },
+          });
+        formsDiscovered += 1;
+      } catch (err) {
+        console.error(
+          `    form-upsert failed for ${ep.url}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+  if (formsDiscovered > 0) {
+    console.log(
+      `  ${formsDiscovered} contact-form endpoint(s) discovered + persisted`,
+    );
   }
 
   console.log(`  extracting via Sonnet over ${fetched.length} pages…`);
