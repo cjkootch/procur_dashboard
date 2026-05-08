@@ -30,6 +30,32 @@
 const VOICEBOX_BASE = 'http://127.0.0.1:17493';
 const HEALTH_TIMEOUT_MS = 2_000;
 
+/** ISO 639-1 codes Voicebox actually exposes in its UI (mirrors the
+ *  language picker in Voicebox's web app). The HTTP API may accept
+ *  more, but model quality is only guaranteed for these. Keep this
+ *  list tight — surfacing an unsupported language to the operator
+ *  results in noticeably degraded synthesis. */
+export const VOICEBOX_SUPPORTED_LANGUAGES = [
+  'zh',
+  'en',
+  'ja',
+  'ko',
+  'de',
+  'fr',
+  'ru',
+  'pt',
+  'es',
+  'it',
+] as const;
+
+export type VoiceboxLanguage = (typeof VOICEBOX_SUPPORTED_LANGUAGES)[number];
+
+export function isVoiceboxSupportedLanguage(
+  code: string,
+): code is VoiceboxLanguage {
+  return (VOICEBOX_SUPPORTED_LANGUAGES as readonly string[]).includes(code);
+}
+
 /** Mirrors Voicebox's VoiceProfileResponse (per OpenAPI spec at
  *  http://127.0.0.1:17493/docs). We only consume a subset; everything
  *  else gets ignored. */
@@ -114,9 +140,10 @@ export interface GenerateVoiceboxAudioInput {
    *  chatterbox_turbo / tada / kokoro per the OpenAPI spec). The
    *  profile may have a default engine; passing one here overrides. */
   engine?: string;
-  /** ISO 639-1 lowercase. Voicebox accepts: zh / en / ja / ko / de /
-   *  fr / ru / pt / es / it / he / ar / da / el / fi / hi / ms / nl /
-   *  no / pl / sv / sw / tr. */
+  /** ISO 639-1 lowercase. Voicebox's UI exposes 10 languages with
+   *  guaranteed model quality — see VOICEBOX_SUPPORTED_LANGUAGES.
+   *  The HTTP API may accept others; quality degrades and we don't
+   *  advertise them in the dashboard's picker. */
   language?: string;
   /** Voicebox-specific delivery instruction string ("warm, slow,
    *  cinematic"). Engine-dependent — works with qwen-family engines. */
