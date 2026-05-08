@@ -21,6 +21,7 @@ import {
 } from './communication-recommendations';
 import { computeProbeScorecard } from './market-probe-measurement';
 import { setProbeStatus } from './market-probes';
+import { listHypothesesForProbe } from './market-probe-hypotheses';
 import { pickVariantForTarget } from './market-probe-variants';
 
 /**
@@ -166,6 +167,57 @@ export async function autopilotSendBatch(
     return {
       ok: false,
       reason: `probe.plan was generated via fallback (${planStatus}); regenerate the plan or explicitly approve before autopilot can send`,
+      attempted: 0,
+      drafted: 0,
+      sent: 0,
+      queued: 0,
+      skipped,
+    };
+  }
+
+  // Plan-content sanity. A clean generationStatus doesn't guarantee
+  // the plan actually carries a hypothesis + outreach angle — operator
+  // could have manually cleared them, or a regeneration could have
+  // landed the planning fields blank while still flagging 'ok' (rare
+  // but possible). Refuse to draft outreach without these — the
+  // drafter prompt won't have the anchor it needs and the result will
+  // be generic boilerplate.
+  const planHypothesis = (probe.planJson?.hypothesis ?? '').trim();
+  const planOutreach = (probe.planJson?.outreachAngle ?? '').trim();
+  if (!planHypothesis || !planOutreach) {
+    const missing = [
+      !planHypothesis ? 'plan.hypothesis' : null,
+      !planOutreach ? 'plan.outreachAngle' : null,
+    ]
+      .filter(Boolean)
+      .join(' + ');
+    return {
+      ok: false,
+      reason: `probe.plan is missing ${missing} — regenerate the plan before autopilot can draft outreach`,
+      attempted: 0,
+      drafted: 0,
+      sent: 0,
+      queued: 0,
+      skipped,
+    };
+  }
+
+  // Hypotheses gate. The probe is supposed to be testing something.
+  // Zero active hypotheses means the agent has no falsifiable bet to
+  // make and no scorecard frame to validate against — outreach goes
+  // out in a vacuum and the Learning Report has nothing to synthesize.
+  // Empty hypothesis table is a fail-loud signal; operator either
+  // re-runs plan generation (which seeds hypotheses) or hand-adds a
+  // hypothesis before the probe can send.
+  const hypotheses = await listHypothesesForProbe(probe.id);
+  const activeHypotheses = hypotheses.filter(
+    (h) => h.status === 'active' || h.status === 'confirmed',
+  );
+  if (activeHypotheses.length === 0) {
+    return {
+      ok: false,
+      reason:
+        'probe has zero active hypotheses — autopilot refuses to send outreach without a falsifiable bet. Regenerate the plan or add a hypothesis manually.',
       attempted: 0,
       drafted: 0,
       sent: 0,
