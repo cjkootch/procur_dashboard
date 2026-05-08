@@ -16,6 +16,8 @@ import {
   HYPOTHESIS_STATUSES,
   type LearningReportPayload,
 } from '@procur/catalog';
+import { CopyMarkdownToolbar } from '../../../_components/CopyMarkdownToolbar';
+import { formatPlanMarkdown } from '../../_lib/markdown';
 import {
   addAtlasFactAction,
   addHypothesisAction,
@@ -85,8 +87,27 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
   const tasks = plan.tasks ?? [];
   const hasPlan = Boolean(plan.hypothesis);
 
+  const markdown = formatPlanMarkdown(probe, {
+    hypothesis: plan.hypothesis,
+    segments: plan.segments,
+    outreachAngle: plan.outreachAngle,
+    successCriteria: plan.successCriteria,
+    hypothesesCount: hypotheses.length,
+    hypothesesActive: hypotheses.filter((h) => h.status === 'active').length,
+    hypothesesConfirmed: hypotheses.filter((h) => h.status === 'confirmed').length,
+    hypothesesRefuted: hypotheses.filter((h) => h.status === 'refuted').length,
+    variantsCount: variants.length,
+    strategyProposalsPending: pendingProposals.length,
+    atlasFactsCount: atlasFacts.length,
+    hasLearningReport: Boolean(latestReport),
+  });
+
   return (
     <>
+      <CopyMarkdownToolbar
+        markdown={markdown}
+        slug={`probe-${probe.id}-plan`}
+      />
 
         <section className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
           <div className="mb-4 flex items-center justify-between gap-2">
