@@ -466,11 +466,15 @@ export async function findDecisionMakersAction(
   });
 
   if (result.ok && result.candidatesFound > 0) {
+    const sourceTag =
+      result.source === 'rolodex'
+        ? ' via rolodex fallback (Apollo unavailable / no coverage — names + titles only, no email-verification status)'
+        : '';
     await markProbeTaskStatus(
       probeId,
       'find_contacts',
       'done',
-      `${result.candidatesFound} decision-maker candidate${result.candidatesFound === 1 ? '' : 's'} found for ${result.entitySlug}; see entity profile Decision-makers panel.`,
+      `${result.candidatesFound} decision-maker candidate${result.candidatesFound === 1 ? '' : 's'} found for ${result.entitySlug}${sourceTag}; see entity profile Decision-makers panel.`,
     );
   }
   revalidatePath(`/market-probes/${probeId}`);
