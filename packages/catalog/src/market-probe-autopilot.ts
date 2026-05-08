@@ -17,7 +17,9 @@ import {
 import { createId } from '@procur/ai';
 import {
   buildCommunicationContextPack,
+  draftLeadFormSubmission,
   draftOutreachFromContext,
+  mapDraftToFieldValues,
 } from './communication-recommendations';
 import { computeProbeScorecard } from './market-probe-measurement';
 import { setProbeStatus } from './market-probes';
@@ -433,6 +435,16 @@ export async function autopilotSendBatch(
       ? 'email'
       : 'lead_form';
 
+    // Form-channel scratch state — populated inside the lead_form
+    // branch below, read by the dispatch branch further down. Both
+    // branches need the same draft + field-values mapping so the
+    // approval payload (rendered to operator) and the executor's
+    // POST body (sent to the form) are guaranteed identical.
+    let leadFormDraft: Awaited<
+      ReturnType<typeof draftLeadFormSubmission>
+    > | null = null;
+    let leadFormDraftFieldValues: Record<string, string> | null = null;
+
     // Phase 2I.4 — variant picker. If the probe has active variants,
     // sample one (winner short-circuits; otherwise weighted-random
     // among 'active'). Falls back to the plan-derived outreach angle
@@ -484,11 +496,19 @@ export async function autopilotSendBatch(
         },
       );
     }
-    const draft = await draftOutreachFromContext({
-      pack,
-      intent,
-      doNotMention: probe.blockedTerms ?? [],
-    });
+    // Email drafter only runs when we'll actually dispatch via email.
+    // For the lead_form-only fallback path the form-aware drafter
+    // (called inside the channel branch below) produces a tighter
+    // form-shaped payload; running the email drafter too would burn
+    // a Sonnet call per target with no consumer.
+    const draft =
+      channelKind === 'email'
+        ? await draftOutreachFromContext({
+            pack,
+            intent,
+            doNotMention: probe.blockedTerms ?? [],
+          })
+        : null;
 
     if (input.dryRun) {
       // Phase 2I will store these previews; for now dry-run is just
@@ -537,7 +557,7 @@ export async function autopilotSendBatch(
     // path (operator clicks "approve" in the queue UI) replays
     // identically through the same executor.
     const approvalId = createId();
-    if (channelKind === 'email' && recipient) {
+    if (channelKind === 'email' && recipient && draft) {
       await db.insert(approvals).values({
         id: approvalId,
         agentRunId: null,
@@ -605,34 +625,47 @@ export async function autopilotSendBatch(
           },
         });
     } else if (channelKind === 'lead_form' && leadFormEndpoint) {
-      // Lead-form approval payload. The drafter (PR 4) will produce
-      // a form-shaped {name, email, message, ...} payload; for now
-      // we map the email draft's subject + body onto the form's
-      // resolved field roles — verbose but functional, replaced by
-      // the form-aware drafter when PR 4 lands.
-      const fieldValues: Record<string, string> = {};
-      if (leadFormEndpoint.messageField) {
-        fieldValues[leadFormEndpoint.messageField] = draft.emailBody;
-      }
-      if (leadFormEndpoint.subjectField) {
-        fieldValues[leadFormEndpoint.subjectField] = draft.emailSubject;
-      }
-      // Sender identity — pulled from the company's email defaults
-      // already used by the email path; cheap fallback here.
-      const senderEmail =
-        process.env.LEAD_FORM_SENDER_EMAIL ?? 'hello@procur.app';
-      const senderName =
-        process.env.LEAD_FORM_SENDER_NAME ?? 'Procur Outreach';
-      if (leadFormEndpoint.emailField) {
-        fieldValues[leadFormEndpoint.emailField] = senderEmail;
-      }
-      if (leadFormEndpoint.nameField) {
-        fieldValues[leadFormEndpoint.nameField] = senderName;
-      }
-      if (leadFormEndpoint.companyField && process.env.LEAD_FORM_SENDER_COMPANY) {
-        fieldValues[leadFormEndpoint.companyField] =
-          process.env.LEAD_FORM_SENDER_COMPANY;
-      }
+      // Form-aware drafter (PR 4). Reuses the same context pack the
+      // email path built but emits a tighter form-shaped payload —
+      // shorter message body capped at 800 chars, no signature, no
+      // markdown, optional subject only when the form has a
+      // subject_field. Single source of truth for "draft → field
+      // values" lives in mapDraftToFieldValues.
+      const formDraft = await draftLeadFormSubmission({
+        pack,
+        intent,
+        doNotMention: probe.blockedTerms ?? [],
+        endpoint: {
+          subjectField: leadFormEndpoint.subjectField,
+          companyField: leadFormEndpoint.companyField,
+          phoneField: leadFormEndpoint.phoneField,
+          senderName:
+            process.env.LEAD_FORM_SENDER_NAME ?? 'Procur Outreach',
+          senderEmail:
+            process.env.LEAD_FORM_SENDER_EMAIL ?? 'hello@procur.app',
+          senderCompany: process.env.LEAD_FORM_SENDER_COMPANY ?? null,
+          senderPhone: process.env.LEAD_FORM_SENDER_PHONE ?? null,
+          language: leadFormEndpoint.language,
+        },
+      });
+      const fieldValues = mapDraftToFieldValues({
+        draft: formDraft,
+        endpoint: {
+          nameField: leadFormEndpoint.nameField,
+          emailField: leadFormEndpoint.emailField,
+          subjectField: leadFormEndpoint.subjectField,
+          messageField: leadFormEndpoint.messageField,
+          companyField: leadFormEndpoint.companyField,
+          phoneField: leadFormEndpoint.phoneField,
+        },
+      });
+      // Cache draft + fieldValues on the loop variable so the
+      // subsequent dispatch branch reuses them rather than redrawing.
+      // (TS doesn't let us close over a let-binding from inside a
+      // branch easily; using a plain const within this scope keeps
+      // the dispatch branch reading a fresh ref via closure.)
+      leadFormDraftFieldValues = fieldValues;
+      leadFormDraft = formDraft;
       await db.insert(approvals).values({
         id: approvalId,
         agentRunId: null,
@@ -644,10 +677,12 @@ export async function autopilotSendBatch(
           form_url: leadFormEndpoint.url,
           field_values: fieldValues,
           drafted_fields: {
-            subject: draft.emailSubject,
-            message: draft.emailBody,
-            email: senderEmail,
-            name: senderName,
+            subject: formDraft.subject,
+            message: formDraft.message,
+            email: formDraft.senderEmail,
+            name: formDraft.senderName,
+            company: formDraft.senderCompany,
+            phone: formDraft.senderPhone,
           },
           rationale: `Market Probe ${probe.id} autopilot (tier ${probe.tier}). Target ${t.id}; entity ${t.entitySlug}. Channel=lead_form (no email recipient available; eligible form endpoint discovered).`,
           actor_source: 'market_probe_autopilot',
@@ -663,47 +698,30 @@ export async function autopilotSendBatch(
     }
 
     let result: { ok: boolean; error?: string };
-    if (channelKind === 'email' && recipient) {
+    if (channelKind === 'email' && recipient && draft) {
       result = await applyEmailSend(approvalId, {
         to: [recipient.email],
         subject: draft.emailSubject,
         body: draft.emailBody,
         rationale: `Market Probe ${probe.id} autopilot dispatch.`,
       });
-    } else if (channelKind === 'lead_form' && leadFormEndpoint) {
-      const fieldValues: Record<string, string> = {};
-      if (leadFormEndpoint.messageField) {
-        fieldValues[leadFormEndpoint.messageField] = draft.emailBody;
-      }
-      if (leadFormEndpoint.subjectField) {
-        fieldValues[leadFormEndpoint.subjectField] = draft.emailSubject;
-      }
-      const senderEmail =
-        process.env.LEAD_FORM_SENDER_EMAIL ?? 'hello@procur.app';
-      const senderName =
-        process.env.LEAD_FORM_SENDER_NAME ?? 'Procur Outreach';
-      if (leadFormEndpoint.emailField) {
-        fieldValues[leadFormEndpoint.emailField] = senderEmail;
-      }
-      if (leadFormEndpoint.nameField) {
-        fieldValues[leadFormEndpoint.nameField] = senderName;
-      }
-      if (
-        leadFormEndpoint.companyField &&
-        process.env.LEAD_FORM_SENDER_COMPANY
-      ) {
-        fieldValues[leadFormEndpoint.companyField] =
-          process.env.LEAD_FORM_SENDER_COMPANY;
-      }
+    } else if (
+      channelKind === 'lead_form' &&
+      leadFormEndpoint &&
+      leadFormDraft &&
+      leadFormDraftFieldValues
+    ) {
       result = await applyLeadFormSubmit(approvalId, {
         entitySlug: t.entitySlug,
         formUrl: leadFormEndpoint.url,
-        fieldValues,
+        fieldValues: leadFormDraftFieldValues,
         draftedFields: {
-          subject: draft.emailSubject,
-          message: draft.emailBody,
-          email: senderEmail,
-          name: senderName,
+          subject: leadFormDraft.subject,
+          message: leadFormDraft.message,
+          email: leadFormDraft.senderEmail,
+          name: leadFormDraft.senderName,
+          company: leadFormDraft.senderCompany ?? undefined,
+          phone: leadFormDraft.senderPhone ?? undefined,
         },
         rationale: `Market Probe ${probe.id} autopilot dispatch via lead_form.`,
       });

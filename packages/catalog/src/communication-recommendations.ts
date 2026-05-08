@@ -1180,3 +1180,304 @@ export function candidateToMlEvidence(
 }
 
 export const COMMUNICATION_RECOMMENDATIONS_MODEL_VERSION = MODEL_VERSION;
+
+// ----------------------------------------------------------------------------
+// draftLeadFormSubmission — drafter variant for website lead-form
+// outreach. Sibling to draftOutreachFromContext but emits a form-
+// shaped {subject?, message, name, email, ...} payload instead of an
+// email/sms/whatsapp draft. Form-friendly differences:
+//   - Shorter message body (300-500 chars; many forms cap at 500-1000)
+//   - No subject when the endpoint has no subject_field
+//   - No signature (form's dedicated name/email fields carry sender
+//     identity)
+//   - Single ask, plain text (forms render as plain text on the
+//     receiving side; markdown / HTML structure won't survive)
+// ----------------------------------------------------------------------------
+
+export interface DraftLeadFormInput {
+  pack: CommunicationContextPack;
+  intent: string;
+  doNotMention?: string[];
+  /** Field-role map from the endpoint row. The drafter uses presence
+   *  of subject_field to decide whether to draft a subject; presence
+   *  of company_field / phone_field to know whether to provide
+   *  optional sender attributes. */
+  endpoint: {
+    subjectField: string | null;
+    companyField: string | null;
+    phoneField: string | null;
+    /** Operator-supplied or default sender identity. The drafter
+     *  doesn't synthesize sender info — it only writes the message.
+     *  These ride into the output verbatim. */
+    senderName: string;
+    senderEmail: string;
+    senderCompany?: string | null;
+    senderPhone?: string | null;
+    /** ISO-639 language hint from the endpoint row. The drafter
+     *  prompt is biased toward writing in this language when
+     *  non-English (most operators write English by default; the
+     *  hint shifts it). */
+    language?: string | null;
+  };
+}
+
+export interface DraftLeadFormResult {
+  /** Subject text. Empty string when the endpoint has no
+   *  subject_field — the form doesn't render it. */
+  subject: string;
+  /** Message body. Required by every endpoint per
+   *  pickAutopilotEligibleEndpoint's filter. */
+  message: string;
+  senderName: string;
+  senderEmail: string;
+  senderCompany: string | null;
+  senderPhone: string | null;
+  evidenceUsed: string[];
+  doNotMention: string[];
+  riskWarnings: string[];
+}
+
+export async function draftLeadFormSubmission(
+  input: DraftLeadFormInput,
+): Promise<DraftLeadFormResult> {
+  const doNotMention = [
+    ...(input.doNotMention ?? []),
+    'ML similarity score',
+    'graph embedding',
+    'recommendation pipeline',
+    'internal score',
+    'our model said',
+  ];
+
+  const riskWarnings: string[] = [];
+  if (input.pack.optedOut) {
+    riskWarnings.push(
+      'Contact is opted out — outreach should be refused, not drafted.',
+    );
+  }
+  if (
+    input.pack.sanctions.some(
+      (s) => s.result === 'hit' || s.result === 'partial_hit',
+    )
+  ) {
+    riskWarnings.push(
+      'Sanctions hit on file — operator must run a sanctions.screen approval before drafting.',
+    );
+  }
+
+  const baseResult = (subject: string, message: string): DraftLeadFormResult => ({
+    subject: input.endpoint.subjectField ? subject : '',
+    message,
+    senderName: input.endpoint.senderName,
+    senderEmail: input.endpoint.senderEmail,
+    senderCompany: input.endpoint.senderCompany ?? null,
+    senderPhone: input.endpoint.senderPhone ?? null,
+    evidenceUsed: [],
+    doNotMention,
+    riskWarnings,
+  });
+
+  // Refuse on opted-out / sanctions hit before spending tokens.
+  if (input.pack.optedOut) {
+    return baseResult(
+      'Outreach refused',
+      'REFUSED: contact is opted out.',
+    );
+  }
+  const sanctionsHit = input.pack.sanctions.some(
+    (s) => s.result === 'hit' || s.result === 'partial_hit',
+  );
+  if (sanctionsHit) {
+    return baseResult(
+      'Outreach refused',
+      'REFUSED: sanctions screen indicates a hit; outreach blocked pending operator review.',
+    );
+  }
+
+  // No-API-key fallback: deterministic skeleton matching the email
+  // path's templateFallback discipline.
+  if (!process.env.ANTHROPIC_API_KEY) {
+    const subject = `Inquiry from ${input.endpoint.senderName}`;
+    const message = [
+      `Hi ${input.pack.entity.name} team,`,
+      '',
+      input.intent,
+      '',
+      `Best, ${input.endpoint.senderName}`,
+    ].join('\n');
+    return baseResult(subject, message);
+  }
+
+  const prompt = buildLeadFormDraftPrompt(input);
+  let raw: string;
+  try {
+    const client = getClient();
+    const resp = await client.messages.create({
+      model: MODELS.haiku,
+      max_tokens: 800,
+      system: LEAD_FORM_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const block = resp.content.find((b) => b.type === 'text');
+    raw = block && 'text' in block ? block.text : '';
+  } catch {
+    const subject = `Inquiry from ${input.endpoint.senderName}`;
+    const message = `${input.intent}\n\nBest,\n${input.endpoint.senderName}`;
+    return baseResult(subject, message);
+  }
+
+  const parsed = (() => {
+    try {
+      const cleaned = raw
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/```$/i, '')
+        .trim();
+      const obj = JSON.parse(cleaned);
+      return typeof obj === 'object' && obj !== null
+        ? (obj as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  })();
+
+  const subjectRaw = typeof parsed['subject'] === 'string' ? parsed['subject'] : '';
+  const messageRaw = typeof parsed['message'] === 'string' ? parsed['message'] : '';
+  const evidenceUsed = Array.isArray(parsed['evidenceUsed'])
+    ? (parsed['evidenceUsed'] as unknown[]).filter(
+        (s): s is string => typeof s === 'string',
+      )
+    : [];
+
+  // Cap message length defensively. Many forms cap at 500-1000 chars;
+  // 800 is a safe ceiling that fits most without truncation.
+  const message = messageRaw.slice(0, 800);
+  const subject = input.endpoint.subjectField ? subjectRaw.slice(0, 120) : '';
+
+  // Enforce doNotMention on the message + subject. Email path does
+  // the same.
+  const stripBanned = (s: string): string => {
+    let out = s;
+    for (const banned of doNotMention) {
+      const re = new RegExp(banned.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      out = out.replace(re, '');
+    }
+    return out;
+  };
+
+  return {
+    subject: stripBanned(subject),
+    message: stripBanned(message),
+    senderName: input.endpoint.senderName,
+    senderEmail: input.endpoint.senderEmail,
+    senderCompany: input.endpoint.senderCompany ?? null,
+    senderPhone: input.endpoint.senderPhone ?? null,
+    evidenceUsed,
+    doNotMention,
+    riskWarnings,
+  };
+}
+
+const LEAD_FORM_SYSTEM_PROMPT = `You draft outbound contact-form submissions for a procurement operator. You receive context about a counterparty (recent touchpoints, fuel-consumption signals, website intelligence, customs activity, contact info) and an operator intent. Forms render as plain text on the receiving side — no markdown, no HTML, no rich formatting.
+
+Output strict JSON with these keys: subject, message, evidenceUsed (array of one-line strings naming the context sources you actually used).
+
+Hard rules:
+1. NEVER mention ML similarity scores, graph embeddings, recommendation pipelines, internal labels, or any phrasing like "we noticed you", "our system identified", "our model said". You are the operator — write as a human.
+2. NEVER reference touchpoint history directly ("you replied to our last email on…") — the recipient knows; restating it sounds robotic.
+3. Message: 80-200 words, plain text, single ask. Forms cap at ~500-1000 chars on the receiving side; staying tight matters.
+4. NO signature block — the form's dedicated name / email / company / phone fields carry sender identity separately. Don't repeat them in the message.
+5. Subject (when the form has a subject field): 5-12 words, no clickbait, plain.
+6. If the context shows opted-out OR sanctions hit, REFUSE — return message = "REFUSED: <reason>" and subject = "Outreach refused".
+7. When the context language is not English, write the message in that language. The operator's intent is in English; translate it naturally.`;
+
+function buildLeadFormDraftPrompt(input: DraftLeadFormInput): string {
+  const p = input.pack;
+  const failedSet = new Set(p.signalHealth?.failedSources ?? []);
+  const failed = (source: ContextSignalSource): boolean => failedSet.has(source);
+  return [
+    `Operator intent: ${input.intent}`,
+    '',
+    `Counterparty: ${p.entity.name} (${p.entity.country}, role: ${p.entity.role})`,
+    p.entity.categories.length > 0
+      ? `Categories: ${p.entity.categories.join(', ')}`
+      : null,
+    '',
+    `Form has subject field: ${input.endpoint.subjectField ? 'yes' : 'no'}`,
+    `Form language hint: ${input.endpoint.language ?? 'unknown'}`,
+    '',
+    failed('fuelSignals')
+      ? 'Fuel signals: fetch failed — do not infer from absence.'
+      : p.fuelSignals.length > 0
+        ? `Fuel signals: ${p.fuelSignals.map((s) => `${s.source} ${s.fuelType ?? ''} (${s.asOfDate})`).join('; ')}`
+        : 'No fuel-consumption signals on file.',
+    '',
+    failed('customs')
+      ? 'Customs activity: fetch failed — do not infer from absence.'
+      : p.customsContext
+        ? `Customs activity: ${p.customsContext.activeYears.length} year(s), top partners: ${p.customsContext.topPartners.join(', ')}`
+        : 'No customs activity on file.',
+    '',
+    failed('web')
+      ? 'Web intelligence: fetch failed — do not infer from absence.'
+      : p.webSummaries.length > 0
+        ? `Web intelligence (truncated): ${p.webSummaries.map((s) => `[${s.section}] ${s.text.slice(0, 250)}`).join(' | ')}`
+        : 'No website intelligence on file.',
+    '',
+    failed('sanctions')
+      ? 'Sanctions screens: fetch failed — do not infer from absence; treat as needs-screening.'
+      : p.sanctions.length > 0
+        ? `Sanctions screens: ${p.sanctions.map((s) => `${s.listSource}=${s.result}`).join(', ')}`
+        : 'No sanctions screens on file.',
+    '',
+    p.optedOut ? 'OPTED OUT — refuse the draft.' : '',
+    '',
+    p.signalHealth?.hasFetchErrors
+      ? `Note to drafter: ${p.signalHealth.failedSources.length} signal source(s) failed to fetch this run. Don't pretend the missing data means "no activity exists" — write copy that's safe under either interpretation, and lean on what DID fetch successfully.`
+      : '',
+    '',
+    `Sender: ${input.endpoint.senderName} <${input.endpoint.senderEmail}>${input.endpoint.senderCompany ? ` from ${input.endpoint.senderCompany}` : ''}`,
+    `Forbidden phrasing: ${(input.doNotMention ?? []).join(' | ') || '(none additional)'}`,
+  ]
+    .filter((s) => s !== null)
+    .join('\n');
+}
+
+/**
+ * Map a draft + endpoint into the field-name → value record the
+ * lead-form executor expects. Single source of truth for "which
+ * draft field goes into which form field" so callers (autopilot,
+ * chat-tool path) can't drift.
+ */
+export function mapDraftToFieldValues(input: {
+  draft: DraftLeadFormResult;
+  endpoint: {
+    nameField: string | null;
+    emailField: string | null;
+    subjectField: string | null;
+    messageField: string | null;
+    companyField: string | null;
+    phoneField: string | null;
+  };
+}): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (input.endpoint.messageField) {
+    out[input.endpoint.messageField] = input.draft.message;
+  }
+  if (input.endpoint.subjectField && input.draft.subject) {
+    out[input.endpoint.subjectField] = input.draft.subject;
+  }
+  if (input.endpoint.nameField) {
+    out[input.endpoint.nameField] = input.draft.senderName;
+  }
+  if (input.endpoint.emailField) {
+    out[input.endpoint.emailField] = input.draft.senderEmail;
+  }
+  if (input.endpoint.companyField && input.draft.senderCompany) {
+    out[input.endpoint.companyField] = input.draft.senderCompany;
+  }
+  if (input.endpoint.phoneField && input.draft.senderPhone) {
+    out[input.endpoint.phoneField] = input.draft.senderPhone;
+  }
+  return out;
+}
