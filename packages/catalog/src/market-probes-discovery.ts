@@ -293,20 +293,32 @@ async function resolveOrCreateRolodexStubFromApollo(input: {
   probeCountry: string | null;
 }): Promise<{ slug: string; created: boolean } | null> {
   // Prefer apollo_org_id match (strongest), then primary_domain.
+  // Phase 2G: scout_protection=true entities are off-limits to
+  // autonomous scouting — return null so the caller skips them.
   const [byApollo] = await db
-    .select({ slug: knownEntities.slug })
+    .select({
+      slug: knownEntities.slug,
+      scoutProtection: knownEntities.scoutProtection,
+    })
     .from(knownEntities)
     .where(eq(knownEntities.apolloOrgId, input.apolloOrgId))
     .limit(1);
-  if (byApollo) return { slug: byApollo.slug, created: false };
+  if (byApollo) {
+    if (byApollo.scoutProtection) return null;
+    return { slug: byApollo.slug, created: false };
+  }
 
   if (input.primaryDomain) {
     const [byDomain] = await db
-      .select({ slug: knownEntities.slug })
+      .select({
+        slug: knownEntities.slug,
+        scoutProtection: knownEntities.scoutProtection,
+      })
       .from(knownEntities)
       .where(eq(knownEntities.primaryDomain, input.primaryDomain))
       .limit(1);
     if (byDomain) {
+      if (byDomain.scoutProtection) return null;
       // Backfill apollo_org_id on this row so future lookalike runs
       // skip the domain-match path and use the strong apollo_org_id
       // index instead. Cheap maintenance write.

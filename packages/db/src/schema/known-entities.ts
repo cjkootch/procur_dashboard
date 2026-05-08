@@ -9,6 +9,7 @@ import {
   integer,
   date,
   index,
+  boolean,
 } from 'drizzle-orm/pg-core';
 
 /**
@@ -113,6 +114,12 @@ export const knownEntities = pgTable(
         Lives in jsonb because none of these are filtered on; rendering
         is the only access pattern. */
     apolloSnapshot: jsonb('apollo_snapshot'),
+
+    /** Phase 2G safety net (migration 0100). When true, all probe
+     *  target-discovery paths skip this entity — strategic
+     *  relationships, sensitive counterparties, manual-only entities.
+     *  Operator opts in per entity from the entity profile. */
+    scoutProtection: boolean('scout_protection').notNull().default(false),
 
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),

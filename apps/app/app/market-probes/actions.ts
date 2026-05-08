@@ -2,6 +2,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { and, eq, inArray } from 'drizzle-orm';
+import { db, knownEntities, marketProbes } from '@procur/db';
 import { requireCompany } from '@procur/auth';
 import { createId } from '@procur/ai';
 import {
@@ -223,10 +225,30 @@ export async function discoverTargetsAction(formData: FormData): Promise<void> {
   }
   const filters = { country: probe.country.toUpperCase() };
 
-  const candidates = await recommendCommunicationTargets({
+  let candidates = await recommendCommunicationTargets({
     limit: 25,
     filters,
   });
+
+  // Phase 2G safety net: drop any candidates flagged
+  // scout_protection=true on known_entities. Strategic relationships
+  // and sensitive counterparties should never appear in autonomous
+  // probe target queues. Single batch lookup against the candidate
+  // set so this stays cheap.
+  if (candidates.length > 0) {
+    const slugs = candidates.map((c) => c.entitySlug);
+    const protectedRows = await db
+      .select({ slug: knownEntities.slug })
+      .from(knownEntities)
+      .where(
+        and(
+          inArray(knownEntities.slug, slugs),
+          eq(knownEntities.scoutProtection, true),
+        ),
+      );
+    const protectedSet = new Set(protectedRows.map((r) => r.slug));
+    candidates = candidates.filter((c) => !protectedSet.has(c.entitySlug));
+  }
 
   if (candidates.length === 0) {
     // No candidates yet — surface the empty result clearly. Mark the
@@ -980,6 +1002,72 @@ export async function setPlaybookStatusAction(
   await setPlaybookStatus(playbookId, status);
   revalidatePath('/market-playbooks');
   revalidatePath(`/market-playbooks/${playbookId}`);
+}
+
+// ────────────────────────────────────────────────────────────────
+// Phase 2G — safety net
+// ────────────────────────────────────────────────────────────────
+
+/** Set probe.mode (experiment / relationship). Phase 2H autopilot
+ *  refuses to fire for relationship probes regardless of probe.tier. */
+export async function setProbeModeAction(formData: FormData): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  const mode = str(formData, 'mode');
+  if (!probeId || !mode) throw new Error('probeId + mode required');
+  if (mode !== 'experiment' && mode !== 'relationship') {
+    throw new Error(`invalid mode: ${mode}`);
+  }
+  await db
+    .update(marketProbes)
+    .set({ mode, updatedAt: new Date() })
+    .where(eq(marketProbes.id, probeId));
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/** Operator-set kill criteria thresholds. */
+export async function setProbeKillCriteriaAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  if (!probeId) throw new Error('probeId required');
+  const fields: Record<string, unknown> = { updatedAt: new Date() };
+  const bounce = str(formData, 'maxBounceRatePct');
+  if (bounce) fields.maxBounceRatePct = String(Number(bounce));
+  const complaint = str(formData, 'maxComplaintRatePct');
+  if (complaint) fields.maxComplaintRatePct = String(Number(complaint));
+  const segPause = int(formData, 'maxNoReplyBeforeSegmentPause');
+  if (segPause != null) fields.maxNoReplyBeforeSegmentPause = segPause;
+  const totalPause = int(formData, 'maxTotalNoSignalBeforeProbePause');
+  if (totalPause != null) fields.maxTotalNoSignalBeforeProbePause = totalPause;
+  await db
+    .update(marketProbes)
+    .set(fields)
+    .where(eq(marketProbes.id, probeId));
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/** Toggle scout_protection on a known_entities row. Operator opts in
+ *  per entity from the entity profile or via the probe target row's
+ *  inline action. */
+export async function toggleScoutProtectionAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const slug = str(formData, 'slug');
+  const value = str(formData, 'value');
+  if (!slug || !value) throw new Error('slug + value required');
+  const protected_ = value === 'true';
+  await db
+    .update(knownEntities)
+    .set({ scoutProtection: protected_, updatedAt: new Date() })
+    .where(eq(knownEntities.slug, slug));
+  // Revalidate probe routes broadly — any probe could surface this
+  // entity. Cheap; revalidatePath without a specific id revalidates
+  // the parent layout segment.
+  revalidatePath('/market-probes');
+  revalidatePath(`/entities/${encodeURIComponent(slug)}`);
 }
 
 export async function setTaskSkippedAction(formData: FormData): Promise<void> {

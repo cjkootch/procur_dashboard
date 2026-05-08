@@ -50,6 +50,30 @@ export const marketProbes = pgTable(
       .notNull()
       .default('market_structure'),
 
+    /** Phase 2G safety net: probe operating mode.
+     *    'experiment'    — bounded learning probe. Tier 1 autopilot
+     *                      eligible.
+     *    'relationship'  — strategic-account probe. Higher discipline;
+     *                      Tier 1 autopilot disabled regardless of
+     *                      probe.tier value. */
+    mode: text('mode').notNull().default('experiment'),
+
+    /** Auto-pause thresholds (migration 0100). Phase 2H autopilot
+     *  reads these before every send batch and pauses the probe
+     *  when any threshold is exceeded. Operator can edit per probe. */
+    maxBounceRatePct: numeric('max_bounce_rate_pct').notNull().default('8'),
+    maxComplaintRatePct: numeric('max_complaint_rate_pct')
+      .notNull()
+      .default('1'),
+    maxNoReplyBeforeSegmentPause: integer('max_no_reply_before_segment_pause')
+      .notNull()
+      .default(12),
+    maxTotalNoSignalBeforeProbePause: integer(
+      'max_total_no_signal_before_probe_pause',
+    )
+      .notNull()
+      .default(30),
+
     objective: text('objective'),
     successCriteriaJson: jsonb('success_criteria_json')
       .$type<Record<string, unknown>>()
