@@ -5,6 +5,7 @@ import {
   numeric,
   timestamp,
   jsonb,
+  boolean,
   index,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
@@ -202,6 +203,26 @@ export const marketProbes = pgTable(
      *  vous-form. Without language set, formality only steers
      *  English register. */
     outreachLanguage: text('outreach_language'),
+
+    /** Operator opt-in for paid Apollo enrichment during autopilot
+     *  dispatch (migration 0112). When true, the autopilot may
+     *  trigger enrichPerson (paid; counts against daily cap) to
+     *  resolve a target's phone number for the RVM channel. When
+     *  false (default — explicit operator choice), targets without
+     *  an already-cached phone are skipped on the RVM channel.
+     *
+     *  Why opt-in: enrichPerson costs Apollo credits per call, and
+     *  the daily cap is tenant-scoped. An autopilot batch of 20
+     *  targets that all need enrichment could blow the entire
+     *  daily budget on phone lookups. Operator's explicit
+     *  acknowledgement before that fires.
+     *
+     *  Email + lead_form channels never enrich for paid data —
+     *  they use the rolodex's email/form info as-is. This flag
+     *  only governs the RVM channel's phone-number resolution. */
+    allowPaidEnrichment: boolean('allow_paid_enrichment')
+      .notNull()
+      .default(false),
 
     createdBy: text('created_by'),
     createdAt: timestamp('created_at', { withTimezone: true })
