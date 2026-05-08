@@ -91,6 +91,30 @@ export interface RecommendCommunicationTargetsInput {
   companyId?: string;
 }
 
+/** Source identifiers for the per-signal fetch outcomes the pack
+ *  surfaces. Drafter + scorecard inspect these to distinguish "we
+ *  tried and the upstream errored" from "we tried and no data
+ *  exists" — the prior shape (silent null swallow via `safe()`)
+ *  conflated the two and let drafts ship from a vacuum during
+ *  upstream incidents without anyone noticing. */
+export type ContextSignalSource =
+  | 'recentTouchpoints'
+  | 'fuelSignals'
+  | 'web'
+  | 'customs'
+  | 'sanctions'
+  | 'apollo'
+  | 'rerank';
+
+export interface ContextSignalOutcome {
+  source: ContextSignalSource;
+  /** true = upstream fetch returned. false = fetch threw. Note: a
+   *  successful fetch returning no data is still ok=true. */
+  ok: boolean;
+  /** Error message snippet when ok=false. */
+  error?: string;
+}
+
 export interface CommunicationContextPack {
   entity: KnownEntityRow;
   recentTouchpoints: Array<{
@@ -115,6 +139,19 @@ export interface CommunicationContextPack {
     phone: string | null;
   }>;
   optedOut: boolean;
+  /** Per-source fetch outcomes. Consumers (drafter, scorecard) check
+   *  this to distinguish "service down" from "no data exists" when
+   *  a field comes back empty. Optional for back-compat with packs
+   *  built before this field landed; new builds always populate it. */
+  signalHealth?: {
+    outcomes: ContextSignalOutcome[];
+    /** Convenience: any source where ok=false. */
+    failedSources: ContextSignalSource[];
+    /** True when any source errored. Drafter should not infer from
+     *  absence of evidence in a failing source — the fetch was
+     *  attempted and the upstream errored. */
+    hasFetchErrors: boolean;
+  };
 }
 
 export interface DraftOutreach {
@@ -492,26 +529,60 @@ export async function buildCommunicationContextPack(input: {
     entityRows.find((r) => r.slug === input.entitySlug) ?? entityRows[0];
   if (!entity) return null;
 
+  // Per-source fetch outcomes — replaces the prior `safe()` swallow.
+  // Each entry pairs the unwrapped data with an ok flag so downstream
+  // consumers (drafter, scorecard, autopilot logging) can distinguish
+  // "service down" from "no data exists" when a field comes back
+  // empty. Without this distinction the drafter has no way to know
+  // it's working with a vacuum during an upstream incident.
+  const outcomes: ContextSignalOutcome[] = [];
   const [
-    recentTouchpoints,
-    fuelSignals,
-    web,
-    customs,
-    sanctions,
-    apollo,
+    recentTouchpointsResult,
+    fuelSignalsResult,
+    webResult,
+    customsResult,
+    sanctionsResult,
+    apolloResult,
   ] = await Promise.all([
     input.contactId
-      ? listRecentTouchpoints({
-          contactId: input.contactId,
-          sinceHours: 24 * 30,
-        })
-      : Promise.resolve(null),
-    safe(() => getFuelConsumptionSignals(entity.slug)),
-    safe(() => getEntityWebIntelligenceWithOverlay(entity.slug, entity.name)),
-    safe(() => getEntityCustomsContext(entity.slug)),
-    safe(() => lookupSanctionsScreens(entity.slug)),
-    safe(() => getApolloEntityCache(entity.slug)),
+      ? safeOutcome('recentTouchpoints', () =>
+          listRecentTouchpoints({
+            contactId: input.contactId!,
+            sinceHours: 24 * 30,
+          }),
+        )
+      : Promise.resolve({ ok: true as const, data: null, source: 'recentTouchpoints' as const }),
+    safeOutcome('fuelSignals', () => getFuelConsumptionSignals(entity.slug)),
+    safeOutcome('web', () =>
+      getEntityWebIntelligenceWithOverlay(entity.slug, entity.name),
+    ),
+    safeOutcome('customs', () => getEntityCustomsContext(entity.slug)),
+    safeOutcome('sanctions', () => lookupSanctionsScreens(entity.slug)),
+    safeOutcome('apollo', () => getApolloEntityCache(entity.slug)),
   ]);
+  outcomes.push(
+    ...[
+      recentTouchpointsResult,
+      fuelSignalsResult,
+      webResult,
+      customsResult,
+      sanctionsResult,
+      apolloResult,
+    ].map((r) => ({
+      source: r.source,
+      ok: r.ok,
+      ...(r.ok ? {} : { error: r.error }),
+    })),
+  );
+
+  const recentTouchpoints = recentTouchpointsResult.ok
+    ? recentTouchpointsResult.data
+    : null;
+  const fuelSignals = fuelSignalsResult.ok ? fuelSignalsResult.data : null;
+  const web = webResult.ok ? webResult.data : null;
+  const customs = customsResult.ok ? customsResult.data : null;
+  const sanctions = sanctionsResult.ok ? sanctionsResult.data : null;
+  const apollo = apolloResult.ok ? apolloResult.data : null;
 
   // Web summaries: shape is Record<sectionKind, text>. Convert to the
   // ordered array the drafter wants.
@@ -530,29 +601,40 @@ export async function buildCommunicationContextPack(input: {
   // drafter only sees a few hundred tokens of summary, so picking
   // the most-relevant sections matters. Reranker scores stay
   // internal — we sort by them, then drop them from the pack.
+  // Reranker failure is surfaced via signalHealth so drafter knows
+  // the unranked order isn't an intentional ranking.
   if (input.intent && webSummaries.length > 1) {
     const candidates = webSummaries
       .filter((s) => s.text && s.text.trim().length > 0)
       .map((s) => ({ id: s.section, text: s.text }));
     if (candidates.length > 1) {
-      const reranked = await rerankPassages({
-        query: input.intent,
-        passages: candidates,
-        topK: candidates.length,
-        context: {
-          source_kind: 'web_summary',
-          entity_slug: entity.slug,
-          ...(input.retrievalContext ?? {}),
-        },
-      });
-      const orderById = new Map(
-        reranked.passages.map((p, i) => [p.id, i] as const),
+      const rerankResult = await safeOutcome('rerank', () =>
+        rerankPassages({
+          query: input.intent!,
+          passages: candidates,
+          topK: candidates.length,
+          context: {
+            source_kind: 'web_summary',
+            entity_slug: entity.slug,
+            ...(input.retrievalContext ?? {}),
+          },
+        }),
       );
-      webSummaries = [...webSummaries].sort((a, b) => {
-        const ai = orderById.get(a.section) ?? Number.MAX_SAFE_INTEGER;
-        const bi = orderById.get(b.section) ?? Number.MAX_SAFE_INTEGER;
-        return ai - bi;
+      outcomes.push({
+        source: rerankResult.source,
+        ok: rerankResult.ok,
+        ...(rerankResult.ok ? {} : { error: rerankResult.error }),
       });
+      if (rerankResult.ok && rerankResult.data) {
+        const orderById = new Map(
+          rerankResult.data.passages.map((p, i) => [p.id, i] as const),
+        );
+        webSummaries = [...webSummaries].sort((a, b) => {
+          const ai = orderById.get(a.section) ?? Number.MAX_SAFE_INTEGER;
+          const bi = orderById.get(b.section) ?? Number.MAX_SAFE_INTEGER;
+          return ai - bi;
+        });
+      }
     }
   }
 
@@ -604,6 +686,8 @@ export async function buildCommunicationContextPack(input: {
     }
   }
 
+  const failedSources = outcomes.filter((o) => !o.ok).map((o) => o.source);
+
   return {
     entity,
     recentTouchpoints: (recentTouchpoints?.touchpoints ?? []).map((t) => ({
@@ -630,14 +714,46 @@ export async function buildCommunicationContextPack(input: {
         : [],
     apolloContacts,
     optedOut: recentTouchpoints?.optedOut ?? false,
+    signalHealth: {
+      outcomes,
+      failedSources,
+      hasFetchErrors: failedSources.length > 0,
+    },
   };
 }
 
-async function safe<T>(fn: () => Promise<T>): Promise<T | null> {
+/**
+ * Per-signal fetch wrapper. Returns a discriminated union the caller
+ * unpacks into a typed CommunicationContextPack field plus a
+ * structured outcome row. Replaces the prior `safe()` shape which
+ * collapsed errors to null and made every failing-upstream signal
+ * indistinguishable from "no data exists" — drafts then shipped from
+ * a vacuum during incidents (Apollo down, customs slow, reranker
+ * rate-limited) without anyone seeing why.
+ */
+async function safeOutcome<T, S extends ContextSignalSource>(
+  source: S,
+  fn: () => Promise<T>,
+): Promise<
+  | { source: S; ok: true; data: T }
+  | { source: S; ok: false; error: string }
+> {
   try {
-    return await fn();
-  } catch {
-    return null;
+    const data = await fn();
+    return { source, ok: true, data };
+  } catch (err) {
+    const error =
+      err instanceof Error
+        ? `${err.name}: ${err.message.slice(0, 200)}`
+        : String(err).slice(0, 200);
+    // Log loudly so operators / on-call see the upstream incident.
+    // The pack still flows; consumers degrade gracefully via
+    // signalHealth.failedSources.
+    console.error(
+      `[communication-context-pack] ${source} fetch failed`,
+      error,
+    );
+    return { source, ok: false, error };
   }
 }
 
@@ -761,6 +877,18 @@ Hard rules:
 
 function buildDraftPrompt(input: DraftOutreachInput): string {
   const p = input.pack;
+  // For each signal source, decide between three messaging shapes:
+  //   - source has data: "Fuel signals: ..."
+  //   - source returned no data (ok=true, empty): "No fuel signals on file."
+  //   - source ERRORED (ok=false): "Fuel signals: fetch failed — do
+  //     not infer from absence." This last case is what changes
+  //     drafter behavior under upstream incidents: prior shape made
+  //     errored-empty look identical to genuinely-empty, so the
+  //     drafter would confidently say "no fuel signals" and the
+  //     recipient got context-thin copy during outages.
+  const failedSet = new Set(p.signalHealth?.failedSources ?? []);
+  const failed = (source: ContextSignalSource): boolean =>
+    failedSet.has(source);
   return [
     `Operator intent: ${input.intent}`,
     '',
@@ -769,31 +897,47 @@ function buildDraftPrompt(input: DraftOutreachInput): string {
       ? `Categories: ${p.entity.categories.join(', ')}`
       : null,
     '',
-    p.recentTouchpoints.length > 0
-      ? `Recent touchpoints (last 30d): ${p.recentTouchpoints.length} — last via ${p.recentTouchpoints[0]?.channel} at ${p.recentTouchpoints[0]?.occurredAt.toISOString()}`
-      : 'No recent touchpoints.',
+    failed('recentTouchpoints')
+      ? 'Recent touchpoints: fetch failed — do not infer from absence.'
+      : p.recentTouchpoints.length > 0
+        ? `Recent touchpoints (last 30d): ${p.recentTouchpoints.length} — last via ${p.recentTouchpoints[0]?.channel} at ${p.recentTouchpoints[0]?.occurredAt.toISOString()}`
+        : 'No recent touchpoints.',
     '',
-    p.fuelSignals.length > 0
-      ? `Fuel signals: ${p.fuelSignals.map((s) => `${s.source} ${s.fuelType ?? ''} (${s.asOfDate})`).join('; ')}`
-      : 'No fuel-consumption signals on file.',
+    failed('fuelSignals')
+      ? 'Fuel signals: fetch failed — do not infer from absence.'
+      : p.fuelSignals.length > 0
+        ? `Fuel signals: ${p.fuelSignals.map((s) => `${s.source} ${s.fuelType ?? ''} (${s.asOfDate})`).join('; ')}`
+        : 'No fuel-consumption signals on file.',
     '',
-    p.customsContext
-      ? `Customs activity: ${p.customsContext.activeYears.length} year(s), top partners: ${p.customsContext.topPartners.join(', ')}`
-      : 'No customs activity on file.',
+    failed('customs')
+      ? 'Customs activity: fetch failed — do not infer from absence.'
+      : p.customsContext
+        ? `Customs activity: ${p.customsContext.activeYears.length} year(s), top partners: ${p.customsContext.topPartners.join(', ')}`
+        : 'No customs activity on file.',
     '',
-    p.webSummaries.length > 0
-      ? `Web intelligence (truncated): ${p.webSummaries.map((s) => `[${s.section}] ${s.text.slice(0, 300)}`).join(' | ')}`
-      : 'No website intelligence on file.',
+    failed('web')
+      ? 'Web intelligence: fetch failed — do not infer from absence.'
+      : p.webSummaries.length > 0
+        ? `Web intelligence (truncated): ${p.webSummaries.map((s) => `[${s.section}] ${s.text.slice(0, 300)}`).join(' | ')}`
+        : 'No website intelligence on file.',
     '',
-    p.sanctions.length > 0
-      ? `Sanctions screens: ${p.sanctions.map((s) => `${s.listSource}=${s.result}`).join(', ')}`
-      : 'No sanctions screens on file.',
+    failed('sanctions')
+      ? 'Sanctions screens: fetch failed — do not infer from absence; treat as needs-screening.'
+      : p.sanctions.length > 0
+        ? `Sanctions screens: ${p.sanctions.map((s) => `${s.listSource}=${s.result}`).join(', ')}`
+        : 'No sanctions screens on file.',
     '',
-    p.apolloContacts.length > 0
-      ? `Apollo contact: ${p.apolloContacts[0]?.fullName ?? '?'} (${p.apolloContacts[0]?.title ?? '?'})`
-      : 'No Apollo contact on file.',
+    failed('apollo')
+      ? 'Apollo contact: fetch failed — do not infer from absence.'
+      : p.apolloContacts.length > 0
+        ? `Apollo contact: ${p.apolloContacts[0]?.fullName ?? '?'} (${p.apolloContacts[0]?.title ?? '?'})`
+        : 'No Apollo contact on file.',
     '',
     p.optedOut ? 'OPTED OUT — refuse the draft.' : '',
+    '',
+    p.signalHealth?.hasFetchErrors
+      ? `Note to drafter: ${p.signalHealth.failedSources.length} signal source(s) failed to fetch this run. Don't pretend the missing data means "no activity exists" — write copy that's safe under either interpretation, and lean on what DID fetch successfully.`
+      : '',
     '',
     `Forbidden phrasing: ${(input.doNotMention ?? []).join(' | ') || '(none additional)'}`,
   ]

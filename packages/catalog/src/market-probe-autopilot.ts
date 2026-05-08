@@ -427,6 +427,26 @@ export async function autopilotSendBatch(
       });
       continue;
     }
+    // Surface degraded signal health for ops visibility. The drafter
+    // prompt already adapts (per-source "fetch failed — do not infer
+    // from absence" lines + a note-to-drafter when ANY source failed)
+    // — this just makes the failure correlatable to the probe + target
+    // in production logs. Two or more failed sources is the operator-
+    // attention threshold per the friction audit.
+    if (
+      pack.signalHealth?.hasFetchErrors &&
+      pack.signalHealth.failedSources.length >= 2
+    ) {
+      console.warn(
+        '[autopilot] degraded context pack — drafting with reduced signal',
+        {
+          probeId: probe.id,
+          targetId: t.id,
+          entitySlug: t.entitySlug,
+          failedSources: pack.signalHealth.failedSources,
+        },
+      );
+    }
     const draft = await draftOutreachFromContext({
       pack,
       intent,
