@@ -353,5 +353,7 @@ export {
 // blocks the parent action.
 export {
   translateInboundMessage,
+  translateOutboundMessage,
   type TranslatedInbound,
+  type TranslatedOutbound,
 } from './translate';
