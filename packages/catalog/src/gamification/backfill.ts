@@ -246,11 +246,15 @@ export async function backfillGamificationLedger(): Promise<BackfillSummary> {
 }
 
 async function insertCredit(input: NewXpLedgerRow): Promise<boolean> {
+  // Partial unique index — see award.ts insertCredit for the full
+  // explanation. Mirrored here so the backfill matches the partial
+  // predicate at the index level and re-running is genuinely safe.
   const inserted = await db
     .insert(xpLedger)
     .values(input)
     .onConflictDoNothing({
       target: [xpLedger.sourceTable, xpLedger.sourceId, xpLedger.verb],
+      where: sql`${xpLedger.sourceTable} IS NOT NULL AND ${xpLedger.sourceId} IS NOT NULL`,
     })
     .returning({ id: xpLedger.id });
   return inserted.length > 0;
