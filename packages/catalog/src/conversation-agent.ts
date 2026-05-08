@@ -1307,9 +1307,18 @@ export function classifyProbeReplyEscalation(body: string): string | null {
   }
 
   // Documents request. LOI / NCNDA / fee agreements need operator
-  // sign-off — agent stages drafts but never sends.
+  // sign-off — agent stages drafts but never sends. Two alternatives:
+  // (a) explicit "send/sign/attach <doc>" with optional "me/the/us/your"
+  //     intermediate — catches "send me the NDA", "send us your LOI"
+  //     forms that the prior strict shape missed; (b) noun-led
+  //     "(need|looking for|require|share|forward) <doc>" — catches
+  //     "Need your CIF offer", "Looking for the LOI" etc., real-world
+  //     forms operators see in inbound mail.
   if (
-    /\b(send\s+(the\s+)?(documents?|loi|ncnda|nda|agreement|contract|terms?|deck|spec|cif\s+offer|fob\s+offer|sco|ico|fco|atb|pop)|sign\s+(the\s+)?(loi|ncnda|nda)|attach\s+(the\s+)?(loi|ncnda|nda|agreement|deck))\b/i.test(
+    /\b(?:send|sign|attach|share|forward)(?:\s+(?:me|us|the|your|a))*\s+(?:the\s+|your\s+|a\s+)?(?:documents?|loi|ncnda|nda|agreement|contract|terms?|deck|spec|cif\s+offer|fob\s+offer|sco|ico|fco|atb|pop)\b/i.test(
+      norm,
+    ) ||
+    /\b(?:need|looking\s+for|require|want|requested)\s+(?:your\s+|the\s+|a\s+|an\s+)?(?:documents?|loi|ncnda|nda|agreement|contract|terms?|deck|spec|cif\s+offer|fob\s+offer|sco|ico|fco|atb|pop)\b/i.test(
       norm,
     )
   ) {
@@ -1326,28 +1335,34 @@ export function classifyProbeReplyEscalation(body: string): string | null {
     return 'recipient raised legal / compliance concern';
   }
 
-  // Commercial interest signal. The reverse of the bad cases — the
-  // recipient wants to TALK, which means the operator should be the
-  // one to engage (this is where deals get won/lost). Auto-pause +
-  // bell so Cole picks up the thread.
+  // Unsubscribe / opt-out. Checked BEFORE commercial-interest because
+  // "not interested" matches the bare \binterested\b in the
+  // commercial-interest regex — without this ordering, a refusal
+  // gets surfaced as a positive interest signal in the variant
+  // performance / scorecard, the OPPOSITE of correct behavior. Also
+  // accepts gerund forms ("stop contacting / emailing / reaching
+  // out") since "contact" \b doesn't match in "contacting" — natural
+  // English the prior shape silently dropped.
   if (
-    /\b(interested|let['']s\s+(talk|discuss|set\s+up|chat)|schedule\s+a\s+call|book\s+a\s+(call|meeting|chat)|happy\s+to\s+(chat|talk|discuss)|love\s+to\s+(chat|talk|discuss)|tell\s+me\s+more|send\s+more\s+(info|details)|sounds\s+(good|interesting))\b/i.test(
-      norm,
-    )
-  ) {
-    return 'recipient expressed commercial interest';
-  }
-
-  // Unsubscribe / opt-out. matchStopKeyword catches the canonical
-  // forms but loose phrasings ("please don't contact", "take me off
-  // the list") slip through — adding here so probe replies pause
-  // even when the language is informal.
-  if (
-    /\b(please\s+(don['']?t|stop|do\s+not)\s+(contact|email|reach\s+out)|take\s+me\s+off|remove\s+(me|us)\s+from|not\s+interested|wrong\s+number|wrong\s+person)\b/i.test(
+    /\b(please\s+(?:don[''’]?t|stop|do\s+not)\s+(?:contact(?:ing)?|email(?:ing)?|reach(?:ing)?\s+out)|take\s+me\s+off|remove\s+(?:me|us)\s+from|not\s+interested|wrong\s+number|wrong\s+person)\b/i.test(
       norm,
     )
   ) {
     return 'recipient asked to be removed';
+  }
+
+  // Commercial interest signal. The reverse of the bad cases — the
+  // recipient wants to TALK, which means the operator should be the
+  // one to engage (this is where deals get won/lost). Auto-pause +
+  // bell so Cole picks up the thread. Curly U+2019 apostrophe added
+  // alongside ASCII so "Let's discuss" / "Let’s discuss" both
+  // match — mail clients auto-curl quotes on send.
+  if (
+    /\b(interested|let[''’]s\s+(talk|discuss|set\s+up|chat)|schedule\s+a\s+call|book\s+a\s+(call|meeting|chat)|happy\s+to\s+(chat|talk|discuss)|love\s+to\s+(chat|talk|discuss)|tell\s+me\s+more|send\s+more\s+(info|details)|sounds\s+(good|interesting))\b/i.test(
+      norm,
+    )
+  ) {
+    return 'recipient expressed commercial interest';
   }
 
   return null;
