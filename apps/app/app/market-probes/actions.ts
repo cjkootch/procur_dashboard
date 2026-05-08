@@ -1040,6 +1040,7 @@ export async function generateLearningReportAction(
       withoutSent: s.withoutSignal.sent,
       withoutReplied: s.withoutSignal.replied,
       replyDelta: s.replyDelta,
+      confidence: s.confidence,
     })),
     atlasFacts: atlasFacts.map((f) => ({
       factType: f.factType,

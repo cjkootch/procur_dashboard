@@ -170,9 +170,22 @@ export interface SignalValidationRow {
   withSignal: { sent: number; replied: number; positiveReplied: number };
   withoutSignal: { sent: number; replied: number; positiveReplied: number };
   /** Reply rate with the signal minus reply rate without. Positive
-   *  delta = signal predicts reply; negative = signal is anti-predictive. */
+   *  delta = signal predicts reply; negative = signal is anti-predictive.
+   *  Forced to 0 when confidence === 'low' or 'unobserved' so consumers
+   *  (Learning Report agent, dashboard) don't lean on a delta computed
+   *  from a tiny sample. */
   replyDelta: number;
+  /** Sample-size-aware confidence on the delta:
+   *    'unobserved' — either bucket has zero sends; delta is meaningless
+   *    'low'        — either bucket has fewer than 5 sends; delta is
+   *                   noise-dominated. Don't ground decisions on it.
+   *    'medium'     — both buckets have ≥ 5 sends and at least one ≥ 10
+   *    'high'       — both buckets have ≥ 10 sends */
+  confidence: 'high' | 'medium' | 'low' | 'unobserved';
 }
+
+const SIGNAL_DELTA_MIN_SENDS_PER_BUCKET = 5;
+const SIGNAL_DELTA_HIGH_CONFIDENCE_SENDS = 10;
 
 /**
  * For a probe, join signal flags against reply outcomes — answers
@@ -220,11 +233,34 @@ export async function computeSignalValidation(
     }
     const wRate = w.sent > 0 ? w.replied / w.sent : 0;
     const woRate = wo.sent > 0 ? wo.replied / wo.sent : 0;
+    // Sample-size-aware confidence. Either bucket below 5 = low; below
+    // 1 = unobserved. Without this gate, the Learning Report agent
+    // gets fed misleading deltas like "signal X predicts reply with
+    // delta 0.90!" when the underlying data is 1/1 = 100% reply on
+    // 1 send — pure noise. Suppressing the delta at low N forces the
+    // agent (and the dashboard) to wait until the signal has enough
+    // observations to ground a claim.
+    const minBucket = Math.min(w.sent, wo.sent);
+    let confidence: 'high' | 'medium' | 'low' | 'unobserved';
+    if (minBucket === 0) {
+      confidence = 'unobserved';
+    } else if (minBucket < SIGNAL_DELTA_MIN_SENDS_PER_BUCKET) {
+      confidence = 'low';
+    } else if (minBucket >= SIGNAL_DELTA_HIGH_CONFIDENCE_SENDS) {
+      confidence = 'high';
+    } else {
+      confidence = 'medium';
+    }
+    const replyDelta =
+      confidence === 'unobserved' || confidence === 'low'
+        ? 0
+        : wRate - woRate;
     rows.push({
       signal,
       withSignal: w,
       withoutSignal: wo,
-      replyDelta: wRate - woRate,
+      replyDelta,
+      confidence,
     });
   }
   // Order: signals with most observations first (more reliable

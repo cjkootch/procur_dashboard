@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   db,
   marketProbeStrategyProposals,
@@ -221,10 +221,23 @@ export async function rejectStrategyProposal(input: {
  * Fed into the agent's next plan-generation prompt as rejection
  * context — "operator rejected pivoting to marine ops because they
  * have no marine relationships yet; don't re-propose."
+ *
+ * Two pruning gates:
+ *   - `limit` (default 20) caps the most recent rejections by count
+ *   - `maxAgeDays` (default 90) filters out stale rationales
+ *
+ * Without the age gate, a rejection rationale from 6 months ago
+ * (when market conditions, the operator's relationships, or the
+ * probe's own state were materially different) keeps riding into
+ * agent prompts forever. The market changes; old rejections become
+ * stale. 90 days is the operational floor: long enough to honor a
+ * recent rejection, short enough that a long-running probe doesn't
+ * get hamstrung by ancient feedback.
  */
 export async function listRejectionHistory(
   probeId: string,
   limit = 20,
+  maxAgeDays = 90,
 ): Promise<
   Array<{
     proposalType: string;
@@ -233,6 +246,7 @@ export async function listRejectionHistory(
     rejectedAt: Date;
   }>
 > {
+  const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000);
   const rows = await db
     .select({
       proposalType: marketProbeStrategyProposals.proposalType,
@@ -245,6 +259,7 @@ export async function listRejectionHistory(
       and(
         eq(marketProbeStrategyProposals.probeId, probeId),
         eq(marketProbeStrategyProposals.status, 'rejected'),
+        sql`${marketProbeStrategyProposals.reviewedAt} >= ${cutoff.toISOString()}`,
       ),
     )
     .orderBy(desc(marketProbeStrategyProposals.reviewedAt))

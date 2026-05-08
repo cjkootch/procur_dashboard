@@ -231,8 +231,20 @@ export async function autopilotSendBatch(
   if (scorecard) {
     const bouncePct = scorecard.bounceRate * 100;
     const maxBounce = Number(probe.maxBounceRatePct);
-    if (bouncePct > maxBounce) {
-      const reason = `bounce rate ${bouncePct.toFixed(1)}% exceeds threshold ${maxBounce}%`;
+    // Sample-size floor on the bounce-rate kill criterion. The earlier
+    // shape compared bounceRate against the threshold unconditionally
+    // — first send going to a stale address (1/1 = 100% bounce)
+    // would auto-pause the probe before any second target ever
+    // dispatched. 10 sends is the operational floor: below that, a
+    // single bad address dominates the rate. Once ≥ 10 have flown,
+    // 8% bounce is a real signal that the seed list / domain
+    // reputation is degraded.
+    const BOUNCE_RATE_MIN_SENDS = 10;
+    if (
+      scorecard.sentCount >= BOUNCE_RATE_MIN_SENDS &&
+      bouncePct > maxBounce
+    ) {
+      const reason = `bounce rate ${bouncePct.toFixed(1)}% exceeds threshold ${maxBounce}% (n=${scorecard.sentCount})`;
       await setProbeStatus(probe.id, 'paused');
       return {
         ok: false,
