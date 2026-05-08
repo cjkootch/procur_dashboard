@@ -184,6 +184,13 @@ export const marketProbeTargets = pgTable(
       .notNull()
       .default({}),
 
+    /** Phase 2I.4 — message variant assignment (migration 0102).
+     *  Stamped by autopilot at draft time via weighted sampling among
+     *  the probe's active variants. Nullable so targets created
+     *  before variants existed fall back to the plan-derived intent
+     *  string from Phase 2H. */
+    variantId: text('variant_id'),
+
     /** 'pending' | 'drafted' | 'queued' | 'sent' | 'bounced' | 'skipped'. */
     sendStatus: text('send_status').notNull().default('pending'),
     lastTouchAt: timestamp('last_touch_at', { withTimezone: true }),

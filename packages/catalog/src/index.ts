@@ -36,6 +36,7 @@ export * from './market-probe-hypotheses';
 export * from './market-probe-measurement';
 export * from './market-playbooks';
 export * from './market-probe-autopilot';
+export * from './market-probe-variants';
 export {
   recommendCommunicationTargets,
   buildCommunicationContextPack,
