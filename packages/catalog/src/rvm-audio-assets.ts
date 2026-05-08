@@ -44,9 +44,21 @@ export interface CreateRvmAudioAssetInput {
 
 /**
  * Create a new active audio asset, retiring any existing active
- * asset with the same scope (probe, variant, language). Single
- * SQL transaction so there's no window where the partial unique
- * index could be violated.
+ * asset with the same scope (probe, variant, language).
+ *
+ * Two sequential auto-committed statements — the neon-http driver
+ * doesn't support transactions (per CLAUDE.md "migration footguns").
+ * Retire first, then insert: if the insert fails, the retire is
+ * harmless (the operator's prior asset is just inactive and
+ * recoverable via reactivateRvmAudioAsset). The reverse ordering
+ * would trip the partial unique index since two active rows for the
+ * same (probe, variant, language) scope can't coexist.
+ *
+ * Single-tenant single-operator deployment, so the brief window
+ * between retire and insert isn't a concurrency concern in practice
+ * — two operators uploading audio for the same scope at the same
+ * second would in theory hit the partial unique index, but it's not
+ * a realistic scenario.
  *
  * Operators iterating on a recording (record → preview → re-record)
  * each upload creates a new row; prior versions stay queryable via
@@ -55,42 +67,37 @@ export interface CreateRvmAudioAssetInput {
 export async function createRvmAudioAsset(
   input: CreateRvmAudioAssetInput,
 ): Promise<RvmAudioAsset> {
-  return await db.transaction(async (tx) => {
-    // Retire any existing active asset for this scope BEFORE
-    // inserting the new active row — partial unique index would
-    // otherwise reject the insert.
-    await tx
-      .update(rvmAudioAssets)
-      .set({ isActive: false, updatedAt: new Date() })
-      .where(
-        and(
-          eq(rvmAudioAssets.probeId, input.probeId),
-          eq(rvmAudioAssets.language, input.language),
-          eq(rvmAudioAssets.isActive, true),
-          input.variantId
-            ? eq(rvmAudioAssets.variantId, input.variantId)
-            : isNull(rvmAudioAssets.variantId),
-        ),
-      );
+  await db
+    .update(rvmAudioAssets)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(
+      and(
+        eq(rvmAudioAssets.probeId, input.probeId),
+        eq(rvmAudioAssets.language, input.language),
+        eq(rvmAudioAssets.isActive, true),
+        input.variantId
+          ? eq(rvmAudioAssets.variantId, input.variantId)
+          : isNull(rvmAudioAssets.variantId),
+      ),
+    );
 
-    const [created] = await tx
-      .insert(rvmAudioAssets)
-      .values({
-        probeId: input.probeId,
-        variantId: input.variantId ?? null,
-        language: input.language,
-        sourceText: input.sourceText,
-        audioUrl: input.audioUrl,
-        audioFormat: input.audioFormat ?? 'audio/mpeg',
-        durationMs: input.durationMs ?? null,
-        voiceProfileId: input.voiceProfileId ?? null,
-        generatedVia: input.generatedVia,
-        generatedByUserId: input.generatedByUserId ?? null,
-      })
-      .returning();
-    if (!created) throw new Error('createRvmAudioAsset: no row returned');
-    return created;
-  });
+  const [created] = await db
+    .insert(rvmAudioAssets)
+    .values({
+      probeId: input.probeId,
+      variantId: input.variantId ?? null,
+      language: input.language,
+      sourceText: input.sourceText,
+      audioUrl: input.audioUrl,
+      audioFormat: input.audioFormat ?? 'audio/mpeg',
+      durationMs: input.durationMs ?? null,
+      voiceProfileId: input.voiceProfileId ?? null,
+      generatedVia: input.generatedVia,
+      generatedByUserId: input.generatedByUserId ?? null,
+    })
+    .returning();
+  if (!created) throw new Error('createRvmAudioAsset: no row returned');
+  return created;
 }
 
 export async function listRvmAudioAssetsForProbe(
@@ -172,33 +179,35 @@ export async function retireRvmAudioAsset(assetId: string): Promise<void> {
  * Reactivate a previously-retired asset. If another asset is
  * currently active for the same (probe, variant, language) scope,
  * that one gets retired first (single-active invariant preserved).
+ *
+ * Three sequential auto-committed statements — neon-http doesn't
+ * support transactions. Lookup, retire-current-active, activate-
+ * target. Same single-tenant concurrency caveat as createRvmAudioAsset.
  */
 export async function reactivateRvmAudioAsset(assetId: string): Promise<void> {
-  await db.transaction(async (tx) => {
-    const [target] = await tx
-      .select()
-      .from(rvmAudioAssets)
-      .where(eq(rvmAudioAssets.id, assetId))
-      .limit(1);
-    if (!target) return;
-    await tx
-      .update(rvmAudioAssets)
-      .set({ isActive: false, updatedAt: new Date() })
-      .where(
-        and(
-          eq(rvmAudioAssets.probeId, target.probeId),
-          eq(rvmAudioAssets.language, target.language),
-          eq(rvmAudioAssets.isActive, true),
-          target.variantId
-            ? eq(rvmAudioAssets.variantId, target.variantId)
-            : isNull(rvmAudioAssets.variantId),
-        ),
-      );
-    await tx
-      .update(rvmAudioAssets)
-      .set({ isActive: true, updatedAt: new Date() })
-      .where(eq(rvmAudioAssets.id, assetId));
-  });
+  const [target] = await db
+    .select()
+    .from(rvmAudioAssets)
+    .where(eq(rvmAudioAssets.id, assetId))
+    .limit(1);
+  if (!target) return;
+  await db
+    .update(rvmAudioAssets)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(
+      and(
+        eq(rvmAudioAssets.probeId, target.probeId),
+        eq(rvmAudioAssets.language, target.language),
+        eq(rvmAudioAssets.isActive, true),
+        target.variantId
+          ? eq(rvmAudioAssets.variantId, target.variantId)
+          : isNull(rvmAudioAssets.variantId),
+      ),
+    );
+  await db
+    .update(rvmAudioAssets)
+    .set({ isActive: true, updatedAt: new Date() })
+    .where(eq(rvmAudioAssets.id, assetId));
 }
 
 /**
