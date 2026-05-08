@@ -1,9 +1,10 @@
 import 'server-only';
-import { eq, sql } from 'drizzle-orm';
-import { db, knownEntities } from '@procur/db';
+import { eq } from 'drizzle-orm';
+import { db, knownEntities, marketProbeTargets } from '@procur/db';
 import {
   enrichOrgFromApollo,
   searchOrgs,
+  searchPeople,
   type ApolloOrgFull,
   type ApolloSearchFilters,
   type ApolloDegradeResult,
@@ -74,17 +75,43 @@ export async function addApolloLookalikesToProbe(input: {
       error: `seed entity "${input.seedSlug}" not found in rolodex`,
     };
   }
-  if (!seed.apolloOrgId) {
-    return {
-      ok: false,
-      error: `seed entity "${seed.name}" has no Apollo enrichment — run "Enrich from Apollo" on the entity profile first, then retry`,
-    };
+  // Auto-enrich on demand when the seed has no apollo_org_id. Phase
+  // 2A surfaced a "run Enrich from Apollo first" error; Phase 2B
+  // resolves the apollo id by searching by primary_domain so the
+  // operator's two-step "enrich → find lookalikes" collapses into
+  // one click. Falls back to the same clear error when the seed has
+  // no domain to search by.
+  let apolloOrgId: string | null = seed.apolloOrgId;
+  if (!apolloOrgId) {
+    if (!seed.primaryDomain) {
+      return {
+        ok: false,
+        error: `seed entity "${seed.name}" has no Apollo enrichment AND no primary_domain — set the domain on the entity profile, then retry`,
+      };
+    }
+    const lookup = await searchOrgs(
+      { organizationDomainsList: [seed.primaryDomain] },
+      { perPage: 1 },
+    );
+    if (!('organizations' in lookup) || lookup.organizations.length === 0) {
+      return {
+        ok: false,
+        error: `Apollo had no record for domain "${seed.primaryDomain}" — verify the domain or pick a different seed`,
+        ...(!('organizations' in lookup) ? { degrade: lookup } : {}),
+      };
+    }
+    apolloOrgId = lookup.organizations[0]!.id;
+    // Backfill on the rolodex row so future runs skip the lookup.
+    await db
+      .update(knownEntities)
+      .set({ apolloOrgId, updatedAt: new Date() })
+      .where(eq(knownEntities.slug, seed.slug));
   }
 
   // Pull seed's full snapshot. Cached after first fetch (default 30d
   // freshness in apollo/config.ts).
   const seedEnrich = await enrichOrgFromApollo({
-    apolloOrgId: seed.apolloOrgId,
+    apolloOrgId,
     target: { table: 'known_entities', id: seed.slug },
   });
   if (!seedEnrich.ok) {
@@ -110,13 +137,11 @@ export async function addApolloLookalikesToProbe(input: {
   }
 
   // Drop the seed itself if it came back in results.
-  const candidates = search.organizations.filter(
-    (o) => o.id !== seed.apolloOrgId,
-  );
+  const candidates = search.organizations.filter((o) => o.id !== apolloOrgId);
   if (candidates.length === 0) {
     return {
       ok: true,
-      seedApolloOrgId: seed.apolloOrgId,
+      seedApolloOrgId: apolloOrgId,
       candidatesFound: 0,
       targetsCreated: 0,
       stubsCreated: 0,
@@ -181,7 +206,7 @@ export async function addApolloLookalikesToProbe(input: {
   const inserted = await upsertProbeTargets(input.probeId, targets);
   return {
     ok: true,
-    seedApolloOrgId: seed.apolloOrgId,
+    seedApolloOrgId: apolloOrgId,
     candidatesFound: candidates.length,
     targetsCreated: inserted,
     stubsCreated,
@@ -326,4 +351,247 @@ async function resolveOrCreateRolodexStubFromApollo(input: {
     );
     return null;
   }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Decision-maker discovery — Apollo searchPeople per target
+// ──────────────────────────────────────────────────────────────────
+
+export type FindDecisionMakersResult =
+  | {
+      ok: true;
+      entitySlug: string;
+      candidatesFound: number;
+    }
+  | { ok: false; error: string; degrade?: ApolloDegradeResult };
+
+/**
+ * For a probe target, run Apollo `searchPeople` scoped to the target's
+ * org and decision-maker seniorities. Results auto-persist to
+ * `entity_contact_enrichments` (Apollo's own searchPeople wrapper does
+ * this when `entitySlug` is supplied), so the entity-profile
+ * Decision-makers panel reflects the new candidates and Phase 2C's
+ * draft-per-target step has names + titles to address.
+ *
+ * `searchPeople` is the FREE endpoint — no credit consumption. Names
+ * + titles only; emails are obfuscated. The `enrichPerson` follow-up
+ * (paid, daily-capped) resolves emails when the operator picks a
+ * specific person to draft for.
+ */
+export async function findDecisionMakersForTarget(input: {
+  targetId: string;
+  companyId: string;
+  perPage?: number;
+}): Promise<FindDecisionMakersResult> {
+  const [target] = await db
+    .select({
+      id: marketProbeTargets.id,
+      entitySlug: marketProbeTargets.entitySlug,
+    })
+    .from(marketProbeTargets)
+    .where(eq(marketProbeTargets.id, input.targetId))
+    .limit(1);
+  if (!target) {
+    return { ok: false, error: `target ${input.targetId} not found` };
+  }
+
+  const [entity] = await db
+    .select({
+      slug: knownEntities.slug,
+      name: knownEntities.name,
+      apolloOrgId: knownEntities.apolloOrgId,
+      primaryDomain: knownEntities.primaryDomain,
+    })
+    .from(knownEntities)
+    .where(eq(knownEntities.slug, target.entitySlug))
+    .limit(1);
+  if (!entity) {
+    return {
+      ok: false,
+      error: `entity "${target.entitySlug}" not found — target may be stale`,
+    };
+  }
+
+  // Prefer apollo_org_id (strong) over domain (fuzzy) — Apollo's
+  // people search returns drastically better matches when scoped by
+  // org id. Fall back to domain when the rolodex stub doesn't have
+  // an apollo id yet (older stubs from before the lookalike pass).
+  const orgFilter = entity.apolloOrgId
+    ? { organizationIds: [entity.apolloOrgId] }
+    : entity.primaryDomain
+      ? { organizationDomainsList: [entity.primaryDomain] }
+      : null;
+  if (!orgFilter) {
+    return {
+      ok: false,
+      error: `entity "${entity.name}" has no Apollo id and no primary_domain — Apollo people search needs at least one`,
+    };
+  }
+
+  const result = await searchPeople({
+    filters: {
+      ...orgFilter,
+      personSeniorities: [
+        // Procurement / commercial-supply decision-makers: tighter
+        // than "everyone." Includes manager so smaller companies
+        // (where the manager IS the decision-maker) aren't excluded.
+        'owner',
+        'founder',
+        'c_suite',
+        'partner',
+        'vp',
+        'head',
+        'director',
+        'manager',
+      ],
+      // 'verified' only — drafting against an unverified address
+      // burns sender reputation. Phase 2C's draft step requires
+      // verified email anyway; filtering here saves a round-trip.
+      contactEmailStatus: ['verified'],
+    },
+    entitySlug: entity.slug,
+    companyId: input.companyId,
+    opts: { perPage: input.perPage ?? 25 },
+  });
+
+  if (!('people' in result)) {
+    return {
+      ok: false,
+      error: `apollo people search failed: ${result.reason}`,
+      degrade: result,
+    };
+  }
+
+  return {
+    ok: true,
+    entitySlug: entity.slug,
+    candidatesFound: result.people.length,
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Thesis-driven Apollo search — seed-free org discovery
+// ──────────────────────────────────────────────────────────────────
+
+export type AddThesisOrgsResult =
+  | {
+      ok: true;
+      candidatesFound: number;
+      targetsCreated: number;
+      stubsCreated: number;
+    }
+  | { ok: false; error: string; degrade?: ApolloDegradeResult };
+
+/**
+ * Seed-free Apollo org discovery for a probe. Operator supplies a few
+ * keyword tags ("hotel procurement", "fuel distributor") + the probe's
+ * country fence already constrains the geography. Useful when the
+ * probe has no rolodex seed yet — graph similarity + lookalikes both
+ * need a seed; this path doesn't.
+ *
+ * Same stub-creation flow as `addApolloLookalikesToProbe`: orgs match
+ * via apollo_org_id or primary_domain reuse the existing slug; new
+ * orgs land as `apollo-<id>` stubs with role='unknown'.
+ */
+export async function addThesisDrivenApolloOrgsToProbe(input: {
+  probeId: string;
+  keywords: string[];
+  limit?: number;
+}): Promise<AddThesisOrgsResult> {
+  const probe = await getProbe(input.probeId);
+  if (!probe) return { ok: false, error: `probe ${input.probeId} not found` };
+  if (!probe.country) {
+    return {
+      ok: false,
+      error: 'probe.country required for thesis search — set it on the probe and retry',
+    };
+  }
+  const keywords = input.keywords.map((k) => k.trim()).filter(Boolean).slice(0, 5);
+  if (keywords.length === 0) {
+    return { ok: false, error: 'at least one keyword required' };
+  }
+
+  const filters: ApolloSearchFilters = {
+    organizationKeywordTags: keywords,
+    organizationLocations: [probe.country],
+  };
+  const limit = Math.min(input.limit ?? 25, 50);
+
+  const search = await searchOrgs(filters, { perPage: limit });
+  if (!('organizations' in search)) {
+    return {
+      ok: false,
+      error: `apollo search failed: ${search.reason}`,
+      degrade: search,
+    };
+  }
+
+  const candidates = search.organizations;
+  if (candidates.length === 0) {
+    return {
+      ok: true,
+      candidatesFound: 0,
+      targetsCreated: 0,
+      stubsCreated: 0,
+    };
+  }
+
+  let stubsCreated = 0;
+  const targets: Array<{
+    id: string;
+    entitySlug: string;
+    contactId: null;
+    segment: null;
+    fitTier: 'A' | 'B' | 'C' | 'D';
+    confidence: number;
+    evidenceJson: Record<string, unknown>;
+  }> = [];
+
+  for (const org of candidates) {
+    const slug = await resolveOrCreateRolodexStubFromApollo({
+      apolloOrgId: org.id,
+      name: org.name,
+      primaryDomain: org.primaryDomain,
+      probeCountry: probe.country,
+    });
+    if (!slug) continue;
+    if (slug.created) stubsCreated += 1;
+    targets.push({
+      id: createId(),
+      entitySlug: slug.slug,
+      contactId: null,
+      segment: null,
+      // Thesis-driven matches are weaker than lookalikes — they
+      // share the operator's keyword guess + country, not a measured
+      // attribute profile. Default fit C; operator promotes to B/A
+      // after review.
+      fitTier: 'C',
+      confidence: 0.4,
+      evidenceJson: {
+        source: 'apollo_thesis_search',
+        apolloOrgId: org.id,
+        keywords,
+        country: probe.country,
+        entityName: org.name,
+        primaryDomain: org.primaryDomain,
+        websiteUrl: org.websiteUrl,
+        linkedinUrl: org.linkedinUrl,
+        foundedYear: org.foundedYear,
+        recommendedChannel: 'email',
+        evidenceItems: [
+          {
+            label: `Apollo thesis match: keywords=[${keywords.join(', ')}], country=${probe.country}`,
+          },
+        ],
+      },
+    });
+  }
+
+  const inserted = await upsertProbeTargets(input.probeId, targets);
+  return {
+    ok: true,
+    candidatesFound: candidates.length,
+    targetsCreated: inserted,
+    stubsCreated,
+  };
 }

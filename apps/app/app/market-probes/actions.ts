@@ -6,7 +6,9 @@ import { requireCompany } from '@procur/auth';
 import { createId } from '@procur/ai';
 import {
   addApolloLookalikesToProbe,
+  addThesisDrivenApolloOrgsToProbe,
   createProbe,
+  findDecisionMakersForTarget,
   getProbe,
   markProbeTaskStatus,
   setProbePlan,
@@ -255,6 +257,81 @@ export async function addApolloLookalikesAction(
       'identify_targets',
       'in_progress',
       `Apollo lookalikes (seed ${seedSlug}): ${result.error}`,
+    );
+  }
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/**
+ * Thesis-driven Apollo search — seed-free org discovery. Operator
+ * supplies a few keyword tags; probe.country fences geography. Useful
+ * when no rolodex seed exists yet.
+ */
+export async function addThesisOrgsAction(formData: FormData): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  if (!probeId) throw new Error('probeId required');
+
+  // Free-form input — split on commas/newlines so the operator can
+  // type "hotel procurement, fuel distributor" or paste a list.
+  const raw = str(formData, 'keywords');
+  const keywords = raw
+    ? raw
+        .split(/[,\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+
+  const result = await addThesisDrivenApolloOrgsToProbe({
+    probeId,
+    keywords,
+    limit: int(formData, 'limit') ?? 25,
+  });
+
+  if (result.ok) {
+    await markProbeTaskStatus(
+      probeId,
+      'identify_targets',
+      result.targetsCreated > 0 ? 'done' : 'in_progress',
+      `Apollo thesis search ([${keywords.join(', ')}], ${(await getProbe(probeId))?.country}): ${result.candidatesFound} candidate${result.candidatesFound === 1 ? '' : 's'} found, ${result.targetsCreated} added${result.stubsCreated > 0 ? ` (${result.stubsCreated} new stub${result.stubsCreated === 1 ? '' : 's'})` : ''}.`,
+    );
+  } else {
+    await markProbeTaskStatus(
+      probeId,
+      'identify_targets',
+      'in_progress',
+      `Apollo thesis search: ${result.error}`,
+    );
+  }
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/**
+ * Per-target decision-maker discovery via Apollo searchPeople.
+ * Results auto-persist to entity_contact_enrichments (Apollo wrapper
+ * handles this) so the entity-profile Decision-makers panel reflects
+ * the new candidates. Marks find_contacts task done if results land.
+ */
+export async function findDecisionMakersAction(
+  formData: FormData,
+): Promise<void> {
+  const { company } = await requireCompany();
+  const targetId = str(formData, 'targetId');
+  const probeId = str(formData, 'probeId');
+  if (!targetId || !probeId) throw new Error('targetId + probeId required');
+
+  const result = await findDecisionMakersForTarget({
+    targetId,
+    companyId: company.id,
+    perPage: 25,
+  });
+
+  if (result.ok && result.candidatesFound > 0) {
+    await markProbeTaskStatus(
+      probeId,
+      'find_contacts',
+      'done',
+      `${result.candidatesFound} decision-maker candidate${result.candidatesFound === 1 ? '' : 's'} found for ${result.entitySlug}; see entity profile Decision-makers panel.`,
     );
   }
   revalidatePath(`/market-probes/${probeId}`);

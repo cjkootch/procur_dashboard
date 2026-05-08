@@ -4,7 +4,9 @@ import { requireCompany } from '@procur/auth';
 import { getProbe, listTargetsForProbe } from '@procur/catalog';
 import {
   addApolloLookalikesAction,
+  addThesisOrgsAction,
   discoverTargetsAction,
+  findDecisionMakersAction,
   generatePlanAction,
   setProbeStatusAction,
   setTaskSkippedAction,
@@ -263,9 +265,39 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
                 Find lookalikes
               </button>
               <p className="mt-1 text-[10px] text-[color:var(--color-muted-foreground)]">
-                Seed must be in the rolodex AND already Apollo-enriched.
-                Pulls 25 attribute-similar orgs (industry / size / country),
-                creates rolodex stubs for those not yet on file.
+                Seed must be in the rolodex (Apollo enrichment auto-runs
+                if missing). Pulls 25 attribute-similar orgs (industry /
+                size / country), creates rolodex stubs for those not yet
+                on file.
+              </p>
+            </form>
+
+            <form
+              action={addThesisOrgsAction}
+              className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] p-2"
+            >
+              <input type="hidden" name="probeId" value={probe.id} />
+              <label className="block text-[11px] font-medium uppercase tracking-wider text-[color:var(--color-muted-foreground)]">
+                Apollo thesis search
+              </label>
+              <input
+                type="text"
+                name="keywords"
+                placeholder="keywords (comma-separated)"
+                required
+                className="mt-1 w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs focus:border-[color:var(--color-foreground)] focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={!probe.country}
+                className="mt-2 w-full rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[color:var(--color-muted)]/40 disabled:opacity-40"
+              >
+                Search by thesis
+              </button>
+              <p className="mt-1 text-[10px] text-[color:var(--color-muted-foreground)]">
+                Seed-free. Country-fenced. Useful before you have a
+                seed entity. Results land at fit-tier C (weaker than
+                lookalikes — keyword guess vs measured similarity).
               </p>
             </form>
 
@@ -393,6 +425,19 @@ export default async function MarketProbeDetailPage({ params }: PageProps) {
                       ))}
                     </ul>
                   )}
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <form action={findDecisionMakersAction}>
+                      <input type="hidden" name="probeId" value={probe.id} />
+                      <input type="hidden" name="targetId" value={t.id} />
+                      <button
+                        type="submit"
+                        className="text-[11px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
+                        title="Run Apollo searchPeople for decision-makers at this org. Results land in the entity profile's Decision-makers panel."
+                      >
+                        Find decision-makers
+                      </button>
+                    </form>
+                  </div>
                 </li>
               );
             })}
