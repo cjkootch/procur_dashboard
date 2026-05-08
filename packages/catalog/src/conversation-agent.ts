@@ -147,6 +147,7 @@ interface QueueAiReplyResult {
     | 'skipped_session_window'
     | 'skipped_draft_failed'
     | 'skipped_superseded'
+    | 'skipped_probe_escalation'
     | 'queued'
     | 'auto_executed';
   approvalId?: string;
@@ -209,6 +210,29 @@ async function runMaybeQueueAiReply(
       reason: `stop keyword: "${matchedStopWord}"`,
     });
     return { status: 'skipped_stop_keyword', reason: matchedStopWord };
+  }
+
+  // Phase 2I.2 — probe-aware reply escalation (mirrors the email
+  // path; see runMaybeQueueAiEmailReply for the full rationale).
+  if (settings.linkedProbeId) {
+    const escalation = classifyProbeReplyEscalation(input.inboundBody);
+    if (escalation) {
+      await pauseConversation({
+        channel: settings.channel as 'sms' | 'whatsapp',
+        conversationKey: settings.conversationKey,
+        reason: `probe escalation: ${escalation}`,
+      });
+      await notifyOperatorsOfPendingApproval({
+        approvalId: settings.id,
+        channel: settings.channel as 'sms' | 'whatsapp',
+        conversationKey: settings.conversationKey,
+        draftPreview: `Probe reply needs your eyes — ${escalation}.`,
+      });
+      return {
+        status: 'skipped_probe_escalation',
+        reason: escalation,
+      };
+    }
   }
 
   // Budget check — turns. Don't draft past the cap.
@@ -746,6 +770,36 @@ async function runMaybeQueueAiEmailReply(
     return { status: 'skipped_stop_keyword', reason: matchedStopWord };
   }
 
+  // Phase 2I.2 — probe-aware reply escalation. When the conversation
+  // is linked to a Market Probe (linkedProbeId set by autopilot when
+  // it sent the original outbound), check the inbound body for the
+  // moments where Cole specifically wants to take over: price-ask /
+  // buyer-name-ask / documents-ask / legal-or-compliance / commercial-
+  // interest / opt-out. Auto-pause + notify operator + skip drafting.
+  // Without this, a successful probe reply that says "what's your
+  // price?" would auto-respond via tiered-mode classification.
+  if (settings.linkedProbeId) {
+    const escalation = classifyProbeReplyEscalation(bodyForKeywords);
+    if (escalation) {
+      await pauseConversation({
+        channel: 'email',
+        conversationKey: input.threadId,
+        reason: `probe escalation: ${escalation}`,
+      });
+      // Surface in the bell so the operator picks up the thread fast.
+      await notifyOperatorsOfPendingApproval({
+        approvalId: input.threadId, // thread-id ride-through; not a UUID, see notes in fn
+        channel: 'email',
+        conversationKey: input.threadId,
+        draftPreview: `Probe reply needs your eyes — ${escalation}.`,
+      });
+      return {
+        status: 'skipped_probe_escalation',
+        reason: escalation,
+      };
+    }
+  }
+
   // Budget — turns / cost / duration.
   if (settings.totalTurns >= settings.maxTurns) {
     await pauseConversation({
@@ -1195,6 +1249,92 @@ async function queueProposalApproval(input: {
  * rate becomes painful (per CLAUDE.md option "regex first, LLM only
  * if regex says safe"). Today: regex only.
  */
+/**
+ * Probe-aware reply escalation classifier (Phase 2I.2). Distinct from
+ * classifyDraftRisk (which checks OUTBOUND drafts before sending).
+ * This runs on INBOUND bodies for conversations linked to a Market
+ * Probe — surfaces the moments where Cole specifically wants to be
+ * pulled in instead of letting the auto-reply path proceed.
+ *
+ * Returns null when no escalation trigger matches; otherwise the
+ * canonical reason string used by the autopilot's pause path. The
+ * five categories mirror ChatGPT's expanded-vision item: price-ask,
+ * buyer-name-ask, documents-ask, legal-or-compliance,
+ * commercial-interest. Adds unsubscribe-style refusals as a sixth so
+ * a "please remove" inbound auto-pauses the contact even if it
+ * doesn't trigger the existing stopKeyword regex.
+ */
+export function classifyProbeReplyEscalation(body: string): string | null {
+  const norm = body.toLowerCase();
+
+  // Price-ask. The agent must NEVER auto-reply with pricing; an
+  // operator-drafted commercial response is the right move.
+  if (
+    /\b(price|pricing|rate|cost|quote|how\s+much|what['']?s\s+the\s+(price|cost|rate)|what\s+would\s+(it|that|this)\s+cost|net\s+price|firm\s+price|indicative\s+price)\b/i.test(
+      norm,
+    )
+  ) {
+    return 'recipient asked for price';
+  }
+
+  // Buyer/seller-name-ask. Disclosure of counterparties is gated on
+  // NDA + fee-protection state per the deal-room compliance work
+  // (PR #309); never auto-reveal.
+  if (
+    /\b(who\s+(is|are)\s+(the|your)?\s*(buyer|seller|supplier|client|counterparty|principal|partner)|who\s+do\s+you\s+represent|what\s+company\s+(is\s+this|do\s+you|does\s+this|are\s+you))\b/i.test(
+      norm,
+    )
+  ) {
+    return 'recipient asked for buyer/seller identity';
+  }
+
+  // Documents request. LOI / NCNDA / fee agreements need operator
+  // sign-off — agent stages drafts but never sends.
+  if (
+    /\b(send\s+(the\s+)?(documents?|loi|ncnda|nda|agreement|contract|terms?|deck|spec|cif\s+offer|fob\s+offer|sco|ico|fco|atb|pop)|sign\s+(the\s+)?(loi|ncnda|nda)|attach\s+(the\s+)?(loi|ncnda|nda|agreement|deck))\b/i.test(
+      norm,
+    )
+  ) {
+    return 'recipient asked for documents';
+  }
+
+  // Legal / compliance concern. These ALWAYS escalate — they're a
+  // signal the operator's involvement matters.
+  if (
+    /\b(legal|compliance|lawyer|attorney|counsel|regulator|sanctions?|ofac|kyc|aml)\b/i.test(
+      norm,
+    )
+  ) {
+    return 'recipient raised legal / compliance concern';
+  }
+
+  // Commercial interest signal. The reverse of the bad cases — the
+  // recipient wants to TALK, which means the operator should be the
+  // one to engage (this is where deals get won/lost). Auto-pause +
+  // bell so Cole picks up the thread.
+  if (
+    /\b(interested|let['']s\s+(talk|discuss|set\s+up|chat)|schedule\s+a\s+call|book\s+a\s+(call|meeting|chat)|happy\s+to\s+(chat|talk|discuss)|love\s+to\s+(chat|talk|discuss)|tell\s+me\s+more|send\s+more\s+(info|details)|sounds\s+(good|interesting))\b/i.test(
+      norm,
+    )
+  ) {
+    return 'recipient expressed commercial interest';
+  }
+
+  // Unsubscribe / opt-out. matchStopKeyword catches the canonical
+  // forms but loose phrasings ("please don't contact", "take me off
+  // the list") slip through — adding here so probe replies pause
+  // even when the language is informal.
+  if (
+    /\b(please\s+(don['']?t|stop|do\s+not)\s+(contact|email|reach\s+out)|take\s+me\s+off|remove\s+(me|us)\s+from|not\s+interested|wrong\s+number|wrong\s+person)\b/i.test(
+      norm,
+    )
+  ) {
+    return 'recipient asked to be removed';
+  }
+
+  return null;
+}
+
 export function classifyDraftRisk(body: string): 'safe' | 'commitment' {
   const norm = body.toLowerCase();
 
