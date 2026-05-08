@@ -39,6 +39,37 @@ import { pickVariantForTarget } from './market-probe-variants';
  * Failure modes are deliberate non-actions: the function returns a
  * structured result enumerating skipped targets and the reason.
  * Operator can then triage; agent doesn't loop trying to send.
+ *
+ * ## Concurrency model
+ *
+ * Two operators (or one operator running batches in parallel from
+ * different tabs / a cron + a manual click) could each pull the same
+ * `send_status='pending'` target and both pass cap checks before
+ * either dispatches — classic read-then-act race. The fix is an
+ * atomic UPDATE-claim: just before dispatch we run
+ *
+ *   UPDATE market_probe_targets
+ *      SET send_status='sent', variant_id=$X, last_touch_at=now()
+ *    WHERE id=$id AND send_status='pending'
+ *    RETURNING id
+ *
+ * Postgres serializes concurrent UPDATEs on the same row, so exactly
+ * one batch wins the claim. The loser sees zero rows returned and
+ * skips that target (its draft is discarded — that's fine; drafting
+ * is idempotent and cheap relative to a duplicate send).
+ *
+ * ## Partial-failure semantics
+ *
+ * The claim runs BEFORE the actual send. If the process crashes
+ * between claim and dispatch, the target sits at `sent` without an
+ * approval row or delivered message. This is a recoverable
+ * observability state — the operator sees a target marked sent with
+ * no matching approval and investigates. We accept this trade-off
+ * because the alternative (claim AFTER send) reintroduces the
+ * double-send race we're closing here, which is a strict correctness
+ * violation. On a clean dispatch failure (Resend returns an error
+ * synchronously), we explicitly rollback the claim:
+ * `send_status='pending'`, `variant_id=null` — operator can retry.
  */
 
 export interface AutopilotResult {
@@ -337,6 +368,40 @@ export async function autopilotSendBatch(
       continue;
     }
 
+    // Atomic claim — flip send_status='pending' → 'sent' in one
+    // UPDATE keyed on the still-pending precondition. Postgres
+    // serializes concurrent UPDATEs on the same row, so exactly one
+    // batch wins the claim per target. RETURNING tells us whether
+    // we won (1 row) or lost (0 rows). Loser skips — drafting work
+    // is discarded but we do NOT double-send. variant_id is stamped
+    // here (not after dispatch) so concurrent batches can't both
+    // claim with different variant ids.
+    const claim = await db
+      .update(marketProbeTargets)
+      .set({
+        sendStatus: 'sent',
+        variantId: variant?.id ?? null,
+        lastTouchAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(marketProbeTargets.id, t.id),
+          eq(marketProbeTargets.sendStatus, 'pending'),
+        ),
+      )
+      .returning({ id: marketProbeTargets.id });
+    if (claim.length === 0) {
+      // Concurrent batch already claimed this target. Drop the draft
+      // and move on — the other batch is the one dispatching.
+      skipped.push({
+        targetId: t.id,
+        entitySlug: t.entitySlug,
+        reason: 'concurrent batch claimed target',
+      });
+      continue;
+    }
+
     // Insert approval row. tier=1 → decision='auto_approved'; tier=0
     // would queue manually but autopilot already gated tier>=1.
     const approvalId = createId();
@@ -415,6 +480,19 @@ export async function autopilotSendBatch(
     });
 
     if (!result.ok) {
+      // Rollback the atomic claim — flip target back to 'pending'
+      // and clear the variant assignment so a future batch can pick
+      // it up cleanly. Without this the target stays stuck at
+      // 'sent' despite no email actually being delivered.
+      await db
+        .update(marketProbeTargets)
+        .set({
+          sendStatus: 'pending',
+          variantId: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(marketProbeTargets.id, t.id));
+
       // Demote approval back to pending so the operator can retry —
       // same pattern as the conversation-agent's autoExecuteReply
       // post-PR #552 fix.
@@ -447,20 +525,6 @@ export async function autopilotSendBatch(
       });
       continue;
     }
-
-    await db
-      .update(marketProbeTargets)
-      .set({
-        sendStatus: 'sent',
-        lastTouchAt: new Date(),
-        // Phase 2I.4 — record which variant produced this send so
-        // outcome aggregation by variant works. Null when the probe
-        // had no variants (Phase 2H probes); aggregator handles
-        // that bucket as "(unassigned)".
-        variantId: variant?.id ?? null,
-        updatedAt: new Date(),
-      })
-      .where(eq(marketProbeTargets.id, t.id));
 
     sent += 1;
   }
