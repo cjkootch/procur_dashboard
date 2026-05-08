@@ -119,3 +119,4 @@ export * from './market-probes';
 export * from './market-atlas-facts';
 export * from './market-probe-strategy-proposals';
 export * from './market-probe-hypotheses';
+export * from './market-map-segments';

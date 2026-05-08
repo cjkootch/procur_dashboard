@@ -147,6 +147,19 @@ export const marketProbeTargets = pgTable(
       .notNull()
       .default('pending'),
 
+    /** Structured boolean signals (migration 0098, Phase 2E). Keyed
+     *  by signal name → boolean. Joined against reply outcomes by
+     *  the scorecard helper to compute signal validation. Canonical
+     *  signal kinds (free text — taxonomy can grow additively):
+     *    procurement_email_found, named_contact_found,
+     *    imports_relevant_products, cold_storage,
+     *    serves_hotels_restaurants, active_website, apollo_contact,
+     *    recent_hiring, tender_or_procurement_signal */
+    signalsPresent: jsonb('signals_present')
+      .$type<Record<string, boolean>>()
+      .notNull()
+      .default({}),
+
     /** 'pending' | 'drafted' | 'queued' | 'sent' | 'bounced' | 'skipped'. */
     sendStatus: text('send_status').notNull().default('pending'),
     lastTouchAt: timestamp('last_touch_at', { withTimezone: true }),
@@ -236,3 +249,21 @@ export const TARGET_JUSTIFICATION_STATES = [
 ] as const;
 export type TargetJustificationState =
   (typeof TARGET_JUSTIFICATION_STATES)[number];
+
+/**
+ * Canonical signal taxonomy for `market_probe_targets.signals_present`.
+ * Free text in DB (taxonomy can grow additively without migration);
+ * this constant lists the canonical kinds the scorecard reports on.
+ */
+export const PROBE_SIGNAL_KINDS = [
+  'procurement_email_found',
+  'named_contact_found',
+  'imports_relevant_products',
+  'cold_storage',
+  'serves_hotels_restaurants',
+  'active_website',
+  'apollo_contact',
+  'recent_hiring',
+  'tender_or_procurement_signal',
+] as const;
+export type ProbeSignalKind = (typeof PROBE_SIGNAL_KINDS)[number];
