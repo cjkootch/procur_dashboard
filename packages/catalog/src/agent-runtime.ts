@@ -7,6 +7,7 @@ import {
   db,
   events,
   feedbackEvents,
+  marketProbes,
 } from '@procur/db';
 import { ActionDescriptor, createId, type ActionDescriptorT } from '@procur/ai';
 import {
@@ -230,6 +231,182 @@ export async function editApprovalPayloadField(input: {
   const updated = await getApproval(input.approvalId);
   if (!updated) return { ok: false, reason: 'not_found' };
   return { ok: true, row: updated };
+}
+
+/**
+ * Translate one free-text field on a pending approval's payload to a
+ * target language and persist BOTH versions — the wire copy goes
+ * into the field; the operator's original is preserved on
+ * payload.translation_audit so the approval card can render
+ * "Original (en): ..." alongside the translated body.
+ *
+ * Memory shape on the payload:
+ *   translation_audit: [
+ *     {
+ *       field: 'body' | 'subject',
+ *       original_text: string,
+ *       translation: string,
+ *       source_language: 'en',
+ *       target_language: 'ja',
+ *       translated_at: ISO string,
+ *     },
+ *     ...
+ *   ]
+ *
+ * Multiple translations append rather than replace — operator can
+ * iterate (translate to JP, change mind, translate to KO) and the
+ * audit trail reflects the sequence. Latest entry per field is what
+ * the UI surfaces as "the operator's original."
+ *
+ * Probe-aware: when the approval payload carries market_probe_id
+ * (autopilot-inserted approvals do), the helper reads the probe's
+ * formality_level + domain_hint and passes them to the translator
+ * so the wire copy honors the same steering used elsewhere.
+ *
+ * Idempotent on (approval_id, decision='pending'): rejected /
+ * approved approvals can't be retranslated. No-translation-needed
+ * (operator already wrote in the target language) returns ok with
+ * translated=false; the field is unchanged.
+ */
+export async function translateApprovalField(input: {
+  approvalId: string;
+  field: 'body' | 'subject';
+  targetLanguage: string;
+  userId: string | null;
+}): Promise<
+  | {
+      ok: true;
+      row: ApprovalListRow;
+      translated: boolean;
+      sourceLanguage: string;
+    }
+  | {
+      ok: false;
+      reason:
+        | 'not_found'
+        | 'not_pending'
+        | 'field_empty'
+        | 'translation_failed';
+    }
+> {
+  const existing = await getApproval(input.approvalId);
+  if (!existing) return { ok: false, reason: 'not_found' };
+  if (existing.decision !== 'pending') {
+    return { ok: false, reason: 'not_pending' };
+  }
+  const before = existing.proposedPayload[input.field];
+  if (typeof before !== 'string' || before.trim().length === 0) {
+    return { ok: false, reason: 'field_empty' };
+  }
+
+  // Probe-aware steering — when the approval came from probe
+  // autopilot, market_probe_id is on the payload. Look up the probe
+  // and pass formality + domain hint into the translator so the wire
+  // copy honors the same steering the drafter used.
+  const probeId =
+    typeof existing.proposedPayload['market_probe_id'] === 'string'
+      ? (existing.proposedPayload['market_probe_id'] as string)
+      : null;
+  let formalityLevel: 'high' | 'professional' | 'casual' | undefined;
+  let domainHint: string | undefined;
+  if (probeId) {
+    const [probeRow] = await db
+      .select({
+        formalityLevel: marketProbes.formalityLevel,
+        domainHint: marketProbes.domainHint,
+      })
+      .from(marketProbes)
+      .where(eq(marketProbes.id, probeId))
+      .limit(1);
+    if (probeRow) {
+      const fl = probeRow.formalityLevel;
+      if (fl === 'high' || fl === 'professional' || fl === 'casual') {
+        formalityLevel = fl;
+      }
+      if (probeRow.domainHint) domainHint = probeRow.domainHint;
+    }
+  }
+
+  // Lazy import so the catalog package doesn't pull @procur/ai's
+  // entire executor surface for callers that don't translate. Same
+  // pattern as autopilot's lazy executor import.
+  const { translateOutboundMessage } = await import('@procur/ai');
+  const result = await translateOutboundMessage({
+    text: before,
+    targetLanguage: input.targetLanguage,
+    ...(formalityLevel ? { formalityLevel } : {}),
+    ...(domainHint ? { domainHint } : {}),
+  });
+  if (!result) {
+    return { ok: false, reason: 'translation_failed' };
+  }
+  // No-op when source already matched target — return ok but don't
+  // mutate the payload. Caller can surface "already in <lang>" to
+  // the operator.
+  if (result.noTranslationNeeded) {
+    const updated = await getApproval(input.approvalId);
+    if (!updated) return { ok: false, reason: 'not_found' };
+    return {
+      ok: true,
+      row: updated,
+      translated: false,
+      sourceLanguage: result.detectedSourceLanguage,
+    };
+  }
+
+  const auditEntry = {
+    field: input.field,
+    original_text: before,
+    translation: result.translation,
+    source_language: result.detectedSourceLanguage,
+    target_language: input.targetLanguage.toLowerCase(),
+    translated_at: new Date().toISOString(),
+  };
+  const priorAudit = Array.isArray(
+    existing.proposedPayload['translation_audit'],
+  )
+    ? (existing.proposedPayload['translation_audit'] as unknown[])
+    : [];
+  const nextPayload = {
+    ...existing.proposedPayload,
+    [input.field]: result.translation,
+    translation_audit: [...priorAudit, auditEntry],
+  };
+  await db
+    .update(approvals)
+    .set({ proposedPayload: nextPayload })
+    .where(
+      and(
+        eq(approvals.id, input.approvalId),
+        eq(approvals.decision, 'pending'),
+      ),
+    );
+  // Record the translation as a feedback event so we can later
+  // analyze which probes / domains lean on translation most.
+  await db.insert(feedbackEvents).values({
+    userId: input.userId ?? null,
+    feedbackKind: 'communication_edit',
+    targetType: 'approval',
+    targetId: input.approvalId,
+    payload: {
+      action_type: existing.actionType,
+      field: input.field,
+      kind: 'translation',
+      source_language: result.detectedSourceLanguage,
+      target_language: input.targetLanguage.toLowerCase(),
+      original_text: before,
+      translated_text: result.translation,
+      probe_id: probeId,
+    },
+  });
+  const updated = await getApproval(input.approvalId);
+  if (!updated) return { ok: false, reason: 'not_found' };
+  return {
+    ok: true,
+    row: updated,
+    translated: true,
+    sourceLanguage: result.detectedSourceLanguage,
+  };
 }
 
 /**

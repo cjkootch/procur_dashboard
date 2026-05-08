@@ -164,3 +164,145 @@ ${clamp(body)}`;
     return null;
   }
 }
+
+/**
+ * Outbound translation memory. Operator composes a reply in English
+ * (or whatever they're comfortable writing in); this Haiku call
+ * translates the body for the wire while keeping the original
+ * verbatim for audit. Used by /api/approvals/[id]/translate-outbound
+ * and the approval card composer button.
+ *
+ * Discipline mirrors translateInboundMessage:
+ *   - never throws; returns null on any failure (caller falls back
+ *     to the operator's original text untranslated, with an error
+ *     surfaced in the UI).
+ *   - skips when input is empty / no API key.
+ *   - clamps long inputs at 4000 chars.
+ *
+ * Differences from inbound:
+ *   - target language is operator-specified (not detected). The
+ *     source language IS detected so we can short-circuit when the
+ *     operator already wrote in the target language.
+ *   - register-aware via formality + domain hint — these flow from
+ *     the linked probe (when one exists) so the translated wire
+ *     copy matches the per-probe steering used elsewhere.
+ *   - preserves a list of proper nouns verbatim (company names,
+ *     vessel names) — the operator may have referenced these
+ *     specifically and translation shouldn't garble them.
+ */
+
+export interface TranslatedOutbound {
+  /** ISO 639-1 lowercase code detected from the source text. */
+  detectedSourceLanguage: string;
+  /** Translated text. When detectedSourceLanguage === targetLanguage,
+   *  this equals the input verbatim and `noTranslationNeeded` is true. */
+  translation: string;
+  /** True when the source text is already in the target language —
+   *  caller can skip persisting an "original" since there's no
+   *  delta. */
+  noTranslationNeeded: boolean;
+}
+
+export async function translateOutboundMessage(input: {
+  text: string;
+  /** ISO 639-1 lowercase code (en, ja, fr, ko, zh, es, ...). */
+  targetLanguage: string;
+  /** Optional formality steering — same taxonomy as the probe's
+   *  drafter steering. 'high' triggers honorifics where the target
+   *  language has them. */
+  formalityLevel?: 'high' | 'professional' | 'casual';
+  /** Free-text domain framing — flows verbatim into the system
+   *  prompt so the translation honors the same context the
+   *  drafter does. */
+  domainHint?: string;
+  /** Proper nouns to preserve verbatim (company names, vessel
+   *  names, port names). Avoids garbled localizations of names
+   *  the operator referenced specifically. */
+  preserveProperNouns?: string[];
+}): Promise<TranslatedOutbound | null> {
+  const text = (input.text ?? '').trim();
+  if (!text) return null;
+  const targetLanguage = (input.targetLanguage ?? '').trim().toLowerCase();
+  if (!targetLanguage || targetLanguage.length < 2 || targetLanguage.length > 8) {
+    return null;
+  }
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+
+  const formalityLine =
+    input.formalityLevel === 'high'
+      ? '\nFormality: HIGH — use honorifics where the target language has them (Japanese 敬語, French vous, German Sie, Korean 존댓말, Spanish usted). Indirect register; deferential.'
+      : input.formalityLevel === 'casual'
+        ? '\nFormality: CASUAL — warm-market tone; first-name basis; conversational. Skip "Dear" / "Best regards" formalities.'
+        : '';
+  const domainLine =
+    input.domainHint && input.domainHint.trim().length > 0
+      ? `\nDomain framing: ${input.domainHint.slice(0, 1000)}`
+      : '';
+  const preserveLine =
+    input.preserveProperNouns && input.preserveProperNouns.length > 0
+      ? `\nPreserve verbatim (do NOT translate or transliterate): ${input.preserveProperNouns.slice(0, 30).join(', ')}`
+      : '';
+
+  const system = `You translate outbound business messages on a trading-desk composer. The operator wrote in their native language (typically English); you translate to the target language so the wire copy reads naturally to the recipient.
+
+Detect the source language and return JSON:
+
+  source_language_code:    ISO 639-1 lowercase code of the OPERATOR's input.
+  translation:             Faithful translation into ${targetLanguage}. When the source already IS ${targetLanguage}, return the input verbatim.
+  no_translation_needed:   true ONLY when source_language_code === ${targetLanguage}.
+
+Discipline:
+- Translation should be faithful to meaning, not literal. Preserve trader / commercial register; don't make it more formal or more casual than the original (unless explicitly steered below).
+- Keep proper nouns (company names, vessel names, port names) in their original form.
+- Do NOT add a translator's note. Do NOT add a "Translated by" line. Output is the wire copy that the recipient will read.
+- Do NOT add a salutation if the operator's original didn't have one. Do NOT add a sign-off the operator didn't write.${formalityLine}${domainLine}${preserveLine}
+
+Return ONLY the JSON object — no markdown fences, no commentary.`;
+
+  const user = `Target language: ${targetLanguage}
+
+Operator's text:
+${clamp(text)}`;
+
+  try {
+    const client = getClient();
+    const resp = await client.messages.create({
+      model: MODELS.haiku,
+      max_tokens: 1500,
+      system,
+      messages: [{ role: 'user', content: user }],
+    });
+    const block = resp.content.find((b) => b.type === 'text');
+    const raw = block && 'text' in block ? block.text.trim() : '';
+    if (!raw) return null;
+    const cleaned = raw
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    const parsed = JSON.parse(cleaned) as {
+      source_language_code?: unknown;
+      translation?: unknown;
+      no_translation_needed?: unknown;
+    };
+    const detectedSourceLanguage = String(parsed.source_language_code ?? '')
+      .toLowerCase()
+      .slice(0, 8);
+    const translation =
+      typeof parsed.translation === 'string' && parsed.translation.trim()
+        ? parsed.translation.trim()
+        : null;
+    if (!detectedSourceLanguage || !translation) return null;
+    const noTranslationNeeded =
+      detectedSourceLanguage === targetLanguage ||
+      parsed.no_translation_needed === true;
+    return {
+      detectedSourceLanguage,
+      translation,
+      noTranslationNeeded,
+    };
+  } catch (err) {
+    console.error('[translate] outbound translation failed', err);
+    return null;
+  }
+}

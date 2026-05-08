@@ -265,6 +265,56 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
     }
   };
 
+  /**
+   * Translate one field of the approval payload to a target language.
+   * Mirrors saveEdit's shape — fires the API, syncs the returned
+   * payload, returns ok/error to the EditableField. The audit-trail
+   * chip surfaces from payload.translation_audit which the route
+   * appends on success.
+   */
+  const translateField = async (
+    field: 'body' | 'subject',
+    targetLanguage: string,
+  ): Promise<{ ok: true } | { ok: false; message: string }> => {
+    try {
+      const res = await fetch(
+        `/api/approvals/${output.approvalId}/translate-outbound`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ field, targetLanguage }),
+        },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        return {
+          ok: false,
+          message: body.error ?? `translation failed (${res.status})`,
+        };
+      }
+      const body = (await res.json()) as {
+        translated: boolean;
+        sourceLanguage: string;
+        row: ApprovalRow;
+      };
+      setPayload(body.row.proposedPayload);
+      if (!body.translated) {
+        return {
+          ok: false,
+          message: `text is already in ${targetLanguage} (no translation needed)`,
+        };
+      }
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        message: err instanceof Error ? err.message : 'unknown error',
+      };
+    }
+  };
+
   const bulk = useContext(BulkActionContext);
   useEffect(() => {
     if (!bulk) return;
@@ -349,6 +399,7 @@ export function ApprovalActionCard({ output }: { output: ApprovalActionOutput })
         summary={output.summary}
         editable={state.status === 'pending'}
         onEdit={saveEdit}
+        onTranslate={translateField}
       />
 
       <OutreachEvidencePanel payload={payload} />
@@ -497,13 +548,33 @@ function ActionPreview({
   summary,
   editable,
   onEdit,
+  onTranslate,
 }: {
   actionType: string;
   payload: Record<string, unknown>;
   summary: string;
   editable: boolean;
   onEdit: EditCallback;
+  onTranslate: (
+    field: 'body' | 'subject',
+    targetLanguage: string,
+  ) => Promise<{ ok: true } | { ok: false; message: string }>;
 }) {
+  // Pull the latest translation_audit entry per field so EditableField
+  // can render the wire/original toggle chip.
+  const auditList = Array.isArray(payload['translation_audit'])
+    ? (payload['translation_audit'] as TranslationAuditEntry[])
+    : [];
+  const latestAuditFor = (
+    field: 'body' | 'subject',
+  ): TranslationAuditEntry | null => {
+    for (let i = auditList.length - 1; i >= 0; i -= 1) {
+      const e = auditList[i];
+      if (e && e.field === field) return e;
+    }
+    return null;
+  };
+
   if (actionType === 'email.send') {
     const to = (payload['to'] as string[] | undefined) ?? [];
     return (
@@ -516,6 +587,8 @@ function ActionPreview({
           value={s(payload, 'subject')}
           editable={editable}
           onSave={(v) => onEdit('subject', v)}
+          onTranslate={(lang) => onTranslate('subject', lang)}
+          translationAudit={latestAuditFor('subject')}
           variant="single-line"
           renderClassName="font-semibold"
         />
@@ -524,6 +597,8 @@ function ActionPreview({
           value={s(payload, 'body')}
           editable={editable}
           onSave={(v) => onEdit('body', v)}
+          onTranslate={(lang) => onTranslate('body', lang)}
+          translationAudit={latestAuditFor('body')}
           variant="multi-line"
         />
       </div>
@@ -540,6 +615,8 @@ function ActionPreview({
           value={s(payload, 'body')}
           editable={editable}
           onSave={(v) => onEdit('body', v)}
+          onTranslate={(lang) => onTranslate('body', lang)}
+          translationAudit={latestAuditFor('body')}
           variant="multi-line"
         />
       </div>
@@ -995,11 +1072,27 @@ function OutreachEvidencePanel({ payload }: { payload: Record<string, unknown> }
  * summary row; clicking pencil expands and switches to edit mode in
  * one motion.
  */
+/**
+ * Translation audit entry stored on the approval payload by
+ * translateApprovalField. The latest entry per (field) is what the
+ * card surfaces — earlier entries are kept for audit but not shown.
+ */
+interface TranslationAuditEntry {
+  field: 'body' | 'subject';
+  original_text: string;
+  translation: string;
+  source_language: string;
+  target_language: string;
+  translated_at: string;
+}
+
 function EditableField({
   label,
   value,
   editable,
   onSave,
+  onTranslate,
+  translationAudit,
   variant,
   hideWhenEmpty,
   renderClassName,
@@ -1011,6 +1104,20 @@ function EditableField({
   onSave: (
     v: string,
   ) => Promise<{ ok: true } | { ok: false; message: string }>;
+  /** Optional outbound-translation handler. When provided, an
+   *  inline "Translate to <lang>" affordance renders alongside the
+   *  pencil edit button. Operator types the target language code,
+   *  the call replaces this field's value with the translation
+   *  (preserving the original on the payload's translation_audit
+   *  for the audit-trail chip). */
+  onTranslate?: (
+    targetLanguage: string,
+  ) => Promise<{ ok: true } | { ok: false; message: string }>;
+  /** When this field has a most-recent translation entry on the
+   *  payload's translation_audit, the chip surfaces the original
+   *  with a click-to-show toggle similar to inbound's
+   *  TranslatableText. */
+  translationAudit?: TranslationAuditEntry | null;
   variant: 'single-line' | 'multi-line';
   hideWhenEmpty?: boolean;
   renderClassName?: string;
@@ -1020,6 +1127,11 @@ function EditableField({
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [translatePopoverOpen, setTranslatePopoverOpen] = useState(false);
+  const [translateTarget, setTranslateTarget] = useState('');
+  const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+  const [showOriginal, setShowOriginal] = useState(false);
 
   // Reset draft when the underlying value changes from outside (e.g.
   // hydrate fetch resolved with a more recent revision than the
@@ -1120,15 +1232,113 @@ function EditableField({
     </button>
   );
 
+  const handleTranslate = async () => {
+    if (!onTranslate) return;
+    const target = translateTarget.trim().toLowerCase();
+    if (!/^[a-z]{2}$/.test(target)) {
+      setTranslateError('expected 2-letter ISO code (e.g. ja, fr, ko)');
+      return;
+    }
+    setTranslating(true);
+    setTranslateError(null);
+    const result = await onTranslate(target);
+    setTranslating(false);
+    if (result.ok) {
+      setTranslatePopoverOpen(false);
+      setTranslateTarget('');
+    } else {
+      setTranslateError(result.message);
+    }
+  };
+
+  const translateAffordance = editable && onTranslate && (
+    <div className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setTranslatePopoverOpen((v) => !v)}
+        title="Translate to target language for the wire"
+        aria-label="Translate"
+        className="text-[10px] font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+      >
+        Translate
+      </button>
+      {translatePopoverOpen && (
+        <div className="absolute right-0 top-5 z-10 flex items-center gap-1 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] p-1 shadow-md">
+          <input
+            type="text"
+            value={translateTarget}
+            onChange={(e) => setTranslateTarget(e.target.value)}
+            placeholder="ja"
+            maxLength={2}
+            disabled={translating}
+            className="w-12 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5 text-xs uppercase"
+          />
+          <button
+            type="button"
+            onClick={handleTranslate}
+            disabled={translating || translateTarget.trim().length !== 2}
+            className="rounded-[var(--radius-sm)] bg-[color:var(--color-foreground)] px-2 py-0.5 text-xs font-medium text-[color:var(--color-background)] disabled:opacity-50"
+          >
+            {translating ? '...' : 'Go'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setTranslatePopoverOpen(false);
+              setTranslateTarget('');
+              setTranslateError(null);
+            }}
+            disabled={translating}
+            className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-1 py-0.5 text-xs"
+          >
+            ×
+          </button>
+        </div>
+      )}
+      {translateError && (
+        <span className="ml-2 text-[10px] text-red-700">{translateError}</span>
+      )}
+    </div>
+  );
+
+  // Translation chip — when this field's most-recent audit entry is
+  // present, surface the wire/original toggle. Mirrors inbound's
+  // TranslatableText UX so operator gets the same mental model on
+  // both ends of a non-English thread.
+  const translationChip = translationAudit && translationAudit.field === label.toLowerCase() && (
+    <button
+      type="button"
+      onClick={() => setShowOriginal((v) => !v)}
+      title={
+        showOriginal
+          ? `Show wire copy (${translationAudit.target_language})`
+          : `Show original (${translationAudit.source_language})`
+      }
+      className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)] hover:border-[color:var(--color-foreground)] hover:text-[color:var(--color-foreground)]"
+    >
+      {showOriginal
+        ? `Original (${translationAudit.source_language}) — show wire`
+        : `Translated to ${translationAudit.target_language} — show original`}
+    </button>
+  );
+
+  // What gets rendered: when toggled to "show original", display the
+  // operator's pre-translation text from the audit row; otherwise
+  // the field's current value (which IS the translation post-call).
+  const displayValue =
+    showOriginal && translationAudit ? translationAudit.original_text : value;
+
   if (collapsedByDefault) {
     return (
       <details className="text-xs">
         <summary className="flex cursor-pointer items-center gap-2 text-[color:var(--color-muted-foreground)]">
           <span>{label}</span>
           {pencil}
+          {translateAffordance}
         </summary>
+        {translationChip && <div className="mt-1">{translationChip}</div>}
         <pre className={`mt-1 whitespace-pre-wrap break-words font-sans ${renderClassName ?? ''}`}>
-          {value}
+          {displayValue}
         </pre>
       </details>
     );
@@ -1136,20 +1346,30 @@ function EditableField({
 
   if (variant === 'single-line') {
     return (
-      <div className="flex items-baseline gap-2">
-        <p className={renderClassName ?? ''}>{value}</p>
-        {pencil}
+      <div className="space-y-1">
+        <div className="flex items-baseline gap-2">
+          <p className={renderClassName ?? ''}>{displayValue}</p>
+          {pencil}
+          {translateAffordance}
+        </div>
+        {translationChip}
       </div>
     );
   }
   return (
-    <div className="flex items-start gap-2">
-      <pre
-        className={`flex-1 whitespace-pre-wrap break-words font-sans text-sm leading-relaxed ${renderClassName ?? ''}`}
-      >
-        {value}
-      </pre>
-      <span className="mt-1 shrink-0">{pencil}</span>
+    <div className="space-y-1">
+      {translationChip}
+      <div className="flex items-start gap-2">
+        <pre
+          className={`flex-1 whitespace-pre-wrap break-words font-sans text-sm leading-relaxed ${renderClassName ?? ''}`}
+        >
+          {displayValue}
+        </pre>
+        <span className="mt-1 flex shrink-0 flex-col items-end gap-1">
+          {pencil}
+          {translateAffordance}
+        </span>
+      </div>
     </div>
   );
 }
