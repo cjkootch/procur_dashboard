@@ -34,6 +34,7 @@ export * from './market-atlas';
 export * from './market-probe-strategy';
 export * from './market-probe-hypotheses';
 export * from './market-probe-measurement';
+export * from './entity-facts';
 export * from './market-playbooks';
 export * from './market-portfolio';
 export * from './probe-conversations';
