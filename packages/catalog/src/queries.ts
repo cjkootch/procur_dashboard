@@ -68,7 +68,7 @@ import { searchOrgs as apolloSearchOrgs } from '@procur/apollo';
  * Use this whenever a JS array needs to land in a `= ANY(...)` or
  * `&& ...` clause typed as text[] / uuid[].
  */
-function pgArray(values: readonly string[], elemType: 'text' | 'uuid' = 'text') {
+export function pgArray(values: readonly string[], elemType: 'text' | 'uuid' = 'text') {
   if (values.length === 0) {
     return sql`ARRAY[]::${sql.raw(elemType)}[]`;
   }
@@ -7555,11 +7555,16 @@ export async function getEnrichedApolloPersonIdsForEntity(
   apolloPersonIds: readonly string[],
 ): Promise<Set<string>> {
   if (apolloPersonIds.length === 0) return new Set();
+  // pgArray() builds an explicit ARRAY[...]::text[] literal; the bare
+  // `${arr}::text[]` template form serializes through neon-http as a
+  // record literal and Postgres rejects it ("malformed array literal" /
+  // "cannot cast type record to text[]"). Same fix pattern as the
+  // commodity-prices loader below.
   const result = await db.execute(sql`
     SELECT apollo_person_id
       FROM entity_contact_enrichments
      WHERE entity_slug = ${entitySlug}
-       AND apollo_person_id = ANY(${apolloPersonIds as string[]}::text[])
+       AND apollo_person_id = ANY(${pgArray(apolloPersonIds)})
        AND apollo_last_refreshed_at IS NOT NULL
   `);
   const enriched = new Set<string>();
@@ -7902,7 +7907,7 @@ export async function getMarketMoveBanner(
           ORDER BY cp.price_date ASC
         ) AS rn_asc
       FROM commodity_prices cp
-      WHERE cp.series_slug = ANY(${slugs}::text[])
+      WHERE cp.series_slug = ANY(${pgArray(slugs)})
         AND cp.contract_type = 'spot'
         AND cp.price_date >= CURRENT_DATE - ${windowDays}::int
     )

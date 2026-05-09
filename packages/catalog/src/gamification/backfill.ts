@@ -7,6 +7,7 @@ import {
   type NewXpLedgerRow,
 } from '@procur/db';
 import { and, eq, isNotNull, sql } from 'drizzle-orm';
+import { pgArray } from '../queries';
 import { xpRuleFor } from './xp-rules';
 
 export interface BackfillSummary {
@@ -69,7 +70,7 @@ export async function backfillGamificationLedger(): Promise<BackfillSummary> {
   }>(sql`
     SELECT id, verb, occurred_at
     FROM events
-    WHERE verb = ANY(${outreachVerbs}::text[])
+    WHERE verb = ANY(${pgArray(outreachVerbs)})
     ORDER BY occurred_at
   `);
   for (const r of outreachRows.rows) {
