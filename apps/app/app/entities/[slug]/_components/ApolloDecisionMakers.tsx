@@ -115,6 +115,7 @@ function ApolloPersonRow({
             <Pair
               label="Email"
               value={contact.email.value}
+              href={`mailto:${contact.email.value}`}
               confidence={contact.email.confidence}
             />
           )}
@@ -122,6 +123,7 @@ function ApolloPersonRow({
             <Pair
               label="Direct phone"
               value={contact.phone.value}
+              href={`tel:${contact.phone.value.replace(/[^+\d]/g, '')}`}
               confidence={contact.phone.confidence}
             />
           )}
@@ -129,6 +131,8 @@ function ApolloPersonRow({
             <Pair
               label="LinkedIn"
               value={contact.linkedinUrl.value}
+              href={contact.linkedinUrl.value}
+              external
               confidence={contact.linkedinUrl.confidence}
             />
           )}
@@ -142,16 +146,31 @@ function Pair({
   label,
   value,
   confidence,
+  href,
+  external,
 }: {
   label: string;
   value: string;
   confidence: number;
+  href?: string;
+  external?: boolean;
 }) {
   return (
     <div className="min-w-0">
       <p className="text-[10px] uppercase tracking-wide">{label}</p>
       <p className="truncate text-[color:var(--color-foreground)]">
-        {value}{' '}
+        {href ? (
+          <a
+            href={href}
+            target={external ? '_blank' : undefined}
+            rel={external ? 'noopener noreferrer' : undefined}
+            className="hover:underline"
+          >
+            {value}
+          </a>
+        ) : (
+          value
+        )}{' '}
         <span
           title={`Confidence: ${(confidence * 100).toFixed(0)}%`}
           className="text-[10px] text-[color:var(--color-muted-foreground)]"
