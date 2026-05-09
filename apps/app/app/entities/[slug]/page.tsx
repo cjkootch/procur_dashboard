@@ -139,6 +139,19 @@ export default async function EntityProfilePage({ params }: Props) {
                   </span>
                 </>
               )}
+              {profile.websiteUrl && (
+                <>
+                  {' · '}
+                  <a
+                    href={profile.websiteUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:underline"
+                  >
+                    {profile.websiteUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                  </a>
+                </>
+              )}
             </p>
             {profile.categories.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">

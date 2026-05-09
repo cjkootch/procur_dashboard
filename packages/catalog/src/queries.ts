@@ -5177,6 +5177,10 @@ export interface EntityProfileResult {
    *  location is known (multinational trading houses, etc.). */
   latitude: number | null;
   longitude: number | null;
+  /** Public website. Read from known_entities.metadata.website_url
+   *  (operator-set via propose_update_known_entity, or seeded
+   *  via the curated rolodex). NULL when unknown. */
+  websiteUrl: string | null;
   /** Resolved external_suppliers.id if this entity has portal-scraped
    *  presence. Null when known-entity-only. */
   matchedSupplierId: string | null;
@@ -5413,6 +5417,7 @@ export async function getEntityProfile(
     },
     latitude: knownEntity?.latitude ?? null,
     longitude: knownEntity?.longitude ?? null,
+    websiteUrl: stringOrNull(meta.website_url),
     matchedSupplierId: supplierId,
     publicTenderActivity,
   };
@@ -5467,6 +5472,7 @@ function notFoundProfile(slugOrId: string): EntityProfileResult {
     },
     latitude: null,
     longitude: null,
+    websiteUrl: null,
     matchedSupplierId: null,
     publicTenderActivity: null,
   };
