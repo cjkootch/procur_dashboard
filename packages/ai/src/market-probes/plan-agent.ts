@@ -17,6 +17,21 @@ export interface ProposedHypothesis {
 export interface ProbePlanResult {
   plan: ProbePlan;
   hypotheses: ProposedHypothesis[];
+  /** Drafter-steering recommendations the plan agent inferred from
+   *  country + product thesis + market shape. Caller applies via
+   *  setProbeDrafterSteering after the plan lands. Any field nullable
+   *  — agent returns null when no specific recommendation is warranted
+   *  and the probe should fall back to global defaults. */
+  steering: {
+    formalityLevel: 'high' | 'professional' | 'casual' | null;
+    /** ISO 639-1 code (e.g. 'es', 'ja') or null. Null means the
+     *  drafter falls back to per-target country detection at dispatch
+     *  time — appropriate for multi-country probes. */
+    outreachLanguage: string | null;
+    /** 1-2 sentence operator-domain framing (capped at 1000 chars
+     *  downstream). */
+    domainHint: string | null;
+  };
 }
 
 /**
@@ -93,6 +108,15 @@ Output a single JSON object with these fields:
 - "outreachAngle": one sentence — what shape of email the agent will send. Should be ROUTING-style ("are you the right person?") UNLESS the probe is past pain_discovery.
 - "successCriteria": 3-5 measurable outcomes the operator should expect at probe end (e.g. "5+ named procurement contacts identified", "3+ replies", "1+ qualified buying process").
 - "tasks": array of {id, label} representing the operator-visible checklist. Reuse stable ids: generate_plan, identify_targets, find_contacts, draft_first_touch, send_first_touch, monitor_replies, summarize_findings. Mark "generate_plan" as the FIRST task with status "done" since the act of returning this JSON IS that task.
+- "formalityLevel": "high" | "professional" | "casual". Pick based on country + market shape:
+    - "high" — Japan / Korea / formal-language markets, senior succession-stage M&A, government / SOE / sovereign procurement. Honorifics + indirection.
+    - "professional" — default for US / EU / LatAm B2B procurement. Direct but courteous; first-name basis.
+    - "casual" — warm-market follow-ups, startup-stage buyers, English-language SMB. Conversational.
+- "outreachLanguage": ISO 639-1 code (e.g. "es" for Spanish-speaking countries, "ja" for Japan, "pt" for Brazil/Portugal, "fr" for France, "de" for Germany). Use the dominant business language of the country. Use null when the probe spans multiple language regions (e.g. Caribbean spans EN/ES/NL/FR) — the drafter will then fall back to per-contact country detection. Use "en" only for explicitly English-speaking markets (US, UK, Ireland, Australia, etc.).
+- "domainHint": 1-2 sentence operator-domain framing for the drafter prompt. Captures the SHAPE of first contact the base drafter prompt can't infer. Examples:
+    - Fuel procurement: "Standard supply-side first-touch — confirm which contact handles refined-fuel sourcing; do NOT discuss pricing, volumes, or payment terms in the first message."
+    - Succession M&A: "Exploratory M&A conversation with a succession-stage business owner. Lead with respect for what they've built; do NOT lead with valuation; goal of first contact is to learn whether succession is on their mind, not to make an offer."
+  Keep under 400 chars.
 
 Constraints:
 - The probe is bounded by daily/total send caps the operator has already set. Don't propose volumes the caps can't sustain.
@@ -121,6 +145,7 @@ export async function generateProbePlan(
         generationError: 'ANTHROPIC_API_KEY is not set in this environment.',
       },
       hypotheses: [],
+      steering: EMPTY_STEERING,
     };
   }
 
@@ -196,6 +221,7 @@ Produce the plan JSON.`,
         generationError: `Sonnet response truncated at max_tokens=2500. Used ${response.usage?.output_tokens ?? '?'} output tokens before being cut. Bump the cap or shorten the prompt.`,
       },
       hypotheses: [],
+      steering: EMPTY_STEERING,
     };
   }
 
@@ -223,6 +249,7 @@ Produce the plan JSON.`,
         generationError: `Sonnet returned malformed JSON (stop_reason=${response.stop_reason}). Raw prefix: ${text.slice(0, 200)}`,
       },
       hypotheses: [],
+      steering: EMPTY_STEERING,
     };
   }
 
@@ -251,8 +278,34 @@ Produce the plan JSON.`,
           h.statement.length > 0,
       )
     : [];
-  return { plan, hypotheses };
+
+  const rawSteering = (parsed as Record<string, unknown>) ?? {};
+  const formality = rawSteering['formalityLevel'];
+  const lang = rawSteering['outreachLanguage'];
+  const hint = rawSteering['domainHint'];
+  const steering: ProbePlanResult['steering'] = {
+    formalityLevel:
+      formality === 'high' || formality === 'professional' || formality === 'casual'
+        ? formality
+        : null,
+    outreachLanguage:
+      typeof lang === 'string' && /^[a-z]{2}$/i.test(lang.trim())
+        ? lang.trim().toLowerCase()
+        : null,
+    domainHint:
+      typeof hint === 'string' && hint.trim().length > 0
+        ? hint.trim().slice(0, 1000)
+        : null,
+  };
+
+  return { plan, hypotheses, steering };
 }
+
+const EMPTY_STEERING: ProbePlanResult['steering'] = {
+  formalityLevel: null,
+  outreachLanguage: null,
+  domainHint: null,
+};
 
 function defaultPlan(ctx: ProbeContextForPlan): ProbePlan {
   return {
