@@ -410,3 +410,76 @@ export const COUNTRY_NAME_EXAMPLES: ReadonlyArray<{ name: string; code: string }
   { name: 'United States', code: 'US' },
   { name: 'United Kingdom', code: 'GB' },
 ];
+
+/**
+ * Dominant business-language map for outreach drafting. ISO 3166-1 alpha-2
+ * country code → ISO 639-1 language code. Used by the autopilot when a
+ * probe has no probe-level `outreachLanguage` set — it falls back to
+ * per-target language detection via this table so a multi-country probe
+ * can email a Peru contact in Spanish and a Brazil contact in Portuguese
+ * without the operator forking the probe.
+ *
+ * The map is intentionally conservative: only countries with a clearly
+ * dominant business language. Multilingual / mixed-language markets
+ * (Belgium, Switzerland, Canada, India, South Africa) are omitted —
+ * lookup returns null and the drafter falls back to English, which is a
+ * safer default than guessing wrong.
+ *
+ * Operator can always force a specific language by setting
+ * `probe.outreachLanguage` explicitly.
+ */
+const COUNTRY_TO_LANGUAGE: Record<string, string> = {
+  // Spanish-language Latin America
+  AR: 'es', BO: 'es', CL: 'es', CO: 'es', CR: 'es', CU: 'es', DO: 'es',
+  EC: 'es', SV: 'es', GT: 'es', HN: 'es', MX: 'es', NI: 'es', PA: 'es',
+  PY: 'es', PE: 'es', UY: 'es', VE: 'es',
+  // Portuguese-language
+  BR: 'pt', PT: 'pt', AO: 'pt', MZ: 'pt',
+  // French-language Europe + North Africa + Francophone Africa
+  FR: 'fr', MC: 'fr', SN: 'fr', CI: 'fr', ML: 'fr', BF: 'fr', NE: 'fr',
+  TG: 'fr', BJ: 'fr', GA: 'fr', CG: 'fr', CD: 'fr', MG: 'fr', DZ: 'fr',
+  TN: 'fr',
+  // German-language
+  DE: 'de', AT: 'de',
+  // Dutch
+  NL: 'nl',
+  // Italian
+  IT: 'it',
+  // Spanish-language Europe
+  ES: 'es',
+  // East Asia
+  JP: 'ja', KR: 'ko', CN: 'zh', TW: 'zh', HK: 'zh',
+  // Southeast Asia
+  TH: 'th', VN: 'vi', ID: 'id',
+  // Slavic
+  PL: 'pl', CZ: 'cs', SK: 'sk', RU: 'ru', UA: 'uk', BG: 'bg', RS: 'sr',
+  HR: 'hr',
+  // Nordic
+  SE: 'sv', NO: 'no', DK: 'da', FI: 'fi', IS: 'is',
+  // Other Europe
+  GR: 'el', HU: 'hu', RO: 'ro', TR: 'tr', AL: 'sq', LT: 'lt', LV: 'lv',
+  EE: 'et', SI: 'sl',
+  // Middle East / Arabic-language (when dominant)
+  SA: 'ar', AE: 'ar', EG: 'ar', JO: 'ar', LB: 'ar', KW: 'ar', QA: 'ar',
+  OM: 'ar', BH: 'ar', IQ: 'ar', LY: 'ar', SY: 'ar', YE: 'ar',
+  // Persian
+  IR: 'fa',
+  // Hebrew
+  IL: 'he',
+};
+
+/**
+ * Resolve a target country to its dominant business language for
+ * outreach drafting. Returns null for English-speaking markets +
+ * unmapped / multilingual countries — caller treats null as "fall
+ * back to English / drafter default". Per the drafter's own guidance,
+ * 'en' returns null too (the drafter has no special STEERING block
+ * for English; it's the base case).
+ */
+export function countryToOutreachLanguage(
+  countryIso2: string | null | undefined,
+): string | null {
+  if (!countryIso2) return null;
+  const code = countryIso2.trim().toUpperCase();
+  return COUNTRY_TO_LANGUAGE[code] ?? null;
+}

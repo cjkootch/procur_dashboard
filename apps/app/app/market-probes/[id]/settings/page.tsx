@@ -29,10 +29,25 @@ interface PageProps {
 }
 
 export default async function ProbeSettingsPage({ params }: PageProps) {
-  await requireCompany();
+  const { company } = await requireCompany();
   const { id } = await params;
   const probe = await getProbe(id);
   if (!probe) notFound();
+
+  // Effective outreach identity = per-probe override OR company default.
+  // The override panel inputs default to empty when there's no probe-
+  // level override, which makes it look like no identity is set. Surface
+  // the inherited defaults above the inputs so the operator can see
+  // what's actually getting sent.
+  const effectiveAlias =
+    probe.alias?.trim() || company.emailSenderDisplayName?.trim() || null;
+  const effectiveSignatureText =
+    probe.emailSignatureText?.trim() ||
+    company.emailSignatureText?.trim() ||
+    null;
+  const inheritingAlias = !probe.alias?.trim() && !!effectiveAlias;
+  const inheritingSignature =
+    !probe.emailSignatureText?.trim() && !!effectiveSignatureText;
   const [variants, rvmAudioAssets] = await Promise.all([
     listVariants(id),
     listRvmAudioAssetsForProbe(id, { activeOnly: false }),
@@ -264,18 +279,41 @@ export default async function ProbeSettingsPage({ params }: PageProps) {
                 className="mt-2 grid gap-1.5"
               >
                 <input type="hidden" name="probeId" value={probe.id} />
-                <p className="text-[10px] text-[color:var(--color-muted-foreground)]">
-                  Per-probe alias + signature override the company defaults
-                  at /settings/email for autopilot dispatch and
-                  submit_lead_form. Leave blank to fall back.
-                </p>
+                {effectiveAlias || effectiveSignatureText ? (
+                  <div className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30 px-2 py-1.5 text-[11px]">
+                    <div className="font-medium">
+                      Currently sending as: {effectiveAlias ?? '(no alias set)'}
+                    </div>
+                    {effectiveSignatureText && (
+                      <pre className="mt-1 whitespace-pre-wrap font-mono text-[10px] text-[color:var(--color-muted-foreground)]">
+                        {effectiveSignatureText}
+                      </pre>
+                    )}
+                    {(inheritingAlias || inheritingSignature) && (
+                      <p className="mt-1 text-[10px] italic text-[color:var(--color-muted-foreground)]">
+                        Inherited from /settings/email. Fill the fields below
+                        to override for this probe only.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-[color:var(--color-muted-foreground)]">
+                    No outreach identity set. Save defaults at /settings/email
+                    once so every probe inherits them, or fill the fields
+                    below to set a per-probe override.
+                  </p>
+                )}
                 <label className="grid gap-1">
                   <span>Alias (sender display name)</span>
                   <input
                     type="text"
                     name="alias"
                     defaultValue={probe.alias ?? ''}
-                    placeholder="e.g. Ana Martinez or Procurement Desk"
+                    placeholder={
+                      company.emailSenderDisplayName
+                        ? `Leave blank to inherit "${company.emailSenderDisplayName}"`
+                        : 'e.g. Cole Kutschinski or Procurement Desk'
+                    }
                     maxLength={120}
                     className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-0.5 text-xs"
                   />
@@ -287,7 +325,11 @@ export default async function ProbeSettingsPage({ params }: PageProps) {
                     defaultValue={probe.emailSignatureText ?? ''}
                     rows={4}
                     maxLength={2000}
-                    placeholder={'Ana Martinez\nProcur • +1 555 0100'}
+                    placeholder={
+                      company.emailSignatureText
+                        ? 'Leave blank to inherit the company default above.'
+                        : 'Cole Kutschinski\nPresident\n+1 832 492 7169'
+                    }
                     className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-1 py-1 text-xs font-mono"
                   />
                 </label>

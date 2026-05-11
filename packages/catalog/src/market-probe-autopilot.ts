@@ -24,6 +24,7 @@ import {
   probeFormalityGuidance,
 } from './communication-recommendations';
 import { computeProbeScorecard } from './market-probe-measurement';
+import { countryToOutreachLanguage } from './country-codes';
 import { setProbeStatus } from './market-probes';
 import { listHypothesesForProbe } from './market-probe-hypotheses';
 import { pickVariantForTarget } from './market-probe-variants';
@@ -356,6 +357,7 @@ export async function autopilotSendBatch(
     .select({
       target: marketProbeTargets,
       scoutProtection: knownEntities.scoutProtection,
+      entityCountry: knownEntities.country,
     })
     .from(marketProbeTargets)
     .leftJoin(
@@ -372,6 +374,21 @@ export async function autopilotSendBatch(
     )
     .orderBy(asc(marketProbeTargets.fitTier))
     .limit(batchSize * 2); // pull extra to allow some to be filtered
+
+  // Per-target country lookup. Used when probe.outreachLanguage is
+  // null/unset to resolve a per-target outreach language at dispatch
+  // time (via countryToOutreachLanguage) — lets a multi-country probe
+  // email each contact in their dominant business language without
+  // forking the probe per country. Falls back to probe.country when
+  // the rolodex overlay doesn't have a country (e.g. external_suppliers
+  // -only entity).
+  const countryByTargetId = new Map<string, string | null>();
+  for (const r of eligibleRows) {
+    countryByTargetId.set(
+      r.target.id,
+      r.entityCountry ?? probe.country ?? null,
+    );
+  }
 
   // Filter scout-protected
   const eligible: MarketProbeTarget[] = [];
@@ -411,6 +428,16 @@ export async function autopilotSendBatch(
   for (const t of eligible) {
     drafted += 1;
 
+    // Resolve the effective outreach language for THIS target.
+    // Precedence: probe.outreachLanguage (operator-set, or plan-agent
+    // recommendation) > per-target country mapping > English default.
+    // The per-target fallback is the lever for multi-country probes
+    // — when probe.outreachLanguage is null, each contact gets emailed
+    // in their dominant business language.
+    const targetCountry = countryByTargetId.get(t.id) ?? null;
+    const effectiveOutreachLanguage =
+      probe.outreachLanguage ?? countryToOutreachLanguage(targetCountry);
+
     // Resolve a recipient email. Prefer Apollo-enriched contact
     // already on entity_contact_enrichments; fall back to looking up
     // a contact via contactOrgMemberships → organizations matching
@@ -443,7 +470,7 @@ export async function autopilotSendBatch(
     let rvmCountry: string | null = null;
     let rvmAudioLanguage: string | null = null;
     if (!recipient && !leadFormEndpoint && allowsRvm) {
-      rvmAudioLanguage = probe.outreachLanguage ?? 'en';
+      rvmAudioLanguage = effectiveOutreachLanguage ?? 'en';
       const hasAudio = await probeHasActiveAudioForLanguage(
         probe.id,
         rvmAudioLanguage,
@@ -608,10 +635,12 @@ export async function autopilotSendBatch(
                 | 'casual'
                 | null) ?? null,
             domainHint: probe.domainHint,
-            // Outreach-language override — when set, drafter writes
-            // in this language even though the operator's intent is
-            // English. NULL = English (existing behavior).
-            outreachLanguage: probe.outreachLanguage,
+            // Outreach-language override — when set on the probe, drafter
+            // writes in this language. When null, falls back to the
+            // target's country mapping (so a multi-country probe writes
+            // each contact in their dominant business language). When
+            // both are null, drafter defaults to English.
+            outreachLanguage: effectiveOutreachLanguage,
           })
         : null;
 
@@ -718,11 +747,14 @@ export async function autopilotSendBatch(
         authority: 'chitchat_only',
         approvalMode: probeApprovalMode,
         tone: 'brokerage_direct',
-        // Outreach-language seed: when probe sets a language, the
-        // reply path stays in that language across the thread.
-        // Otherwise 'auto' (recipient's reply language) — existing
-        // behavior, fine for English-default probes.
-        language: probe.outreachLanguage ?? 'auto',
+        // Outreach-language seed: the EFFECTIVE outreach language
+        // (probe override OR per-target country mapping) is what we
+        // used to draft the first touch, so the reply path stays in
+        // that language across the thread. Falls back to 'auto' when
+        // even the per-target country mapping produces nothing
+        // (multi-country probe with unmapped country → recipient's
+        // reply language wins on the inbound side).
+        language: effectiveOutreachLanguage ?? 'auto',
         identityDisclosure: 'on_request',
         linkedProbeId: probe.id,
         linkedEntitySlug: t.entitySlug,
@@ -758,9 +790,9 @@ export async function autopilotSendBatch(
             // detected language — which contradicts the probe's
             // intentional language choice. CASE expression in SQL so we
             // never overwrite an operator-set explicit language.
-            ...(probe.outreachLanguage
+            ...(effectiveOutreachLanguage
               ? {
-                  language: sql`CASE WHEN ${conversationSettings.language} = 'auto' THEN ${probe.outreachLanguage} ELSE ${conversationSettings.language} END`,
+                  language: sql`CASE WHEN ${conversationSettings.language} = 'auto' THEN ${effectiveOutreachLanguage} ELSE ${conversationSettings.language} END`,
                 }
               : {}),
             // Same shape for customPrompt — when the existing row has
@@ -827,7 +859,7 @@ export async function autopilotSendBatch(
             | 'casual'
             | null) ?? null,
         domainHint: probe.domainHint,
-        outreachLanguage: probe.outreachLanguage,
+        outreachLanguage: effectiveOutreachLanguage,
         endpoint: {
           subjectField: leadFormEndpoint.subjectField,
           companyField: leadFormEndpoint.companyField,

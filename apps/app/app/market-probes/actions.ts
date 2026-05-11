@@ -249,6 +249,26 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
     // ones to 'abandoned' first).
     await bulkInsertHypotheses(probeId, result.hypotheses);
   }
+
+  // Apply the plan agent's drafter-steering recommendations on the
+  // FIRST plan generation only. Operator edits on regeneration are
+  // preserved — the agent's pass would otherwise stomp tweaks the
+  // operator made between plan refreshes. "First-time" is defined as
+  // all three steering fields still at NULL; once any one is set we
+  // assume the operator has touched the steering panel and leave it
+  // alone.
+  const untouchedSteering =
+    probe.formalityLevel == null &&
+    probe.outreachLanguage == null &&
+    (probe.domainHint == null || probe.domainHint.trim().length === 0);
+  if (untouchedSteering) {
+    await setProbeDrafterSteering(probeId, {
+      formalityLevel: result.steering.formalityLevel,
+      outreachLanguage: result.steering.outreachLanguage,
+      domainHint: result.steering.domainHint,
+    });
+  }
+
   revalidatePath(`/market-probes/${probeId}`);
 }
 
