@@ -679,3 +679,38 @@ Multiple deferred items wait on this one upstream blocker:
 Don't try to unblock these one at a time. Migrate Trigger.dev
 v3→v4 in a dedicated PR; the five follow-ups slot in cleanly
 afterward.
+
+## FAS Open Data connection
+
+Per `docs/gain-extraction-brief.md` (companion brief). USDA FAS
+publishes three structured sub-APIs under `api.fas.usda.gov` covering
+ag trade flows + supply/demand forecasts. Free API key via signup
+at `https://fas.usda.gov/data/open-data-portal` → set
+`FAS_API_KEY` in `.env.local`.
+
+Sub-APIs:
+- **ESR** (weekly US export sales) — `/api/esr/exports/...` —
+  shipped via `pnpm --filter @procur/db ingest-fas-esr`. Writes to
+  `fas_esr_weekly` keyed on (commodity_code, country_code,
+  market_year, week_ending_date).
+- **GATS UN ComTrade** (annual global HS6) —
+  `/api/gats/UNTrade{Imports,Exports,ReExports}/...` — shipped via
+  `pnpm --filter @procur/db ingest-fas-un-comtrade`. Writes to the
+  shared `customs_imports` table with `source='fas-un-comtrade'`.
+- **PSD** (global production/supply/distribution forecasts) —
+  deferred. Plumbing fits the same client.
+- **GATS US Census monthly** — deferred. Same shape would slot into
+  `customs_imports` with `source='fas-us-census'`.
+
+Scope: Caribbean / LATAM seed list — VE, JM, DO, TT, GY, SR, HT,
+CO, PA, CU. Constants live in
+`packages/db/src/lib/fas-seed-countries.ts`. FAS uses its own 2-char
+country codes (CH = China, not Switzerland) — the `fas_countries`
+reference table caches them and maps the seed list onto ISO-2.
+
+Client: `packages/db/src/lib/fas-client.ts`. X-Api-Key header, 3
+retries with exponential backoff on 429 + 5xx, fail-fast on other
+4xx. Idempotent on the canonical unique indexes — re-running an
+ingest updates `raw_payload` + numeric columns without duplicating
+rows. Quarterly cadence is the natural recurring schedule once the
+Trigger.dev v3→v4 migration lands.

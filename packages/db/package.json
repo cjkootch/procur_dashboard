@@ -55,6 +55,8 @@
     "seed-marine-operators": "tsx src/seed-marine-operators.ts",
     "ingest-eu-mrv": "tsx src/ingest-eu-mrv.ts",
     "ingest-viirs-ntl": "tsx src/ingest-viirs-ntl.ts",
+    "ingest-fas-esr": "tsx src/ingest-fas-esr.ts",
+    "ingest-fas-un-comtrade": "tsx src/ingest-fas-un-comtrade.ts",
     "extract-graph": "tsx src/extract-graph.ts",
     "validate-graph-embeddings": "tsx src/validate-graph-embeddings.ts",
     "extract-bge-texts": "tsx src/extract-bge-texts.ts",
