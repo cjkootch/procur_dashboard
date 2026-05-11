@@ -12,23 +12,29 @@
 
 export interface FasSeedCountry {
   iso2: string;
+  /** GENC alpha-3. FAS publishes gencCode in the 3-letter form for
+   *  most countries, so this is the primary join key. */
+  genc3: string;
   /** Canonical name (preferred form). */
   name: string;
-  /** Alternative spellings / aliases the FAS API might use. */
+  /** Alternative spellings / aliases the FAS API might use. FAS often
+   *  truncates names ("TRINID", "COLOMB", "VENEZ", "SURINAM"); these
+   *  aliases catch them when gencCode is null (territories, historical
+   *  entries — Suriname is a known case). */
   aliases: string[];
 }
 
 export const FAS_SEED_COUNTRIES: ReadonlyArray<FasSeedCountry> = [
-  { iso2: 'VE', name: 'Venezuela',          aliases: ['Venezuela (Bolivarian Republic of)', 'Venezuela, Bolivarian Republic of'] },
-  { iso2: 'JM', name: 'Jamaica',            aliases: [] },
-  { iso2: 'DO', name: 'Dominican Republic', aliases: ['Dominican Rep'] },
-  { iso2: 'TT', name: 'Trinidad and Tobago', aliases: ['Trinidad & Tobago'] },
-  { iso2: 'GY', name: 'Guyana',             aliases: [] },
-  { iso2: 'SR', name: 'Suriname',           aliases: [] },
-  { iso2: 'HT', name: 'Haiti',              aliases: [] },
-  { iso2: 'CO', name: 'Colombia',           aliases: [] },
-  { iso2: 'PA', name: 'Panama',             aliases: [] },
-  { iso2: 'CU', name: 'Cuba',               aliases: [] },
+  { iso2: 'VE', genc3: 'VEN', name: 'Venezuela',          aliases: ['Venezuela (Bolivarian Republic of)', 'VENEZ'] },
+  { iso2: 'JM', genc3: 'JAM', name: 'Jamaica',            aliases: [] },
+  { iso2: 'DO', genc3: 'DOM', name: 'Dominican Republic', aliases: ['Dominican Rep', 'Dom Rep', 'DOM REP', 'DOMINI REP', 'DR'] },
+  { iso2: 'TT', genc3: 'TTO', name: 'Trinidad and Tobago', aliases: ['Trinidad & Tobago', 'TRINID', 'TRIN', 'TRIN & TOB'] },
+  { iso2: 'GY', genc3: 'GUY', name: 'Guyana',             aliases: [] },
+  { iso2: 'SR', genc3: 'SUR', name: 'Suriname',           aliases: ['SURINAM', 'Surinam'] },
+  { iso2: 'HT', genc3: 'HTI', name: 'Haiti',              aliases: [] },
+  { iso2: 'CO', genc3: 'COL', name: 'Colombia',           aliases: ['COLOMB'] },
+  { iso2: 'PA', genc3: 'PAN', name: 'Panama',             aliases: [] },
+  { iso2: 'CU', genc3: 'CUB', name: 'Cuba',               aliases: [] },
 ];
 
 /** Normalize a country name for matching: lowercase, strip accents,
@@ -47,30 +53,31 @@ export function normalizeCountryName(s: string): string {
 /**
  * Resolve a seed entry against a list of FAS country records.
  *
- * Primary key: GENC code. FAS's `/api/esr/countries` and
- * `/api/gats/countries` responses include a `gencCode` field —
- * GENC (Geopolitical Entity, Names, and Codes) is the US gov's
- * standard, ISO 3166-1 alpha-2 compatible for sovereign states. The
- * seed list's `iso2` literally matches `gencCode` for every entry
- * we care about, so this is a deterministic lookup with no alias
- * maintenance burden as FAS adds countries.
- *
- * Fallback: case-insensitive + accent-folded name match against the
- * seed's canonical name + aliases. Catches the rare case where a FAS
- * record has no gencCode (territories, historical entries).
+ * Resolution order, falling through on miss:
+ *   1. gencCode === seed.genc3   (FAS publishes 3-letter GENC codes —
+ *      TTO, COL, VEN — for most sovereign entries, this is the
+ *      stable join key with zero alias maintenance)
+ *   2. gencCode === seed.iso2    (defensive: in case FAS ever switches
+ *      sub-API to publish 2-letter GENC, or for entries that happen
+ *      to use 2-letter)
+ *   3. Name + alias match        (catches records where gencCode is
+ *      null — Suriname is a known case; FAS also truncates names like
+ *      "VENEZ", "TRINID", "SURINAM" so aliases handle those)
  */
 export function resolveFasCountry<
   T extends {
     countryName?: string;
     name?: string;
-    gencCode?: string;
+    gencCode?: string | null;
   },
 >(records: T[], seed: FasSeedCountry): T | null {
+  const seedGenc3 = seed.genc3.toUpperCase();
   const seedIso2 = seed.iso2.toUpperCase();
   for (const r of records) {
-    if (r.gencCode && r.gencCode.toUpperCase() === seedIso2) return r;
+    const g = r.gencCode?.toUpperCase();
+    if (g && (g === seedGenc3 || g === seedIso2)) return r;
   }
-  // Name fallback for records without gencCode.
+  // Name fallback for records without gencCode (or with stale ones).
   const wanted = new Set(
     [seed.name, ...seed.aliases].map(normalizeCountryName),
   );
