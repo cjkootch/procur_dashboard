@@ -33,7 +33,7 @@ export const graphRetrain = task({
     const sanitizedVersion = payload.modelVersion?.replace(/[^a-zA-Z0-9_-]/g, "");
 
     console.log("Starting graph extraction...");
-    await runCommand("pnpm", ["extract-graph", "--output", graphFile], dbDir);
+    await runNodeScript("src/extract-graph.ts", ["--output", graphFile], dbDir);
 
     console.log("Starting GraphSAGE training...");
     const trainArgs = [
@@ -63,9 +63,6 @@ export const graphRetrain = task({
 
 function runCommand(command: string, args: string[], cwd: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    // cross-spawn handles Windows .cmd/.bat resolution and the Node 20+
-    // shell-spawn CVE mitigation transparently. modelVersion is sanitized
-    // and other args are derived from path.join, so no injection surface.
     const proc = spawn(command, args, { cwd, stdio: "inherit" });
     proc.on("close", (code) => {
       if (code === 0) resolve();
@@ -75,4 +72,11 @@ function runCommand(command: string, args: string[], cwd: string): Promise<void>
       reject(new Error(`Failed to start command ${command}: ${err.message}`));
     });
   });
+}
+
+// Run a tsx script via the current node binary (process.execPath). Avoids
+// pnpm.cmd / cmd.exe — the Trigger.dev v4 worker on Windows can't reach
+// cmd.exe under any spawn config we tried.
+function runNodeScript(scriptRelPath: string, args: string[], cwd: string): Promise<void> {
+  return runCommand(process.execPath, ["--import", "tsx", scriptRelPath, ...args], cwd);
 }

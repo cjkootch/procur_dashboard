@@ -26,7 +26,7 @@ export const bgeM3Embed = task({
     const embeddingsFile = path.join(mlDir, "bge-embeddings.json");
 
     console.log("Extracting BGE texts...");
-    await runCommand("pnpm", ["extract-bge-texts", "--output", textsFile], dbDir);
+    await runNodeScript("src/extract-bge-texts.ts", ["--output", textsFile], dbDir);
 
     console.log("Running BGE-M3 embedding (GPU)...");
     await runCommand(
@@ -36,7 +36,7 @@ export const bgeM3Embed = task({
     );
 
     console.log("Upserting BGE embeddings...");
-    await runCommand("pnpm", ["upsert-bge-embeddings", "--input", embeddingsFile], dbDir);
+    await runNodeScript("src/upsert-bge-embeddings.ts", ["--input", embeddingsFile], dbDir);
 
     return {
       status: "completed",
@@ -46,8 +46,6 @@ export const bgeM3Embed = task({
 
 function runCommand(command: string, args: string[], cwd: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    // cross-spawn handles Windows .cmd/.bat resolution and the Node 20+
-    // shell-spawn CVE mitigation transparently.
     const proc = spawn(command, args, { cwd, stdio: "inherit" });
     proc.on("close", (code) => {
       if (code === 0) resolve();
@@ -57,4 +55,11 @@ function runCommand(command: string, args: string[], cwd: string): Promise<void>
       reject(new Error(`Failed to start command ${command}: ${err.message}`));
     });
   });
+}
+
+// Run a tsx script via the current node binary (process.execPath). Avoids
+// pnpm.cmd / cmd.exe — the Trigger.dev v4 worker on Windows can't reach
+// cmd.exe under any spawn config we tried.
+function runNodeScript(scriptRelPath: string, args: string[], cwd: string): Promise<void> {
+  return runCommand(process.execPath, ["--import", "tsx", scriptRelPath, ...args], cwd);
 }

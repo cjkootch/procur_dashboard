@@ -32,9 +32,9 @@ export const entityEmbed = task({
     const singleGraphFile = path.join(ROOT_DIR, `single-${payload.entitySlug}.json`);
 
     console.log(`Extracting neighborhood for ${payload.entitySlug}...`);
-    await runCommand(
-      "pnpm",
-      ["extract-graph", `--single-entity=${payload.entitySlug}`, "--output", singleGraphFile],
+    await runNodeScript(
+      "src/extract-graph.ts",
+      [`--single-entity=${payload.entitySlug}`, "--output", singleGraphFile],
       dbDir
     );
 
@@ -76,10 +76,6 @@ export const entityEmbed = task({
 
 function runCommand(command: string, args: string[], cwd: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    // cross-spawn handles Windows .cmd/.bat resolution and the Node 20+
-    // shell-spawn CVE mitigation transparently. Args are validated against
-    // strict allowlists or built from path.join, so there's no shell-meta
-    // injection surface on either platform.
     const proc = spawn(command, args, { cwd, stdio: "inherit" });
     proc.on("close", (code) => {
       if (code === 0) resolve();
@@ -89,4 +85,12 @@ function runCommand(command: string, args: string[], cwd: string): Promise<void>
       reject(new Error(`Failed to start command ${command}: ${err.message}`));
     });
   });
+}
+
+// Run a tsx script via the current node binary (process.execPath, always a
+// real .exe on Windows). Avoids pnpm.cmd / cmd.exe entirely — the Trigger.dev
+// v4 worker subprocess on Windows can't reach cmd.exe under any spawn
+// configuration we tried.
+function runNodeScript(scriptRelPath: string, args: string[], cwd: string): Promise<void> {
+  return runCommand(process.execPath, ["--import", "tsx", scriptRelPath, ...args], cwd);
 }
