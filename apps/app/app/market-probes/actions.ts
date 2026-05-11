@@ -47,6 +47,7 @@ import {
   setProbeAllowPaidEnrichment,
   setProbeDrafterSteering,
   setProbeIdentity,
+  setProbeActive,
   setProbePlan,
   setProbeStatus,
   setTargetJustification,
@@ -179,6 +180,37 @@ export async function createProbeAction(formData: FormData): Promise<void> {
     createdBy: user.id,
   });
 
+  // Auto-assemble: chain plan-gen + target discovery synchronously so
+  // the operator lands on a fully-assembled probe rather than an empty
+  // shell + two more buttons to click. Each step is wrapped so a
+  // failure in plan-gen doesn't block target discovery, and a failure
+  // in either still leaves the probe shell usable — the operator can
+  // retry individual steps from the overview page.
+  const probe = await getProbe(id);
+  if (probe) {
+    try {
+      await runPlanGenForProbe(probe);
+    } catch (err) {
+      console.error('[createProbe] plan-gen failed; probe shell remains', {
+        probeId: id,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    // Re-read so target discovery sees the segments + steering the
+    // plan-gen pass just wrote.
+    const refreshed = await getProbe(id);
+    if (refreshed && refreshed.country) {
+      try {
+        await runTargetDiscoveryForProbe(refreshed);
+      } catch (err) {
+        console.error('[createProbe] target discovery failed', {
+          probeId: id,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
   revalidatePath('/market-probes');
   redirect(`/market-probes/${id}`);
 }
@@ -196,16 +228,21 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
   const probe = await getProbe(probeId);
   if (!probe) throw new Error('probe not found');
 
-  // Pull rejection history so a regeneration after rejected proposals
-  // doesn't re-propose the same pivots — the agent sees the
-  // operator's feedback and adapts. First plan generation has empty
-  // history; later regenerations carry the learning forward.
-  const rejectionHistory = await listRejectionHistory(probeId);
+  await runPlanGenForProbe(probe);
+  revalidatePath(`/market-probes/${probeId}`);
+}
 
-  // Pull negative rules from the atlas (any prior probe in this
-  // country that wrote prescriptive constraints). HONOR rules ride
-  // into the plan-gen prompt so the agent doesn't propose a
-  // strategy a prior probe already learned not to do.
+/**
+ * Plan generation for a probe row. Shared between generatePlanAction
+ * (operator-triggered regeneration) and createProbeAction (auto-run
+ * at probe creation). Reads rejection history + atlas negative-rules,
+ * runs the Sonnet pass, applies the plan + hypotheses + drafter
+ * steering. Caller is responsible for revalidatePath.
+ */
+async function runPlanGenForProbe(
+  probe: Awaited<ReturnType<typeof getProbe>> & object,
+): Promise<void> {
+  const rejectionHistory = await listRejectionHistory(probe.id);
   const negativeRules = probe.country
     ? (
         await listAtlasFacts({
@@ -241,13 +278,9 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
     negativeRules,
   });
 
-  await setProbePlan(probeId, result.plan);
+  await setProbePlan(probe.id, result.plan);
   if (result.hypotheses.length > 0) {
-    // First plan-gen: bulk-insert. Subsequent regenerations also
-    // append (operators rarely re-run with the same hypotheses
-    // surviving; if they want clean state they can resolve the old
-    // ones to 'abandoned' first).
-    await bulkInsertHypotheses(probeId, result.hypotheses);
+    await bulkInsertHypotheses(probe.id, result.hypotheses);
   }
 
   // Apply the plan agent's drafter-steering recommendations on the
@@ -262,14 +295,12 @@ export async function generatePlanAction(formData: FormData): Promise<void> {
     probe.outreachLanguage == null &&
     (probe.domainHint == null || probe.domainHint.trim().length === 0);
   if (untouchedSteering) {
-    await setProbeDrafterSteering(probeId, {
+    await setProbeDrafterSteering(probe.id, {
       formalityLevel: result.steering.formalityLevel,
       outreachLanguage: result.steering.outreachLanguage,
       domainHint: result.steering.domainHint,
     });
   }
-
-  revalidatePath(`/market-probes/${probeId}`);
 }
 
 /**
@@ -294,8 +325,10 @@ export async function approveFallbackPlanAction(
     // doesn't error).
     return;
   }
-  // Strip the fallback markers and re-run setProbePlan, which now
-  // sees a clean plan and flips status to 'active'.
+  // Strip the fallback markers and re-run setProbePlan. setProbePlan
+  // no longer auto-flips status (operator approval is the new gate);
+  // since accepting a fallback IS an explicit approval, flip status
+  // here via setProbeActive.
   const {
     generationStatus: _drop,
     generationError: _drop2,
@@ -304,8 +337,10 @@ export async function approveFallbackPlanAction(
   void _drop;
   void _drop2;
   await setProbePlan(probeId, { ...cleanPlan, generationStatus: 'ok' });
+  await setProbeActive(probeId);
   revalidatePath(`/market-probes/${probeId}`);
 }
+
 
 /**
  * Run target discovery for a probe. Reuses
@@ -325,11 +360,20 @@ export async function discoverTargetsAction(formData: FormData): Promise<void> {
   const probe = await getProbe(probeId);
   if (!probe) throw new Error('probe not found');
 
-  // Country fence: most probes scope to a single ISO-2; pass it as a
-  // hard filter so the recommender doesn't drift outside the sandbox.
-  // The recommender accepts filter-only mode (no seed) for fresh
-  // probes — see the small relaxation in
-  // packages/catalog/src/communication-recommendations.ts.
+  await runTargetDiscoveryForProbe(probe);
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/**
+ * Target discovery for a probe row. Shared between
+ * discoverTargetsAction (operator-triggered) and createProbeAction
+ * (auto-run at probe creation). Returns silently when probe.country
+ * is unset — that's a soft constraint at create-time, hard error at
+ * action-time enforced by the caller.
+ */
+async function runTargetDiscoveryForProbe(
+  probe: NonNullable<Awaited<ReturnType<typeof getProbe>>>,
+): Promise<void> {
   if (!probe.country) {
     throw new Error(
       'probe.country required for target discovery — set it on the probe and retry',
@@ -399,12 +443,11 @@ export async function discoverTargetsAction(formData: FormData): Promise<void> {
     // nothing actionable. They can refine the country/segments and
     // re-run.
     await markProbeTaskStatus(
-      probeId,
+      probe.id,
       'identify_targets',
       'in_progress',
       'Recommender returned 0 candidates — refine market/segments and retry.',
     );
-    revalidatePath(`/market-probes/${probeId}`);
     return;
   }
 
@@ -433,14 +476,13 @@ export async function discoverTargetsAction(formData: FormData): Promise<void> {
     },
   }));
 
-  const inserted = await upsertProbeTargets(probeId, targets);
+  const inserted = await upsertProbeTargets(probe.id, targets);
   await markProbeTaskStatus(
-    probeId,
+    probe.id,
     'identify_targets',
     'done',
     `Identified ${inserted} target${inserted === 1 ? '' : 's'}.`,
   );
-  revalidatePath(`/market-probes/${probeId}`);
 }
 
 export async function setProbeStatusAction(formData: FormData): Promise<void> {
@@ -1570,6 +1612,8 @@ export async function toggleScoutProtectionAction(
  * Trigger the autopilot send batch. All gates (mode, tier, kill
  * criteria, scout protection, daily/total caps) are enforced inside
  * `autopilotSendBatch` — the action just kicks it off + revalidates.
+ * On first call (probe.status === 'planning'), this is the operator's
+ * approval — promote planning → active before dispatching.
  */
 export async function autopilotSendBatchAction(
   formData: FormData,
@@ -1577,6 +1621,10 @@ export async function autopilotSendBatchAction(
   const { company } = await requireCompany();
   const probeId = str(formData, 'probeId');
   if (!probeId) throw new Error('probeId required');
+  // Idempotent — no-op when already active, error when the plan is a
+  // fallback skeleton (operator routes through approveFallbackPlanAction
+  // for that path).
+  await setProbeActive(probeId);
   const result = await autopilotSendBatch({ probeId, companyId: company.id });
   // Revalidate even on refusal — operator sees the reason via probe
   // state (paused) or via the next page load. Phase 2I adds a

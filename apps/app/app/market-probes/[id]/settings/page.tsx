@@ -12,7 +12,6 @@ import {
   addApolloLookalikesAction,
   addThesisOrgsAction,
   discoverTargetsAction,
-  autopilotSendBatchAction,
   setProbeAllowPaidEnrichmentAction,
   setProbeDrafterSteeringAction,
   setProbeIdentityAction,
@@ -491,17 +490,10 @@ export default async function ProbeSettingsPage({ params }: PageProps) {
                 )}
                 {probe.tier >= 1 && (
                   <>
-                    <form action={autopilotSendBatchAction}>
-                      <input type="hidden" name="probeId" value={probe.id} />
-                      <button
-                        type="submit"
-                        disabled={probe.mode !== 'experiment' || probe.status !== 'active'}
-                        className="w-full rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-background)] disabled:opacity-40"
-                        title="Drafts + dispatches the next eligible batch (justified A/B targets, scout-protection cleared, kill criteria not breached, within daily cap)."
-                      >
-                        Run autopilot batch
-                      </button>
-                    </form>
+                    <p className="rounded-[var(--radius-sm)] border border-dashed border-[color:var(--color-border)] px-2 py-1.5 text-[10px] text-[color:var(--color-muted-foreground)]">
+                      Approve &amp; start probe + Run next batch live on
+                      the overview tab.
+                    </p>
                     <form action={setProbeTierAction}>
                       <input type="hidden" name="probeId" value={probe.id} />
                       <input type="hidden" name="tier" value="0" />

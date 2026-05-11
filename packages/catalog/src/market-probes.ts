@@ -255,24 +255,22 @@ export async function setTargetSendStatus(
  * ids are removed. The "generate_plan" task is the exception —
  * regeneration always re-runs it, so its done timestamp updates.
  *
- * Status promotion gate: the probe flips planning → active ONLY when
- * the plan came back from a successful Sonnet pass
- * (generationStatus === 'ok' or absent for back-compat with plans
- * created before the field landed). When the plan is a fallback
- * skeleton (no API key / parse error), status stays at 'planning' —
- * the operator sees the failure banner, retries plan generation, OR
- * explicitly accepts the hollow plan via approveFallbackPlanAction
- * (which clears generationStatus and re-runs setProbePlan).
+ * Status: setProbePlan does NOT flip planning → active. The operator's
+ * explicit approval (approveProbeAction on the overview page) is what
+ * starts the probe. A probe that is already at status='active' (e.g.
+ * regeneration after the operator approved the first pass) stays
+ * active. This separation makes "planning" mean exactly one thing:
+ * "operator has not yet approved this probe to dispatch outreach."
  *
- * Without this gate, a probe with no hypotheses would transition to
- * active and autopilot could send outreach grounded in nothing.
+ * Without this separation, the previous behavior was: plan-gen
+ * silently flipped status to active and the operator's only gate was
+ * the buried autopilot-batch button. Operators reported it as
+ * confusing — the probe looked "started" before they'd reviewed it.
  */
 export async function setProbePlan(
   probeId: string,
   plan: ProbePlan,
 ): Promise<MarketProbe | null> {
-  const isClean =
-    plan.generationStatus === undefined || plan.generationStatus === 'ok';
   // Preserve operator-edited task status across regeneration.
   const existing = await getProbe(probeId);
   const existingTasksById = new Map(
@@ -299,9 +297,36 @@ export async function setProbePlan(
     .update(marketProbes)
     .set({
       planJson: mergedPlan,
-      ...(isClean ? { status: 'active' as const } : {}),
       updatedAt: new Date(),
     })
+    .where(eq(marketProbes.id, probeId))
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * Flip probe status planning → active. Called by approveProbeAction
+ * on operator approval (the new "Approve & start probe" CTA on the
+ * overview page) and by approveFallbackPlanAction. Idempotent — if
+ * the probe is already active, this is a no-op. Refuses if the plan
+ * is a fallback skeleton (generationStatus !== 'ok') so an unapproved
+ * fallback can't be promoted silently.
+ */
+export async function setProbeActive(
+  probeId: string,
+): Promise<MarketProbe | null> {
+  const existing = await getProbe(probeId);
+  if (!existing) return null;
+  if (existing.status === 'active') return existing;
+  const generationStatus = existing.planJson?.generationStatus;
+  if (generationStatus && generationStatus !== 'ok') {
+    throw new Error(
+      `cannot activate probe ${probeId}: plan is a fallback skeleton (${generationStatus}). Regenerate the plan or accept the fallback via approveFallbackPlanAction first.`,
+    );
+  }
+  const [row] = await db
+    .update(marketProbes)
+    .set({ status: 'active' as const, updatedAt: new Date() })
     .where(eq(marketProbes.id, probeId))
     .returning();
   return row ?? null;

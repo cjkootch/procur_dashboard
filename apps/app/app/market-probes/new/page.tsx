@@ -5,11 +5,16 @@ import { createProbeAction } from '../actions';
 export const dynamic = 'force-dynamic';
 
 /**
- * Create-probe form. After submit, server action redirects to the
- * detail page where the operator runs plan generation + target
- * discovery. The form is deliberately short — daily/total send caps
- * have conservative defaults; advanced fields (allowed channels,
- * blocked terms) get edit-in-place on the detail page in Phase 1.1.
+ * Create-probe form. On submit, the probe auto-assembles the plan +
+ * target list synchronously (~10-15s) and the operator lands on the
+ * overview page ready to approve and start outreach. Apollo contact
+ * discovery runs on the first batch — operator doesn't click through
+ * a per-target enrichment workflow.
+ *
+ * The form is deliberately short: market name + country + product
+ * thesis are required. Caps + advanced steering live under
+ * "Advanced settings" so the create surface stays focused on the
+ * three pieces of context the plan agent actually needs.
  */
 export default async function NewMarketProbePage() {
   await requireCompany();
@@ -25,10 +30,10 @@ export default async function NewMarketProbePage() {
       <header className="mt-4 mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">New Probe</h1>
         <p className="mt-1 text-sm text-[color:var(--color-muted-foreground)]">
-          Pick a small market and hand the agent a scope. Probes default
-          to Tier 0 (research-only — every send operator-approved). You
-          can graduate to Tier 1 (autopilot within caps) after you&apos;ve
-          reviewed the agent&apos;s first drafts.
+          Give the agent a market and a product thesis. The probe will
+          auto-assemble a plan + target list; you review and approve on
+          the next page to start outreach. Submission takes ~10-15s
+          while the plan agent runs.
         </p>
       </header>
 
@@ -46,8 +51,9 @@ export default async function NewMarketProbePage() {
         <Field
           label="Country (ISO-2)"
           name="country"
+          required
           placeholder="e.g. BB"
-          helper="Hard fence on the recommender — targets outside this country won't surface. Required for target discovery to work."
+          helper="Hard fence on the recommender — targets outside this country won't surface. Plan agent also uses it to pick the dominant business language for outreach."
         />
         <Textarea
           label="Product thesis"
@@ -57,60 +63,68 @@ export default async function NewMarketProbePage() {
           placeholder="e.g. Hotels and small distributors that periodically source powdered milk and cooking oil from outside the island."
           helper="One paragraph describing what activity might exist in this market that the desk could plug into."
         />
-        <Field
-          label="Objective (optional)"
-          name="objective"
-          placeholder="e.g. identify 3+ named procurement contacts; surface 1+ active buying process"
-        />
-        <Field
-          label="Domain (optional)"
-          name="domain"
-          placeholder="e.g. fuel_supply, ma_matchmaking, pe_buyers, succession_targets"
-          helper="Free-text tag identifying the kind of bet this probe is testing. Used by cross-probe memory to filter prior learning reports — without it, a Japan fuel probe's lessons would feed into a Japan M&A probe's strategy prompt. Pick a stable slug and reuse it across related probes; leave blank if you only run one kind."
-        />
-        <Select
-          label="Risk level"
-          name="riskLevel"
-          defaultValue="low"
-          options={[
-            { value: 'low', label: 'Low — small private companies, low-stakes' },
-            { value: 'medium', label: 'Medium — mid-size, more visibility' },
-            { value: 'high', label: 'High — strategic / reputationally important' },
-          ]}
-        />
-        <div className="grid grid-cols-2 gap-4">
-          <Field
-            label="Daily send cap"
-            name="dailySendLimit"
-            type="number"
-            defaultValue="10"
-          />
-          <Field
-            label="Total send cap"
-            name="totalSendLimit"
-            type="number"
-            defaultValue="50"
-          />
-        </div>
-        <Field
-          label="Allowed channels"
-          name="allowedChannels"
-          defaultValue="email"
-          helper="Comma-separated. Email-only is the safest default. Calls/SMS/WhatsApp require explicit opt-in."
-        />
-        <Field
-          label="Blocked terms"
-          name="blockedTerms"
-          placeholder="e.g. price, quote, $, USG, payment, LOI"
-          helper="Comma-separated. Any draft containing one of these gets blocked from auto-send (Tier 1+). Phase 1 stores; Tier 1 enforces."
-        />
+
+        <details className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-3 py-2">
+          <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]">
+            Advanced settings
+          </summary>
+          <div className="mt-3 grid gap-4">
+            <Field
+              label="Objective (optional)"
+              name="objective"
+              placeholder="e.g. identify 3+ named procurement contacts; surface 1+ active buying process"
+            />
+            <Field
+              label="Domain (optional)"
+              name="domain"
+              placeholder="e.g. fuel_supply, ma_matchmaking, pe_buyers, succession_targets"
+              helper="Free-text tag for cross-probe memory. Leave blank if you only run one kind of probe."
+            />
+            <Select
+              label="Risk level"
+              name="riskLevel"
+              defaultValue="low"
+              options={[
+                { value: 'low', label: 'Low — small private companies, low-stakes' },
+                { value: 'medium', label: 'Medium — mid-size, more visibility' },
+                { value: 'high', label: 'High — strategic / reputationally important' },
+              ]}
+            />
+            <div className="grid grid-cols-2 gap-4">
+              <Field
+                label="Daily send cap"
+                name="dailySendLimit"
+                type="number"
+                defaultValue="10"
+              />
+              <Field
+                label="Total send cap"
+                name="totalSendLimit"
+                type="number"
+                defaultValue="50"
+              />
+            </div>
+            <Field
+              label="Allowed channels"
+              name="allowedChannels"
+              defaultValue="email"
+              helper="Comma-separated. Email-only is the safest default. Calls/SMS/WhatsApp require explicit opt-in."
+            />
+            <Field
+              label="Blocked terms"
+              name="blockedTerms"
+              placeholder="e.g. price, quote, $, USG, payment, LOI"
+              helper="Comma-separated. Any draft containing one of these gets blocked from auto-send (Tier 1+)."
+            />
+          </div>
+        </details>
 
         <div className="flex items-center gap-3 pt-2">
           <button
             type="submit"
             className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)]"
           >
-            Create probe
+            Create &amp; assemble probe
           </button>
           <Link
             href="/market-probes"
