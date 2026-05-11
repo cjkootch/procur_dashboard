@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, "../../../");
+const IS_WINDOWS = process.platform === "win32";
+const VENV_PYTHON_REL = IS_WINDOWS ? ".venv/Scripts/python.exe" : ".venv/bin/python";
 
 /**
  * Inductive entity embedding.
@@ -25,7 +27,7 @@ export const entityEmbed = task({
 
     const dbDir = path.join(ROOT_DIR, "packages/db");
     const mlDir = path.join(ROOT_DIR, "services/ml-training");
-    const pythonPath = path.join(mlDir, ".venv/bin/python");
+    const pythonPath = path.join(mlDir, VENV_PYTHON_REL);
     // Slug is now safe to use in filename
     const singleGraphFile = path.join(ROOT_DIR, `single-${payload.entitySlug}.json`);
 
@@ -74,7 +76,10 @@ export const entityEmbed = task({
 
 function runCommand(command: string, args: string[], cwd: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(command, args, { cwd, stdio: "inherit" });
+    // Windows: shell:true so pnpm.cmd / npm.cmd resolve. All args here are
+    // validated against strict allowlists or built from path.join, so no
+    // shell-metacharacter injection surface.
+    const proc = spawn(command, args, { cwd, stdio: "inherit", shell: IS_WINDOWS });
     proc.on("close", (code) => {
       if (code === 0) resolve();
       else reject(new Error(`Command ${command} ${args.join(" ")} failed with code ${code}`));
