@@ -574,7 +574,63 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run main() when invoked as a CLI script. Importing this
+// module from the dashboard (for crawlSingleEntity) must NOT
+// trigger a process-wide crawl.
+const isMainModule =
+  import.meta.url === `file://${process.argv[1] ?? ''}` ||
+  (process.argv[1] ?? '').endsWith('/crawl-entity-website.ts') ||
+  (process.argv[1] ?? '').endsWith('/crawl-entity-website.js');
+if (isMainModule) {
+  main().catch((err: unknown) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+/**
+ * Single-entity crawl entry point exposed to the dashboard. Wraps
+ * `crawlOne` with one-shot rate limiter + robots cache so a server
+ * action can trigger a refresh from the entity profile.
+ *
+ * Vercel function timeout caveat: the crawler does Anthropic Sonnet
+ * calls + multi-page fetches + Vercel Blob uploads. Caller should
+ * set `export const maxDuration = 300` (or 900 on Pro+) on the
+ * route. If it hits the wall mid-page, partial progress (already-
+ * uploaded pages, written facts) persists in DB and the operator
+ * can retry. Trigger.dev v4 migration is the long-term home for
+ * this; sync HTTP is the bridge.
+ */
+export async function crawlSingleEntity(
+  slug: string,
+  options: { refresh?: boolean; perEntityLimit?: number } = {},
+): Promise<{ ok: boolean; error?: string }> {
+  const refresh = options.refresh ?? true;
+  const perEntityLimit = Math.min(
+    MAX_PAGES_PER_ENTITY,
+    options.perEntityLimit ?? MAX_PAGES_PER_ENTITY,
+  );
+
+  const entities = await loadEntities({ slug, country: null, limit: 1 });
+  if (entities.length === 0) {
+    return {
+      ok: false,
+      error: `Entity '${slug}' has no primary_domain set; nothing to crawl.`,
+    };
+  }
+  const entity = entities[0]!;
+
+  const rateLimiter = new HostRateLimiter(REQUEST_DELAY_MS);
+  const robots = new RobotsCache();
+
+  try {
+    await crawlOne(entity, rateLimiter, robots, {
+      refresh,
+      dryRun: false,
+      perEntityLimit,
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}

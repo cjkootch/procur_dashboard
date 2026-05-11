@@ -41,6 +41,13 @@ import {
  * Server component. Auth via apps/app/middleware.ts.
  */
 export const dynamic = 'force-dynamic';
+// Bumped from default 60s so triggerEntityCrawlAction can run a
+// multi-page Sonnet-backed crawl synchronously. The crawler caps at
+// 5 pages per entity (perEntityLimit) which fits comfortably under
+// 300s for typical websites; if it hits the wall, partial DB writes
+// persist and the operator can retry. Trigger.dev v4 will eventually
+// take this off the request-response path entirely.
+export const maxDuration = 300;
 
 interface Props {
   params: Promise<{ slug: string }>;

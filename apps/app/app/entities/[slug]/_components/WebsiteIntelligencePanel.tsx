@@ -1,10 +1,14 @@
 import type { EntityWebIntelligenceRow } from '@procur/catalog';
+import { TriggerCrawlButton } from './TriggerCrawlButton';
 
 /**
  * Read-only "Website intelligence" panel — surfaces facts +
- * summaries extracted by `pnpm crawl-entity-website`. No refresh
- * button yet (gated on Trigger.dev v3→v4 migration; sync HTTP
- * would time out on the ~60-120s crawl).
+ * summaries extracted by the @procur/ai crawler. The Trigger Crawl
+ * button on the header runs `crawlSingleEntity` synchronously
+ * (page sets maxDuration=300; capped at 5 pages). Trigger.dev v4
+ * migration is the long-term home for the crawl path; this is the
+ * pragmatic bridge so operators don't have to drop to CLI for a
+ * one-off refresh.
  *
  * Confidence framing per the website-metadata-layer scope: marketing
  * self-presentation, defaults 0.4-0.6. Confidence badges color-code
@@ -13,20 +17,26 @@ import type { EntityWebIntelligenceRow } from '@procur/catalog';
 export function WebsiteIntelligencePanel({
   intel,
   entityName,
+  entitySlug,
 }: {
   intel: EntityWebIntelligenceRow | null;
   entityName: string;
+  entitySlug: string;
 }) {
   if (!intel) {
     return (
       <section className="mb-6">
-        <SectionHeader title="Website intelligence" />
+        <div className="flex items-start justify-between gap-3">
+          <SectionHeader title="Website intelligence" />
+          <TriggerCrawlButton entitySlug={entitySlug} />
+        </div>
         <p className="text-xs text-[color:var(--color-muted-foreground)]">
-          Not yet crawled. If this entity has a primary_domain set, run{' '}
+          Not yet crawled. If this entity has a primary_domain set, click
+          Trigger crawl above (or run{' '}
           <code className="rounded bg-[color:var(--color-muted)] px-1">
             pnpm --filter @procur/ai crawl-entity-website --slug=...
           </code>{' '}
-          to populate.
+          from CLI).
         </p>
       </section>
     );
@@ -49,7 +59,7 @@ export function WebsiteIntelligencePanel({
       <SectionHeader
         title="Website intelligence"
         right={
-          <div className="flex items-center gap-2 text-xs text-[color:var(--color-muted-foreground)]">
+          <div className="flex items-center gap-3 text-xs text-[color:var(--color-muted-foreground)]">
             <span>{intel.pagesCrawled} page{intel.pagesCrawled === 1 ? '' : 's'}</span>
             <span>·</span>
             <span>{intel.factsCount} fact{intel.factsCount === 1 ? '' : 's'}</span>
@@ -57,6 +67,7 @@ export function WebsiteIntelligencePanel({
             <span className={stale ? 'text-amber-600' : ''}>
               last crawled {formatRelative(intel.lastCrawledAt)}{stale ? ' (stale)' : ''}
             </span>
+            <TriggerCrawlButton entitySlug={entitySlug} />
           </div>
         }
       />

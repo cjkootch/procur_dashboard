@@ -4,10 +4,12 @@ import { revalidatePath } from 'next/cache';
 import { requireCompany } from '@procur/auth';
 import {
   SupplierApprovalEntityMissingError,
+  addManualContactEnrichment,
   resolveApolloEntityRef,
   upsertFormEndpoint,
   upsertSupplierApproval,
 } from '@procur/catalog';
+import { crawlSingleEntity } from '@procur/ai';
 import {
   isSupplierApprovalStatus,
   type SupplierApprovalStatus,
@@ -381,4 +383,70 @@ export async function retireLeadFormEndpointAction(
   });
   revalidatePath(`/entities/${entitySlug}`);
   return { ok: true, message: 'Endpoint retired from autopilot.' };
+}
+
+/**
+ * Operator-side manual contact entry. Used when Apollo can't
+ * find the person (no Apollo org match, person not in Apollo's
+ * index) but the operator has the email / phone / LinkedIn from
+ * another source. Lands in entity_contact_enrichments with
+ * source='manual', confidence 1.00 on every populated field.
+ *
+ * Idempotent on (entity_slug, source='manual', name) — re-submitting
+ * with the same name updates the existing row's fields rather than
+ * duplicating.
+ */
+export async function addManualContactAction(
+  formData: FormData,
+): Promise<{ ok: boolean; message: string }> {
+  await requireCompany();
+  const entitySlug = String(formData.get('entitySlug') ?? '').trim();
+  const fullName = String(formData.get('fullName') ?? '').trim();
+  if (!entitySlug || !fullName) {
+    return { ok: false, message: 'Entity + full name required.' };
+  }
+  await addManualContactEnrichment({
+    entitySlug,
+    fullName,
+    email: String(formData.get('email') ?? '').trim() || null,
+    title: String(formData.get('title') ?? '').trim() || null,
+    phone: String(formData.get('phone') ?? '').trim() || null,
+    linkedinUrl: String(formData.get('linkedinUrl') ?? '').trim() || null,
+  });
+  revalidatePath(`/entities/${entitySlug}`);
+  return { ok: true, message: `Saved manual contact "${fullName}".` };
+}
+
+/**
+ * Operator-triggered website re-crawl. Wraps `crawlSingleEntity`
+ * from @procur/ai with a route-side maxDuration override. Sync HTTP
+ * with Anthropic + multi-page fetch + Vercel Blob writes can run
+ * 60-300s; route file sets maxDuration accordingly. Trigger.dev v4
+ * migration is the proper home for long-running crawls; this is the
+ * pragmatic bridge while operators want a manual refresh affordance.
+ *
+ * Returns ok:false with the underlying error message when the
+ * crawler refuses (no primary_domain, robots.txt block, etc.) so
+ * the panel can render it.
+ */
+export async function triggerEntityCrawlAction(
+  formData: FormData,
+): Promise<{ ok: boolean; message: string }> {
+  await requireCompany();
+  const entitySlug = String(formData.get('entitySlug') ?? '').trim();
+  if (!entitySlug) {
+    return { ok: false, message: 'entitySlug required' };
+  }
+  const result = await crawlSingleEntity(entitySlug, {
+    refresh: true,
+    perEntityLimit: 5,
+  });
+  revalidatePath(`/entities/${entitySlug}`);
+  if (!result.ok) {
+    return {
+      ok: false,
+      message: result.error ?? 'Crawl failed for an unknown reason.',
+    };
+  }
+  return { ok: true, message: 'Crawl complete — refresh to see results.' };
 }
