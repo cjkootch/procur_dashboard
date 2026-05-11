@@ -76,12 +76,13 @@ export function createFasClient(options: FasClientOptions = {}) {
 // ─── Reference data shapes ──────────────────────────────────────────
 
 export interface FasCountryRecord {
-  countryCode: string;
+  // FAS uses different code shapes across sub-APIs (sometimes string,
+  // sometimes numeric). We coerce to string at ingest time and store
+  // raw payload for audit.
+  countryCode: string | number;
   countryName: string;
-  regionCode?: string;
+  regionCode?: string | number | null;
   regionName?: string;
-  // Some endpoints also include description / countryDescription
-  // fields; we capture the full payload in rawPayload.
   [k: string]: unknown;
 }
 

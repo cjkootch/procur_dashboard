@@ -37,7 +37,7 @@ import {
   type FasEsrCommodityRecord,
   type FasEsrExportRecord,
 } from './lib/fas-client';
-import { FAS_SEED_COUNTRIES } from './lib/fas-seed-countries';
+import { FAS_SEED_COUNTRIES, resolveFasCountry } from './lib/fas-seed-countries';
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -55,12 +55,17 @@ async function main() {
   );
   console.log(`[fas-esr] market years: ${marketYears.join(', ')}`);
 
-  // Cache country reference (so we can resolve names + audit FAS code
-  // mismatches without an extra HTTP call per country).
+  // Cache country reference for the audit trail + resolve each seed
+  // country by NAME (FAS country code shapes vary across sub-APIs;
+  // names are the stable join key). Log a sample of the API response
+  // so a future code-name mismatch surfaces immediately.
   const countries = await client.get<FasCountryRecord[]>('/api/esr/countries');
-  const countriesByCode = new Map(
-    countries.map((c) => [c.countryCode, c]),
-  );
+  if (countries.length > 0) {
+    const sample = countries[0];
+    console.log(
+      `[fas-esr] /esr/countries returned ${countries.length} rows. Sample keys: ${Object.keys(sample as object).join(',')}`,
+    );
+  }
   await upsertCountryReference(db, countries, 'esr');
 
   // Commodity scope: either operator-specified or all of FAS ESR's
@@ -83,21 +88,25 @@ async function main() {
   let skippedCountries = 0;
 
   for (const country of FAS_SEED_COUNTRIES) {
-    if (!countriesByCode.has(country.esrCode)) {
+    const resolved = resolveFasCountry(countries, country);
+    if (!resolved) {
       console.warn(
-        `[fas-esr] seed country ${country.iso2} (${country.name}) — FAS code "${country.esrCode}" not found in /esr/countries; skipping`,
+        `[fas-esr] seed country ${country.iso2} (${country.name}) — no name match in /esr/countries; skipping`,
       );
       skippedCountries += 1;
       continue;
     }
+    const fasCode = String(resolved.countryCode);
     for (const my of marketYears) {
       for (const commodityCode of commodityCodes) {
         try {
           const records = await client.get<FasEsrExportRecord[]>(
-            `/api/esr/exports/commodityCode/${commodityCode}/countryCode/${country.esrCode}/marketYear/${my}`,
+            `/api/esr/exports/commodityCode/${commodityCode}/countryCode/${fasCode}/marketYear/${my}`,
           );
           if (records.length === 0) continue;
-          const rows = records.map((r) => buildEsrRow(r, country.esrCode, commodityCode, my));
+          const rows = records.map((r) =>
+            buildEsrRow(r, fasCode, commodityCode, my),
+          );
           await upsertEsrBatch(db, rows);
           totalRows += records.length;
           console.log(
@@ -213,24 +222,21 @@ async function upsertCountryReference(
   api: 'esr' | 'gats' | 'psd',
 ) {
   if (countries.length === 0) return;
-  // Map seed ISO-2 onto FAS codes for the curated subset.
-  const iso2ByFasEsr = new Map(
-    FAS_SEED_COUNTRIES.map((c) => [c.esrCode, c.iso2]),
-  );
-  const iso2ByFasGats = new Map(
-    FAS_SEED_COUNTRIES.map((c) => [c.gatsCode, c.iso2]),
-  );
+  // Resolve ISO-2 for each FAS record by NAME against the seed list.
+  // FAS country code shapes vary; names are the stable join key.
+  const iso2ByFasCode = new Map<string, string>();
+  for (const seed of FAS_SEED_COUNTRIES) {
+    const match = resolveFasCountry(countries, seed);
+    if (match?.countryCode != null) {
+      iso2ByFasCode.set(String(match.countryCode), seed.iso2);
+    }
+  }
   const rows: schema.NewFasCountry[] = countries.map((c) => ({
-    fasCode: c.countryCode,
+    fasCode: String(c.countryCode),
     api,
     countryName: c.countryName,
-    regionCode: c.regionCode ?? null,
-    iso2:
-      api === 'esr'
-        ? iso2ByFasEsr.get(c.countryCode) ?? null
-        : api === 'gats'
-          ? iso2ByFasGats.get(c.countryCode) ?? null
-          : null,
+    regionCode: c.regionCode != null ? String(c.regionCode) : null,
+    iso2: iso2ByFasCode.get(String(c.countryCode)) ?? null,
     rawPayload: c as unknown as Record<string, unknown>,
   }));
   await db

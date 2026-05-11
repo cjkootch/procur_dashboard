@@ -3,32 +3,64 @@
  * GAIN-extraction brief's Caribbean / LATAM focus
  * (`docs/gain-extraction-brief.md`).
  *
- * FAS uses 2-char country codes that overlap with ISO-2 for most
- * countries but diverge for a few (most famously CH = China rather
- * than Switzerland). The mappings here were verified against
- * /api/esr/countries + /api/gats/countries on first ingest; the
- * fas_countries table is the live source of truth and these
- * constants are the starting filter set.
+ * Resolution is done by NAME, not by code. FAS uses an internal code
+ * system that doesn't match ISO-2 (and on /esr/countries doesn't
+ * even line up between sub-APIs cleanly). Name matching is stable —
+ * the resolver does case-insensitive + accent-folded comparison and
+ * accepts a list of aliases per country.
  */
 
 export interface FasSeedCountry {
   iso2: string;
+  /** Canonical name (preferred form). */
   name: string;
-  /** FAS ESR country code (used by /api/esr/* endpoints). */
-  esrCode: string;
-  /** FAS GATS country code (used by /api/gats/* — includes UN ComTrade). */
-  gatsCode: string;
+  /** Alternative spellings / aliases the FAS API might use. */
+  aliases: string[];
 }
 
 export const FAS_SEED_COUNTRIES: ReadonlyArray<FasSeedCountry> = [
-  { iso2: 'VE', name: 'Venezuela',         esrCode: 'VE', gatsCode: 'VE' },
-  { iso2: 'JM', name: 'Jamaica',           esrCode: 'JM', gatsCode: 'JM' },
-  { iso2: 'DO', name: 'Dominican Republic', esrCode: 'DO', gatsCode: 'DO' },
-  { iso2: 'TT', name: 'Trinidad & Tobago', esrCode: 'TD', gatsCode: 'TD' },
-  { iso2: 'GY', name: 'Guyana',            esrCode: 'GY', gatsCode: 'GY' },
-  { iso2: 'SR', name: 'Suriname',          esrCode: 'SR', gatsCode: 'SR' },
-  { iso2: 'HT', name: 'Haiti',             esrCode: 'HA', gatsCode: 'HA' },
-  { iso2: 'CO', name: 'Colombia',          esrCode: 'CO', gatsCode: 'CO' },
-  { iso2: 'PA', name: 'Panama',            esrCode: 'PA', gatsCode: 'PA' },
-  { iso2: 'CU', name: 'Cuba',              esrCode: 'CU', gatsCode: 'CU' },
+  { iso2: 'VE', name: 'Venezuela',          aliases: ['Venezuela (Bolivarian Republic of)', 'Venezuela, Bolivarian Republic of'] },
+  { iso2: 'JM', name: 'Jamaica',            aliases: [] },
+  { iso2: 'DO', name: 'Dominican Republic', aliases: ['Dominican Rep'] },
+  { iso2: 'TT', name: 'Trinidad and Tobago', aliases: ['Trinidad & Tobago'] },
+  { iso2: 'GY', name: 'Guyana',             aliases: [] },
+  { iso2: 'SR', name: 'Suriname',           aliases: [] },
+  { iso2: 'HT', name: 'Haiti',              aliases: [] },
+  { iso2: 'CO', name: 'Colombia',           aliases: [] },
+  { iso2: 'PA', name: 'Panama',             aliases: [] },
+  { iso2: 'CU', name: 'Cuba',               aliases: [] },
 ];
+
+/** Normalize a country name for matching: lowercase, strip accents,
+ *  collapse whitespace, strip common punctuation. */
+export function normalizeCountryName(s: string): string {
+  return s
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '') // strip accents
+    .toLowerCase()
+    .replace(/[.,'"`]/g, '')
+    .replace(/\band\b/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Resolve a seed entry against a list of FAS country records. Tries
+ * the canonical name first, then each alias. Returns the matched
+ * record (with whatever code shape FAS uses) or null on miss.
+ *
+ * The fas record shape varies across sub-APIs; this helper only
+ * relies on a `countryName` field being present.
+ */
+export function resolveFasCountry<
+  T extends { countryName?: string; name?: string },
+>(records: T[], seed: FasSeedCountry): T | null {
+  const wanted = new Set(
+    [seed.name, ...seed.aliases].map(normalizeCountryName),
+  );
+  for (const r of records) {
+    const recordName = r.countryName ?? r.name ?? '';
+    if (wanted.has(normalizeCountryName(recordName))) return r;
+  }
+  return null;
+}

@@ -34,7 +34,7 @@ import {
   type FasCountryRecord,
   type FasUNTradeRecord,
 } from './lib/fas-client';
-import { FAS_SEED_COUNTRIES } from './lib/fas-seed-countries';
+import { FAS_SEED_COUNTRIES, resolveFasCountry } from './lib/fas-seed-countries';
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -66,29 +66,40 @@ async function main() {
     `[fas-un-comtrade] years=${years.join(',')} flows=${flows.join(',')}`,
   );
 
-  // Cache + map FAS GATS country codes for the seed list.
+  // Cache /gats/countries + build name-based ISO-2 mapping. FAS code
+  // shapes vary across sub-APIs; name match is the stable join.
   const gatsCountries = await client.get<FasCountryRecord[]>('/api/gats/countries');
-  const gatsByCode = new Map(gatsCountries.map((c) => [c.countryCode, c]));
-  const fasGatsToIso2 = new Map(
-    FAS_SEED_COUNTRIES.map((c) => [c.gatsCode, c.iso2]),
-  );
+  if (gatsCountries.length > 0) {
+    const sample = gatsCountries[0];
+    console.log(
+      `[fas-un-comtrade] /gats/countries returned ${gatsCountries.length} rows. Sample keys: ${Object.keys(sample as object).join(',')}`,
+    );
+  }
+  const fasGatsToIso2 = new Map<string, string>();
+  for (const seed of FAS_SEED_COUNTRIES) {
+    const match = resolveFasCountry(gatsCountries, seed);
+    if (match?.countryCode != null)
+      fasGatsToIso2.set(String(match.countryCode), seed.iso2);
+  }
 
   let totalRows = 0;
   let skippedCountries = 0;
 
   for (const country of FAS_SEED_COUNTRIES) {
-    if (!gatsByCode.has(country.gatsCode)) {
+    const resolved = resolveFasCountry(gatsCountries, country);
+    if (!resolved) {
       console.warn(
-        `[fas-un-comtrade] seed country ${country.iso2} (${country.name}) — GATS code "${country.gatsCode}" not in /gats/countries; skipping`,
+        `[fas-un-comtrade] seed country ${country.iso2} (${country.name}) — no name match in /gats/countries; skipping`,
       );
       skippedCountries += 1;
       continue;
     }
+    const fasCode = String(resolved.countryCode);
     for (const year of years) {
       for (const flow of flows) {
         try {
           const records = await client.get<FasUNTradeRecord[]>(
-            `/api/gats/${FLOW_TO_ENDPOINT[flow]}/reporterCode/${country.gatsCode}/year/${year}`,
+            `/api/gats/${FLOW_TO_ENDPOINT[flow]}/reporterCode/${fasCode}/year/${year}`,
           );
           if (records.length === 0) continue;
           const rows = records
