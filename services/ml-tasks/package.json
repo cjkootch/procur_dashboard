@@ -1,0 +1,22 @@
+{
+  "name": "@procur/ml-tasks",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "trigger.dev dev",
+    "deploy": "trigger.dev deploy",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo node_modules"
+  },
+  "dependencies": {
+    "@trigger.dev/sdk": "4.4.4",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@procur/config": "workspace:*",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
