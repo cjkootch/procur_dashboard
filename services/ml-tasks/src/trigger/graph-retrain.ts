@@ -63,10 +63,12 @@ export const graphRetrain = task({
 
 function runCommand(command: string, args: string[], cwd: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    // Windows: shell:true so pnpm.cmd / npm.cmd resolve. modelVersion is
-    // stripped to [a-zA-Z0-9_-] and other args are derived from path.join,
-    // so no shell-metacharacter injection surface.
-    const proc = spawn(command, args, { cwd, stdio: "inherit", shell: IS_WINDOWS });
+    // Windows: spawn doesn't auto-resolve .cmd extensions. Append .cmd
+    // directly rather than using shell:true — the trigger.dev worker
+    // sandbox can't always resolve cmd.exe via PATH, but it can resolve
+    // pnpm.cmd directly since that lives in the pnpm install dir.
+    const resolved = IS_WINDOWS && (command === "pnpm" || command === "npm") ? `${command}.cmd` : command;
+    const proc = spawn(resolved, args, { cwd, stdio: "inherit" });
     proc.on("close", (code) => {
       if (code === 0) resolve();
       else reject(new Error(`Command ${command} ${args.join(" ")} failed with code ${code}`));
