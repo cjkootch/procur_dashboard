@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "trigger.dev dev",
+    "deploy": "trigger.dev deploy",
     "type-check": "tsc --noEmit",
     "clean": "rm -rf dist .turbo node_modules"
   },

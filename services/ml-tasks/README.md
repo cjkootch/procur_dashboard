@@ -26,9 +26,9 @@ To hook up your GPU rig to Procur, follow these steps on the rig:
     Create a `.env.local` in the root of the repo with your `TRIGGER_SECRET_KEY` and `DATABASE_URL`.
 6.  **Start the Trigger.dev worker**:
     ```bash
-    cd services/ml-tasks
-    npx trigger.dev@latest dev
+    pnpm --filter @procur/ml-tasks dev
     ```
+    (Or `cd services/ml-tasks && pnpm dev` if you prefer.)
 
 Once the worker is running, it will automatically register the following tasks and wait for jobs:
 - `ml.graph-retrain`: Full GraphSAGE training pipeline.

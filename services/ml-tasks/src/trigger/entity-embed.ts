@@ -43,9 +43,25 @@ export const entityEmbed = task({
       "--upsert",
     ];
     if (payload.checkpointDir) {
-      // Basic sanitization for checkpointDir
-      const sanitizedDir = payload.checkpointDir.replace(/[^a-zA-Z0-9_\-\/]/g, "");
-      embedArgs.push("--checkpoint-dir", sanitizedDir);
+      // Strict relative-path allowlist: each segment must match
+      // [a-zA-Z0-9_-]+ and the assembled path must not start with /,
+      // contain `..`, or have empty segments. Earlier version stripped
+      // characters but didn't reject `..` outright, which after
+      // path.resolve() in the Python side could escape the intended
+      // checkpoints dir.
+      const dir = payload.checkpointDir.trim();
+      const segmentRe = /^[a-zA-Z0-9_-]+$/;
+      const segments = dir.split("/").filter(Boolean);
+      const valid =
+        !dir.startsWith("/") &&
+        segments.length > 0 &&
+        segments.every((s) => s !== ".." && segmentRe.test(s));
+      if (!valid) {
+        throw new Error(
+          `Invalid checkpointDir: ${payload.checkpointDir}. Use a relative path of [a-zA-Z0-9_-] segments only (no .. or leading /).`,
+        );
+      }
+      embedArgs.push("--checkpoint-dir", segments.join("/"));
     }
     await runCommand(pythonPath, embedArgs, mlDir);
 
