@@ -11,10 +11,13 @@
   },
   "dependencies": {
     "@trigger.dev/sdk": "4.4.4",
-    "dotenv": "^16.4.7"
+    "cross-spawn": "^7.0.6",
+    "dotenv": "^16.4.7",
+    "import-in-the-middle": "^3.0.1"
   },
   "devDependencies": {
     "@procur/config": "workspace:*",
+    "@types/cross-spawn": "^6.0.6",
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"

@@ -1,5 +1,5 @@
 import { task } from "@trigger.dev/sdk";
-import { spawn } from "node:child_process";
+import spawn from "cross-spawn";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -63,12 +63,10 @@ export const graphRetrain = task({
 
 function runCommand(command: string, args: string[], cwd: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    // Windows: spawn doesn't auto-resolve .cmd extensions. Append .cmd
-    // directly rather than using shell:true — the trigger.dev worker
-    // sandbox can't always resolve cmd.exe via PATH, but it can resolve
-    // pnpm.cmd directly since that lives in the pnpm install dir.
-    const resolved = IS_WINDOWS && (command === "pnpm" || command === "npm") ? `${command}.cmd` : command;
-    const proc = spawn(resolved, args, { cwd, stdio: "inherit" });
+    // cross-spawn handles Windows .cmd/.bat resolution and the Node 20+
+    // shell-spawn CVE mitigation transparently. modelVersion is sanitized
+    // and other args are derived from path.join, so no injection surface.
+    const proc = spawn(command, args, { cwd, stdio: "inherit" });
     proc.on("close", (code) => {
       if (code === 0) resolve();
       else reject(new Error(`Command ${command} ${args.join(" ")} failed with code ${code}`));
