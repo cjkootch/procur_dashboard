@@ -17,6 +17,8 @@ import { formatTargetsMarkdown } from '../../_lib/markdown';
 import {
   addProbeTargetAction,
   dismissAllPendingTargetsAction,
+  draftAllPendingTargetJustificationsAction,
+  draftTargetJustificationAction,
   findDecisionMakersAction,
   markTargetResearchOnlyAction,
   setTargetJustificationAction,
@@ -78,16 +80,29 @@ export default async function ProbeTargetsPage({ params }: PageProps) {
           Targets ({targets.length})
         </h2>
         {justificationCounts.pending > 0 && (
-          <form action={dismissAllPendingTargetsAction}>
-            <input type="hidden" name="probeId" value={probe.id} />
-            <button
-              type="submit"
-              className="text-[11px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
-              title={`Flip all ${justificationCounts.pending} pending targets to research_only so autopilot skips them.`}
-            >
-              Dismiss all {justificationCounts.pending} pending
-            </button>
-          </form>
+          <div className="flex items-center gap-3">
+            <form action={draftAllPendingTargetJustificationsAction}>
+              <input type="hidden" name="probeId" value={probe.id} />
+              <button
+                type="submit"
+                className="text-[11px] font-medium text-[color:var(--color-foreground)] hover:underline"
+                title={`Draft all four justification fields on each pending target via Sonnet, grounded in entity dossier + probe hypothesis. Capped at 50 targets per click. Operator-written values are preserved.`}
+              >
+                Draft all {Math.min(justificationCounts.pending, 50)} pending
+              </button>
+            </form>
+            <span className="text-[color:var(--color-muted-foreground)]">·</span>
+            <form action={dismissAllPendingTargetsAction}>
+              <input type="hidden" name="probeId" value={probe.id} />
+              <button
+                type="submit"
+                className="text-[11px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
+                title={`Flip all ${justificationCounts.pending} pending targets to research_only so autopilot skips them.`}
+              >
+                Dismiss all {justificationCounts.pending} pending
+              </button>
+            </form>
+          </div>
         )}
       </div>
       <p className="mb-3 text-xs text-[color:var(--color-muted-foreground)]">
@@ -235,6 +250,24 @@ export default async function ProbeTargetsPage({ params }: PageProps) {
                   <summary className="cursor-pointer text-[11px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]">
                     Justification {t.justificationState === 'justified' ? '✓' : ''}
                   </summary>
+                  <form
+                    action={draftTargetJustificationAction}
+                    className="mt-2 flex items-center justify-between rounded-[var(--radius-sm)] border border-dashed border-[color:var(--color-border)] px-2 py-1.5 text-[11px]"
+                  >
+                    <input type="hidden" name="probeId" value={probe.id} />
+                    <input type="hidden" name="targetId" value={t.id} />
+                    <span className="text-[color:var(--color-muted-foreground)]">
+                      Sonnet drafts the four fields from the entity dossier
+                      + probe hypothesis. Operator-written values are
+                      preserved.
+                    </span>
+                    <button
+                      type="submit"
+                      className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-0.5 font-medium hover:bg-[color:var(--color-muted)]/40"
+                    >
+                      Draft with AI
+                    </button>
+                  </form>
                   <form
                     action={setTargetJustificationAction}
                     className="mt-2 grid gap-2 rounded-[var(--radius-sm)] border border-dashed border-[color:var(--color-border)] p-2 text-xs"
