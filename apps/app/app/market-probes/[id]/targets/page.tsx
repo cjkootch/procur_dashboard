@@ -33,6 +33,30 @@ const FIT_TONE: Record<string, string> = {
   D: 'bg-red-100 text-red-900',
 };
 
+const JUSTIFICATION_LABEL: Record<string, string> = {
+  pending: 'Needs review',
+  justified: 'Ready',
+  research_only: 'Held back',
+};
+
+const SEND_STATUS_LABEL: Record<string, string> = {
+  drafted: 'Draft ready',
+  queued: 'Queued',
+  sent: 'Sent',
+  bounced: 'Bounced',
+  skipped: 'Skipped',
+};
+
+function describeEvidenceItem(item: unknown): string {
+  if (typeof item === 'string') return item;
+  if (typeof item !== 'object' || item === null) return '';
+  const o = item as Record<string, unknown>;
+  if (typeof o.summary === 'string') return o.summary;
+  if (typeof o.label === 'string') return o.label;
+  if (typeof o.kind === 'string') return String(o.kind).replace(/_/g, ' ');
+  return '';
+}
+
 interface PageProps {
   params: Promise<{ id: string }>;
 }
@@ -86,9 +110,10 @@ export default async function ProbeTargetsPage({ params }: PageProps) {
               <button
                 type="submit"
                 className="text-[11px] font-medium text-[color:var(--color-foreground)] hover:underline"
-                title={`Draft all four justification fields on each pending target via Sonnet, grounded in entity dossier + probe hypothesis. Capped at 50 targets per click. Operator-written values are preserved.`}
+                title="Fill in justification on every target that still needs review, using AI grounded in the probe hypothesis and what we know about each company. Anything you've already written is preserved. Up to 50 at a time."
               >
-                Draft all {Math.min(justificationCounts.pending, 50)} pending
+                Draft all {Math.min(justificationCounts.pending, 50)} that need
+                review
               </button>
             </form>
             <span className="text-[color:var(--color-muted-foreground)]">·</span>
@@ -97,20 +122,20 @@ export default async function ProbeTargetsPage({ params }: PageProps) {
               <button
                 type="submit"
                 className="text-[11px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
-                title={`Flip all ${justificationCounts.pending} pending targets to research_only so autopilot skips them.`}
+                title={`Hold back all ${justificationCounts.pending} targets that still need review — they won't be contacted.`}
               >
-                Dismiss all {justificationCounts.pending} pending
+                Hold back all {justificationCounts.pending}
               </button>
             </form>
           </div>
         )}
       </div>
       <p className="mb-3 text-xs text-[color:var(--color-muted-foreground)]">
-        {justificationCounts.justified} justified ·{' '}
-        {justificationCounts.pending} pending ·{' '}
-        {justificationCounts.research_only} research-only.{' '}
+        {justificationCounts.justified} ready ·{' '}
+        {justificationCounts.pending} need review ·{' '}
+        {justificationCounts.research_only} held back.{' '}
         <span className="italic">
-          Tier 1 autopilot only sends to justified targets (Phase 2H).
+          Only targets marked Ready will be contacted.
         </span>
       </p>
       <form
@@ -129,7 +154,7 @@ export default async function ProbeTargetsPage({ params }: PageProps) {
         <button
           type="submit"
           className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2.5 py-1 text-xs hover:bg-[color:var(--color-muted)]/40"
-          title="Add an entity from the rolodex as a target. Defaults to fitTier C; idempotent on the same slug."
+          title="Add a company from the rolodex as a target on this probe."
         >
           Add target
         </button>
@@ -137,9 +162,7 @@ export default async function ProbeTargetsPage({ params }: PageProps) {
       {targets.length === 0 ? (
         <p className="text-sm text-[color:var(--color-muted-foreground)]">
           No targets yet. Run <strong>Discover targets</strong> on the
-          Overview tab to populate via the intelligence-graph ranker
-          (graph similarity + customs + web intelligence + Apollo +
-          recency).
+          Overview tab to find candidate companies for this probe.
         </p>
       ) : (
         <ul className="divide-y divide-[color:var(--color-border)]">
@@ -175,8 +198,11 @@ export default async function ProbeTargetsPage({ params }: PageProps) {
                     tier {t.fitTier}
                   </span>
                   {score && (
-                    <span className="text-xs font-mono text-[color:var(--color-muted-foreground)]">
-                      score {score}
+                    <span
+                      className="text-xs text-[color:var(--color-muted-foreground)]"
+                      title="Discovery match score — higher means a closer fit to the probe's hypothesis."
+                    >
+                      Match {score}
                     </span>
                   )}
                   {channel && (
@@ -184,21 +210,20 @@ export default async function ProbeTargetsPage({ params }: PageProps) {
                       {channel}
                     </span>
                   )}
-                  <span className="ml-auto text-xs text-[color:var(--color-muted-foreground)]">
-                    {t.sendStatus}
-                  </span>
+                  {SEND_STATUS_LABEL[t.sendStatus] && (
+                    <span className="ml-auto text-xs text-[color:var(--color-muted-foreground)]">
+                      {SEND_STATUS_LABEL[t.sendStatus]}
+                    </span>
+                  )}
                 </div>
                 {evidenceItems.length > 0 && (
                   <ul className="mt-1 list-disc pl-5 text-xs text-[color:var(--color-muted-foreground)]">
-                    {evidenceItems.map((e, i) => (
-                      <li key={i}>
-                        {typeof e === 'string'
-                          ? e
-                          : typeof e === 'object' && e !== null && 'label' in e
-                            ? String((e as { label: unknown }).label)
-                            : JSON.stringify(e)}
-                      </li>
-                    ))}
+                    {evidenceItems
+                      .map((e) => describeEvidenceItem(e))
+                      .filter((s) => s.length > 0)
+                      .map((s, i) => (
+                        <li key={i}>{s}</li>
+                      ))}
                   </ul>
                 )}
                 <div className="mt-1.5 flex items-center gap-2 text-[11px]">
@@ -208,7 +233,7 @@ export default async function ProbeTargetsPage({ params }: PageProps) {
                     <button
                       type="submit"
                       className="text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
-                      title="Run Apollo searchPeople for decision-makers at this org. Results land in the entity profile's Decision-makers panel."
+                      title="Look up named decision-makers at this company. Results appear on the entity's profile."
                     >
                       Find decision-makers
                     </button>
@@ -222,9 +247,9 @@ export default async function ProbeTargetsPage({ params }: PageProps) {
                     <button
                       type="submit"
                       className="text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
-                      title="Dismiss — flips send_status to research_only so autopilot skips this target."
+                      title="Hold this target back — it won't be contacted."
                     >
-                      dismiss
+                      Hold back
                     </button>
                   </form>
                   <span
@@ -237,13 +262,14 @@ export default async function ProbeTargetsPage({ params }: PageProps) {
                     }`}
                     title={
                       t.justificationState === 'justified'
-                        ? 'Eligible for autopilot draft (Phase 2H).'
+                        ? 'Ready — eligible for outreach.'
                         : t.justificationState === 'research_only'
-                          ? 'Held back from outreach.'
-                          : 'Justification pending — fill in the why fields below to promote to justified.'
+                          ? 'Held back — will not be contacted.'
+                          : 'Fill in the four why-fields below (or click Draft with AI) to mark this target Ready.'
                     }
                   >
-                    {t.justificationState}
+                    {JUSTIFICATION_LABEL[t.justificationState] ??
+                      t.justificationState}
                   </span>
                 </div>
                 <details className="mt-2">
