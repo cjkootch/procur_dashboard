@@ -81,8 +81,16 @@ export interface FasCountryRecord {
   // raw payload for audit.
   countryCode: string | number;
   countryName: string;
+  /** Longer description / official name; not always present. */
+  countryDescription?: string;
+  /** Region ID (numeric or string depending on sub-API). */
+  regionId?: string | number | null;
   regionCode?: string | number | null;
   regionName?: string;
+  /** GENC (Geopolitical Entity, Names, and Codes) — ISO 3166-1
+   *  alpha-2 compatible for sovereign states. This is the stable
+   *  join key for seed-country resolution. */
+  gencCode?: string;
   [k: string]: unknown;
 }
 

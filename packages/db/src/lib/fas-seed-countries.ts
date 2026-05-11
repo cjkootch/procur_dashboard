@@ -45,16 +45,32 @@ export function normalizeCountryName(s: string): string {
 }
 
 /**
- * Resolve a seed entry against a list of FAS country records. Tries
- * the canonical name first, then each alias. Returns the matched
- * record (with whatever code shape FAS uses) or null on miss.
+ * Resolve a seed entry against a list of FAS country records.
  *
- * The fas record shape varies across sub-APIs; this helper only
- * relies on a `countryName` field being present.
+ * Primary key: GENC code. FAS's `/api/esr/countries` and
+ * `/api/gats/countries` responses include a `gencCode` field —
+ * GENC (Geopolitical Entity, Names, and Codes) is the US gov's
+ * standard, ISO 3166-1 alpha-2 compatible for sovereign states. The
+ * seed list's `iso2` literally matches `gencCode` for every entry
+ * we care about, so this is a deterministic lookup with no alias
+ * maintenance burden as FAS adds countries.
+ *
+ * Fallback: case-insensitive + accent-folded name match against the
+ * seed's canonical name + aliases. Catches the rare case where a FAS
+ * record has no gencCode (territories, historical entries).
  */
 export function resolveFasCountry<
-  T extends { countryName?: string; name?: string },
+  T extends {
+    countryName?: string;
+    name?: string;
+    gencCode?: string;
+  },
 >(records: T[], seed: FasSeedCountry): T | null {
+  const seedIso2 = seed.iso2.toUpperCase();
+  for (const r of records) {
+    if (r.gencCode && r.gencCode.toUpperCase() === seedIso2) return r;
+  }
+  // Name fallback for records without gencCode.
   const wanted = new Set(
     [seed.name, ...seed.aliases].map(normalizeCountryName),
   );
