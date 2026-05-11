@@ -368,3 +368,8 @@ export {
   type TranslatedInbound,
   type TranslatedOutbound,
 } from './translate';
+// Single-entity crawler trigger — exposes the existing CLI crawler
+// to a server action. See crawl-entity-website.ts for caveats
+// around Vercel function timeouts and the pending Trigger.dev v4
+// migration that's the proper home for long-running crawls.
+export { crawlSingleEntity } from './crawl-entity-website';

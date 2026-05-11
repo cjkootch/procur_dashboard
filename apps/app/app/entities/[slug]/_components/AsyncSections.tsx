@@ -10,6 +10,7 @@ import {
 } from '@procur/catalog';
 import { ApolloCorporateContext } from './ApolloCorporateContext';
 import { ApolloDecisionMakers } from './ApolloDecisionMakers';
+import { ManualContactForm } from './ManualContactForm';
 import { FuelBuyerImportContextPanel } from './FuelBuyerImportContextPanel';
 import { RefineryImportContextPanel } from './RefineryImportContextPanel';
 import { WebsiteIntelligencePanel } from './WebsiteIntelligencePanel';
@@ -39,7 +40,13 @@ export async function WebsiteIntelligenceSection({
   entityName: string;
 }) {
   const intel = await getEntityWebIntelligence(entitySlug).catch(() => null);
-  return <WebsiteIntelligencePanel intel={intel} entityName={entityName} />;
+  return (
+    <WebsiteIntelligencePanel
+      intel={intel}
+      entityName={entityName}
+      entitySlug={entitySlug}
+    />
+  );
 }
 
 export async function ImportContextSection({
@@ -272,6 +279,7 @@ export async function ContactsSection({
         contacts={contactEnrichments}
         entitySlug={entitySlug}
       />
+      <ManualContactForm entitySlug={entitySlug} />
       {contactEnrichments.filter((c) => c.source !== 'apollo').length > 0 && (
         <ExternalContactList contacts={contactEnrichments} />
       )}

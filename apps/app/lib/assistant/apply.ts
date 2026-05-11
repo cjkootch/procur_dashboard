@@ -1003,6 +1003,15 @@ const updateKnownEntitySchema = z.object({
 const updateKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
   const payload = updateKnownEntitySchema.parse(rawPayload);
 
+  // Mirror the create path: derive primary_domain from
+  // metadata.website_url so Apollo's matcher (which reads
+  // known_entities.primary_domain, NOT metadata.website_url) picks
+  // up the website on the next refresh. Without this, the domain
+  // update is invisible to Apollo even though the tile link works.
+  const primaryDomain = deriveDomainFromUrl(
+    (payload.metadata as Record<string, unknown>)?.['website_url'],
+  );
+
   const result = await db
     .update(knownEntities)
     .set({
@@ -1015,6 +1024,10 @@ const updateKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
       metadata: payload.metadata,
       latitude: payload.latitude,
       longitude: payload.longitude,
+      // Only set primary_domain when we successfully derived one —
+      // a metadata-only update with no website_url shouldn't wipe
+      // an existing domain that Apollo already matched against.
+      ...(primaryDomain ? { primaryDomain } : {}),
       updatedAt: new Date(),
     })
     .where(eq(knownEntities.slug, payload.slug))
