@@ -113,12 +113,33 @@ export async function createProbe(input: CreateProbeInput): Promise<MarketProbe>
   return created;
 }
 
+/** Count abandoned + completed probes. Drives the "Show archived (N)"
+ *  toggle on the list page — operator can see whether anything is
+ *  hidden without clicking through. */
+export async function countArchivedProbes(): Promise<number> {
+  const [row] = await db
+    .select({
+      n: sql<number>`COUNT(*) FILTER (WHERE ${marketProbes.status} IN ('abandoned', 'completed'))::int`,
+    })
+    .from(marketProbes);
+  return row?.n ?? 0;
+}
+
 export async function listProbes(options: {
   status?: MarketProbe['status'];
   limit?: number;
+  /** Default behavior hides `abandoned` + `completed` probes — the
+   *  list surface is about current work. Set true to include them
+   *  (the operator's "Show archived" toggle on /market-probes). Has
+   *  no effect when an explicit `status` filter is also set. */
+  includeArchived?: boolean;
 } = {}): Promise<Array<MarketProbe & { targetCount: number; sentCount: number; replyCount: number }>> {
   const limit = options.limit ?? 50;
-  const where = options.status ? eq(marketProbes.status, options.status) : undefined;
+  const where = options.status
+    ? eq(marketProbes.status, options.status)
+    : options.includeArchived
+      ? undefined
+      : sql`${marketProbes.status} NOT IN ('abandoned', 'completed')`;
   const probeRows = await db
     .select()
     .from(marketProbes)
