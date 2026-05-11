@@ -137,6 +137,13 @@ export {
   type LearningReportResult,
 } from './market-probes/learning-report-agent';
 export {
+  draftTargetJustification,
+  type DraftedJustification,
+  type DraftJustificationResult,
+  type JustificationAgentContext,
+  type JustificationContextDossier,
+} from './market-probes/justification-agent';
+export {
   ClassifyOutput,
   SummaryOutput,
   LanguageOutput,

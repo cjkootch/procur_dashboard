@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { and, eq, inArray } from 'drizzle-orm';
-import { db, knownEntities, marketProbes } from '@procur/db';
+import { db, knownEntities, marketProbes, marketProbeTargets } from '@procur/db';
 import { requireCompany } from '@procur/auth';
 import { createId } from '@procur/ai';
 import {
@@ -52,6 +52,9 @@ import {
   setTargetJustification,
   setTargetResearchOnly,
   setTargetSignals,
+  getEntityProfile,
+  getEntityWebIntelligenceWithOverlay,
+  getFuelConsumptionSignals,
   upsertProbeTargets,
   upsertSegment,
   recommendCommunicationTargets,
@@ -63,11 +66,13 @@ import {
   type ProbeFeedbackLabel,
 } from '@procur/catalog';
 import {
+  draftTargetJustification,
   generateLearningReport,
   generateProbePlan,
   proposeProbeStrategyAdjustments,
   proposeVariantAdjustments,
   type ProbeMetricsSnapshot,
+  type DraftedJustification,
 } from '@procur/ai';
 
 /**
@@ -969,6 +974,180 @@ export async function markTargetResearchOnlyAction(
   const probeId = str(formData, 'probeId');
   if (!targetId || !probeId) throw new Error('targetId + probeId required');
   await setTargetResearchOnly(targetId);
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/**
+ * Pre-fill the four narrative justification fields for a single
+ * target via Sonnet, grounded in the entity dossier (web summaries,
+ * fuel-consumption signals, role/categories, target-row evidence)
+ * + the probe hypothesis. Operator-in-the-loop: writes through
+ * setTargetJustification so the next page render shows the draft as
+ * editable defaults; the operator still saves to commit.
+ *
+ * Discipline: existing operator-written values WIN — the agent only
+ * fills empty fields. Draft of an already-fully-filled target is a
+ * no-op (returns silently; operator sees no change).
+ */
+async function draftJustificationForTarget(targetId: string): Promise<{
+  ok: boolean;
+  reason?: string;
+}> {
+  const [target] = await db
+    .select()
+    .from(marketProbeTargets)
+    .where(eq(marketProbeTargets.id, targetId))
+    .limit(1);
+  if (!target) return { ok: false, reason: 'target not found' };
+
+  const probe = await getProbe(target.probeId);
+  if (!probe) return { ok: false, reason: 'probe not found' };
+
+  // Skip when nothing's empty — saves a Sonnet call when an operator
+  // re-clicks Draft after already filling everything.
+  const empties = {
+    whyThisCompany: !target.whyThisCompany?.trim(),
+    whyThisPerson: !target.whyThisPerson?.trim(),
+    whyNow: !target.whyNow?.trim(),
+    safestFirstAsk: !target.safestFirstAsk?.trim(),
+  };
+  if (!empties.whyThisCompany && !empties.whyThisPerson && !empties.whyNow && !empties.safestFirstAsk) {
+    return { ok: true };
+  }
+
+  const evidence = (target.evidenceJson ?? {}) as Record<string, unknown>;
+  const entityName =
+    typeof evidence['entityName'] === 'string'
+      ? (evidence['entityName'] as string)
+      : target.entitySlug;
+  const evidenceItems = Array.isArray(evidence['evidenceItems'])
+    ? (evidence['evidenceItems'] as unknown[]).slice(0, 5)
+    : [];
+
+  // Assemble the dossier — best-effort. Each lookup tolerates a
+  // missing entity (returns null/empty) so a thin rolodex entry
+  // still gets a draft (the prompt instructs the model to admit
+  // when the dossier is thin rather than confabulate).
+  const [profile, webIntel, fuelSignals] = await Promise.all([
+    getEntityProfile(target.entitySlug).catch(() => null),
+    getEntityWebIntelligenceWithOverlay(target.entitySlug, entityName).catch(
+      () => null,
+    ),
+    getFuelConsumptionSignals(target.entitySlug).catch(() => []),
+  ]);
+
+  // Truncate per-section web summaries to ~400 chars to bound the
+  // prompt — full summaries can run 2k+ chars per section and a
+  // 7-section dossier blows the prompt cap.
+  const webSummaries: Record<string, string> = {};
+  if (webIntel?.summaries) {
+    for (const [kind, content] of Object.entries(webIntel.summaries)) {
+      webSummaries[kind] =
+        content.length > 400 ? `${content.slice(0, 397)}...` : content;
+    }
+  }
+
+  const result = await draftTargetJustification({
+    probeHypothesis:
+      (probe.planJson as { hypothesis?: string } | null)?.hypothesis ??
+      probe.productThesis,
+    ladderStage: probe.ladderStage,
+    planOutreachAngle:
+      (probe.planJson as { outreachAngle?: string } | null)?.outreachAngle ??
+      null,
+    marketName: probe.marketName,
+    productThesis: probe.productThesis,
+    country: probe.country,
+    dossier: {
+      entityName: profile?.name ?? entityName,
+      entitySlug: target.entitySlug,
+      country: profile?.country ?? probe.country,
+      role: profile?.role ?? null,
+      categories: profile?.categories ?? [],
+      tags: profile?.tags ?? [],
+      evidenceItems,
+      webSummaries,
+      fuelSignals: fuelSignals.slice(0, 5).map((s) => ({
+        source: s.source,
+        signalKind: s.signalKind,
+        fuelType: s.fuelType,
+        volumeBblYrMin: s.volumeBblYrMin,
+        volumeBblYrMax: s.volumeBblYrMax,
+        confidence: s.confidence,
+        coverageYear: s.coverageYear,
+      })),
+      hasResolvedContact: !!target.contactId,
+    },
+  });
+
+  if (!result.ok) return { ok: false, reason: result.reason };
+
+  // Merge: operator's existing values win — only patch empty fields.
+  const draft: DraftedJustification = result.draft;
+  await setTargetJustification({
+    targetId,
+    ...(empties.whyThisCompany ? { whyThisCompany: draft.whyThisCompany } : {}),
+    ...(empties.whyThisPerson ? { whyThisPerson: draft.whyThisPerson } : {}),
+    ...(empties.whyNow ? { whyNow: draft.whyNow } : {}),
+    ...(empties.safestFirstAsk
+      ? { safestFirstAsk: draft.safestFirstAsk }
+      : {}),
+  });
+
+  return { ok: true };
+}
+
+export async function draftTargetJustificationAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const targetId = str(formData, 'targetId');
+  const probeId = str(formData, 'probeId');
+  if (!targetId || !probeId) throw new Error('targetId + probeId required');
+  await draftJustificationForTarget(targetId);
+  revalidatePath(`/market-probes/${probeId}`);
+}
+
+/**
+ * Bulk-draft justifications for every pending target on a probe.
+ * Sonnet calls fan out in parallel — Anthropic per-org rate limiting
+ * provides backpressure for large probes (>30 targets); each per-
+ * target failure is logged and skipped so one bad row doesn't sink
+ * the batch.
+ *
+ * Bounded at 50 targets per invocation to cap LLM spend on a single
+ * click — matches the typical probe.totalSendLimit. An operator with
+ * a larger probe can re-click after the first batch lands.
+ */
+export async function draftAllPendingTargetJustificationsAction(
+  formData: FormData,
+): Promise<void> {
+  await requireCompany();
+  const probeId = str(formData, 'probeId');
+  if (!probeId) throw new Error('probeId required');
+
+  const pending = await db
+    .select({ id: marketProbeTargets.id })
+    .from(marketProbeTargets)
+    .where(
+      and(
+        eq(marketProbeTargets.probeId, probeId),
+        eq(marketProbeTargets.justificationState, 'pending'),
+      ),
+    )
+    .limit(50);
+
+  const results = await Promise.allSettled(
+    pending.map((t) => draftJustificationForTarget(t.id)),
+  );
+  const failures = results.filter(
+    (r) => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.ok),
+  );
+  if (failures.length > 0) {
+    console.error(
+      `[draftAllPendingTargetJustifications] probe=${probeId} drafted=${results.length - failures.length}/${results.length}; failures logged above`,
+    );
+  }
   revalidatePath(`/market-probes/${probeId}`);
 }
 
