@@ -16,11 +16,23 @@
 
 const DEFAULT_BASE = 'https://api.fas.usda.gov';
 
+/** Inter-request delay (ms) — keeps us under FAS's per-minute burst
+ *  limit. ~250ms = ~4 req/sec = 240/min, comfortably below the
+ *  observed soft limit of ~1000/hour and the per-minute burst.
+ *  Override via FAS_REQUEST_DELAY_MS env var. */
+const DEFAULT_REQUEST_DELAY_MS = 250;
+
+/** Backoff schedule when 429 is hit anyway. FAS's rate-limit window
+ *  appears to be minute-scale, so short retries don't clear it. */
+const RATE_LIMIT_BACKOFF_MS = [30_000, 60_000, 120_000];
+
 export interface FasClientOptions {
   apiKey?: string;
   baseUrl?: string;
   /** Override for testing. */
   fetchImpl?: typeof fetch;
+  /** Delay between successive requests (ms). Default 250ms. */
+  requestDelayMs?: number;
 }
 
 export class FasApiError extends Error {
@@ -43,10 +55,25 @@ export function createFasClient(options: FasClientOptions = {}) {
   }
   const baseUrl = options.baseUrl ?? DEFAULT_BASE;
   const fetchImpl = options.fetchImpl ?? fetch;
+  const requestDelayMs =
+    options.requestDelayMs ??
+    (Number.parseInt(process.env.FAS_REQUEST_DELAY_MS ?? '', 10) ||
+      DEFAULT_REQUEST_DELAY_MS);
+
+  let lastRequestAt = 0;
+  async function paceRequest() {
+    const elapsed = Date.now() - lastRequestAt;
+    if (elapsed < requestDelayMs) {
+      await new Promise((r) => setTimeout(r, requestDelayMs - elapsed));
+    }
+    lastRequestAt = Date.now();
+  }
 
   async function get<T>(path: string): Promise<T> {
     let lastErr: unknown;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    let rateLimitAttempt = 0;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await paceRequest();
       const res = await fetchImpl(`${baseUrl}${path}`, {
         method: 'GET',
         headers: {
@@ -57,15 +84,27 @@ export function createFasClient(options: FasClientOptions = {}) {
       if (res.ok) {
         return (await res.json()) as T;
       }
-      // 429 + 5xx: backoff. 4xx (other than 429): fail fast.
+      // 4xx other than 429: fail fast.
       if (res.status !== 429 && res.status < 500) {
         const body = await res.text().catch(() => '');
         throw new FasApiError(res.status, path, body);
       }
       const body = await res.text().catch(() => '');
       lastErr = new FasApiError(res.status, path, body);
-      const delayMs = 1000 * 2 ** attempt; // 1s, 2s, 4s
-      await new Promise((r) => setTimeout(r, delayMs));
+      if (res.status === 429) {
+        const wait =
+          RATE_LIMIT_BACKOFF_MS[
+            Math.min(rateLimitAttempt, RATE_LIMIT_BACKOFF_MS.length - 1)
+          ];
+        rateLimitAttempt += 1;
+        console.warn(
+          `[fas-client] 429 rate limit; sleeping ${Math.round((wait ?? 0) / 1000)}s before retry`,
+        );
+        await new Promise((r) => setTimeout(r, wait));
+      } else {
+        // 5xx: short backoff
+        await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+      }
     }
     throw lastErr ?? new Error(`FAS API: unknown error on ${path}`);
   }
