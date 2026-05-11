@@ -92,13 +92,27 @@ export function createFasClient(options: FasClientOptions = {}) {
       const body = await res.text().catch(() => '');
       lastErr = new FasApiError(res.status, path, body);
       if (res.status === 429) {
-        const wait =
+        // FAS sometimes emits Retry-After (seconds or HTTP-date) +
+        // rate-limit headers. Honor Retry-After when present; fall
+        // back to our schedule otherwise. Log the headers on the
+        // first 429 so we can see the actual limit.
+        const retryAfter = res.headers.get('retry-after');
+        const remaining = res.headers.get('x-ratelimit-remaining');
+        const reset = res.headers.get('x-ratelimit-reset');
+        if (rateLimitAttempt === 0) {
+          console.warn(
+            `[fas-client] 429 headers — retry-after=${retryAfter ?? 'unset'} remaining=${remaining ?? 'unset'} reset=${reset ?? 'unset'}`,
+          );
+        }
+        const parsedRetryAfter = parseRetryAfter(retryAfter);
+        const schedDelay =
           RATE_LIMIT_BACKOFF_MS[
             Math.min(rateLimitAttempt, RATE_LIMIT_BACKOFF_MS.length - 1)
-          ];
+          ] ?? 120_000;
+        const wait = parsedRetryAfter ?? schedDelay;
         rateLimitAttempt += 1;
         console.warn(
-          `[fas-client] 429 rate limit; sleeping ${Math.round((wait ?? 0) / 1000)}s before retry`,
+          `[fas-client] 429 rate limit; sleeping ${Math.round(wait / 1000)}s before retry`,
         );
         await new Promise((r) => setTimeout(r, wait));
       } else {
@@ -110,6 +124,23 @@ export function createFasClient(options: FasClientOptions = {}) {
   }
 
   return { get };
+}
+
+/** Parse a Retry-After header (seconds or HTTP-date) into milliseconds.
+ *  Returns null on unparseable input. */
+function parseRetryAfter(raw: string | null): number | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  // Pure seconds: "120"
+  if (/^\d+$/.test(trimmed)) {
+    return Number.parseInt(trimmed, 10) * 1000;
+  }
+  // HTTP-date
+  const parsed = Date.parse(trimmed);
+  if (Number.isFinite(parsed)) {
+    return Math.max(0, parsed - Date.now());
+  }
+  return null;
 }
 
 // ─── Reference data shapes ──────────────────────────────────────────
