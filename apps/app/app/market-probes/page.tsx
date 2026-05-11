@@ -1,8 +1,12 @@
 import Link from 'next/link';
 import { requireCompany } from '@procur/auth';
-import { listProbes } from '@procur/catalog';
+import { countArchivedProbes, listProbes } from '@procur/catalog';
 
 export const dynamic = 'force-dynamic';
+
+interface PageProps {
+  searchParams: Promise<{ archived?: string }>;
+}
 
 const STATUS_TONE: Record<string, string> = {
   planning: 'bg-[color:var(--color-muted)]/60',
@@ -26,9 +30,14 @@ const TIER_LABEL: Record<number, string> = {
  * Lists probes newest-first with target/sent/reply counts. The "New
  * probe" button routes to the create form.
  */
-export default async function MarketProbesPage() {
+export default async function MarketProbesPage({ searchParams }: PageProps) {
   await requireCompany();
-  const probes = await listProbes({ limit: 50 });
+  const params = await searchParams;
+  const showingArchived = params.archived === '1';
+  const [probes, archivedCount] = await Promise.all([
+    listProbes({ limit: 50, includeArchived: showingArchived }),
+    countArchivedProbes(),
+  ]);
 
   return (
     <div className="mx-auto max-w-5xl px-8 py-10">
@@ -42,6 +51,16 @@ export default async function MarketProbesPage() {
             strict caps. The point is to discover whether a market has
             signal, not to close deals.
           </p>
+          {archivedCount > 0 && (
+            <Link
+              href={showingArchived ? '/market-probes' : '/market-probes?archived=1'}
+              className="mt-2 inline-block text-xs text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] hover:underline"
+            >
+              {showingArchived
+                ? '← Hide archived'
+                : `Show archived (${archivedCount}) →`}
+            </Link>
+          )}
         </div>
         <Link
           href="/market-probes/new"

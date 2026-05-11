@@ -13,6 +13,7 @@ import {
   approveFallbackPlanAction,
   autopilotSendBatchAction,
   generatePlanAction,
+  setProbeStatusAction,
 } from '../../actions';
 
 export const dynamic = 'force-dynamic';
@@ -54,6 +55,8 @@ export default async function ProbeOverviewPage({ params }: PageProps) {
   });
 
   const isPlanning = probe.status === 'planning';
+  const isArchived =
+    probe.status === 'abandoned' || probe.status === 'completed';
   const isFallbackPlan =
     plan.generationStatus && plan.generationStatus !== 'ok';
   const topTargets = targets.slice(0, 8);
@@ -79,6 +82,8 @@ export default async function ProbeOverviewPage({ params }: PageProps) {
         />
       )}
 
+      {isArchived && <ArchivedProbeHero probe={probe} />}
+
       {isPlanning && !isFallbackPlan && (
         <ApprovalHero
           probe={probe}
@@ -89,7 +94,7 @@ export default async function ProbeOverviewPage({ params }: PageProps) {
         />
       )}
 
-      {!isPlanning && (
+      {!isPlanning && !isArchived && (
         <ActiveProbeHero probe={probe} targetCount={targets.length} />
       )}
 
@@ -266,6 +271,7 @@ function ApprovalHero({
             Approve &amp; start probe
           </button>
         </form>
+        <ArchiveButton probeId={probe.id} label="Archive plan" />
         <span className="text-[11px] text-[color:var(--color-muted-foreground)]">
           First batch caps at {probe.dailySendLimit}/day,{' '}
           {probe.totalSendLimit} total.
@@ -294,17 +300,20 @@ function ActiveProbeHero({
           {probe.totalSendLimit}.
         </div>
       </div>
-      <form action={autopilotSendBatchAction}>
-        <input type="hidden" name="probeId" value={probe.id} />
-        <button
-          type="submit"
-          disabled={probe.status !== 'active' || probe.mode !== 'experiment'}
-          title="Dispatch the next autopilot batch within caps. Apollo enrichment runs for any target missing contacts."
-          className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)] disabled:opacity-40"
-        >
-          Run next batch
-        </button>
-      </form>
+      <div className="flex flex-wrap items-center gap-2">
+        <form action={autopilotSendBatchAction}>
+          <input type="hidden" name="probeId" value={probe.id} />
+          <button
+            type="submit"
+            disabled={probe.status !== 'active' || probe.mode !== 'experiment'}
+            title="Dispatch the next autopilot batch within caps. Apollo enrichment runs for any target missing contacts."
+            className="rounded-[var(--radius-md)] bg-[color:var(--color-foreground)] px-3 py-1.5 text-sm font-medium text-[color:var(--color-background)] disabled:opacity-40"
+          >
+            Run next batch
+          </button>
+        </form>
+        <ArchiveButton probeId={probe.id} label="Archive" />
+      </div>
     </section>
   );
 }
@@ -404,6 +413,76 @@ function Stat({
       </span>
       <span>{children}</span>
     </div>
+  );
+}
+
+/**
+ * Archive (abandon) a probe — flips status to 'abandoned' via
+ * setProbeStatusAction. Cascade behavior in setProbeStatus pauses
+ * every linked conversation_settings so inbound replies stop
+ * triggering AI auto-replies on a probe the operator has walked
+ * away from. Operator can reactivate via the ArchivedProbeHero.
+ *
+ * Rendered on both ApprovalHero (planning state — "this plan isn't
+ * what I want, throw it away") and ActiveProbeHero (running state
+ * — "this probe isn't producing signal, shut it down"). Same
+ * destination, slightly different framing per state.
+ */
+function ArchiveButton({
+  probeId,
+  label,
+}: {
+  probeId: string;
+  label: string;
+}) {
+  return (
+    <form action={setProbeStatusAction}>
+      <input type="hidden" name="probeId" value={probeId} />
+      <input type="hidden" name="status" value="abandoned" />
+      <button
+        type="submit"
+        title="Archive this probe. Linked conversations stop auto-replying. You can reactivate from the overview page."
+        className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs text-[color:var(--color-muted-foreground)] hover:bg-[color:var(--color-muted)]/40 hover:text-[color:var(--color-foreground)]"
+      >
+        {label}
+      </button>
+    </form>
+  );
+}
+
+/**
+ * Archived probe hero. Shown when probe.status is 'abandoned' or
+ * 'completed' — both are surfaced via the /market-probes "Show
+ * archived" toggle. Operator can reactivate (flips to 'paused' so
+ * they can review before resuming dispatch) or leave it alone.
+ */
+function ArchivedProbeHero({
+  probe,
+}: {
+  probe: NonNullable<Awaited<ReturnType<typeof getProbe>>>;
+}) {
+  const verb = probe.status === 'abandoned' ? 'archived' : 'completed';
+  return (
+    <section className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30 p-4">
+      <div>
+        <div className="text-sm font-medium">This probe is {verb}.</div>
+        <div className="text-xs text-[color:var(--color-muted-foreground)]">
+          Linked conversations are paused — inbound replies route to the
+          inbox without auto-reply. Reactivate to revisit the plan.
+        </div>
+      </div>
+      <form action={setProbeStatusAction}>
+        <input type="hidden" name="probeId" value={probe.id} />
+        <input type="hidden" name="status" value="paused" />
+        <button
+          type="submit"
+          title="Reactivate the probe to status='paused' so you can review before resuming dispatch."
+          className="rounded-[var(--radius-md)] border border-[color:var(--color-border)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-muted)]/40"
+        >
+          Reactivate
+        </button>
+      </form>
+    </section>
   );
 }
 
