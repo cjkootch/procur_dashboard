@@ -1,7 +1,7 @@
 import { defineConfig } from "@trigger.dev/sdk";
 
 export default defineConfig({
-  project: "proj_ml_gpu_tasks",
+  project: "proj_wqurnqwsraccoopzwktw",
   runtime: "node-22",
   logLevel: "info",
   maxDuration: 7200, // 2 hours for full training
