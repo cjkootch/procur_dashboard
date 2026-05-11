@@ -25,6 +25,7 @@ import {
 } from './communication-recommendations';
 import { computeProbeScorecard } from './market-probe-measurement';
 import { countryToOutreachLanguage } from './country-codes';
+import { findDecisionMakersForTarget } from './market-probes-discovery';
 import { setProbeStatus } from './market-probes';
 import { listHypothesesForProbe } from './market-probe-hypotheses';
 import { pickVariantForTarget } from './market-probe-variants';
@@ -403,6 +404,54 @@ export async function autopilotSendBatch(
     }
     eligible.push(r.target);
     if (eligible.length >= batchSize) break;
+  }
+
+  // Just-in-time contact enrichment. Before dispatch, find eligible
+  // targets that have no Apollo-enriched contact on
+  // entity_contact_enrichments and run findDecisionMakersForTarget
+  // for them. Without this pass the dispatch loop would skip every
+  // un-enriched target with reason 'no recipient email' and the
+  // operator would have to click a per-target "find decision-makers"
+  // button manually — exactly the friction the per-target button was
+  // surfaced to solve and that operators reported as the second-worst
+  // launch friction.
+  //
+  // Capped at MAX_JIT_ENRICH per batch (8) to bound Apollo cost +
+  // sync-request duration (~2s per call × 8 = ~16s, comfortably
+  // inside Vercel timeout). Targets beyond the cap get enriched on
+  // subsequent batch clicks. Requires companyId — without it Apollo
+  // can't write to the cost ledger and we skip silently.
+  if (input.companyId && eligible.length > 0) {
+    const slugs = Array.from(new Set(eligible.map((t) => t.entitySlug)));
+    const enrichedRows = await db.execute<{ entity_slug: string }>(sql`
+      SELECT DISTINCT entity_slug
+        FROM entity_contact_enrichments
+       WHERE entity_slug = ANY(${slugs})
+         AND source = 'apollo'
+         AND email IS NOT NULL
+         AND email <> ''
+    `);
+    const enriched = new Set(
+      enrichedRows.rows.map((r) => r.entity_slug),
+    );
+    const missing = eligible.filter((t) => !enriched.has(t.entitySlug));
+    const MAX_JIT_ENRICH = 8;
+    const toEnrich = missing.slice(0, MAX_JIT_ENRICH);
+    for (const t of toEnrich) {
+      try {
+        await findDecisionMakersForTarget({
+          targetId: t.id,
+          companyId: input.companyId,
+          perPage: 25,
+        });
+      } catch (err) {
+        console.warn('[autopilot] jit-enrich failed for target', {
+          targetId: t.id,
+          entitySlug: t.entitySlug,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 
   if (eligible.length === 0) {
