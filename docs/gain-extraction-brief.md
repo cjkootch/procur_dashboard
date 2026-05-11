@@ -161,6 +161,7 @@ The extraction prompt is structured around:
 - **Per-batch validation:** every extraction batch runs a sampler on 5% of outputs, asking a second Claude pass to grade whether each extracted record is a genuine commercial counterparty mention vs. a false positive. Records flagged by the validator are queued for analyst review rather than auto-persisted.
 - **Cross-report consistency:** if a company appears in 3+ separate GAIN reports across different years, its market-position assessment should be reasonably consistent. Significant disagreement (e.g., "dominant" in 2022, "declining" in 2024, "dominant" again in 2025) flags either a real market shift or extraction noise; surface for analyst review.
 - **Manual seed validation:** before the first full backfill, run the extractor on three known reports (a Venezuela Grain and Feed Annual, a DR Retail Foods, a Jamaica Exporter Guide) and have an analyst grade the outputs by hand. Target: ≥85% precision on named-importer extraction, ≥75% recall against an independent analyst pass on the same reports.
+- **Negative-case validation:** the prompt must correctly produce an empty extraction list when run against statistical / market-summary reports that contain no named commercial counterparties. The canonical negative test fixture is `data/gain-reference-samples/VE2026-0002_US-Venezuelan-Agricultural-Trade-Summary-2025.md` — a USDA Caracas trade summary that is rich in macro tables (origin shares, top commodities, price trends) but names no Venezuelan importers, distributors, or retailers. A correct extraction returns zero importer mentions; any non-empty output for this fixture is a hallucination regression and must fail CI.
 
 ### 4.4 Cost estimate
 
@@ -374,8 +375,9 @@ Suggested implementation order (4–6 days total):
 **Day 3 — LLM extraction prompt + structured output**
 - Write extraction prompt (v1) with examples from Venezuela + DR reports
 - Implement structured-output validation via Zod
-- Run extraction on 3 known reports, manually grade outputs
-- Iterate on prompt until precision ≥85% on the validation set
+- Run extraction on 3 known positive-case reports (Venezuela Grain and Feed Annual, DR Retail Foods, Jamaica Exporter Guide), manually grade outputs
+- Run extraction on the negative-case fixture at `data/gain-reference-samples/VE2026-0002_US-Venezuelan-Agricultural-Trade-Summary-2025.md`; verify zero importer mentions returned
+- Iterate on prompt until precision ≥85% on the positive set AND zero false positives on the negative fixture
 - Persist initial outputs to `gain_importer_mentions`
 
 **Day 4 — entity resolution + validator pass**
