@@ -34,8 +34,9 @@ export default async function AssistantThreadPage({ params, searchParams }: Prop
   const rendered = hydrateMessages(rawMessages);
   const pageContext = parsePageContext(ctxKind, ctxId);
 
+  // dvh, not vh — see /assistant/page.tsx for rationale.
   return (
-    <div className="flex h-[calc(100vh-var(--shell-topbar-height)-1px)] flex-col lg:flex-row">
+    <div className="flex h-[calc(100dvh-var(--shell-topbar-height)-1px)] flex-col lg:flex-row">
       <aside className="hidden shrink-0 overflow-y-auto border-r border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-3 lg:flex lg:w-64 lg:flex-col">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-medium">Conversations</div>

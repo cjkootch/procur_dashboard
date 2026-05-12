@@ -9,8 +9,12 @@ export default async function AssistantHomePage() {
   const { user, company } = await requireCompany();
   const threads = await listThreads(company.id, user.id);
 
+  // dvh (dynamic viewport height) rather than vh — iOS Safari's vh
+  // measures the LAYOUT viewport so the chat composer ends up behind
+  // the keyboard when it opens. dvh tracks the visible viewport. Same
+  // applies on /assistant/[threadId].
   return (
-    <div className="flex h-[calc(100vh-var(--shell-topbar-height)-1px)] flex-col lg:flex-row">
+    <div className="flex h-[calc(100dvh-var(--shell-topbar-height)-1px)] flex-col lg:flex-row">
       <ConversationsAside
         threads={threads.map((t) => ({
           id: t.id,
