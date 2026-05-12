@@ -62,6 +62,13 @@ export {
 } from './org-service';
 
 export {
+  enrichMpiEstablishmentsViaApollo,
+  runMpiApolloEnrichment,
+  type EnrichMpiArgs,
+  type EnrichmentResult as MpiApolloEnrichmentResult,
+} from './usda-fsis-mpi-enrich';
+
+export {
   searchPeople,
   enrichPerson,
   enrichPeopleBulk,

@@ -10,10 +10,13 @@
   },
   "scripts": {
     "type-check": "tsc --noEmit",
-    "clean": "rm -rf dist .turbo node_modules"
+    "clean": "rm -rf dist .turbo node_modules",
+    "enrich-mpi": "tsx src/scripts/enrich-mpi.ts"
   },
   "dependencies": {
     "@procur/db": "workspace:*",
+    "@neondatabase/serverless": "^0.10.4",
+    "dotenv": "^16.4.7",
     "drizzle-orm": "^0.38.3",
     "server-only": "^0.0.1",
     "zod": "^3.24.1"
