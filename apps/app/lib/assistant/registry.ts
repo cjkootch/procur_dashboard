@@ -22,6 +22,7 @@ import { proposePushManyToVexTool } from './tools/propose-push-many-to-vex';
 import { proposeCreateKnownEntityTool } from './tools/propose-create-known-entity';
 import { proposeUpdateKnownEntityTool } from './tools/propose-update-known-entity';
 import { addKnownEntitiesTool } from './tools/add-known-entities';
+import { addContactsTool } from './tools/add-contacts';
 
 export const readTools = {
   [searchOpportunitiesTool.name]: searchOpportunitiesTool,
@@ -35,10 +36,14 @@ export const readTools = {
   [listRecommendedOpportunitiesTool.name]: listRecommendedOpportunitiesTool,
   [getCompanyProfileTool.name]: getCompanyProfileTool,
   [listContractsTool.name]: listContractsTool,
-  // Auto-write tool — bypasses approval gate per operator direction.
-  // Lives in readTools (rather than writeTools) because writeTools is
-  // the propose/approval pattern, which this tool deliberately skips.
+  // Auto-write tools — bypass the approval gate per operator
+  // direction. Live in readTools (rather than writeTools) because
+  // writeTools is the propose/approval pattern these tools
+  // deliberately skip. Outreach to auto-added contacts still goes
+  // through the existing Tier-2/Tier-3 approval gates (propose_email_send,
+  // propose_sms_send, propose_outbound_call, submit_lead_form).
   [addKnownEntitiesTool.name]: addKnownEntitiesTool,
+  [addContactsTool.name]: addContactsTool,
 } satisfies ToolRegistry;
 
 export const writeTools = {

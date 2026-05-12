@@ -266,6 +266,7 @@ export {
   applyOrgTag,
   applyOrgUpdateFields,
   applyScheduleFollowUp,
+  insertContactRow,
   parseCloseLeadPayload,
   parseCreateCompanyPayload,
   parseCreateContactPayload,
@@ -273,6 +274,7 @@ export {
   type CloseLeadPayload,
   type CreateCompanyPayload,
   type CreateContactPayload,
+  type InsertContactResult,
   type ScheduleFollowUpPayload,
 } from './executors/sales';
 // Phase 5 — fuel-deal executors + DealEvaluator + DealMarketContext agents

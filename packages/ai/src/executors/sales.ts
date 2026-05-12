@@ -196,17 +196,39 @@ export function parseCreateContactPayload(
   return out;
 }
 
-export async function applyCreateContact(
-  approvalId: string,
-  payload: CreateContactPayload,
-): Promise<ExecutorResult> {
-  if (await alreadyApplied(approvalId)) return { ok: true };
+export type InsertContactResult =
+  | {
+      ok: true;
+      contactId: string;
+      primaryOrgId: string;
+      dedupedAgainstExisting?: { contactId: string };
+    }
+  | { ok: false; error: string };
 
-  // Resolve every org link to a concrete organizations.id, creating
-  // shadow rows for known_entity slugs that don't yet have a CRM
-  // counterpart. This collapses the old "create company → create
-  // contact" two-approval round trip into one approval when the
-  // entity is already in the rolodex.
+/**
+ * Insert a single contact row + its org-membership links, resolving
+ * each org link to a concrete organizations.id (creating shadow CRM
+ * orgs from rolodex slugs as needed).
+ *
+ * Exported so the chat-side auto-add tool (`add_contacts`) shares the
+ * same write path as the approval-applied propose flow — both produce
+ * identical CRM rows. No approval-id concerns; caller (executor vs.
+ * chat tool) handles their own idempotency.
+ *
+ * Dedup discipline: when `dedupBy === 'fullNameAndPrimaryOrg'`, skip
+ * insert if an active contact with the same fullName under the same
+ * resolved primary org already exists. Returns the existing contactId
+ * in that case. The contacts table has no unique constraint at the
+ * DB level — dedup is app-side, by design (same person legitimately
+ * appears under multiple org variants).
+ */
+export async function insertContactRow(
+  payload: CreateContactPayload,
+  options: { dedupBy?: 'fullNameAndPrimaryOrg' | 'none'; tags?: string[] } = {},
+): Promise<InsertContactResult> {
+  const dedupBy = options.dedupBy ?? 'none';
+  const extraTags = options.tags ?? [];
+
   const resolved: Array<{
     orgId: string;
     role: string | null;
@@ -231,9 +253,28 @@ export async function applyCreateContact(
     });
   }
 
-  // Pick the primary AFTER resolving — keeps the "first link is
-  // primary if none flagged" fallback intact.
   const primary = resolved.find((o) => o.isPrimary) ?? resolved[0]!;
+
+  if (dedupBy === 'fullNameAndPrimaryOrg') {
+    const existing = await db
+      .select({ id: contacts.id })
+      .from(contacts)
+      .where(
+        sql`${contacts.orgId} = ${primary.orgId}
+            AND LOWER(${contacts.fullName}) = LOWER(${payload.fullName})
+            AND ${contacts.status} = 'active'
+            AND ${contacts.mergedIntoContactId} IS NULL`,
+      )
+      .limit(1);
+    if (existing[0]?.id) {
+      return {
+        ok: true,
+        contactId: existing[0].id,
+        primaryOrgId: primary.orgId,
+        dedupedAgainstExisting: { contactId: existing[0].id },
+      };
+    }
+  }
 
   const id = createId();
   await db.insert(contacts).values({
@@ -243,6 +284,7 @@ export async function applyCreateContact(
     title: payload.title ?? null,
     emails: (payload.emails ?? []).map((e) => e.toLowerCase()),
     phones: payload.phones ?? [],
+    tags: extraTags,
     status: 'active',
   });
   for (const link of resolved) {
@@ -256,10 +298,24 @@ export async function applyCreateContact(
       })
       .onConflictDoNothing();
   }
-  await stampApplied(approvalId, id, 'contact.created', {
+
+  return { ok: true, contactId: id, primaryOrgId: primary.orgId };
+}
+
+export async function applyCreateContact(
+  approvalId: string,
+  payload: CreateContactPayload,
+): Promise<ExecutorResult> {
+  if (await alreadyApplied(approvalId)) return { ok: true };
+
+  const result = await insertContactRow(payload);
+  if (!result.ok) {
+    return { ok: false, error: result.error };
+  }
+  await stampApplied(approvalId, result.contactId, 'contact.created', {
     full_name: payload.fullName,
   });
-  return { ok: true, appliedObjectId: id };
+  return { ok: true, appliedObjectId: result.contactId };
 }
 
 /**
