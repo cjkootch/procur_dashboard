@@ -57,6 +57,7 @@
     "ingest-viirs-ntl": "tsx src/ingest-viirs-ntl.ts",
     "ingest-fas-esr": "tsx src/ingest-fas-esr.ts",
     "ingest-fas-un-comtrade": "tsx src/ingest-fas-un-comtrade.ts",
+    "ingest-gain-reports": "tsx src/ingest-gain-reports.ts",
     "extract-graph": "tsx src/extract-graph.ts",
     "validate-graph-embeddings": "tsx src/validate-graph-embeddings.ts",
     "extract-bge-texts": "tsx src/extract-bge-texts.ts",
@@ -81,6 +82,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",
+    "@vercel/blob": "^0.27.0",
     "cheerio": "^1.0.0",
     "csv-parse": "^5.6.0",
     "dotenv": "^16.4.7",
