@@ -247,6 +247,24 @@ export default async function CompanyProfilePage() {
         )}
       </section>
 
+      <section className="mt-10 rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-5">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+            Team
+          </h2>
+          <Link
+            href="/settings/team"
+            className="text-xs underline text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+          >
+            Manage members →
+          </Link>
+        </div>
+        <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+          Invite teammates to your Procur workspace, set their role, and remove
+          accounts. Invitations are sent by email and accepted via Clerk.
+        </p>
+      </section>
+
       <section className="mt-10 rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-5">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
           Plan
