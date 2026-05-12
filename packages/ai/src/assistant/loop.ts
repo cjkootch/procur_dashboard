@@ -41,6 +41,69 @@ export type TurnResult = {
 };
 
 /**
+ * Add an ephemeral cache_control breakpoint to the LAST content block
+ * of the LAST message. The Anthropic Messages API caches everything
+ * up to and including the breakpoint at 0.1x read cost on subsequent
+ * calls within the TTL.
+ *
+ * Why on EVERY messages.create call (not just at turn end):
+ *   - Within a single turn, the agent loops on tool_use. Each iteration
+ *     re-sends all accumulated messages. Setting the breakpoint on the
+ *     last message every iteration makes every iteration after the
+ *     first read its prior steps from cache.
+ *   - Across turns, when the next user message arrives the prior
+ *     turn's final assistant response sits at the breakpoint, so the
+ *     entire prior conversation reads from cache.
+ *
+ * Breakpoint accounting (Anthropic caps at 4 per request):
+ *   - system block #1: 1 breakpoint (cached statically)
+ *   - system block #2: 1 breakpoint (cached statically)
+ *   - last message:    1 breakpoint (this function)
+ *   - total: 3, well under the cap.
+ *
+ * The returned array is a shallow clone — the caller's array is not
+ * mutated, and the last message itself is cloned (with its content
+ * cloned to add the cache_control on the last block).
+ */
+function withCacheControlOnLast(
+  messages: Anthropic.MessageParam[],
+): Anthropic.MessageParam[] {
+  if (messages.length === 0) return messages;
+  const lastIdx = messages.length - 1;
+  const last = messages[lastIdx]!;
+  const cacheBreakpoint = { type: 'ephemeral' as const, ttl: '1h' as const };
+
+  if (typeof last.content === 'string') {
+    return [
+      ...messages.slice(0, lastIdx),
+      {
+        role: last.role,
+        content: [
+          { type: 'text', text: last.content, cache_control: cacheBreakpoint },
+        ],
+      },
+    ];
+  }
+
+  if (!Array.isArray(last.content) || last.content.length === 0) {
+    return messages;
+  }
+
+  const lastBlockIdx = last.content.length - 1;
+  const lastBlock = last.content[lastBlockIdx]!;
+  return [
+    ...messages.slice(0, lastIdx),
+    {
+      role: last.role,
+      content: [
+        ...last.content.slice(0, lastBlockIdx),
+        { ...lastBlock, cache_control: cacheBreakpoint },
+      ],
+    } as Anthropic.MessageParam,
+  ];
+}
+
+/**
  * Run one agentic turn: send user → loop on tool_use → return final messages
  * with all intermediate steps preserved. Writes a usage row for every model
  * call. The caller is responsible for persisting messages.
@@ -80,7 +143,7 @@ export async function runAgentTurn(input: TurnInput): Promise<TurnResult> {
       max_tokens: DEFAULT_ASSISTANT_MAX_TOKENS,
       system,
       tools: toolParams,
-      messages,
+      messages: withCacheControlOnLast(messages),
       container: containerId,
     });
     if (response.container?.id) containerId = response.container.id;
