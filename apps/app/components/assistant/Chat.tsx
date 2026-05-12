@@ -497,7 +497,10 @@ export function Chat({
             rows={2}
             autoFocus={autoFocus}
             placeholder={placeholder ?? 'Ask the assistant…'}
-            className="w-full resize-none rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-3 py-2 text-sm outline-none focus:border-[color:var(--color-foreground)]/50"
+            // text-base on mobile (16px) prevents iOS Safari's auto-zoom on
+            // focus; text-sm (14px) below 16 triggers the zoom. Desktop
+            // keeps the denser sm size.
+            className="w-full resize-none rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-3 py-2 text-base outline-none focus:border-[color:var(--color-foreground)]/50 md:text-sm"
             disabled={sending}
           />
           <div className="mt-2 flex items-center justify-between text-xs text-[color:var(--color-muted-foreground)]">
