@@ -14,6 +14,7 @@
     "ingest-ni-43-101": "tsx src/ingest-ni-43-101.ts",
     "ingest-bond-prospectus": "tsx src/ingest-bond-prospectus.ts",
     "ingest-eiti-report": "tsx src/ingest-eiti-report.ts",
+    "parse-gain-reports": "tsx src/parse-gain-reports.ts",
     "seed-entity-text-embeddings": "tsx src/seed-entity-text-embeddings.ts",
     "crawl-entity-website": "tsx src/crawl-entity-website.ts",
     "type-check": "tsc --noEmit",
