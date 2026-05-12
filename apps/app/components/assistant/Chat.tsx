@@ -453,7 +453,13 @@ export function Chat({
       {messages.length > 0 && (
         <ChatToolbar messages={messages} threadId={threadId} />
       )}
-      <div ref={scrollerRef} className="flex-1 overflow-y-auto px-4 py-4">
+      {/* overscroll-contain — prevents iOS momentum from chaining out
+          of this scroller into the parent / body when the user
+          rubber-bands at the top or bottom of the messages list. */}
+      <div
+        ref={scrollerRef}
+        className="flex-1 overflow-y-auto overscroll-contain px-4 py-4"
+      >
         {hydrating && messages.length === 0 && (
           <div className="mx-auto max-w-lg py-16 text-center text-sm text-[color:var(--color-muted-foreground)]">
             Loading conversation…
