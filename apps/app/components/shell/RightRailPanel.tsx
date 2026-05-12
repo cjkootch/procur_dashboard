@@ -186,8 +186,12 @@ function LauncherButton({ onOpen }: { onOpen: () => void }) {
       // panel goes one higher (z-[1000]) so the launcher tucks under
       // it cleanly. Bottom offset respects safe-area inset so the
       // button clears Safari's bottom bar / iOS home indicator.
+      // `hidden md:flex` — hide on mobile; the floating pill overlaps
+      // the chat input area when /assistant is open, and Assistant is
+      // already a top-level sidebar nav row on mobile. Matches
+      // FrictionButton's "Stuck?" pill which is also desktop-only.
       style={{ bottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' }}
-      className="fixed right-4 z-[999] flex items-center gap-2 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-4 py-2.5 text-sm font-medium shadow-lg hover:bg-[color:var(--color-muted)]/40"
+      className="fixed right-4 z-[999] hidden items-center gap-2 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-4 py-2.5 text-sm font-medium shadow-lg hover:bg-[color:var(--color-muted)]/40 md:flex"
       aria-label="Open Procur Assistant"
       title="Procur Assistant (⌘K)"
     >
