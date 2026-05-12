@@ -1,11 +1,13 @@
 import { task } from "@trigger.dev/sdk";
-import { spawn } from "node:child_process";
+import spawn from "cross-spawn";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, "../../../");
+const IS_WINDOWS = process.platform === "win32";
+const VENV_PYTHON_REL = IS_WINDOWS ? ".venv/Scripts/python.exe" : ".venv/bin/python";
 
 /**
  * Full GraphSAGE retraining pipeline.
@@ -23,7 +25,7 @@ export const graphRetrain = task({
   run: async (payload: { epochs?: number; modelVersion?: string } = {}) => {
     const dbDir = path.join(ROOT_DIR, "packages/db");
     const mlDir = path.join(ROOT_DIR, "services/ml-training");
-    const pythonPath = path.join(mlDir, ".venv/bin/python");
+    const pythonPath = path.join(mlDir, VENV_PYTHON_REL);
     const graphFile = path.join(ROOT_DIR, "graph.json");
     const embeddingsFile = path.join(mlDir, "embeddings.json");
 
@@ -31,7 +33,7 @@ export const graphRetrain = task({
     const sanitizedVersion = payload.modelVersion?.replace(/[^a-zA-Z0-9_-]/g, "");
 
     console.log("Starting graph extraction...");
-    await runCommand("pnpm", ["extract-graph", "--output", graphFile], dbDir);
+    await runNodeScript("src/extract-graph.ts", ["--output", graphFile], dbDir);
 
     console.log("Starting GraphSAGE training...");
     const trainArgs = [
@@ -61,9 +63,6 @@ export const graphRetrain = task({
 
 function runCommand(command: string, args: string[], cwd: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    // Avoid shell: true for security.
-    // pnpm on Unix is a symlink to a JS file, so we may need to use full path or 'node' if it fails.
-    // However, Trigger.dev environment usually has pnpm in PATH.
     const proc = spawn(command, args, { cwd, stdio: "inherit" });
     proc.on("close", (code) => {
       if (code === 0) resolve();
@@ -73,4 +72,11 @@ function runCommand(command: string, args: string[], cwd: string): Promise<void>
       reject(new Error(`Failed to start command ${command}: ${err.message}`));
     });
   });
+}
+
+// Run a tsx script via the current node binary (process.execPath). Avoids
+// pnpm.cmd / cmd.exe — the Trigger.dev v4 worker on Windows can't reach
+// cmd.exe under any spawn config we tried.
+function runNodeScript(scriptRelPath: string, args: string[], cwd: string): Promise<void> {
+  return runCommand(process.execPath, ["--import", "tsx", scriptRelPath, ...args], cwd);
 }

@@ -1,11 +1,13 @@
 import { task } from "@trigger.dev/sdk";
-import { spawn } from "node:child_process";
+import spawn from "cross-spawn";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, "../../../");
+const IS_WINDOWS = process.platform === "win32";
+const VENV_PYTHON_REL = IS_WINDOWS ? ".venv/Scripts/python.exe" : ".venv/bin/python";
 
 /**
  * Inductive entity embedding.
@@ -25,14 +27,14 @@ export const entityEmbed = task({
 
     const dbDir = path.join(ROOT_DIR, "packages/db");
     const mlDir = path.join(ROOT_DIR, "services/ml-training");
-    const pythonPath = path.join(mlDir, ".venv/bin/python");
+    const pythonPath = path.join(mlDir, VENV_PYTHON_REL);
     // Slug is now safe to use in filename
     const singleGraphFile = path.join(ROOT_DIR, `single-${payload.entitySlug}.json`);
 
     console.log(`Extracting neighborhood for ${payload.entitySlug}...`);
-    await runCommand(
-      "pnpm",
-      ["extract-graph", `--single-entity=${payload.entitySlug}`, "--output", singleGraphFile],
+    await runNodeScript(
+      "src/extract-graph.ts",
+      [`--single-entity=${payload.entitySlug}`, "--output", singleGraphFile],
       dbDir
     );
 
@@ -83,4 +85,12 @@ function runCommand(command: string, args: string[], cwd: string): Promise<void>
       reject(new Error(`Failed to start command ${command}: ${err.message}`));
     });
   });
+}
+
+// Run a tsx script via the current node binary (process.execPath, always a
+// real .exe on Windows). Avoids pnpm.cmd / cmd.exe entirely — the Trigger.dev
+// v4 worker subprocess on Windows can't reach cmd.exe under any spawn
+// configuration we tried.
+function runNodeScript(scriptRelPath: string, args: string[], cwd: string): Promise<void> {
+  return runCommand(process.execPath, ["--import", "tsx", scriptRelPath, ...args], cwd);
 }
