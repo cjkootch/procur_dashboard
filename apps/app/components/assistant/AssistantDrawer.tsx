@@ -82,7 +82,12 @@ export function AssistantDrawer() {
     }
   }, []);
 
-  if (!open) return <LauncherButton onOpen={() => setOpen(true)} />;
+  if (!open) {
+    // Hide the floating launcher on the /assistant route — the page IS
+    // the assistant, the chip is just visual clutter there.
+    if (pathname?.startsWith('/assistant')) return null;
+    return <LauncherButton onOpen={() => setOpen(true)} />;
+  }
 
   return (
     <div
