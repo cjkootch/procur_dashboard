@@ -91,11 +91,31 @@ export function Chat({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Auto-scroll behavior: stick to the bottom by default so new tokens
+  // are visible as they stream. The moment the user scrolls up, detach
+  // — let them read the start of a long response without being yanked
+  // back to the bottom by every token. Reattach when they return to
+  // within ~60px of the bottom (≈ two lines), generous enough that
+  // incidental momentum-scroll doesn't toggle constantly.
+  const [stickToBottom, setStickToBottom] = useState(true);
+
   useEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setStickToBottom(distance < 60);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (!stickToBottom) return;
+    const el = scrollerRef.current;
+    if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, stickToBottom]);
 
   useEffect(() => {
     return () => abortRef.current?.abort();
@@ -194,6 +214,9 @@ export function Chat({
     setInput('');
     setError(null);
     setSending(true);
+    // User just submitted — bring them to the bottom regardless of
+    // where they were scrolled mid-read.
+    setStickToBottom(true);
     const attachments = stagedAttachments;
     setStagedAttachments([]);
 
