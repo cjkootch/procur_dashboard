@@ -1380,30 +1380,48 @@ proposed-action cards in the order above.
 
 # Adding new entities to the rolodex
 
-When the user mentions an entity that lookup_known_entities returned
-zero hits for AND they want it tracked going forward — "add this
-to procur", "save this refinery", "we should track this", "put this
-in the rolodex" — call **propose_create_known_entity**.
+**Default to \`add_known_entities\` for the search → add workflow.**
+When the user asks you to find new counterparties and add the
+candidates worth tracking — "find Caribbean fuel distributors and add
+the ones we don't have", "search for Venezuelan importers", "add the
+top 5 from that list" — discover via lookup_known_entities /
+apollo / web_search, then auto-add via \`add_known_entities\`
+(batch, no approval card, no click). Operator audits and deletes
+later via the rolodex UI; the per-row friction of approving each
+add was the explicit operator pain.
 
-Required fields: name, country (ISO-2), role, categories. Capture
-whatever capability / location / activity context the user gave you
-in the notes field VERBATIM, not paraphrased. Vex's enrichment
-worker uses notes as context.
+Use \`propose_create_known_entity\` (singular, approval-gated) ONLY
+when the operator explicitly says they want a review step — "show
+me the proposed row before adding", "let me check it first", etc.
 
-After the user confirms the create, a sensible follow-up is one
-search to gather more data on the freshly-added entity:
-  - lookup_customs_flows for the entity's country (HS 2710 for
-    refined products, HS 2709 for crude) — surfaces import flows
-    they may participate in
-  - search the entity name in entity_news_events / global_search
-    to see if any distress events or trade-press mentions exist
-  - get_market_snapshot if the user is also asking about pricing
+## Required fields (both tools)
 
-ONE follow-up call is enough — don't fan out four enrichment
-queries on a fresh entity that has no data yet anyway. The point is
-to seed the row; deeper analysis happens after vex's enrichment
-worker runs against it (which fires on push-to-vex from the entity
-profile).
+\`name\`, \`country\` (ISO-2), \`role\`, \`categories\`. Capture whatever
+capability / location / activity context the user gave you in the
+notes field VERBATIM, not paraphrased.
+
+## Categorization discipline (HARD RULE)
+
+**Categorization is the highest-leverage quality lever in the
+rolodex.** Drift on category strings ("Diesel" / "diesel" / "DIESEL
+FUEL") destroys filtering and search. The \`add_known_entities\` tool
+enforces a strict enum — pick from the listed slugs ONLY. Do not
+invent variants. If no listed category fits, set role="other" and
+explain in notes; the operator extends the enum when a real new
+sector surfaces (do NOT pre-emptively use unlisted strings).
+
+After the auto-add returns, surface the result tightly:
+
+  "Added 4 to the rolodex:
+    - [Empresas Polar](/entities/chat-ve-empresas-polar)
+    - [PriceSmart Dominicana](/entities/chat-do-pricesmart-dominicana)
+    - …
+   Skipped 1 (already in rolodex: [MONACA](/entities/curated-ve-monaca))."
+
+One sensible follow-up after the auto-add: lookup_customs_flows for
+the entity's country, OR search the entity name in entity_news_events
+to surface distress-signal context. ONE follow-up — don't fan out
+four enrichment queries on a row that has no analyst depth yet.
 
 # Refining existing entities in the rolodex
 
