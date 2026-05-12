@@ -28,6 +28,7 @@ import {
 import type { AssistantContext } from '@procur/ai';
 import { getActivePursuitCount } from '../capture-queries';
 import { fireExtractRequirements } from '../trigger-extract-requirements';
+import { geocodeEntity } from './geocode-entity';
 import { semanticSearchLibrary } from '../library-queries';
 import { semanticSearchPastPerformance } from '../past-performance-queries';
 import { FREE_TIER_ACTIVE_PURSUIT_CAP } from '../plan-limits';
@@ -916,6 +917,43 @@ export async function insertKnownEntityRow(
     ],
   );
 
+  // Best-effort geocode when the caller didn't supply coordinates.
+  // Chat-auto-add rarely has lat/lng handy (Apollo / GAIN / web-search
+  // don't return them), so without this step the entity lands in the
+  // rolodex but disappears from the map view. Nominatim is free + no
+  // API key + rate-limited to 1 req/sec; misses leave lat/lng null
+  // and the map page renders a country-centroid fallback marker.
+  // Failures here must NEVER roll back the create.
+  let geocoded: { latitude: number; longitude: number } | null = null;
+  if (payload.latitude == null && payload.longitude == null) {
+    try {
+      geocoded = await geocodeEntity({
+        name: payload.name,
+        country: payload.country,
+        websiteUrl:
+          (payload.metadata as Record<string, unknown> | null | undefined)?.[
+            'website_url'
+          ] as string | undefined,
+      });
+    } catch (geocodeErr) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          service: 'assistant.apply.insertKnownEntityRow',
+          msg: 'geocode failed — continuing without coordinates',
+          slug: payload.slug,
+          error:
+            geocodeErr instanceof Error
+              ? geocodeErr.message
+              : String(geocodeErr),
+        }),
+      );
+    }
+  }
+
+  const effectiveLat = payload.latitude ?? geocoded?.latitude ?? null;
+  const effectiveLng = payload.longitude ?? geocoded?.longitude ?? null;
+
   const row: NewKnownEntity = {
     slug: payload.slug,
     name: payload.name,
@@ -926,8 +964,8 @@ export async function insertKnownEntityRow(
     aliases: payload.aliases,
     tags: payload.tags,
     metadata: payload.metadata,
-    latitude: payload.latitude == null ? null : String(payload.latitude),
-    longitude: payload.longitude == null ? null : String(payload.longitude),
+    latitude: effectiveLat == null ? null : String(effectiveLat),
+    longitude: effectiveLng == null ? null : String(effectiveLng),
     primaryDomain,
   };
 

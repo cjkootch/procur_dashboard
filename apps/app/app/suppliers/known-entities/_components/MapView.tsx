@@ -31,6 +31,12 @@ export type MapEntity = {
   metadata: Record<string, unknown> | null;
   latitude: number;
   longitude: number;
+  /** True when the (latitude, longitude) came from the country
+   *  centroid fallback rather than an actual geocoded location for
+   *  the entity. Rendered with a distinct (hollow, dimmer) marker so
+   *  the operator can tell at a glance which pins are precise vs.
+   *  country-only. */
+  approximate?: boolean;
 };
 
 const ROLE_COLORS: Record<string, string> = {
@@ -41,21 +47,38 @@ const ROLE_COLORS: Record<string, string> = {
   'power-plant': '#dc2626', // red — refined-fuel buyer
 };
 
-function makeIcon(color: string): L.DivIcon {
+function makeIcon(color: string, approximate = false): L.DivIcon {
   // Inline SVG marker — no external pin asset needed.
-  const svg = `
+  // Approximate (country-centroid fallback) renders as a smaller,
+  // dashed-outline circle so the operator can tell precise from
+  // country-only at a glance.
+  const svg = approximate
+    ? `
+    <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="9" cy="9" r="7" fill="${color}" fill-opacity="0.35" stroke="${color}" stroke-width="1.5" stroke-dasharray="2 2"/>
+    </svg>
+  `
+    : `
     <svg width="24" height="32" viewBox="0 0 24 32" xmlns="http://www.w3.org/2000/svg">
       <path d="M12 0C5.373 0 0 5.373 0 12c0 9 12 20 12 20s12-11 12-20c0-6.627-5.373-12-12-12z" fill="${color}" stroke="white" stroke-width="1.5"/>
       <circle cx="12" cy="12" r="4.5" fill="white"/>
     </svg>
   `;
-  return L.divIcon({
-    html: svg,
-    className: '',
-    iconSize: [24, 32],
-    iconAnchor: [12, 32],
-    popupAnchor: [0, -28],
-  });
+  return approximate
+    ? L.divIcon({
+        html: svg,
+        className: '',
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+        popupAnchor: [0, -10],
+      })
+    : L.divIcon({
+        html: svg,
+        className: '',
+        iconSize: [24, 32],
+        iconAnchor: [12, 32],
+        popupAnchor: [0, -28],
+      });
 }
 
 /** Adjust map bounds to fit all markers when entities change. */
@@ -200,7 +223,7 @@ export function MapView({
             disableClusteringAtZoom={9}
           >
             {entities.map((e) => {
-              const icon = makeIcon(ROLE_COLORS[e.role] ?? '#737373');
+              const icon = makeIcon(ROLE_COLORS[e.role] ?? '#737373', e.approximate ?? false);
               const meta = e.metadata ?? {};
               const capBpd =
                 typeof meta.capacity_bpd === 'number' ? meta.capacity_bpd : null;
@@ -228,6 +251,19 @@ export function MapView({
                           {e.name}
                         </Link>
                       </div>
+                      {e.approximate && (
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: '#a16207',
+                            marginBottom: 4,
+                            fontStyle: 'italic',
+                          }}
+                        >
+                          Approximate location — country centroid (no
+                          precise coordinates on this entity).
+                        </div>
+                      )}
                       <div style={{ fontSize: 12, color: '#525252' }}>
                         {e.country} · {e.role}
                       </div>

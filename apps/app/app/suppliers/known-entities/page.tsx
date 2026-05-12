@@ -10,6 +10,7 @@ import { EntityAvatar } from '../../../components/EntityAvatar';
 import { KycBadge } from '../../../components/KycBadge';
 import { MapViewClient } from './_components/MapViewClient';
 import type { MapEntity } from './_components/MapView';
+import { lookupCountryCentroid } from '../../../lib/known-entity-centroids';
 
 /**
  * Known-entities rolodex page — analyst-curated buyers / sellers /
@@ -441,20 +442,46 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
     });
   }
 
-  const mapEntities: MapEntity[] = rows
-    .filter((r) => r.latitude != null && r.longitude != null)
-    .map((r) => ({
-      slug: r.slug,
-      name: r.name,
-      country: r.country,
-      role: r.role,
-      categories: r.categories,
-      tags: r.tags,
-      notes: r.notes,
-      metadata: r.metadata,
-      latitude: r.latitude as number,
-      longitude: r.longitude as number,
-    }));
+  // Rows with precise coordinates render at their exact location;
+  // rows missing coordinates render at the country centroid with an
+  // "approximate" marker style so they stay visible on the map. This
+  // closes the gap where chat-auto-added entities (which rarely have
+  // lat/lng handy) silently disappeared from the map view.
+  const mapEntities: MapEntity[] = rows.flatMap((r) => {
+    if (r.latitude != null && r.longitude != null) {
+      return [
+        {
+          slug: r.slug,
+          name: r.name,
+          country: r.country,
+          role: r.role,
+          categories: r.categories,
+          tags: r.tags,
+          notes: r.notes,
+          metadata: r.metadata,
+          latitude: r.latitude as number,
+          longitude: r.longitude as number,
+        },
+      ];
+    }
+    const centroid = lookupCountryCentroid(r.country);
+    if (!centroid) return [];
+    return [
+      {
+        slug: r.slug,
+        name: r.name,
+        country: r.country,
+        role: r.role,
+        categories: r.categories,
+        tags: r.tags,
+        notes: r.notes,
+        metadata: r.metadata,
+        latitude: centroid.latitude,
+        longitude: centroid.longitude,
+        approximate: true,
+      },
+    ];
+  });
 
   const containerClass =
     activeView === 'map'
