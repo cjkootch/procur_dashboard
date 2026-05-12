@@ -1,6 +1,6 @@
 # Brief implementation status
 
-**Last refreshed:** 2026-05-12
+**Last refreshed:** 2026-05-12 (MDB brief added; GAIN Days 1-3 + cost-reduction shipped)
 **Purpose:** single authoritative status for every brief in `docs/`. Read
 this FIRST before assessing what's left to build — individual briefs'
 top-of-file "Status:" lines drift and have repeatedly fooled AI sessions
@@ -32,7 +32,8 @@ a brief; don't try to keep both in sync.
 | `deal-structures-catalog-brief.md` | ✓ Shipped | PRs #386/#387/#388/#389 merged per brief banner. |
 | `environmental-services-rolodex-brief.md` | ◯ Deferred | Adjacent capability; defer until Venezuela engagement crystallizes. No PRs against it. |
 | `feedback-ui-brief.md` | ✓ Shipped | Patterns 1-5 + match queue + entity profile + `/pinned`/`/friction`/`/relationships/heat-map`/`/retrospectives` per CLAUDE.md (PRs #430-#435). LLM friction categorization gated on Trigger.dev v3→v4. |
-| `gain-extraction-brief.md` | ✗ Not yet implemented | **NEW** as of 2026-05-11. USDA FAS GAIN narrative report extraction. 4-6 days. Companions: `fas-opendata-brief.md` (already shipped as PRs #634 + #636), `mirror-export-side-brief.md` (TBD). |
+| `gain-extraction-brief.md` | 🟡 Partial | Days 1-3 + cost-reduction levers (Haiku triage + Batch API) shipped (PRs #641 / #642 / #643 / #644). Days 4-6 deferred: entity resolution + validator sampler + chat tools + `/intelligence/gain-importers` surface. |
+| `multilateral-bank-docs-brief.md` | 🟡 Partial | **NEW** as of 2026-05-12. Day 1 lands with the brief — IDB scraper + schema. Days 2-5 deferred: CDB / World Bank / IFC scrapers, MDB-specific LLM extraction (reuses GAIN stack), chat tools, `/intelligence/mdb-contractors` surface. |
 | `intelligence-layers-brief.md` | ✓ Shipped | All 3 layers (vessel/pricing/distress) live per brief banner. |
 | `mcp-server-brief.md` | ✓ Shipped | Per operator; 18 MCP-related commits in `main`. |
 | `pricing-analytics-brief.md` | ✓ Shipped + extended | Per brief banner; addendum at end of file documents follow-on work. |
