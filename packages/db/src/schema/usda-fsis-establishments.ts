@@ -70,6 +70,12 @@ export const usdaFsisEstablishments = pgTable(
      *  joins MPI rows to crawled web summaries on primary_domain. */
     productSummary: text('product_summary'),
     productSummarySource: text('product_summary_source'),
+    /** Slug of the corresponding `known_entities` row, created via the
+     *  website-intelligence pipeline. NULL until promoted. The shadow
+     *  rolodex entry is what downstream surfaces (lookup_known_entities,
+     *  analyze_supplier, map view, web crawl) consume; this MPI row
+     *  stays canonical for regulatory data. */
+    linkedKnownEntitySlug: text('linked_known_entity_slug'),
     ingestedAt: timestamp('ingested_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },

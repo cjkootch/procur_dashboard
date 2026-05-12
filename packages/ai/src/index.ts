@@ -382,3 +382,9 @@ export {
 // around Vercel function timeouts and the pending Trigger.dev v4
 // migration that's the proper home for long-running crawls.
 export { crawlSingleEntity } from './crawl-entity-website';
+export {
+  promoteAndCrawlMpiEstablishments,
+  runMpiIntelligencePipeline,
+  type PromoteCrawlArgs as MpiIntelArgs,
+  type PromoteCrawlResult as MpiIntelResult,
+} from './usda-fsis-rolodex-pipeline';
