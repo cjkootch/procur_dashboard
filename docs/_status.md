@@ -1,6 +1,6 @@
 # Brief implementation status
 
-**Last refreshed:** 2026-05-12
+**Last refreshed:** 2026-05-12 (Panama brief added)
 **Purpose:** single authoritative status for every brief in `docs/`. Read
 this FIRST before assessing what's left to build — individual briefs'
 top-of-file "Status:" lines drift and have repeatedly fooled AI sessions
@@ -33,6 +33,7 @@ a brief; don't try to keep both in sync.
 | `environmental-services-rolodex-brief.md` | ◯ Deferred | Adjacent capability; defer until Venezuela engagement crystallizes. No PRs against it. |
 | `feedback-ui-brief.md` | ✓ Shipped | Patterns 1-5 + match queue + entity profile + `/pinned`/`/friction`/`/relationships/heat-map`/`/retrospectives` per CLAUDE.md (PRs #430-#435). LLM friction categorization gated on Trigger.dev v3→v4. |
 | `gain-extraction-brief.md` | ✗ Not yet implemented | **NEW** as of 2026-05-11. USDA FAS GAIN narrative report extraction. 4-6 days. Companions: `fas-opendata-brief.md` (already shipped as PRs #634 + #636), `mirror-export-side-brief.md` (TBD). |
+| `panama-company-graph-brief.md` | ✗ Not yet implemented | **NEW** as of 2026-05-12. Multi-source free-data Panama company graph (PanamaCompra OCDS + Contraloría + ACP transit + Registro Público + Gaceta Oficial). Complements FAS country-level data with company-level depth for the Caribbean transhipment hub. 6-8 days. |
 | `intelligence-layers-brief.md` | ✓ Shipped | All 3 layers (vessel/pricing/distress) live per brief banner. |
 | `mcp-server-brief.md` | ✓ Shipped | Per operator; 18 MCP-related commits in `main`. |
 | `pricing-analytics-brief.md` | ✓ Shipped + extended | Per brief banner; addendum at end of file documents follow-on work. |
