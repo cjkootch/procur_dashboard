@@ -4,6 +4,12 @@ Context for AI sessions working on procur_dashboard. Read at the
 start of any session, especially before touching the chat assistant
 or supplier tracking surfaces.
 
+**Before recommending or scoping work against any brief in `docs/`,
+read `docs/_status.md` first.** Individual briefs' top-of-file
+"Status:" lines drift; the status index is canonical. Multiple AI
+sessions have wasted operator time proposing already-shipped work
+because they trusted stale brief banners over the index.
+
 ## Repo orientation
 
 Turborepo monorepo. Key surfaces, in rough priority order:
