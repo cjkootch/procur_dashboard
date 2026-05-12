@@ -69,10 +69,11 @@ async function main() {
   await upsertCountryReference(db, countries, 'esr');
 
   // Commodity scope: either operator-specified or all of FAS ESR's
-  // commodity list. The list is short (~20) so "all" is fine.
+  // commodity list. The list is short (~44) so "all" is fine.
   const allCommodities = await client.get<FasEsrCommodityRecord[]>(
     '/api/esr/commodities',
   );
+  await upsertCommoditiesReference(db, allCommodities, 'esr');
   const commodityCodes = parseCommodityCodes(
     process.env.FAS_ESR_COMMODITIES,
     allCommodities.map((c) => c.commodityCode),
@@ -248,6 +249,33 @@ async function upsertCountryReference(
         countryName: sql`EXCLUDED.country_name`,
         regionCode: sql`EXCLUDED.region_code`,
         iso2: sql`COALESCE(EXCLUDED.iso2, ${schema.fasCountries.iso2})`,
+        rawPayload: sql`EXCLUDED.raw_payload`,
+        updatedAt: sql`NOW()`,
+      },
+    });
+}
+
+async function upsertCommoditiesReference(
+  db: ReturnType<typeof drizzle<typeof schema>>,
+  commodities: FasEsrCommodityRecord[],
+  api: 'esr' | 'gats' | 'psd',
+) {
+  if (commodities.length === 0) return;
+  const rows: schema.NewFasCommodity[] = commodities.map((c) => ({
+    commodityCode: c.commodityCode,
+    api,
+    commodityName: c.commodityName,
+    unitId: c.unitId ?? null,
+    rawPayload: c as unknown as Record<string, unknown>,
+  }));
+  await db
+    .insert(schema.fasCommodities)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [schema.fasCommodities.commodityCode, schema.fasCommodities.api],
+      set: {
+        commodityName: sql`EXCLUDED.commodity_name`,
+        unitId: sql`EXCLUDED.unit_id`,
         rawPayload: sql`EXCLUDED.raw_payload`,
         updatedAt: sql`NOW()`,
       },
