@@ -35,6 +35,7 @@ import {
   type FasUNTradeRecord,
 } from './lib/fas-client';
 import { FAS_SEED_COUNTRIES, resolveFasCountry } from './lib/fas-seed-countries';
+import { iso3ToIso2 } from './lib/country-codes';
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -75,7 +76,27 @@ async function main() {
       `[fas-un-comtrade] /gats/countries returned ${gatsCountries.length} rows. Sample keys: ${Object.keys(sample as object).join(',')}`,
     );
   }
+  // Resolve every FAS GATS country to ISO-2 so partner_country in
+  // customs_imports lands as ISO-2 regardless of whether the partner
+  // is in our seed list. Earlier versions only resolved seeds; non-
+  // seed partners (Brazil, US, Argentina — i.e. most trading
+  // partners of the seed reporters) fell through as raw FAS numeric
+  // codes, surfacing as garbage in chat-tool output.
   const fasGatsToIso2 = new Map<string, string>();
+  for (const c of gatsCountries) {
+    if (c.countryCode == null) continue;
+    const g = c.gencCode?.toUpperCase();
+    if (!g) continue;
+    // 2-letter GENC == ISO-2 for sovereign states; accept directly.
+    if (g.length === 2 && /^[A-Z]{2}$/.test(g)) {
+      fasGatsToIso2.set(String(c.countryCode), g);
+      continue;
+    }
+    const iso2 = iso3ToIso2(g);
+    if (iso2) fasGatsToIso2.set(String(c.countryCode), iso2);
+  }
+  // Overlay the seed list — handles records where gencCode is null
+  // (Suriname is a known case) and any aliases we've curated.
   for (const seed of FAS_SEED_COUNTRIES) {
     const match = resolveFasCountry(gatsCountries, seed);
     if (match?.countryCode != null)

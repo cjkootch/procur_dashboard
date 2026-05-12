@@ -38,6 +38,7 @@ import {
   type FasEsrExportRecord,
 } from './lib/fas-client';
 import { FAS_SEED_COUNTRIES, resolveFasCountry } from './lib/fas-seed-countries';
+import { iso3ToIso2 } from './lib/country-codes';
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -223,9 +224,21 @@ async function upsertCountryReference(
   api: 'esr' | 'gats' | 'psd',
 ) {
   if (countries.length === 0) return;
-  // Resolve ISO-2 for each FAS record by NAME against the seed list.
-  // FAS country code shapes vary; names are the stable join key.
+  // Resolve ISO-2 for every FAS record. Order:
+  //   1. gencCode (3-letter, present on most records) → ISO_3_TO_ISO_2.
+  //      Covers every sovereign country with a standard GENC entry.
+  //   2. Seed list name + alias resolver — overlays on top so seed
+  //      countries always resolve even when gencCode is null (Suriname
+  //      is a known case) or when FAS truncates names.
+  // Earlier versions of this function only filled the seed-country
+  // iso2 cells, leaving every other partner with NULL iso2 and the
+  // FAS numeric code falling through into customs_imports.partner_country.
   const iso2ByFasCode = new Map<string, string>();
+  for (const c of countries) {
+    if (c.countryCode == null) continue;
+    const iso2FromGenc = iso3ToIso2(c.gencCode);
+    if (iso2FromGenc) iso2ByFasCode.set(String(c.countryCode), iso2FromGenc);
+  }
   for (const seed of FAS_SEED_COUNTRIES) {
     const match = resolveFasCountry(countries, seed);
     if (match?.countryCode != null) {
