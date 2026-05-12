@@ -27,6 +27,10 @@ type Row = {
   hasDirectPhone: string | null;
   organization: string | null;
   alreadyEnriched: boolean;
+  // Optional for back-compat with cached tool outputs from before the
+  // tool started surfacing this. Treat missing as false so old rows
+  // render as "No email" rather than silently green.
+  enrichedHasEmail?: boolean;
 };
 
 type Output = {
@@ -295,7 +299,14 @@ function PersonRow({
         )}
       </div>
       {isResolved ? (
-        <EnrichedPill />
+        // Locally-resolved rows know their email directly; cached
+        // already-enriched rows fall back to the tool's enrichedHasEmail
+        // flag so we don't double-fetch.
+        (resolvedHere?.email ?? null) != null || row.enrichedHasEmail ? (
+          <EnrichedPill />
+        ) : (
+          <NoEmailPill />
+        )
       ) : entitySlug ? (
         <EnrichInChatButton
           entitySlug={entitySlug}
@@ -313,12 +324,26 @@ function EnrichedPill() {
   return (
     <span
       className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300"
-      title="Already enriched via Apollo /people/match"
+      title="Enriched via Apollo /people/match — verified email on file"
     >
       <svg viewBox="0 0 12 12" className="h-3 w-3" aria-hidden fill="currentColor">
         <path d="M4.5 8.5L2 6l-.7.7 3.2 3.2 6.5-6.5L10.3 3z" />
       </svg>
-      Enriched
+      Has email
+    </span>
+  );
+}
+
+function NoEmailPill() {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
+      title="Enriched via Apollo, but no verified email was returned. Add a manual email on the entity profile or try an alternate contact."
+    >
+      <svg viewBox="0 0 12 12" className="h-3 w-3" aria-hidden fill="currentColor">
+        <path d="M6 1.5a4.5 4.5 0 100 9 4.5 4.5 0 000-9zm-.5 2.5h1v3h-1V4zm0 4h1v1h-1V8z" />
+      </svg>
+      No email
     </span>
   );
 }

@@ -7556,28 +7556,33 @@ export async function getContactEnrichmentsBySlug(
  * with apollo_last_refreshed_at IS NULL count as not-yet-enriched
  * (pre-enrichment search hits live in the table too).
  */
-export async function getEnrichedApolloPersonIdsForEntity(
+export async function getEnrichedApolloPersonsForEntity(
   entitySlug: string,
   apolloPersonIds: readonly string[],
-): Promise<Set<string>> {
-  if (apolloPersonIds.length === 0) return new Set();
+): Promise<Map<string, { hasEmail: boolean }>> {
+  if (apolloPersonIds.length === 0) return new Map();
   // pgArray() builds an explicit ARRAY[...]::text[] literal; the bare
   // `${arr}::text[]` template form serializes through neon-http as a
   // record literal and Postgres rejects it ("malformed array literal" /
   // "cannot cast type record to text[]"). Same fix pattern as the
   // commodity-prices loader below.
   const result = await db.execute(sql`
-    SELECT apollo_person_id
+    SELECT apollo_person_id, email
       FROM entity_contact_enrichments
      WHERE entity_slug = ${entitySlug}
        AND apollo_person_id = ANY(${pgArray(apolloPersonIds)})
        AND apollo_last_refreshed_at IS NOT NULL
   `);
-  const enriched = new Set<string>();
-  for (const r of result.rows as Array<{ apollo_person_id: string | null }>) {
-    if (r.apollo_person_id) enriched.add(r.apollo_person_id);
+  const out = new Map<string, { hasEmail: boolean }>();
+  for (const r of result.rows as Array<{
+    apollo_person_id: string | null;
+    email: string | null;
+  }>) {
+    if (r.apollo_person_id) {
+      out.set(r.apollo_person_id, { hasEmail: r.email != null });
+    }
   }
-  return enriched;
+  return out;
 }
 
 // ─── Apollo entity cache reader ──────────────────────────────────

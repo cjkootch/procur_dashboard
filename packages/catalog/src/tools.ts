@@ -66,7 +66,7 @@ import {
   summarizeCatalog,
   whatsNewForUser,
   type OpportunityScope,
-  getEnrichedApolloPersonIdsForEntity,
+  getEnrichedApolloPersonsForEntity,
 } from './queries';
 import {
   getFasEsrRecentExportsForCountry,
@@ -7582,7 +7582,7 @@ export function buildCatalogTools(): ToolRegistry {
               };
             }
 
-            const enrichedIds = await getEnrichedApolloPersonIdsForEntity(
+            const enrichedMap = await getEnrichedApolloPersonsForEntity(
               input.entitySlug,
               result.people.map((p) => p.id),
             );
@@ -7590,29 +7590,43 @@ export function buildCatalogTools(): ToolRegistry {
               degraded: false,
               peopleCount: result.people.length,
               totalEntries: result.totalEntries,
-              people: result.people.map((p) => ({
-                apolloPersonId: p.id,
-                firstName: p.firstName,
-                lastNameObfuscated: p.lastNameObfuscated,
-                title: p.title,
-                hasEmail: p.hasEmail,
-                hasDirectPhone: p.hasDirectPhone,
-                organization: p.organization?.name ?? null,
-                // True when this person has already been resolved via a
-                // prior /people/match call. The chat renderer uses this
-                // to draw a ✓ instead of an Enrich affordance, so the
-                // operator doesn't accidentally re-pay for a contact
-                // already on file.
-                alreadyEnriched: enrichedIds.has(p.id),
-              })),
+              people: result.people.map((p) => {
+                const enriched = enrichedMap.get(p.id);
+                return {
+                  apolloPersonId: p.id,
+                  firstName: p.firstName,
+                  lastNameObfuscated: p.lastNameObfuscated,
+                  title: p.title,
+                  hasEmail: p.hasEmail,
+                  hasDirectPhone: p.hasDirectPhone,
+                  organization: p.organization?.name ?? null,
+                  // True when this person has already been resolved via a
+                  // prior /people/match call. The chat renderer uses this
+                  // to draw a ✓ instead of an Enrich affordance, so the
+                  // operator doesn't accidentally re-pay for a contact
+                  // already on file.
+                  alreadyEnriched: enriched != null,
+                  // Whether the cached enrichment actually contains an
+                  // email. Apollo /people/match can succeed (return title,
+                  // LinkedIn, employment) without yielding a verified
+                  // email, so "enriched" alone isn't enough to know the
+                  // contact is reachable. The renderer uses this to split
+                  // the ✓ pill into "Has email" (green) vs "No email"
+                  // (amber) — gives the operator a one-glance signal of
+                  // which contacts are actually contactable.
+                  enrichedHasEmail: enriched?.hasEmail ?? false,
+                };
+              }),
               note:
                 'Last names are obfuscated for unenriched rows. Rows ' +
                 'with `alreadyEnriched: true` have already been resolved ' +
                 'via /people/match — the chat UI renders those with a ' +
-                'confirmed-identity check. Unenriched rows show an ' +
-                'Enrich affordance that links to the entity profile, ' +
-                'where clicking Enrich fires /people/match (paid, ' +
-                'per-tenant daily cap).',
+                'confirmed-identity check. `enrichedHasEmail` reveals ' +
+                'whether the cached enrichment actually contains an ' +
+                'email (some enrichments return profile data only). ' +
+                'Unenriched rows show an Enrich affordance that links ' +
+                'to the entity profile, where clicking Enrich fires ' +
+                '/people/match (paid, per-tenant daily cap).',
             };
           },
         ),
