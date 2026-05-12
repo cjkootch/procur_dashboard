@@ -160,7 +160,14 @@ export async function AppShell({
   const pollState = await getNotificationPollState(user.id);
 
   return (
-    <div className="flex min-h-screen">
+    // min-h-[100dvh] not min-h-screen — vh measures the LAYOUT viewport
+    // on iOS so this container ended up taller than the visible area
+    // when the URL bar was showing. Combined with `<main className="
+    // overflow-auto">` and chat pages that size to 100dvh, that delta
+    // showed up as scrollable empty space below the chat composer on
+    // mobile. dvh tracks the visible viewport so the shell and chat
+    // surfaces stay aligned.
+    <div className="flex min-h-[100dvh]">
       <Sidebar nav={NAV} company={sidebarCompany} />
 
       <div className="flex min-w-0 flex-1 flex-col">
