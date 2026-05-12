@@ -59,6 +59,8 @@
     "ingest-fas-un-comtrade": "tsx src/ingest-fas-un-comtrade.ts",
     "ingest-gain-reports": "tsx src/ingest-gain-reports.ts",
     "ingest-mdb-idb": "tsx src/ingest-mdb-idb.ts",
+    "ingest-mdb-worldbank": "tsx src/ingest-mdb-worldbank.ts",
+    "ingest-mdb-cdb": "tsx src/ingest-mdb-cdb.ts",
     "extract-graph": "tsx src/extract-graph.ts",
     "validate-graph-embeddings": "tsx src/validate-graph-embeddings.ts",
     "extract-bge-texts": "tsx src/extract-bge-texts.ts",
