@@ -84,7 +84,15 @@ function ApolloPersonRow({
   contact: EntityContactEnrichment;
   entitySlug: string;
 }) {
-  const enriched = contact.email != null;
+  // Three states, not two: a row may have been enriched (Apollo
+  // /people/match ran) and still not have an email — Apollo returns
+  // profile + LinkedIn without one when the verified-email lookup
+  // misses. Previously this code treated "enriched-but-no-email" the
+  // same as "never enriched", so the Enrich button re-appeared and
+  // an operator could burn paid credits re-asking Apollo the same
+  // question. The badge below makes that state explicit instead.
+  const hasEmail = contact.email != null;
+  const wasEnriched = contact.apolloLastRefreshedAt != null;
   return (
     <div className="rounded-[var(--radius-lg)] border border-[color:var(--color-border)] p-3">
       <div className="flex items-start justify-between gap-3">
@@ -102,14 +110,22 @@ function ApolloPersonRow({
             )}
           </p>
         </div>
-        {!enriched && contact.apolloPersonId && (
+        {!wasEnriched && contact.apolloPersonId && (
           <EnrichApolloPersonButton
             entitySlug={entitySlug}
             apolloPersonId={contact.apolloPersonId}
           />
         )}
+        {wasEnriched && !hasEmail && (
+          <span
+            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
+            title="Apollo returned a profile for this contact but no verified email. Re-enriching is unlikely to help; add an email manually if you find one elsewhere."
+          >
+            No email
+          </span>
+        )}
       </div>
-      {enriched && (
+      {hasEmail && (
         <div className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-xs text-[color:var(--color-muted-foreground)] md:grid-cols-2">
           {contact.email && (
             <Pair
