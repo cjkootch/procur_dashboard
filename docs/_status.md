@@ -1,6 +1,6 @@
 # Brief implementation status
 
-**Last refreshed:** 2026-05-12 (MDB Day 2: World Bank + CDB scrapers)
+**Last refreshed:** 2026-05-12 (MDB Day 3: IFC + LLM extraction)
 **Purpose:** single authoritative status for every brief in `docs/`. Read
 this FIRST before assessing what's left to build — individual briefs'
 top-of-file "Status:" lines drift and have repeatedly fooled AI sessions
@@ -33,7 +33,7 @@ a brief; don't try to keep both in sync.
 | `environmental-services-rolodex-brief.md` | ◯ Deferred | Adjacent capability; defer until Venezuela engagement crystallizes. No PRs against it. |
 | `feedback-ui-brief.md` | ✓ Shipped | Patterns 1-5 + match queue + entity profile + `/pinned`/`/friction`/`/relationships/heat-map`/`/retrospectives` per CLAUDE.md (PRs #430-#435). LLM friction categorization gated on Trigger.dev v3→v4. |
 | `gain-extraction-brief.md` | 🟡 Partial | Days 1-3 + cost-reduction levers (Haiku triage + Batch API) shipped (PRs #641 / #642 / #643 / #644). Days 4-6 deferred: entity resolution + validator sampler + chat tools + `/intelligence/gain-importers` surface. |
-| `multilateral-bank-docs-brief.md` | 🟡 Partial | **NEW** as of 2026-05-12. Days 1-2 shipped: IDB + World Bank + CDB scrapers + schema. Days 3-5 deferred: IFC scraper, MDB-specific LLM extraction (reuses GAIN stack), entity resolution, chat tools, `/intelligence/mdb-contractors` surface. |
+| `multilateral-bank-docs-brief.md` | 🟡 Partial | **NEW** as of 2026-05-12. Days 1-3 shipped: IDB + World Bank + CDB + IFC scrapers + LLM extraction pipeline (Sonnet + Haiku triage + Batch API support). Days 4-5 deferred: entity resolution against `known_entities`, validator second-pass, chat tools, `/intelligence/mdb-contractors` surface. |
 | `intelligence-layers-brief.md` | ✓ Shipped | All 3 layers (vessel/pricing/distress) live per brief banner. |
 | `mcp-server-brief.md` | ✓ Shipped | Per operator; 18 MCP-related commits in `main`. |
 | `pricing-analytics-brief.md` | ✓ Shipped + extended | Per brief banner; addendum at end of file documents follow-on work. |

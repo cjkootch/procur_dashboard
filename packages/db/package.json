@@ -61,6 +61,7 @@
     "ingest-mdb-idb": "tsx src/ingest-mdb-idb.ts",
     "ingest-mdb-worldbank": "tsx src/ingest-mdb-worldbank.ts",
     "ingest-mdb-cdb": "tsx src/ingest-mdb-cdb.ts",
+    "ingest-mdb-ifc": "tsx src/ingest-mdb-ifc.ts",
     "extract-graph": "tsx src/extract-graph.ts",
     "validate-graph-embeddings": "tsx src/validate-graph-embeddings.ts",
     "extract-bge-texts": "tsx src/extract-bge-texts.ts",

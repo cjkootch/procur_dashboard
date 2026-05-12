@@ -16,6 +16,7 @@
     "ingest-eiti-report": "tsx src/ingest-eiti-report.ts",
     "parse-gain-reports": "tsx src/parse-gain-reports.ts",
     "extract-gain-reports": "tsx src/extract-gain-reports.ts",
+    "extract-mdb-projects": "tsx src/extract-mdb-projects.ts",
     "seed-entity-text-embeddings": "tsx src/seed-entity-text-embeddings.ts",
     "crawl-entity-website": "tsx src/crawl-entity-website.ts",
     "type-check": "tsc --noEmit",
