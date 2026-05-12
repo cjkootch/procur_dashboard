@@ -21,6 +21,7 @@ import { proposePushToVexTool } from './tools/propose-push-to-vex';
 import { proposePushManyToVexTool } from './tools/propose-push-many-to-vex';
 import { proposeCreateKnownEntityTool } from './tools/propose-create-known-entity';
 import { proposeUpdateKnownEntityTool } from './tools/propose-update-known-entity';
+import { addKnownEntitiesTool } from './tools/add-known-entities';
 
 export const readTools = {
   [searchOpportunitiesTool.name]: searchOpportunitiesTool,
@@ -34,6 +35,10 @@ export const readTools = {
   [listRecommendedOpportunitiesTool.name]: listRecommendedOpportunitiesTool,
   [getCompanyProfileTool.name]: getCompanyProfileTool,
   [listContractsTool.name]: listContractsTool,
+  // Auto-write tool — bypasses approval gate per operator direction.
+  // Lives in readTools (rather than writeTools) because writeTools is
+  // the propose/approval pattern, which this tool deliberately skips.
+  [addKnownEntitiesTool.name]: addKnownEntitiesTool,
 } satisfies ToolRegistry;
 
 export const writeTools = {

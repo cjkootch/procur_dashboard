@@ -127,6 +127,63 @@ export const DEAL_CATEGORIES = [
 ] as const;
 export type DealCategory = (typeof DEAL_CATEGORIES)[number];
 
+/**
+ * Canonical category vocabulary for known_entities. Used by the
+ * chat-side auto-add tool (`add_known_entities`) to keep categorization
+ * tight — free-form category strings drift ("Diesel" vs "diesel" vs
+ * "DIESEL FUEL") and hurt both downstream filtering and operator
+ * search. Keep the list lean; extend only when a real new sector
+ * surfaces (NOT for one-off variants).
+ *
+ * Slugs are kebab-case. Singular when natural ("crude-oil"), plural
+ * when the category covers a class ("food-commodities").
+ */
+export const KNOWN_ENTITY_CATEGORIES = [
+  // Refined fuels
+  'crude-oil',
+  'diesel',
+  'gasoline',
+  'jet-fuel',
+  'kerosene',
+  'heating-oil',
+  'fuel-oil',
+  'marine-bunker',
+  'naphtha',
+  'gasoil',
+  // Gases
+  'lpg',
+  'lng',
+  // Petrochemicals
+  'petrochemicals',
+  // Mining / metals
+  'mining',
+  'metals',
+  'fertilizer',
+  // Food / ag bulk commodities
+  'food-commodities',
+  'wheat',
+  'corn',
+  'soybean',
+  'rice',
+  'sugar',
+  'beef',
+  'pork',
+  'poultry',
+  'dairy',
+  'oilseeds',
+  'palm-oil',
+  // Services / adjacents
+  'environmental-services',
+  'scrap-metals',
+  'logistics',
+  'shipping',
+  'terminal-operator',
+  'refinery-operator',
+  // Catch-all
+  'other',
+] as const;
+export type KnownEntityCategory = (typeof KNOWN_ENTITY_CATEGORIES)[number];
+
 // ─── Standard documents ───────────────────────────────────────────
 
 /**

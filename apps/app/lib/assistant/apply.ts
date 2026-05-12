@@ -865,9 +865,51 @@ function deriveDomainFromUrl(value: unknown): string | null {
  * getApolloEntityCache, etc.). Best-effort — Apollo failures must
  * never roll back the create.
  */
-const createKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
-  const payload = createKnownEntitySchema.parse(rawPayload);
+export type KnownEntityInsertPayload = {
+  slug: string;
+  name: string;
+  country: string;
+  role: string;
+  categories: string[];
+  notes: string | null;
+  aliases: string[];
+  tags: string[];
+  metadata: Record<string, unknown>;
+  latitude: number | null;
+  longitude: number | null;
+};
 
+export type KnownEntityInsertResult =
+  | {
+      ok: true;
+      entityId: string | null;
+      slug: string;
+      dedupedAgainstExisting?: true;
+    }
+  | { ok: false; error: string; message?: string };
+
+/**
+ * Insert a single known_entities row with best-effort Apollo + text-
+ * embedding enrichment. Exported so the chat-side auto-add tool
+ * (`add_known_entities`) shares the same write path as the approval-
+ * applied propose flow — both paths produce identical rolodex rows,
+ * including downstream enrichment.
+ *
+ * Domain-driven enrichment: when the payload carries a website URL in
+ * metadata, populate `primary_domain` on the row AND fire a single
+ * Apollo `enrichOrgsBatch` so the entity is linked to its Apollo org
+ * before the next chat tool call. Best-effort — Apollo failures must
+ * never roll back the create.
+ *
+ * Conflict-on-slug returns `dedupedAgainstExisting: true` so the
+ * caller can navigate to the existing slug instead of getting a
+ * confusing duplicate error (proposal step pre-checks for this, but
+ * a race between proposal and apply / between two parallel auto-adds
+ * can land here).
+ */
+export async function insertKnownEntityRow(
+  payload: KnownEntityInsertPayload,
+): Promise<KnownEntityInsertResult> {
   const primaryDomain = deriveDomainFromUrl(
     (payload.metadata as Record<string, unknown> | null | undefined)?.[
       'website_url'
@@ -896,12 +938,6 @@ const createKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
       .returning({ id: knownEntities.id, slug: knownEntities.slug });
     if (!created) return { ok: false, error: 'insert_failed' };
 
-    // Best-effort Apollo link. enrichOrgsBatch matches by domain via
-    // POST /mixed_companies/search and writes apollo_org_id + the
-    // thin snapshot back onto the row. Failures (rate limit, network,
-    // Apollo down) must NEVER roll back the create — log and move on.
-    // The next chat tool call (find_decision_makers_at_entity etc.)
-    // will then have a live apolloOrgId to filter by.
     if (primaryDomain) {
       try {
         await enrichOrgsBatch({
@@ -912,23 +948,17 @@ const createKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
         console.warn(
           JSON.stringify({
             level: 'warn',
-            service: 'assistant.apply.createKnownEntity',
+            service: 'assistant.apply.insertKnownEntityRow',
             msg: 'apollo enrichOrgsBatch failed — continuing',
             slug: created.slug,
             primaryDomain,
-            error: apolloErr instanceof Error ? apolloErr.message : String(apolloErr),
+            error:
+              apolloErr instanceof Error ? apolloErr.message : String(apolloErr),
           }),
         );
       }
     }
 
-    // Best-effort text embedding for ML mention-resolution. Mirrors
-    // the seed-entity-text-embeddings.ts source-text composition so
-    // backfill batches and on-create writes share an identity space.
-    // ~$0.0001 per row at text-embedding-3-small pricing. Failures
-    // (OpenAI rate limit, no API key in dev, Postgres congestion)
-    // must NEVER roll back the create — log and move on; the
-    // nightly seed script will pick up the gap.
     try {
       await embedAndUpsertEntityText({
         slug: created.slug,
@@ -943,41 +973,45 @@ const createKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
       console.warn(
         JSON.stringify({
           level: 'warn',
-          service: 'assistant.apply.createKnownEntity',
+          service: 'assistant.apply.insertKnownEntityRow',
           msg: 'text-embedding upsert failed — continuing',
           slug: created.slug,
-          error: embedErr instanceof Error ? embedErr.message : String(embedErr),
+          error:
+            embedErr instanceof Error ? embedErr.message : String(embedErr),
         }),
       );
     }
 
-    return {
-      ok: true,
-      result: {
-        entityId: created.id,
-        slug: created.slug,
-        redirectTo: `/entities/${created.slug}`,
-      },
-    };
+    return { ok: true, entityId: created.id, slug: created.slug };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // Postgres unique-constraint violation surfaces as "duplicate key
-    // value violates unique constraint". The proposal step already
-    // checks for this, but a race between proposal and apply can land
-    // here — return the existing slug so the user has somewhere to go.
     if (/duplicate key/i.test(msg)) {
       return {
         ok: true,
-        result: {
-          entityId: null,
-          slug: payload.slug,
-          redirectTo: `/entities/${payload.slug}`,
-          dedupedAgainstExisting: true,
-        },
+        entityId: null,
+        slug: payload.slug,
+        dedupedAgainstExisting: true,
       };
     }
     return { ok: false, error: 'insert_failed', message: msg };
   }
+}
+
+const createKnownEntity: ApplyHandler = async (_ctx, rawPayload) => {
+  const payload = createKnownEntitySchema.parse(rawPayload);
+  const result = await insertKnownEntityRow(payload);
+  if (!result.ok) return result;
+  return {
+    ok: true,
+    result: {
+      entityId: result.entityId,
+      slug: result.slug,
+      redirectTo: `/entities/${result.slug}`,
+      ...(result.dedupedAgainstExisting
+        ? { dedupedAgainstExisting: true }
+        : {}),
+    },
+  };
 };
 
 const updateKnownEntitySchema = z.object({
