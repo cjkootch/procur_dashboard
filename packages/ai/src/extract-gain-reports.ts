@@ -21,6 +21,8 @@
  *   GAIN_EXTRACT_COUNTRY=VE     # optional — restrict to ISO-2
  *   GAIN_EXTRACT_FORCE=1        # re-extract reports already marked 'extracted'
  *   GAIN_EXTRACT_DRY_RUN=1      # parse + extract, print results, do NOT persist
+ *   GAIN_EXTRACT_TRIAGE=1       # pre-filter sections with Haiku before Sonnet (real-time mode only)
+ *   GAIN_EXTRACT_BATCH=1        # submit via Anthropic Batch API (50% off, ~minutes-to-24h wall clock)
  */
 
 import 'dotenv/config';
@@ -33,8 +35,12 @@ import {
   type GainReport,
   type NewGainImporterMention,
 } from '@procur/db';
-import { parseGainPdf } from './gain-extraction/parser';
-import { extractGainReport } from './gain-extraction/extractor';
+import { parseGainPdf, type ParsedGainReport } from './gain-extraction/parser';
+import {
+  extractGainReport,
+  extractGainReportsBatch,
+  type GainExtractionResult,
+} from './gain-extraction/extractor';
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -53,7 +59,14 @@ async function fetchPdf(report: GainReport): Promise<Buffer | null> {
   }
 }
 
-async function processReport(report: GainReport, dryRun: boolean) {
+type PreparedReport = { report: GainReport; parsed: ParsedGainReport };
+
+/**
+ * Fetch + parse + handle terminal cases (fetch failed / parse failed /
+ * no candidate sections). Returns the parsed report when extraction
+ * should proceed; null when terminal state was already persisted.
+ */
+async function prepareReport(report: GainReport): Promise<PreparedReport | null> {
   console.log(
     `\n[gain-extract] ${report.countryCode} ${report.reportType} "${report.title.slice(0, 60)}"`,
   );
@@ -67,16 +80,13 @@ async function processReport(report: GainReport, dryRun: boolean) {
   if (!pdf) {
     await db
       .update(gainReports)
-      .set({
-        extractionStatus: 'failed',
-        extractionError: 'pdf_fetch_failed',
-      })
+      .set({ extractionStatus: 'failed', extractionError: 'pdf_fetch_failed' })
       .where(eq(gainReports.id, report.id));
     console.warn('  ✗ fetch failed; marked failed');
-    return;
+    return null;
   }
 
-  let parsed;
+  let parsed: ParsedGainReport;
   try {
     parsed = await parseGainPdf(pdf);
   } catch (err) {
@@ -88,7 +98,7 @@ async function processReport(report: GainReport, dryRun: boolean) {
       })
       .where(eq(gainReports.id, report.id));
     console.warn(`  ✗ parse failed: ${(err as Error).message}`);
-    return;
+    return null;
   }
 
   const candidateCount = parsed.sections.filter((s) => s.kind === 'candidate').length;
@@ -103,31 +113,24 @@ async function processReport(report: GainReport, dryRun: boolean) {
       })
       .where(eq(gainReports.id, report.id));
     console.log('  · no candidate sections; skipped');
-    return;
+    return null;
   }
 
-  let result;
-  try {
-    result = await extractGainReport({
-      parsed,
-      reportTitle: report.title,
-      reportType: report.reportType,
-      countryCode: report.countryCode,
-    });
-  } catch (err) {
-    await db
-      .update(gainReports)
-      .set({
-        extractionStatus: 'failed',
-        extractionError: `llm_failed: ${(err as Error).message.slice(0, 200)}`,
-      })
-      .where(eq(gainReports.id, report.id));
-    console.warn(`  ✗ LLM extract failed: ${(err as Error).message}`);
-    return;
-  }
+  return { report, parsed };
+}
 
+async function persistExtraction(
+  prepared: PreparedReport,
+  result: GainExtractionResult,
+  dryRun: boolean,
+) {
+  const { report, parsed } = prepared;
+  const candidateCount = parsed.sections.filter((s) => s.kind === 'candidate').length;
+  const triageSkipped = result.triageDecisions.filter(
+    (d) => !d.decision.hasNamedImporters,
+  ).length;
   console.log(
-    `  → ${candidateCount} candidate sections, ${result.importers.length} importers extracted (after dedup)`,
+    `  → ${candidateCount} candidate sections${triageSkipped > 0 ? ` (${triageSkipped} skipped by triage)` : ''}, ${result.importers.length} importers extracted (after dedup)`,
   );
   console.log(
     `  → tokens: input=${result.usage.inputTokens}, output=${result.usage.outputTokens}, cache_read=${result.usage.cacheReadTokens}`,
@@ -171,6 +174,95 @@ async function processReport(report: GainReport, dryRun: boolean) {
     .where(eq(gainReports.id, report.id));
 }
 
+async function processReportRealtime(
+  report: GainReport,
+  dryRun: boolean,
+  triage: boolean,
+) {
+  const prepared = await prepareReport(report);
+  if (!prepared) return;
+
+  let result: GainExtractionResult;
+  try {
+    result = await extractGainReport({
+      parsed: prepared.parsed,
+      reportTitle: report.title,
+      reportType: report.reportType,
+      countryCode: report.countryCode,
+      triage,
+    });
+  } catch (err) {
+    await db
+      .update(gainReports)
+      .set({
+        extractionStatus: 'failed',
+        extractionError: `llm_failed: ${(err as Error).message.slice(0, 200)}`,
+      })
+      .where(eq(gainReports.id, report.id));
+    console.warn(`  ✗ LLM extract failed: ${(err as Error).message}`);
+    return;
+  }
+  await persistExtraction(prepared, result, dryRun);
+}
+
+async function processReportsBatch(reports: GainReport[], dryRun: boolean) {
+  console.log(`[gain-extract] batch mode — preparing ${reports.length} reports`);
+
+  const prepared: PreparedReport[] = [];
+  for (const report of reports) {
+    const p = await prepareReport(report);
+    if (p) prepared.push(p);
+  }
+  if (prepared.length === 0) {
+    console.log('[gain-extract] no reports ready for batch (all terminal); done');
+    return;
+  }
+
+  console.log(
+    `\n[gain-extract] submitting batch for ${prepared.length} reports — wait time can range from minutes to ~24h`,
+  );
+
+  const batchResult = await extractGainReportsBatch(
+    prepared.map((p) => ({
+      reportId: p.report.id,
+      reportTitle: p.report.title,
+      reportType: p.report.reportType,
+      countryCode: p.report.countryCode,
+      parsed: p.parsed,
+    })),
+    {
+      onStatus: (status) => {
+        console.log(
+          `  · batch ${status.id} status=${status.processing_status} processed=${status.request_counts.succeeded + status.request_counts.errored + status.request_counts.canceled + status.request_counts.expired}/${status.request_counts.processing + status.request_counts.succeeded + status.request_counts.errored + status.request_counts.canceled + status.request_counts.expired}`,
+        );
+      },
+    },
+  );
+
+  for (const p of prepared) {
+    const r = batchResult.byReport.get(p.report.id);
+    if (r) {
+      await persistExtraction(p, r, dryRun);
+      continue;
+    }
+    await db
+      .update(gainReports)
+      .set({
+        extractionStatus: 'failed',
+        extractionError: 'batch_no_results',
+      })
+      .where(eq(gainReports.id, p.report.id));
+    console.warn(`  ✗ ${p.report.countryCode} ${p.report.title.slice(0, 40)}: no batch results`);
+  }
+
+  if (batchResult.errors.size > 0) {
+    console.log(`\n[gain-extract] batch errors:`);
+    for (const [customId, err] of batchResult.errors) {
+      console.log(`  ${customId}: ${err}`);
+    }
+  }
+}
+
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required.');
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -180,6 +272,8 @@ async function main() {
   const limit = Number.parseInt(process.env.GAIN_EXTRACT_LIMIT ?? '5', 10);
   const force = process.env.GAIN_EXTRACT_FORCE === '1';
   const dryRun = process.env.GAIN_EXTRACT_DRY_RUN === '1';
+  const triage = process.env.GAIN_EXTRACT_TRIAGE === '1';
+  const useBatch = process.env.GAIN_EXTRACT_BATCH === '1';
   const reportIdFilter = process.env.GAIN_EXTRACT_REPORT_ID;
   const countryFilter = process.env.GAIN_EXTRACT_COUNTRY?.toUpperCase();
 
@@ -207,11 +301,21 @@ async function main() {
   }
 
   console.log(
-    `[gain-extract] processing ${reports.length} reports (dry-run=${dryRun})`,
+    `[gain-extract] processing ${reports.length} reports (mode=${useBatch ? 'batch' : 'realtime'}, triage=${triage && !useBatch}, dry-run=${dryRun})`,
   );
 
-  for (const r of reports) {
-    await processReport(r, dryRun);
+  if (useBatch && triage) {
+    console.log(
+      '[gain-extract] note: GAIN_EXTRACT_TRIAGE is ignored in batch mode (every section goes to Sonnet at 50%-off batch rate).',
+    );
+  }
+
+  if (useBatch) {
+    await processReportsBatch(reports, dryRun);
+  } else {
+    for (const r of reports) {
+      await processReportRealtime(r, dryRun, triage);
+    }
   }
 
   console.log('\n[gain-extract] done');
