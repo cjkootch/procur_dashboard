@@ -10,6 +10,7 @@
  * Apps that only need the tools can import from `@procur/catalog/tools`.
  */
 export * from './queries';
+export * from './fas-queries';
 export * from './mutations';
 export * from './agent-runtime';
 export * from './inbox';

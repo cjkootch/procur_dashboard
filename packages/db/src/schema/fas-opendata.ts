@@ -116,3 +116,29 @@ export const fasEsrWeekly = pgTable(
 
 export type FasEsrWeekly = typeof fasEsrWeekly.$inferSelect;
 export type NewFasEsrWeekly = typeof fasEsrWeekly.$inferInsert;
+
+/**
+ * FAS commodity reference cache. Populated by ingest-fas-esr from
+ * /api/esr/commodities. Required for chat tools to return
+ * human-readable commodity names alongside FAS commodity codes —
+ * "wheat" / "soybean meal" / "muscle cuts of pork" rather than
+ * 401 / 107 / 1505.
+ */
+export const fasCommodities = pgTable(
+  'fas_commodities',
+  {
+    commodityCode: integer('commodity_code').notNull(),
+    api: text('api').notNull(),
+    commodityName: text('commodity_name').notNull(),
+    unitId: integer('unit_id'),
+    rawPayload: jsonb('raw_payload'),
+    ingestedAt: timestamp('ingested_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.commodityCode, table.api] }),
+  }),
+);
+
+export type FasCommodity = typeof fasCommodities.$inferSelect;
+export type NewFasCommodity = typeof fasCommodities.$inferInsert;

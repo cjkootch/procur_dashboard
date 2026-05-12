@@ -69,6 +69,10 @@ import {
   getEnrichedApolloPersonIdsForEntity,
 } from './queries';
 import {
+  getFasEsrRecentExportsForCountry,
+  getFasUNComtradePartnersForCountry,
+} from './fas-queries';
+import {
   addOpportunityToPursuit,
   attachEntityDocument,
   createAlertProfile,
@@ -2664,6 +2668,157 @@ export function buildCatalogTools(): ToolRegistry {
                 'priority dedup. Country-level, not per-cargo. For per-cargo buyer attribution, ' +
                 'paid AIS/customs services (Kpler/Vortexa) are required. Pair with ' +
                 'lookup_known_entities to attribute country imports to candidate refineries.',
+            };
+          },
+        );
+      },
+    }),
+
+    lookup_fas_esr_exports: defineTool({
+      name: 'lookup_fas_esr_exports',
+      description:
+        'USDA FAS Export Sales Reporting — weekly US agricultural export ' +
+        'commitments + outstanding sales + accumulated shipments to a ' +
+        'destination country, broken down by commodity. Answers "is the US ' +
+        'currently shipping wheat / corn / soybeans / pork / etc. to ' +
+        '{country}, and how much is in the pipeline?" Reflects real, ' +
+        'committed trade flows (not forecasts). Coverage scoped to the ' +
+        "Caribbean / LATAM seed list — Venezuela, Jamaica, DR, Trinidad, " +
+        'Guyana, Suriname, Haiti, Colombia, Panama, Cuba; expanding when ' +
+        'the strategic focus broadens. Units vary by commodity (wheat / ' +
+        'corn / oilseeds in MT, meat in MT). Cite USDA explicitly when ' +
+        'surfacing — these are USDA-published numbers, not procur ' +
+        'observations.',
+      kind: 'read',
+      schema: z.object({
+        country: isoAlpha2Country.describe(
+          "Destination country — ISO-2 (e.g. 'VE', 'JM'). Accepts full " +
+            'names too; normalized to ISO-2.',
+        ),
+        commodityCode: z
+          .number()
+          .int()
+          .optional()
+          .describe(
+            'FAS ESR commodity code — optional filter to one commodity. ' +
+              'Common: 401 (wheat), 107 (soybean meal), 1505 (muscle cuts ' +
+              'of pork). Omit to get every commodity ranked by weekly ' +
+              'export volume.',
+          ),
+        weeksLookback: z
+          .number()
+          .int()
+          .min(1)
+          .max(104)
+          .optional()
+          .describe(
+            'Window in weeks. Default 26 (≈6 months). Use 13 for "current ' +
+              'quarter", 52 for "current year", 104 for "two years".',
+          ),
+        limit: z.number().int().min(1).max(50).optional(),
+      }),
+      handler: async (ctx, input) => {
+        return withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_fas_esr_exports',
+            args: input,
+            summarize: (out: { rankedCommodities: { length: number } }) => ({
+              resultCount: out.rankedCommodities.length,
+              resultSummary: {
+                country: input.country,
+                commodityCode: input.commodityCode,
+              },
+            }),
+          },
+          async () => {
+            const rows = await getFasEsrRecentExportsForCountry(input.country, {
+              commodityCode: input.commodityCode,
+              weeksLookback: input.weeksLookback,
+              limit: input.limit ?? 25,
+            });
+            return {
+              source: 'USDA FAS Export Sales Reporting (ESR)',
+              country: input.country,
+              windowWeeks: input.weeksLookback ?? 26,
+              rankedCommodities: rows,
+              noData: rows.length === 0,
+            };
+          },
+        );
+      },
+    }),
+
+    lookup_fas_un_comtrade_partners: defineTool({
+      name: 'lookup_fas_un_comtrade_partners',
+      description:
+        'USDA FAS / UN ComTrade annual HS6 trade flows — ranks supplier or ' +
+        'destination countries for a given reporter country. Answers "who ' +
+        'supplies {country} with refined fuels / wheat / agricultural ' +
+        'products?" at HS6 granularity, including non-US trade lanes the ' +
+        "ESR data doesn't capture (Brazil → Venezuela, Argentina → Caribbean, " +
+        'etc.). Annual cadence, ~12-month lag — pair with lookup_fas_esr_' +
+        'exports for the real-time view of US-origin lanes. Coverage scoped ' +
+        'to the Caribbean / LATAM seed list. Cite USDA / UN ComTrade.',
+      kind: 'read',
+      schema: z.object({
+        country: isoAlpha2Country.describe(
+          "Reporter country — ISO-2. The country whose trade flows we're " +
+            "looking up. e.g. 'VE' for Venezuela, 'JM' for Jamaica.",
+        ),
+        productCode: z
+          .string()
+          .optional()
+          .describe(
+            "HS6 product code (6 digits). Common: '270900' (crude petroleum), " +
+              "'271019' (refined fuels, other), '100190' (wheat, other), " +
+              "'120100' (soybeans). Omit to see top trade across all HS6.",
+          ),
+        direction: z
+          .enum(['import', 'export'])
+          .optional()
+          .describe(
+            "'import' (default) ranks countries SUPPLYING the reporter. " +
+              "'export' ranks countries the reporter SHIPS to.",
+          ),
+        yearsLookback: z
+          .number()
+          .int()
+          .min(1)
+          .max(10)
+          .optional()
+          .describe('Window in years. Default 5.'),
+        limit: z.number().int().min(1).max(50).optional(),
+      }),
+      handler: async (ctx, input) => {
+        return withToolTelemetry(
+          {
+            ctx,
+            toolName: 'lookup_fas_un_comtrade_partners',
+            args: input,
+            summarize: (out: { rankedPartners: { length: number } }) => ({
+              resultCount: out.rankedPartners.length,
+              resultSummary: {
+                country: input.country,
+                productCode: input.productCode,
+                direction: input.direction ?? 'import',
+              },
+            }),
+          },
+          async () => {
+            const rows = await getFasUNComtradePartnersForCountry(input.country, {
+              productCode: input.productCode,
+              direction: input.direction,
+              yearsLookback: input.yearsLookback,
+              limit: input.limit ?? 25,
+            });
+            return {
+              source: 'USDA FAS / UN ComTrade (annual HS6)',
+              reporterCountry: input.country,
+              direction: input.direction ?? 'import',
+              windowYears: input.yearsLookback ?? 5,
+              rankedPartners: rows,
+              noData: rows.length === 0,
             };
           },
         );
