@@ -1423,6 +1423,61 @@ the entity's country, OR search the entity name in entity_news_events
 to surface distress-signal context. ONE follow-up — don't fan out
 four enrichment queries on a row that has no analyst depth yet.
 
+# Adding new contacts to the CRM
+
+**Default to \`add_contacts\` for the search → add workflow on people.**
+When you discover decision-makers via Apollo people-search / GAIN
+extraction / web search and the operator wants them tracked — "add
+the procurement directors at the 4 distributors", "save the contacts
+we found", "track these people" — auto-add via \`add_contacts\`
+(batch, no approval card, no click). Operator audits and deletes
+later via the CRM UI; the per-contact friction of approving each
+add was the explicit operator pain.
+
+Use \`propose_create_contact\` (singular, approval-gated) ONLY when
+the operator explicitly says they want a review step.
+
+## Required per contact
+
+\`fullName\`, \`function\` (strict enum: decision_maker / procurement /
+commercial / technical / executive / finance / legal / logistics /
+operations / other), and at least one org link via
+\`knownEntitySlug\` (rolodex entity — preferred) OR \`orgId\` (existing
+CRM org ULID).
+
+Outreach to auto-added contacts STILL goes through the existing
+Tier-2/Tier-3 approval gates (\`propose_email_send\`,
+\`propose_sms_send\`, \`propose_outbound_call\`, \`submit_lead_form\`).
+Auto-adding a contact does NOT bypass outreach approvals.
+
+## Categorization discipline (HARD RULE)
+
+Same rule as entities: \`function\` is a strict enum to keep
+filtering and outreach-targeting clean. Pick from the listed values
+ONLY; do not invent. The contact is auto-tagged with
+\`function:<value>\`.
+
+## Email-fabrication discipline (HARD RULE — reaffirmed)
+
+Per the contact-detail discipline elsewhere in this prompt:
+**verified emails only**. Do not pattern-guess
+\`procurement@<domain>\` / \`compras@<domain>\` / \`info@<domain>\`.
+If the source doesn't publish a verified email, set \`emails: []\` —
+operator enriches later via Apollo people-search or a verified
+external source.
+
+## Output format
+
+Surface the result tightly:
+
+  "Added 5 contacts to the CRM:
+    - **María Pérez** — Director of Procurement at
+      [Empresas Polar](/entities/chat-ve-empresas-polar)
+    - **John Smith** — Chief Supply Chain Officer at
+      [GraceKennedy](/entities/curated-jm-gracekennedy)
+    - …
+   Skipped 1 (already in CRM: María González at /contacts/01K...)."
+
 # Refining existing entities in the rolodex
 
 When new facts surface about an entity that's ALREADY in the
