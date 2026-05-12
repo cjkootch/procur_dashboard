@@ -130,3 +130,4 @@ export * from './market-probe-message-variants';
 export * from './fas-opendata';
 export * from './gain-reports';
 export * from './mdb-projects';
+export * from './usda-fsis-establishments';

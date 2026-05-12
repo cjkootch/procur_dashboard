@@ -14,7 +14,8 @@
     "./ingest-bankruptcy-recap": "./src/ingest-bankruptcy-recap.ts",
     "./ingest-aisstream": "./src/ingest-aisstream.ts",
     "./ingest-fred-prices": "./src/ingest-fred-prices.ts",
-    "./ingest-eia-prices": "./src/ingest-eia-prices.ts"
+    "./ingest-eia-prices": "./src/ingest-eia-prices.ts",
+    "./ingest-usda-fsis-mpi-lib": "./src/lib/usda-fsis-mpi.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",
@@ -62,6 +63,7 @@
     "ingest-mdb-worldbank": "tsx src/ingest-mdb-worldbank.ts",
     "ingest-mdb-cdb": "tsx src/ingest-mdb-cdb.ts",
     "ingest-mdb-ifc": "tsx src/ingest-mdb-ifc.ts",
+    "ingest-usda-fsis-mpi": "tsx src/ingest-usda-fsis-mpi.ts",
     "extract-graph": "tsx src/extract-graph.ts",
     "validate-graph-embeddings": "tsx src/validate-graph-embeddings.ts",
     "extract-bge-texts": "tsx src/extract-bge-texts.ts",
