@@ -92,7 +92,15 @@ export function RightRailPanel() {
   if (!open) return <LauncherButton onOpen={() => setOpen(true)} />;
 
   return (
-    <div className="fixed inset-0 z-[1000]" role="dialog" aria-modal="true">
+    // dvh-based height (not inset-0) so the dialog matches the visual
+    // viewport on iOS when the keyboard opens. Otherwise the chat
+    // composer ends up behind the keyboard and the ChatToolbar at the
+    // top falls outside the viewport.
+    <div
+      className="fixed inset-x-0 top-0 z-[1000] h-[100dvh]"
+      role="dialog"
+      aria-modal="true"
+    >
       <button
         type="button"
         aria-label="Close right rail"
