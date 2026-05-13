@@ -4879,8 +4879,11 @@ export function buildCatalogTools(): ToolRegistry {
         '    - With a buyer target: pass it as sellPrice; productCost ' +
         'auto-pulls from spot for a realistic margin estimate.\n' +
         '    - With a supplier FOB: pass it as productCostPerUsg; pass ' +
-        "the realistic CIF mid as sellPrice (from evaluate_multi_product_rfq's " +
-        '`realisticCifUsdPerMt.mid` divided by bblPerMt × 42).\n' +
+        "the realistic CIF mid as sellPrice. Use evaluate_multi_product_rfq's " +
+        '`realisticCifUsdPerUsg.mid` VERBATIM — do not derive sellPrice ' +
+        'by dividing `realisticCifUsdPerMt.mid` yourself. Real chat traces ' +
+        'have produced $0.40-$0.86/USG conversion errors that flipped a ' +
+        '$152k LOSS into a $594k EBITDA story.\n' +
         '  • Override (rare): set `allowWashSale: true` ONLY when the user ' +
         'explicitly wants to see the freight/insurance drag on a zero-' +
         'margin hypothetical.',

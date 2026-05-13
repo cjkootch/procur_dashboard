@@ -441,9 +441,9 @@ export async function composeDealEconomics(
         `freight + insurance it goes negative by construction. ` +
         `To model a real deal: pass productCostPerUsg (or productCostPerBbl) ` +
         `with a real supplier FOB, OR pass sellPrice as the realistic CIF ` +
-        `mid from evaluate_multi_product_rfq (returns realisticCifUsdPerMt.mid ` +
-        `for the destination). To model the wash explicitly, set ` +
-        `allowWashSale: true.`,
+        `mid from evaluate_multi_product_rfq (copy realisticCifUsdPerUsg.mid ` +
+        `verbatim into sellPricePerUsg for the destination). To model the ` +
+        `wash explicitly, set allowWashSale: true.`,
     );
   }
 
@@ -492,6 +492,35 @@ export async function composeDealEconomics(
       `($${(results.breakeven.sellPricePerUsg * USG_PER_BBL).toFixed(2)}/bbl) ` +
       `vs your ${sellPricePerUsg.toFixed(4)}/USG. Lift sell price, tighten freight, ` +
       `or get a lower supplier cost before treating this line as viable.`;
+  }
+
+  // Third top-level guard: sellPrice well above benchmark spot. For
+  // clean-product Atlantic-basin CIF, freight + crack premium rarely
+  // pushes realistic CIF more than ~15% over the matching NYH spot
+  // benchmark. When sellPrice clears that bar with the cost auto-pulled,
+  // it usually means the caller fabricated a price (e.g. botched
+  // MT→USG conversion from evaluate_multi_product_rfq's
+  // realisticCifUsdPerMt). The Haiti Petroil trace (2026-05-13) is the
+  // canonical case: gasoline sellPrice came in 31% above NYH gasoline
+  // spot, flipped a barely-breakeven program into a fictional $594k
+  // EBITDA. The realisticCifUsdPerUsg field on evaluate_multi_product_rfq
+  // is the canonical source; this guard just catches mis-extractions.
+  const benchmarkPerUsg = benchmark?.pricePerUsg ?? null;
+  if (
+    topLevelWarning == null &&
+    benchmarkPerUsg != null &&
+    sellPricePerUsg > benchmarkPerUsg * 1.15
+  ) {
+    const pctOver = ((sellPricePerUsg - benchmarkPerUsg) / benchmarkPerUsg) * 100;
+    topLevelWarning =
+      `Sell price ($${sellPricePerUsg.toFixed(4)}/USG) is ${pctOver.toFixed(1)}% ` +
+      `above the ${benchmark!.slug} spot benchmark ($${benchmarkPerUsg.toFixed(4)}/USG). ` +
+      `For clean-product CIF, realistic prices rarely exceed 15% over spot — ` +
+      `freight + crack premium tops out around there. Verify sellPrice against ` +
+      `evaluate_multi_product_rfq's realisticCifUsdPerUsg.high for this ` +
+      `destination before treating the margin as real. Common cause: ` +
+      `mis-extracted MT→USG conversion (use realisticCifUsdPerUsg verbatim, ` +
+      `don't derive from realisticCifUsdPerMt).`;
   }
 
   return { inputs, results, benchmark, topLevelWarning, densitySource, kind: 'deal_economics' };
