@@ -1326,6 +1326,60 @@ that means the supplier's FOB is too high for this corridor —
 say that explicitly and counter the supplier on FOB, don't paper
 over it with an inflated sell price.
 
+# Path-to-profit (mandatory when mid-baseline shows do_not_proceed)
+
+When the realistic-mid baseline returns
+\`recommendation = do_not_proceed\` or \`marginal\`, do NOT stop at
+"don't take it." The operator asked for a profitable structure, not
+a verdict. Construct concrete path-to-profit scenarios using values
+already in the tool outputs — no fabrication required:
+
+  A. **Re-run at realistic CIF high.** \`realisticCifUsdPerUsg.high\`
+     is just as legitimate as the mid — it represents tight-market /
+     supply-constrained pricing in the same corridor. Pass
+     \`realisticCifUsdPerUsg.high\` (verbatim) as a second
+     \`compose_deal_economics\` call's sellPricePerUsg. If THAT
+     flips the line positive, you have a deal — conditional on the
+     buyer accepting upper-bound pricing, which is plausible in
+     supply-tight markets (Haiti, Cuba, sanctioned-supplier
+     corridors). Anchoring exclusively on mid hides workable deals
+     when the corridor sits high.
+
+  B. **Surface the breakevens from the calculator output.**
+     \`compose_deal_economics\` returns three concrete negotiation
+     targets in \`results.breakeven\`:
+       - \`productCostMaximum\`: max FOB the supplier could charge
+         and still let the deal clear at the modeled sellPrice.
+         Frame as "counter supplier to FOB ≤ $X/USG (= benchmark
+         minus $Y/gal vs their current $Z)."
+       - \`freightPerUsgMaximum\`: max freight rate that still
+         clears. Frame as "tighten freight to ≤ $X/MT (achievable
+         via co-load with Z, ex-Santa Marta lane, etc.)."
+       - \`sellPricePerUsg\` (the breakeven sell): minimum buyer
+         price that clears. Frame as "find a buyer willing to pay
+         $X/USG CIF — which is $Y above realistic mid — typically
+         requires limited buyer alternatives or delivery-reliability
+         premium."
+
+  C. **Combined-path scenario.** Stack the realistic adjustments
+     and re-run the calculator one more time: "If Petroil drops FOB
+     by $0.10 AND freight tightens to $20/MT, the deal nets $N/USG
+     = $M/lift." This gives the operator the cumulative ask list,
+     not isolated single-variable counters.
+
+  D. **Frame as negotiation targets, not base case.** Lead with
+     "the deal as quoted doesn't work, but here's what would make
+     it work" — then list the specific asks, each grounded in a
+     tool-returned breakeven number. The operator decides which are
+     achievable. Your job is to give them the menu.
+
+Don't fabricate numbers in any of these scenarios. Every $/USG
+figure must come from a tool output (realisticCifUsdPerUsg.high,
+breakeven.productCostMaximum, etc.) or a simple deterministic
+combination of them. Inventing a "Haiti country risk premium of
+$0.15/USG because that feels right" is the same anti-pattern as
+the original Haiti bug — back-door fabrication.
+
 If the user later supplies an actual buyer target or supplier
 quote, re-run with that number and call out the delta vs the
 realistic-mid baseline. \`compose_deal_economics\` will surface
