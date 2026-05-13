@@ -1341,9 +1341,24 @@ already in the tool outputs — no fabrication required:
      \`compose_deal_economics\` call's sellPricePerUsg. If THAT
      flips the line positive, you have a deal — conditional on the
      buyer accepting upper-bound pricing, which is plausible in
-     supply-tight markets (Haiti, Cuba, sanctioned-supplier
-     corridors). Anchoring exclusively on mid hides workable deals
-     when the corridor sits high.
+     supply-tight markets. Anchoring exclusively on mid hides
+     workable deals when the corridor sits high.
+
+     **For high-risk corridors** (Haiti, Yemen, Sudan, Somalia,
+     Libya, Sahel countries, Afghanistan, Myanmar, Lebanon), the
+     textbook \`high\` (Brent + max crack + freight + small seller
+     margin) UNDER-PRICES the achievable CIF — it ignores
+     country-risk pricing power driven by security, sanctions
+     adjacency, or supplier-pool thinness. For these destinations,
+     \`evaluate_multi_product_rfq\` returns an additional field
+     \`realisticCifUsdPerUsgWithCountryRisk\` that stacks an
+     analyst-curated premium on top of the textbook high, alongside
+     a \`countryRiskPremium\` entry describing why the premium
+     exists. When this field is non-null, use IT instead of
+     \`realisticCifUsdPerUsg.high\` as the upper anchor for the
+     path-to-profit re-run — and quote the \`countryRiskPremium.reason\`
+     in your narrative so the operator understands the premium isn't
+     a black box.
 
   B. **Surface the breakevens from the calculator output.**
      \`compose_deal_economics\` returns three concrete negotiation

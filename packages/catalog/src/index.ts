@@ -76,6 +76,11 @@ export {
   type Verdict,
 } from './plausibility';
 export {
+  COUNTRY_RISK_PREMIUMS,
+  getCountryRiskPremium,
+  type CountryRiskPremium,
+} from './country-risk-premiums';
+export {
   recommendVesselClass,
   inferVesselClass,
   VESSEL_CLASSES,

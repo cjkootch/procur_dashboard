@@ -22,6 +22,10 @@ import {
   type FreightOriginRegion,
   type FreightProductType,
 } from './freight-routes';
+import {
+  getCountryRiskPremium,
+  type CountryRiskPremium,
+} from './country-risk-premiums';
 
 export type ProductSlug =
   | 'en590-ulsd'
@@ -168,6 +172,25 @@ export type EvaluateTargetPriceResult = {
    * the deal narrative from "loss" to "$594k EBITDA").
    */
   realisticCifUsdPerUsg: { low: number; mid: number; high: number } | null;
+  /**
+   * Country-risk-adjusted upper bound. NULL when destCountry has no
+   * entry in COUNTRY_RISK_PREMIUMS (most corridors). For high-risk
+   * corridors (Haiti, Yemen, Sudan, Sahel) this stacks the per-USG
+   * premium on top of the textbook `high` to capture pricing power
+   * the textbook Brent+crack+freight model misses — driven by
+   * security, sanctions adjacency, or supplier-pool thinness rather
+   * than commodity fundamentals. Use this as the upper anchor when
+   * modeling a path-to-profit for these destinations; the textbook
+   * `high` will under-price the achievable CIF.
+   */
+  realisticCifUsdPerUsgWithCountryRisk: number | null;
+  /**
+   * The country-risk premium entry applied to derive
+   * realisticCifUsdPerUsgWithCountryRisk, or null if none applies.
+   * The `reason` string is meant to be quoted into the assistant's
+   * narrative so the premium isn't a black box to the operator.
+   */
+  countryRiskPremium: CountryRiskPremium | null;
   pctGapVsMid: number | null;
   /** 'no-target' when the caller didn't supply a target price
       (realistic-CIF-only mode). 'no-data' when benchmark or freight
@@ -225,6 +248,11 @@ export async function evaluateTargetPrice(
   let freightHigh: number | null = null;
   let chosenOrigin: FreightOriginRegion | null = input.originRegion ?? null;
   let chosenVessel: string | null = null;
+  // Destination country (ISO-2) — carried on each freight route entry
+  // so we can apply the country-risk premium without a separate ports
+  // table lookup. All routes for a given destPortSlug share the same
+  // destCountry, so we just take it from whichever route we picked.
+  let destCountry: string | null = null;
 
   if (candidateRoutes.length > 0) {
     if (input.originRegion) {
@@ -233,6 +261,7 @@ export async function evaluateTargetPrice(
       freightHigh = r.usdPerMtHigh;
       chosenOrigin = r.originRegion;
       chosenVessel = r.vesselClassTypical;
+      destCountry = r.destCountry;
     } else {
       // Cheapest sourcing: minimum low and minimum high across origins.
       const cheapest = [...candidateRoutes].sort(
@@ -242,6 +271,7 @@ export async function evaluateTargetPrice(
       freightHigh = cheapest.usdPerMtHigh;
       chosenOrigin = cheapest.originRegion;
       chosenVessel = cheapest.vesselClassTypical;
+      destCountry = cheapest.destCountry;
     }
   }
 
@@ -276,6 +306,14 @@ export async function evaluateTargetPrice(
       verdict = 'no-target';
     }
   }
+
+  // Country-risk-premium lookup. Looks up `destCountry` (carried on
+  // the freight route, ISO-2) in COUNTRY_RISK_PREMIUMS. NULL for any
+  // corridor not in the table — most destinations.
+  const countryRiskEntry = getCountryRiskPremium(
+    destCountry,
+    input.product.startsWith('crude-') ? 'crude' : 'refined',
+  );
 
   const narrative = buildNarrative({
     input,
@@ -318,6 +356,11 @@ export async function evaluateTargetPrice(
             mid: realisticPerBbl.mid / 42,
             high: realisticPerBbl.high / 42,
           },
+    realisticCifUsdPerUsgWithCountryRisk:
+      realisticPerBbl == null || countryRiskEntry == null
+        ? null
+        : realisticPerBbl.high / 42 + countryRiskEntry.premiumUsdPerUsg,
+    countryRiskPremium: countryRiskEntry,
     pctGapVsMid: pctGap,
     verdict,
     narrative,
