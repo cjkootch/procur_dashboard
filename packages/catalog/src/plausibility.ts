@@ -156,6 +156,18 @@ export type EvaluateTargetPriceResult = {
   };
   realisticCifUsdPerMt: { low: number; mid: number; high: number } | null;
   realisticCifUsdPerBbl: { low: number; mid: number; high: number } | null;
+  /**
+   * USG-denominated CIF range — same numbers as realisticCifUsdPerMt /
+   * realisticCifUsdPerBbl, pre-divided by (bblPerMt × 42). Surfaced so
+   * the assistant can copy the value verbatim into
+   * compose_deal_economics.sellPricePerUsg instead of doing the
+   * conversion in-prompt. Real chat traces saw $0.40-$0.86/USG errors
+   * when the model interpolated MT→USG by hand (Haiti Petroil program,
+   * 2026-05-13: diesel sell quoted at $3.748 when realistic mid was
+   * $3.36, gasoline at $4.098 when realistic mid was $3.24 — flipped
+   * the deal narrative from "loss" to "$594k EBITDA").
+   */
+  realisticCifUsdPerUsg: { low: number; mid: number; high: number } | null;
   pctGapVsMid: number | null;
   /** 'no-target' when the caller didn't supply a target price
       (realistic-CIF-only mode). 'no-data' when benchmark or freight
@@ -298,6 +310,14 @@ export async function evaluateTargetPrice(
     },
     realisticCifUsdPerMt: realisticPerMt,
     realisticCifUsdPerBbl: realisticPerBbl,
+    realisticCifUsdPerUsg:
+      realisticPerBbl == null
+        ? null
+        : {
+            low: realisticPerBbl.low / 42,
+            mid: realisticPerBbl.mid / 42,
+            high: realisticPerBbl.high / 42,
+          },
     pctGapVsMid: pctGap,
     verdict,
     narrative,
