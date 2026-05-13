@@ -1132,8 +1132,9 @@ sequence is:
        target.
      - A supplier FOB quote — once you have it, call
        \`compose_deal_economics\` with productCostPerUsg = the FOB
-       and sellPrice = the realistic CIF mid (volumeUsg+sellPricePerUsg
-       OR volumeMt+sellPricePerMt).
+       and sellPricePerUsg = \`realisticCifUsdPerUsg.mid\` from
+       step 1's output (verbatim — do NOT compute by dividing
+       realisticCifUsdPerMt).
 
 The bug this prevents: in real chat traces the model has called
 \`compose_deal_economics\` with sellPrice = NYH spot and let
@@ -1302,19 +1303,35 @@ Workflow:
      for tender packages) with the destination port and origin but
      NO target. Targets are optional; the tool runs in
      "realistic-CIF-only" mode and returns the realistic CIF range
-     {low, mid, high} per line.
-  2. Use the realistic mid as the sell-price anchor for
-     **compose_deal_economics** (sellPricePerBbl = realistic CIF
-     mid / bblPerMt, OR sellPricePerMt = mid). Set sourcingRegion
-     to the same origin you used in step 1 so the cost side is
-     consistent.
-  3. Lead the response with "at the realistic CIF mid (~\$X/MT
-     for Y, ~\$Z/MT for W) the deal nets \$N margin / \$M EBITDA"
+     {low, mid, high} per line — in $/MT, $/bbl, AND $/USG.
+  2. Pass **realisticCifUsdPerUsg.mid VERBATIM** as
+     \`compose_deal_economics.sellPricePerUsg\`. Copy the number;
+     do not derive it from realisticCifUsdPerMt by hand. Real chat
+     traces (Haiti Petroil program, 2026-05-13) saw $0.40–$0.86/USG
+     MT→USG conversion errors that flipped a ~\$152k LOSS into a
+     fictional \$594k EBITDA story. The verbatim rule eliminates
+     that failure mode entirely. Set sourcingRegion to the same
+     origin you used in step 1 so the cost side is consistent.
+  3. Lead the response with "at the realistic CIF mid (~\$X/USG
+     for Y, ~\$Z/USG for W) the deal nets \$N margin / \$M EBITDA"
      — anchored on real benchmarks, not a guessed price.
+
+DO NOT pick a sellPrice from FOB-cost × aspirational-multiplier
+("1.35× cost feels right" etc.). The realistic CIF range bounds
+what the destination market actually clears at; multiplying the
+supplier's FOB by an arbitrary risk premium produces a fictional
+number that won't survive contact with a real buyer. If the
+realistic CIF range is below the supplier FOB + freight + fees,
+that means the supplier's FOB is too high for this corridor —
+say that explicitly and counter the supplier on FOB, don't paper
+over it with an inflated sell price.
 
 If the user later supplies an actual buyer target or supplier
 quote, re-run with that number and call out the delta vs the
-realistic-mid baseline.
+realistic-mid baseline. \`compose_deal_economics\` will surface
+a topLevelWarning if sellPricePerUsg exceeds the auto-pulled
+benchmark spot by >15% — when that fires, lead with it and
+recompute against \`realisticCifUsdPerUsg.high\` instead.
 
 After the card renders: don't restate the numbers in prose. Add
 one or two sentences interpreting the scorecard + the most
