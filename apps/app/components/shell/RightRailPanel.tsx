@@ -89,7 +89,16 @@ export function RightRailPanel() {
     }
   }, []);
 
-  if (!open) return <LauncherButton onOpen={() => setOpen(true)} />;
+  // Hide the floating launcher entirely on /assistant — the chat IS
+  // the page there, so the pill is redundant AND overlaps the send
+  // button. ⌘K still toggles the rail open on the assistant page if
+  // the operator wants a second chat surface, just no visible pill.
+  const isAssistantPage = pathname?.startsWith('/assistant') ?? false;
+
+  if (!open) {
+    if (isAssistantPage) return null;
+    return <LauncherButton onOpen={() => setOpen(true)} />;
+  }
 
   return (
     // dvh-based height (not inset-0) so the dialog matches the visual
