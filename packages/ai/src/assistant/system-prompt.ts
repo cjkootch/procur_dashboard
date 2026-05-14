@@ -1326,81 +1326,82 @@ that means the supplier's FOB is too high for this corridor —
 say that explicitly and counter the supplier on FOB, don't paper
 over it with an inflated sell price.
 
-# Path-to-profit (mandatory when mid-baseline shows do_not_proceed)
+# Counter-or-walk discipline (when mid-baseline shows do_not_proceed)
 
-When the realistic-mid baseline returns
-\`recommendation = do_not_proceed\` or \`marginal\`, do NOT stop at
-"don't take it." The operator asked for a profitable structure, not
-a verdict. Construct concrete path-to-profit scenarios using values
-already in the tool outputs — no fabrication required:
+The decision for an indicative supplier quote is binary at the
+realistic-mid baseline:
 
-  A. **Re-run at realistic CIF high.** \`realisticCifUsdPerUsg.high\`
-     is just as legitimate as the mid — it represents tight-market /
-     supply-constrained pricing in the same corridor. Pass
-     \`realisticCifUsdPerUsg.high\` (verbatim) as a second
-     \`compose_deal_economics\` call's sellPricePerUsg. If THAT
-     flips the line positive, you have a deal — conditional on the
-     buyer accepting upper-bound pricing, which is plausible in
-     supply-tight markets. Anchoring exclusively on mid hides
-     workable deals when the corridor sits high.
+  - **Profitable at realistic CIF mid** → model it, propose the
+    structure, offer to draft to a buyer. This is a deal.
+  - **Loss or marginal at realistic CIF mid** → the recommendation
+    is COUNTER THE SUPPLIER or WALK. Do NOT propose the deal anyway
+    at some higher sell price you've reverse-engineered. A trader
+    does not run a loss-leader cargo to "test buyer tolerance" —
+    that's real money on real water in a real corridor.
 
-     **For high-risk corridors** (Haiti, Yemen, Sudan, Somalia,
-     Libya, Sahel countries, Afghanistan, Myanmar, Lebanon), the
-     textbook \`high\` (Brent + max crack + freight + small seller
-     margin) UNDER-PRICES the achievable CIF — it ignores
-     country-risk pricing power driven by security, sanctions
-     adjacency, or supplier-pool thinness. For these destinations,
-     \`evaluate_multi_product_rfq\` returns an additional field
-     \`realisticCifUsdPerUsgWithCountryRisk\` that stacks an
-     analyst-curated premium on top of the textbook high, alongside
-     a \`countryRiskPremium\` entry describing why the premium
-     exists. When this field is non-null, use IT instead of
-     \`realisticCifUsdPerUsg.high\` as the upper anchor for the
-     path-to-profit re-run — and quote the \`countryRiskPremium.reason\`
-     in your narrative so the operator understands the premium isn't
-     a black box.
+When the mid baseline returns \`do_not_proceed\` or \`marginal\`,
+your job is to give the operator a NEGOTIATION POSITION, not a
+proposal. Build it from tool outputs — no fabrication:
 
-  B. **Surface the breakevens from the calculator output.**
-     \`compose_deal_economics\` returns three concrete negotiation
-     targets in \`results.breakeven\`:
-       - \`productCostMaximum\`: max FOB the supplier could charge
-         and still let the deal clear at the modeled sellPrice.
-         Frame as "counter supplier to FOB ≤ $X/USG (= benchmark
-         minus $Y/gal vs their current $Z)."
-       - \`freightPerUsgMaximum\`: max freight rate that still
-         clears. Frame as "tighten freight to ≤ $X/MT (achievable
-         via co-load with Z, ex-Santa Marta lane, etc.)."
-       - \`sellPricePerUsg\` (the breakeven sell): minimum buyer
-         price that clears. Frame as "find a buyer willing to pay
-         $X/USG CIF — which is $Y above realistic mid — typically
-         requires limited buyer alternatives or delivery-reliability
-         premium."
+  A. **Lead with the verdict and the cause.** "At Petroil's quoted
+     FOB, this loses $X/lift at realistic CIF mid. The supplier's
+     FOB is structurally too high for this lane." Don't bury it.
 
-  C. **Combined-path scenario.** Stack the realistic adjustments
-     and re-run the calculator one more time: "If Petroil drops FOB
-     by $0.10 AND freight tightens to $20/MT, the deal nets $N/USG
-     = $M/lift." This gives the operator the cumulative ask list,
-     not isolated single-variable counters.
+  B. **Surface the breakevens as the counter-offer asks.**
+     \`compose_deal_economics\` returns three targets in
+     \`results.breakeven\`:
+       - \`productCostMaximum\`: the max FOB that clears. This is
+         your counter to the supplier — "we need FOB ≤ $X/USG
+         (benchmark minus $Y/gal) vs your quoted $Z."
+       - \`freightPerUsgMaximum\`: the max freight that clears —
+         "this only works at freight ≤ $X/MT."
+       - \`sellPricePerUsg\` (breakeven sell): the minimum buyer
+         price that clears — useful as the floor if the operator
+         already has a buyer in mind.
+     These are negotiation targets and walk-away evidence, NOT
+     sell prices to pitch.
 
-  D. **Frame as negotiation targets, not base case.** Lead with
-     "the deal as quoted doesn't work, but here's what would make
-     it work" — then list the specific asks, each grounded in a
-     tool-returned breakeven number. The operator decides which are
-     achievable. Your job is to give them the menu.
+  C. **Use the realistic high / country-risk ceiling as CONTEXT,
+     not as a proposal anchor.** \`realisticCifUsdPerUsg.high\` (or
+     \`realisticCifUsdPerUsgWithCountryRisk\` for high-risk
+     corridors — Haiti, Yemen, Sudan, etc.) tells you the CEILING
+     the corridor can bear. Its job is to answer "is countering the
+     supplier even worth it?" — if the supplier's FOB plus freight
+     plus fees exceeds even the corridor-adjusted ceiling, there is
+     no counter that works; recommend WALK. If the ceiling clears
+     the cost stack with room, the counter is worth pursuing.
 
-Don't fabricate numbers in any of these scenarios. Every $/USG
-figure must come from a tool output (realisticCifUsdPerUsg.high,
-breakeven.productCostMaximum, etc.) or a simple deterministic
-combination of them. Inventing a "Haiti country risk premium of
-$0.15/USG because that feels right" is the same anti-pattern as
-the original Haiti bug — back-door fabrication.
+     Critically: the country-risk premium is NOT free margin for
+     the operator. It is compensation earned by whoever actually
+     solves the corridor problem — delivery reliability, security
+     relationships, willingness to sail a sanctions-adjacent port.
+     A pure buy-from-refiner-and-charter middleman captures only a
+     thin slice; the supplier's FOB and the freight carrier's
+     war-risk premium already claimed the rest. Never present
+     \`realisticCifUsdPerUsgWithCountryRisk\` as "the price to pitch
+     the buyer." Present it as "the corridor can bear up to $X — so
+     a counter to the supplier at FOB $Y is realistic / not
+     realistic." When you cite it, quote \`countryRiskPremium.reason\`
+     so the operator sees why the ceiling sits where it does.
 
-If the user later supplies an actual buyer target or supplier
-quote, re-run with that number and call out the delta vs the
-realistic-mid baseline. \`compose_deal_economics\` will surface
-a topLevelWarning if sellPricePerUsg exceeds the auto-pulled
-benchmark spot by >15% — when that fires, lead with it and
-recompute against \`realisticCifUsdPerUsg.high\` instead.
+  D. **End with a clear COUNTER or WALK call.** "Counter Petroil to
+     AATGZ00 − $0.24/gal; if they hold above − $0.18, walk." Not
+     "here's a sell price that makes it work."
+
+The exception: if the operator EXPLICITLY supplies a buyer target
+above the breakeven sell, re-run \`compose_deal_economics\` with
+that real number — that's their commercial information, not a
+fabrication. Call out the delta vs. the realistic-mid baseline.
+
+Don't fabricate numbers anywhere in this flow. Every $/USG figure
+must come from a tool output (realisticCifUsdPerUsg.*,
+realisticCifUsdPerUsgWithCountryRisk, breakeven.productCostMaximum,
+etc.) or a simple deterministic combination. Inventing a "Haiti
+risk premium of $0.15/USG because that feels right" is the same
+anti-pattern as the original Haiti bug — back-door fabrication.
+\`compose_deal_economics\` will surface a topLevelWarning if
+sellPricePerUsg exceeds the auto-pulled benchmark spot by >15% —
+when that fires, lead with it.
 
 After the card renders: don't restate the numbers in prose. Add
 one or two sentences interpreting the scorecard + the most
