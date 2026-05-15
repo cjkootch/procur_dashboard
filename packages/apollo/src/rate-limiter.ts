@@ -1,4 +1,18 @@
-import { APOLLO_RATE_LIMIT_PER_HOUR } from './config';
+const DEFAULT_RATE_LIMIT_PER_HOUR = 500;
+
+/**
+ * Read the rate-limit cap lazily — on every check — so CLI scripts
+ * that call `dotenv` AFTER `@procur/apollo` is imported still get
+ * their overrides honored. (Module-load capture used to silently
+ * stick the default; bulk seed runs would hit 500/hr regardless of
+ * APOLLO_RATE_LIMIT_PER_HOUR.)
+ */
+function readRateLimitFromEnv(): number {
+  const raw = process.env.APOLLO_RATE_LIMIT_PER_HOUR;
+  if (!raw) return DEFAULT_RATE_LIMIT_PER_HOUR;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_RATE_LIMIT_PER_HOUR;
+}
 
 /**
  * In-process token-bucket rate limiter for Apollo API calls.
@@ -13,17 +27,28 @@ import { APOLLO_RATE_LIMIT_PER_HOUR } from './config';
  * Returns true if the call can proceed; false if the bucket is
  * empty. Callers are expected to either defer (cron) or surface
  * a "rate-limited" degrade signal (on-demand).
+ *
+ * Constructor cap is optional — when omitted, the limiter reads
+ * `APOLLO_RATE_LIMIT_PER_HOUR` on every check so dotenv-loaded
+ * overrides land even if dotenv runs after this module imports.
  */
 export class ApolloRateLimiter {
   private callTimestamps: number[] = [];
+  private readonly explicitCapacity: number | null;
 
-  constructor(private readonly capacityPerHour: number = APOLLO_RATE_LIMIT_PER_HOUR) {}
+  constructor(capacityPerHour?: number) {
+    this.explicitCapacity = capacityPerHour ?? null;
+  }
+
+  private currentCapacity(): number {
+    return this.explicitCapacity ?? readRateLimitFromEnv();
+  }
 
   tryAcquire(): boolean {
     const now = Date.now();
     const windowStart = now - 60 * 60 * 1000;
     this.callTimestamps = this.callTimestamps.filter((t) => t > windowStart);
-    if (this.callTimestamps.length >= this.capacityPerHour) {
+    if (this.callTimestamps.length >= this.currentCapacity()) {
       return false;
     }
     this.callTimestamps.push(now);
@@ -35,7 +60,7 @@ export class ApolloRateLimiter {
     const now = Date.now();
     const windowStart = now - 60 * 60 * 1000;
     const recentCount = this.callTimestamps.filter((t) => t > windowStart).length;
-    return Math.max(0, this.capacityPerHour - recentCount);
+    return Math.max(0, this.currentCapacity() - recentCount);
   }
 }
 
