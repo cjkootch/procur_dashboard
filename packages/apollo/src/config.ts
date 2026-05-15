@@ -18,13 +18,17 @@ export const APOLLO_BASE_URL = 'https://api.apollo.io/api/v1';
  * here). Apollo's published per-endpoint cap is 600/hr on most plans;
  * higher caps exist on Enterprise. Set this conservatively below your
  * actual plan limit.
+ *
+ * Read lazily — the actual rate-limiter calls this on every check so
+ * CLI scripts that load dotenv AFTER `@procur/apollo` is imported still
+ * get their overrides honored.
  */
-export const APOLLO_RATE_LIMIT_PER_HOUR = (() => {
+export function getApolloRateLimitPerHour(): number {
   const raw = process.env.APOLLO_RATE_LIMIT_PER_HOUR;
   if (!raw) return 500;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : 500;
-})();
+}
 
 /** Maximum domains per /mixed_companies/search call when batch-
  *  enriching. Apollo accepts up to 1,000. */
