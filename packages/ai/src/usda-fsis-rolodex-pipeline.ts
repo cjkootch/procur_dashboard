@@ -55,6 +55,11 @@ export interface PromoteCrawlArgs {
   crawl?: boolean;
   /** Filter to a specific species (e.g. 'swine'). */
   speciesFilter?: string;
+  /** Filter to one or more FSIS size_class values
+   *  ('Large' | 'Small' | 'Very Small' | 'N / A'). Use to crawl
+   *  bigger processors first — the LLM cost on the very small ones
+   *  is poor value when their sites are usually thin. */
+  sizeClassFilter?: string[];
 }
 
 /**
@@ -149,6 +154,14 @@ export async function promoteAndCrawlMpiEstablishments(
   if (args.speciesFilter) {
     whereParts.push(
       sql`${schema.usdaFsisEstablishments.species} @> ARRAY[${args.speciesFilter}]::text[]`,
+    );
+  }
+  if (args.sizeClassFilter && args.sizeClassFilter.length > 0) {
+    whereParts.push(
+      sql`${schema.usdaFsisEstablishments.sizeClass} IN (${sql.join(
+        args.sizeClassFilter.map((s) => sql`${s}`),
+        sql`, `,
+      )})`,
     );
   }
   const whereClause = sql.join(whereParts, sql` AND `);
