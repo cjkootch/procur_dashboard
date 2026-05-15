@@ -25,6 +25,7 @@ import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import * as schema from '@procur/db';
 import { enrichMpiEstablishmentsViaApollo } from '../usda-fsis-mpi-enrich';
+import { getApolloRateLimitPerHour } from '../config';
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -45,7 +46,7 @@ async function main() {
     : undefined;
 
   console.log(
-    `[fsis-apollo] starting — batch=${limit}${speciesFilter ? ` species=${speciesFilter}` : ''}${staleHours ? ` staleHours=${staleHours}` : ''}`,
+    `[fsis-apollo] starting — batch=${limit}${speciesFilter ? ` species=${speciesFilter}` : ''}${staleHours ? ` staleHours=${staleHours}` : ''} rateLimitPerHour=${getApolloRateLimitPerHour()}`,
   );
 
   let totalProcessed = 0;
