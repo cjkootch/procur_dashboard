@@ -27,7 +27,7 @@
  * existing crawler's 90-day re-crawl skip per CLAUDE.md.
  */
 
-import { sql, and, isNull, isNotNull } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { neon } from '@neondatabase/serverless';
 import { drizzle, type drizzle as drizzleType } from 'drizzle-orm/neon-http';
 import * as schema from '@procur/db';
@@ -129,10 +129,23 @@ export async function promoteAndCrawlMpiEstablishments(
   const shouldCrawl = args.crawl ?? true;
 
   // Pending rows: have a primary_domain (so there's something to crawl)
-  // AND haven't been promoted yet.
+  // AND either haven't been promoted yet OR have been promoted but no
+  // web_summaries exist yet (a previous run did promote-only). Without
+  // the second branch, a promote-only first pass leaves all rows
+  // ineligible for the later crawl pass.
+  //
+  // When crawl=false, we only want unpromoted rows — promoting an
+  // already-promoted row is a no-op, but selecting them wastes the
+  // batch budget.
   const whereParts: ReturnType<typeof sql>[] = [];
   whereParts.push(sql`${schema.usdaFsisEstablishments.primaryDomain} IS NOT NULL`);
-  whereParts.push(sql`${schema.usdaFsisEstablishments.linkedKnownEntitySlug} IS NULL`);
+  if (shouldCrawl) {
+    whereParts.push(
+      sql`(${schema.usdaFsisEstablishments.linkedKnownEntitySlug} IS NULL OR NOT EXISTS (SELECT 1 FROM ${schema.entityWebSummaries} WHERE ${schema.entityWebSummaries.entitySlug} = ${schema.usdaFsisEstablishments.linkedKnownEntitySlug}))`,
+    );
+  } else {
+    whereParts.push(sql`${schema.usdaFsisEstablishments.linkedKnownEntitySlug} IS NULL`);
+  }
   if (args.speciesFilter) {
     whereParts.push(
       sql`${schema.usdaFsisEstablishments.species} @> ARRAY[${args.speciesFilter}]::text[]`,
@@ -154,6 +167,7 @@ export async function promoteAndCrawlMpiEstablishments(
       longitude: schema.usdaFsisEstablishments.longitude,
       primaryDomain: schema.usdaFsisEstablishments.primaryDomain,
       websiteUrl: schema.usdaFsisEstablishments.websiteUrl,
+      existingSlug: schema.usdaFsisEstablishments.linkedKnownEntitySlug,
     })
     .from(schema.usdaFsisEstablishments)
     .where(whereClause)
@@ -167,71 +181,80 @@ export async function promoteAndCrawlMpiEstablishments(
   let errors = 0;
 
   for (const row of rows) {
-    const baseSlug = `mpi-fsis-${slugifyName(row.legalName)}-${slugifyName(row.establishmentNumber)}`;
-    const slug = baseSlug.slice(0, 100);
-    const categories = categoriesForMpi(row.species);
-    const speciesTags = row.species.map((s) => `fsis-${s}`);
-    const tags = Array.from(
-      new Set([
-        'usda-fsis',
-        'fsis-mpi-curated',
-        'meat-processor',
-        ...speciesTags,
-      ]),
-    );
-    const metadata: Record<string, unknown> = {
-      source: 'usda-fsis-mpi',
-      fsis_establishment_number: row.establishmentNumber,
-    };
-    if (row.websiteUrl) metadata.website_url = row.websiteUrl;
-
-    try {
-      // Insert the shadow rolodex row. ON CONFLICT DO NOTHING handles
-      // the rare race where two promote runs target the same slug or
-      // the slug already exists for some unrelated reason — we still
-      // want to stamp the back-pointer either way.
-      await db
-        .insert(schema.knownEntities)
-        .values({
-          slug,
-          name: row.legalName,
-          country: 'US',
-          role: 'producer',
-          categories,
-          notes: composeNotes(row),
-          aliases: row.dbaName && row.dbaName !== row.legalName ? [row.dbaName] : [],
-          tags,
-          metadata,
-          latitude: row.latitude,
-          longitude: row.longitude,
-          primaryDomain: row.primaryDomain,
-        })
-        .onConflictDoNothing({ target: schema.knownEntities.slug });
-
-      // Stamp back-pointer regardless of whether the insert created a
-      // new row (idempotent path lands on the existing slug).
-      await db
-        .update(schema.usdaFsisEstablishments)
-        .set({
-          linkedKnownEntitySlug: slug,
-          updatedAt: sql`NOW()`,
-        })
-        .where(
-          sql`${schema.usdaFsisEstablishments.establishmentNumber} = ${row.establishmentNumber}`,
-        );
-      promoted += 1;
-    } catch (err) {
-      errors += 1;
-      console.warn(
-        JSON.stringify({
-          level: 'warn',
-          service: 'usda-fsis.promote',
-          msg: 'promote failed — continuing',
-          establishmentNumber: row.establishmentNumber,
-          error: err instanceof Error ? err.message : String(err),
-        }),
+    let slug: string;
+    if (row.existingSlug) {
+      // Already promoted by a prior run — reuse the slug, skip the
+      // promote-side writes entirely. We're here because the crawl
+      // pass selected this row (no web_summaries yet).
+      slug = row.existingSlug;
+      skippedAlreadyLinked += 1;
+    } else {
+      const baseSlug = `mpi-fsis-${slugifyName(row.legalName)}-${slugifyName(row.establishmentNumber)}`;
+      slug = baseSlug.slice(0, 100);
+      const categories = categoriesForMpi(row.species);
+      const speciesTags = row.species.map((s) => `fsis-${s}`);
+      const tags = Array.from(
+        new Set([
+          'usda-fsis',
+          'fsis-mpi-curated',
+          'meat-processor',
+          ...speciesTags,
+        ]),
       );
-      continue;
+      const metadata: Record<string, unknown> = {
+        source: 'usda-fsis-mpi',
+        fsis_establishment_number: row.establishmentNumber,
+      };
+      if (row.websiteUrl) metadata.website_url = row.websiteUrl;
+
+      try {
+        // Insert the shadow rolodex row. ON CONFLICT DO NOTHING handles
+        // the rare race where two promote runs target the same slug or
+        // the slug already exists for some unrelated reason — we still
+        // want to stamp the back-pointer either way.
+        await db
+          .insert(schema.knownEntities)
+          .values({
+            slug,
+            name: row.legalName,
+            country: 'US',
+            role: 'producer',
+            categories,
+            notes: composeNotes(row),
+            aliases: row.dbaName && row.dbaName !== row.legalName ? [row.dbaName] : [],
+            tags,
+            metadata,
+            latitude: row.latitude,
+            longitude: row.longitude,
+            primaryDomain: row.primaryDomain,
+          })
+          .onConflictDoNothing({ target: schema.knownEntities.slug });
+
+        // Stamp back-pointer regardless of whether the insert created a
+        // new row (idempotent path lands on the existing slug).
+        await db
+          .update(schema.usdaFsisEstablishments)
+          .set({
+            linkedKnownEntitySlug: slug,
+            updatedAt: sql`NOW()`,
+          })
+          .where(
+            sql`${schema.usdaFsisEstablishments.establishmentNumber} = ${row.establishmentNumber}`,
+          );
+        promoted += 1;
+      } catch (err) {
+        errors += 1;
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            service: 'usda-fsis.promote',
+            msg: 'promote failed — continuing',
+            establishmentNumber: row.establishmentNumber,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+        continue;
+      }
     }
 
     if (shouldCrawl) {
@@ -266,16 +289,13 @@ export async function promoteAndCrawlMpiEstablishments(
     }
   }
 
-  // Remaining count for operator progress.
+  // Remaining count for operator progress. Mirror the eligibility
+  // filter above so the printed `remaining` matches what would be
+  // picked on the next iteration.
   const remainingResult = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(schema.usdaFsisEstablishments)
-    .where(
-      and(
-        isNotNull(schema.usdaFsisEstablishments.primaryDomain),
-        isNull(schema.usdaFsisEstablishments.linkedKnownEntitySlug),
-      ),
-    );
+    .where(whereClause);
   const remaining = remainingResult[0]?.n ?? 0;
 
   return {
