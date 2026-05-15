@@ -16,6 +16,7 @@
     "ingest-eiti-report": "tsx src/ingest-eiti-report.ts",
     "parse-gain-reports": "tsx src/parse-gain-reports.ts",
     "extract-gain-reports": "tsx src/extract-gain-reports.ts",
+    "resolve-gain-mentions": "tsx src/scripts/resolve-gain-mentions.ts",
     "extract-mdb-projects": "tsx src/extract-mdb-projects.ts",
     "intel-mpi": "tsx src/scripts/intel-mpi.ts",
     "seed-entity-text-embeddings": "tsx src/seed-entity-text-embeddings.ts",
