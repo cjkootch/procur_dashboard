@@ -45,14 +45,19 @@ const WB_SEARCH_URL = 'https://search.worldbank.org/api/v3/projects';
 interface WbProjectRecord {
   id?: string;
   project_name?: string;
-  countrycode?: string; // ISO-3 alpha-3
+  countrycode?: string;
+  countryshortname?: string;
   countryname?: string;
   sector?: string | Array<{ Name?: string }>;
   sector1?: { Name?: string };
+  major_sector_name?: string;
   status?: string;
   projectstatusdisplay?: string;
   boardapprovaldate?: string;
   closingdate?: string;
+  /** `totalamt` is the V3 field that actually carries value;
+   *  `totalcommamt` is the older alias. Try both. */
+  totalamt?: number | string;
   totalcommamt?: number | string;
   url?: string;
   /** Document list shape varies; the API publishes some doc links in
@@ -83,7 +88,9 @@ async function searchCountry(
   const fromYear = new Date().getUTCFullYear() - yearsLookback;
   const url = new URL(WB_SEARCH_URL);
   url.searchParams.set('format', 'json');
-  url.searchParams.set('countrycode_exact', seed.genc3);
+  // WB's countrycode_exact filter expects ISO-2 (e.g. "VE"), not ISO-3
+  // — passing GENC3 silently returns total=0 for every country.
+  url.searchParams.set('countrycode_exact', seed.iso2);
   url.searchParams.set('rows', String(limit));
   url.searchParams.set(
     'fl',
@@ -91,13 +98,16 @@ async function searchCountry(
       'id',
       'project_name',
       'countrycode',
+      'countryshortname',
       'countryname',
       'sector1',
       'sector',
+      'major_sector_name',
       'status',
       'projectstatusdisplay',
       'boardapprovaldate',
       'closingdate',
+      'totalamt',
       'totalcommamt',
       'url',
       'projectdocs',
@@ -234,7 +244,9 @@ function normalizeStatus(input: string | undefined): string | null {
 function extractSectorName(
   sector: WbProjectRecord['sector'],
   sector1: WbProjectRecord['sector1'],
+  majorSectorName?: string,
 ): string | null {
+  if (majorSectorName) return majorSectorName;
   if (sector1?.Name) return sector1.Name;
   if (typeof sector === 'string') return sector;
   if (Array.isArray(sector) && sector[0]?.Name) return sector[0].Name;
@@ -307,11 +319,11 @@ async function main() {
           externalId,
           countryCode: country.iso2,
           projectName: r.project_name ?? externalId,
-          sector: extractSectorName(r.sector, r.sector1),
+          sector: extractSectorName(r.sector, r.sector1, r.major_sector_name),
           status: normalizeStatus(r.projectstatusdisplay ?? r.status),
           approvalDate: parseDate(r.boardapprovaldate),
           closingDate: parseDate(r.closingdate),
-          totalAmountUsd: parseAmount(r.totalcommamt),
+          totalAmountUsd: parseAmount(r.totalamt ?? r.totalcommamt),
           sourceUrl: r.url ?? `https://projects.worldbank.org/en/projects-operations/project-detail/${externalId}`,
           sourceDocUrl: doc?.url ?? null,
           pdfBlobUrl,
