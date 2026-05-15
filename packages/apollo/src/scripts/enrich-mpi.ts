@@ -51,7 +51,7 @@ async function main() {
   let totalProcessed = 0;
   let totalMatched = 0;
   let totalUnmatched = 0;
-  let consecutiveEmptyIterations = 0;
+  let noProgressIterations = 0;
 
   while (true) {
     const result = await enrichMpiEstablishmentsViaApollo(db, {
@@ -62,14 +62,34 @@ async function main() {
     totalProcessed += result.processed;
     totalMatched += result.matched;
     totalUnmatched += result.unmatched;
+    const degradeNote = result.firstDegradeReason
+      ? ` degrade="${result.firstDegradeReason}"`
+      : '';
     console.log(
-      `[fsis-apollo] iter — processed=${result.processed} matched=${result.matched} unmatched=${result.unmatched} errors=${result.errors} remaining=${result.remaining} apolloCalls=${result.apolloCalls}`,
+      `[fsis-apollo] iter — processed=${result.processed} matched=${result.matched} unmatched=${result.unmatched} errors=${result.errors} remaining=${result.remaining} apolloCalls=${result.apolloCalls}${degradeNote}`,
     );
-    if (result.processed === 0) {
-      consecutiveEmptyIterations += 1;
-      if (consecutiveEmptyIterations >= 2) break;
+
+    // Progress check: "no progress" means nothing got matched OR
+    // newly stamped as unmatched this iter. Pure-error iterations
+    // count as no-progress so we don't loop forever burning Apollo
+    // calls when the API is rate-limiting us.
+    const madeProgress = result.matched > 0 || result.unmatched > 0;
+    if (!madeProgress) {
+      noProgressIterations += 1;
+      if (noProgressIterations >= 3) {
+        console.warn(
+          `\n[fsis-apollo] stopping — 3 consecutive iterations made no progress (Apollo rate-limiting or degraded). Re-run later to resume; idempotent on apollo_synced_at.`,
+        );
+        break;
+      }
+      // Exponential backoff: 60s, 120s, 240s.
+      const backoffMs = 60_000 * Math.pow(2, noProgressIterations - 1);
+      console.log(
+        `[fsis-apollo] backing off ${Math.round(backoffMs / 1000)}s before next iter…`,
+      );
+      await new Promise((r) => setTimeout(r, backoffMs));
     } else {
-      consecutiveEmptyIterations = 0;
+      noProgressIterations = 0;
     }
     if (result.remaining === 0) break;
   }
