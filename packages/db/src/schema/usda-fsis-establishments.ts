@@ -1,5 +1,6 @@
 import {
   bigint,
+  date,
   index,
   integer,
   jsonb,
@@ -70,6 +71,18 @@ export const usdaFsisEstablishments = pgTable(
      *  joins MPI rows to crawled web summaries on primary_domain. */
     productSummary: text('product_summary'),
     productSummarySource: text('product_summary_source'),
+    /** FSIS-published facility size class — primary scale signal.
+     *  Common values: 'Very Small', 'Small', 'Large', 'N / A'. */
+    sizeClass: text('size_class'),
+    /** DUNS number — stable corporate identifier; pairs with Apollo
+     *  enrichment + cross-system entity resolution. */
+    dunsNumber: text('duns_number'),
+    /** Date FSIS granted inspection authority — proxy for facility
+     *  tenure. */
+    grantDate: date('grant_date'),
+    /** FSIS internal regulatory subdivisions, useful for grouping. */
+    fsisDistrict: text('fsis_district'),
+    fsisCircuit: text('fsis_circuit'),
     /** Slug of the corresponding `known_entities` row, created via the
      *  website-intelligence pipeline. NULL until promoted. The shadow
      *  rolodex entry is what downstream surfaces (lookup_known_entities,

@@ -178,59 +178,135 @@ interface MappedRow {
   grants: string[];
   latitude: string | null;
   longitude: string | null;
+  sizeClass: string | null;
+  dunsNumber: string | null;
+  grantDate: string | null;
+  fsisDistrict: string | null;
+  fsisCircuit: string | null;
   rawPayload: Record<string, unknown>;
 }
 
+/**
+ * Parse FSIS's `activities` semicolon-joined string into a normalized
+ * activity-type set + coarse species set.
+ *
+ * FSIS encodes BOTH activity AND species hint via labels like
+ * "Meat Slaughter", "Poultry Processing", "Egg Product",
+ * "Identification - Siluriformes", "Off-Premise Freezing - Meat".
+ *
+ * Coarse species split: 'meat' (covers cattle/swine/sheep/goat/equine —
+ * the demographic-data CSV refines this), 'poultry' (chicken/turkey/etc),
+ * 'egg', 'fish' (siluriformes). Operator can refine via a follow-up
+ * join against the Establishment Demographic Data CSV.
+ */
+function parseActivitiesAndSpecies(raw: string | null): {
+  activities: string[];
+  species: string[];
+} {
+  if (!raw) return { activities: [], species: [] };
+  const parts = raw
+    .split(/[;|]/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+
+  const activities = new Set<string>();
+  const species = new Set<string>();
+  for (const p of parts) {
+    if (p.includes('slaughter')) activities.add('slaughter');
+    if (p.includes('processing')) activities.add('processing');
+    if (p.includes('identification')) activities.add('identification');
+    if (p.includes('imported product') || p.includes('import')) activities.add('import');
+    if (p.includes('off-premise freezing')) activities.add('off_premise_freezing');
+    if (p.includes('certification')) activities.add('certification');
+    if (p.includes('food inspection')) activities.add('food_inspection');
+    if (p.includes('voluntary')) activities.add('voluntary');
+
+    if (p.includes('meat')) species.add('meat');
+    if (p.includes('poultry')) species.add('poultry');
+    if (p.includes('egg')) species.add('egg');
+    if (p.includes('siluriformes') || p.includes('catfish')) species.add('fish');
+  }
+  return {
+    activities: Array.from(activities),
+    species: Array.from(species),
+  };
+}
+
+function parseGrantDate(input: string | null): string | null {
+  if (!input) return null;
+  const trimmed = input.trim();
+  // FSIS format observed: M/D/YYYY (e.g. "1/28/2026").
+  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(trimmed);
+  if (us?.[1] && us[2] && us[3]) {
+    const mm = us[1].padStart(2, '0');
+    const dd = us[2].padStart(2, '0');
+    return `${us[3]}-${mm}-${dd}`;
+  }
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(trimmed);
+  if (iso?.[1] && iso[2] && iso[3]) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  return null;
+}
+
+function normalizeSizeClass(raw: string | null): string | null {
+  if (!raw) return null;
+  const t = raw.trim();
+  if (!t || t.toLowerCase() === 'n / a' || t.toLowerCase() === 'n/a') return null;
+  return t;
+}
+
 function mapRow(row: MpiCsvRow): MappedRow | null {
+  // FSIS CSV uses snake_case columns; legacy title-case aliases kept
+  // for resilience against future schema shifts.
   const establishmentNumber = pickField(
     row,
+    'establishment_number',
     'Establishment Number',
-    'Establishment ID',
     'EstablishmentNumber',
-    'EstNum',
   );
   const legalName = pickField(
     row,
+    'establishment_name',
     'Establishment Name',
     'Company Name',
     'Legal Name',
-    'EstablishmentName',
   );
   if (!establishmentNumber || !legalName) return null;
 
-  const activitiesRaw = pickField(row, 'Activities', 'Activity', 'Operations');
-  const speciesRaw = pickField(row, 'Species', 'Species List', 'Animal');
-  const grantsRaw = pickField(
-    row,
-    'Inspection Grants',
-    'Grants',
-    'Inspection Type',
-  );
+  const activitiesRaw = pickField(row, 'activities', 'Activities', 'Activity');
+  const { activities, species } = parseActivitiesAndSpecies(activitiesRaw);
 
-  const lat = parseFloatSafe(pickField(row, 'Latitude', 'Lat'));
-  const lng = parseFloatSafe(pickField(row, 'Longitude', 'Lon', 'Lng'));
+  const grantsRaw = pickField(row, 'grants', 'Inspection Grants', 'Inspection Type');
+
+  const lat = parseFloatSafe(pickField(row, 'latitude', 'Latitude', 'Lat'));
+  const lng = parseFloatSafe(pickField(row, 'longitude', 'Longitude', 'Lon', 'Lng'));
+
+  // `dbas` is comma- or semicolon-joined in FSIS. Take first when
+  // multiple; rest would land in raw_payload for reference.
+  const dbasRaw = pickField(row, 'dbas', 'DBA Name', 'DBA', 'Doing Business As');
+  const dbaName = dbasRaw ? dbasRaw.split(/[,;]/)[0]?.trim() || null : null;
 
   return {
     establishmentNumber,
     legalName,
-    dbaName: pickField(row, 'DBA Name', 'DBA', 'Doing Business As'),
-    street: pickField(row, 'Street', 'Street Address', 'Address'),
-    city: pickField(row, 'City'),
-    state: pickField(row, 'State', 'St'),
-    zip: pickField(row, 'Zip', 'ZIP', 'Zip Code', 'Postal Code'),
-    county: pickField(row, 'County'),
-    phone: pickField(row, 'Phone', 'Phone Number'),
-    activities: splitMulti(activitiesRaw)
-      .map(normalizeActivity)
-      .filter((v): v is string => v != null),
-    species: splitMulti(speciesRaw)
-      .map(normalizeSpecies)
-      .filter((v): v is string => v != null),
+    dbaName,
+    street: pickField(row, 'street', 'Street', 'Street Address', 'Address'),
+    city: pickField(row, 'city', 'City'),
+    state: pickField(row, 'state', 'State', 'St'),
+    zip: pickField(row, 'zip', 'Zip', 'ZIP', 'Zip Code', 'Postal Code'),
+    county: pickField(row, 'county', 'County'),
+    phone: pickField(row, 'phone', 'Phone', 'Phone Number'),
+    activities,
+    species,
     grants: splitMulti(grantsRaw)
       .map(normalizeGrant)
       .filter((v): v is string => v != null),
     latitude: lat != null ? String(lat) : null,
     longitude: lng != null ? String(lng) : null,
+    sizeClass: normalizeSizeClass(pickField(row, 'size', 'Size', 'size_class')),
+    dunsNumber: pickField(row, 'duns_number', 'DUNS', 'DUNS Number'),
+    grantDate: parseGrantDate(pickField(row, 'grant_date', 'Grant Date')),
+    fsisDistrict: pickField(row, 'district', 'District', 'FSIS District'),
+    fsisCircuit: pickField(row, 'circuit', 'Circuit', 'FSIS Circuit'),
     rawPayload: row as Record<string, unknown>,
   };
 }
@@ -343,6 +419,11 @@ export async function fetchAndIngestMpiDirectory(
             grants: sql`EXCLUDED.grants`,
             latitude: sql`COALESCE(EXCLUDED.latitude, ${schema.usdaFsisEstablishments.latitude})`,
             longitude: sql`COALESCE(EXCLUDED.longitude, ${schema.usdaFsisEstablishments.longitude})`,
+            sizeClass: sql`EXCLUDED.size_class`,
+            dunsNumber: sql`EXCLUDED.duns_number`,
+            grantDate: sql`EXCLUDED.grant_date`,
+            fsisDistrict: sql`EXCLUDED.fsis_district`,
+            fsisCircuit: sql`EXCLUDED.fsis_circuit`,
             rawPayload: sql`EXCLUDED.raw_payload`,
             updatedAt: sql`NOW()`,
           },
