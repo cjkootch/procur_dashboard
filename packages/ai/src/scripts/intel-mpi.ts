@@ -14,6 +14,8 @@
  *   MPI_INTEL_BATCH_SIZE=25            # rows per loop iteration
  *   MPI_INTEL_CRAWL=1                  # fire website crawl in same pass; defaults to 1
  *   MPI_INTEL_SPECIES_FILTER=swine     # filter eligible rows by species
+ *   MPI_INTEL_SIZE_FILTER=Large,Small  # filter eligible rows by FSIS size_class
+ *                                        (e.g. 'Large,Small' skips 'Very Small')
  */
 import 'dotenv/config';
 import { config as loadEnv } from 'dotenv';
@@ -32,9 +34,12 @@ async function main() {
   const limit = Number.parseInt(process.env.MPI_INTEL_BATCH_SIZE ?? '25', 10);
   const crawl = process.env.MPI_INTEL_CRAWL !== '0';
   const speciesFilter = process.env.MPI_INTEL_SPECIES_FILTER;
+  const sizeClassFilter = process.env.MPI_INTEL_SIZE_FILTER?.split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   console.log(
-    `[mpi-intel] starting — batch=${limit} crawl=${crawl}${speciesFilter ? ` species=${speciesFilter}` : ''}`,
+    `[mpi-intel] starting — batch=${limit} crawl=${crawl}${speciesFilter ? ` species=${speciesFilter}` : ''}${sizeClassFilter && sizeClassFilter.length > 0 ? ` size=${sizeClassFilter.join('|')}` : ''}`,
   );
 
   let totalPromoted = 0;
@@ -46,6 +51,7 @@ async function main() {
       limit,
       crawl,
       ...(speciesFilter ? { speciesFilter } : {}),
+      ...(sizeClassFilter && sizeClassFilter.length > 0 ? { sizeClassFilter } : {}),
     });
     totalPromoted += result.promoted;
     totalCrawled += result.crawled;
