@@ -8,9 +8,23 @@
 
 export const APOLLO_BASE_URL = 'https://api.apollo.io/api/v1';
 
-/** Hard ceiling we run under, leaving headroom below Apollo's
- *  600/hr per-endpoint cap so concurrent jobs don't trip it. */
-export const APOLLO_RATE_LIMIT_PER_HOUR = 500;
+/**
+ * Hard ceiling we run under, leaving headroom below Apollo's
+ * per-endpoint caps so concurrent jobs don't trip them. Default 500/hr
+ * is conservative — appropriate for Free tier or shared chat usage.
+ *
+ * Override via APOLLO_RATE_LIMIT_PER_HOUR env var for bulk seed runs
+ * on larger plans (Cole's MPI / FSIS / known_entities backfills land
+ * here). Apollo's published per-endpoint cap is 600/hr on most plans;
+ * higher caps exist on Enterprise. Set this conservatively below your
+ * actual plan limit.
+ */
+export const APOLLO_RATE_LIMIT_PER_HOUR = (() => {
+  const raw = process.env.APOLLO_RATE_LIMIT_PER_HOUR;
+  if (!raw) return 500;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 500;
+})();
 
 /** Maximum domains per /mixed_companies/search call when batch-
  *  enriching. Apollo accepts up to 1,000. */
