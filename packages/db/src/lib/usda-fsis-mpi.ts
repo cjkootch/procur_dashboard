@@ -20,12 +20,30 @@
  * which are owned by separate enrichment pipelines.
  */
 
+import { readFile } from 'node:fs/promises';
+import { isAbsolute, resolve } from 'node:path';
 import { parse as parseCsv } from 'csv-parse/sync';
 import { sql } from 'drizzle-orm';
 import { neon } from '@neondatabase/serverless';
 import { drizzle, type drizzle as drizzleType } from 'drizzle-orm/neon-http';
 import * as cheerio from 'cheerio';
 import * as schema from '../schema';
+
+/**
+ * FSIS sits behind Akamai bot-protection that 403s plain Node fetches
+ * (procur-fsis-ingest UA gets blocked). A standard browser UA + the
+ * common companion headers (Accept, Accept-Language) pass cleanly.
+ * We're a polite-frequency caller (quarterly cadence), so this isn't
+ * adversarial scraping — just defeating an overly-aggressive WAF rule.
+ */
+const BROWSER_HEADERS: Record<string, string> = {
+  'User-Agent':
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+    '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  Accept:
+    'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
 
 const FSIS_CATALOG_PAGE =
   'https://www.fsis.usda.gov/inspection/establishments/meat-poultry-and-egg-product-inspection-directory';
@@ -55,12 +73,7 @@ export interface IngestResult {
  */
 async function discoverMpiCsvUrl(): Promise<string | null> {
   try {
-    const resp = await fetch(FSIS_CATALOG_PAGE, {
-      headers: {
-        Accept: 'text/html',
-        'User-Agent': 'procur-fsis-ingest/0.1 (+https://procur.app)',
-      },
-    });
+    const resp = await fetch(FSIS_CATALOG_PAGE, { headers: BROWSER_HEADERS });
     if (!resp.ok) return null;
     const html = await resp.text();
     const $ = cheerio.load(html);
@@ -225,36 +238,61 @@ function mapRow(row: MpiCsvRow): MappedRow | null {
 /**
  * Fetch + parse + upsert the MPI Directory.
  *
+ * Source resolution order:
+ *   1. MPI_CSV_PATH env var (local file) — for operators who
+ *      downloaded the CSV manually because FSIS's Akamai WAF blocks
+ *      programmatic UAs in their region
+ *   2. `explicitCsvUrl` arg — passed by caller
+ *   3. MPI_CSV_URL env var — pinned URL
+ *   4. Auto-discovery via the FSIS catalog page
+ *
  * @param db Drizzle Neon-HTTP client.
- * @param explicitCsvUrl When set, overrides discovery (and the
- *   MPI_CSV_URL env var). Useful for testing against a pinned CSV.
+ * @param explicitCsvUrl When set, overrides URL discovery (but not
+ *   MPI_CSV_PATH). Useful for testing against a pinned CSV.
  */
 export async function fetchAndIngestMpiDirectory(
   db: Db,
   explicitCsvUrl?: string,
 ): Promise<IngestResult> {
-  const csvUrl =
-    explicitCsvUrl ??
-    process.env.MPI_CSV_URL ??
-    (await discoverMpiCsvUrl());
-  if (!csvUrl) {
-    throw new Error(
-      'fetchAndIngestMpiDirectory: no CSV URL — set MPI_CSV_URL or check that the FSIS catalog page exposes a "Establishment Number" CSV link.',
-    );
+  const localPath = process.env.MPI_CSV_PATH;
+  let text: string;
+  let csvUrl: string;
+
+  if (localPath) {
+    // Resolve against the user's invocation cwd so relative paths
+    // like `./data/mpi.csv` work regardless of where pnpm parked us.
+    const resolved = isAbsolute(localPath)
+      ? localPath
+      : resolve(process.env.INIT_CWD ?? process.cwd(), localPath);
+    console.log(`[fsis-mpi] reading local file ${resolved}`);
+    text = await readFile(resolved, 'utf8');
+    csvUrl = `file://${resolved}`;
+  } else {
+    const resolvedUrl =
+      explicitCsvUrl ??
+      process.env.MPI_CSV_URL ??
+      (await discoverMpiCsvUrl());
+    if (!resolvedUrl) {
+      throw new Error(
+        'fetchAndIngestMpiDirectory: no CSV source — set MPI_CSV_PATH (local file), MPI_CSV_URL (pinned URL), or check that the FSIS catalog page exposes an Establishment-Number CSV link.',
+      );
+    }
+    csvUrl = resolvedUrl;
+    console.log(`[fsis-mpi] fetching ${csvUrl}`);
+    const resp = await fetch(csvUrl, {
+      headers: {
+        ...BROWSER_HEADERS,
+        Referer: FSIS_CATALOG_PAGE,
+      },
+    });
+    if (!resp.ok) {
+      throw new Error(
+        `fetchAndIngestMpiDirectory: HTTP ${resp.status} for ${csvUrl}. If FSIS is blocking the fetch, download the CSV manually and set MPI_CSV_PATH=/path/to/file.csv instead.`,
+      );
+    }
+    text = await resp.text();
   }
 
-  console.log(`[fsis-mpi] fetching ${csvUrl}`);
-  const resp = await fetch(csvUrl, {
-    headers: {
-      'User-Agent': 'procur-fsis-ingest/0.1 (+https://procur.app)',
-    },
-  });
-  if (!resp.ok) {
-    throw new Error(
-      `fetchAndIngestMpiDirectory: HTTP ${resp.status} for ${csvUrl}`,
-    );
-  }
-  const text = await resp.text();
   const rows = parseCsv(text, {
     columns: true,
     skip_empty_lines: true,

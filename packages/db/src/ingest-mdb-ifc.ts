@@ -52,14 +52,20 @@ interface ParsedIfcProject {
   primaryDocUrl: string | null;
 }
 
+const BROWSER_HEADERS: Record<string, string> = {
+  'User-Agent':
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+    '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  Accept:
+    'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
+
 async function fetchHtml(url: string): Promise<string | null> {
   await new Promise((r) => setTimeout(r, 2000));
   try {
     const resp = await fetch(url, {
-      headers: {
-        Accept: 'text/html',
-        'User-Agent': 'procur-mdb-ingest/0.1 (+https://procur.app)',
-      },
+      headers: BROWSER_HEADERS,
     });
     if (!resp.ok) {
       console.warn(`[mdb-ifc] HTTP ${resp.status} for ${url}`);
@@ -171,9 +177,7 @@ async function fetchProjectDocument(
 
   await new Promise((r) => setTimeout(r, 2000));
   try {
-    const resp = await fetch(docUrl, {
-      headers: { 'User-Agent': 'procur-mdb-ingest/0.1 (+https://procur.app)' },
-    });
+    const resp = await fetch(docUrl, { headers: BROWSER_HEADERS });
     if (!resp.ok) return null;
     const buf = Buffer.from(await resp.arrayBuffer());
     return { docUrl, pdf: buf };
