@@ -44,6 +44,9 @@ export interface EnrichmentResult {
   remaining: number;
   /** Apollo API calls actually issued — useful for credit tracking. */
   apolloCalls: number;
+  /** First degrade reason seen this run, for operator diagnostics
+   *  (rate-limited / feature-off / etc.). Null when no errors. */
+  firstDegradeReason: string | null;
 }
 
 export interface EnrichMpiArgs {
@@ -99,6 +102,7 @@ export async function enrichMpiEstablishmentsViaApollo(
   let unmatched = 0;
   let errors = 0;
   let apolloCalls = 0;
+  let firstDegradeReason: string | null = null;
 
   for (const row of rows) {
     // Bias the search to the establishment's US state when known.
@@ -124,6 +128,9 @@ export async function enrichMpiEstablishmentsViaApollo(
       if ('ok' in result && result.ok === false) {
         // Degrade signal (rate-limited / feature-off / missing key).
         // Don't burn the row's pending status — leave it for retry.
+        if (!firstDegradeReason) {
+          firstDegradeReason = `${result.reason}: ${result.message}`.slice(0, 200);
+        }
         errors += 1;
         continue;
       }
@@ -188,6 +195,7 @@ export async function enrichMpiEstablishmentsViaApollo(
     errors,
     remaining,
     apolloCalls,
+    firstDegradeReason,
   };
 }
 
