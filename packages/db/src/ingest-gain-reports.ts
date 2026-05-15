@@ -6,9 +6,18 @@
  * filters to high-yield report types, persists metadata to
  * gain_reports, and (optionally) caches PDFs to Vercel Blob.
  *
- * Sources (no auth required, free):
- *   Search:   POST https://apps.fas.usda.gov/newgainapi/api/Report/SearchReports
- *   Download: GET  https://apps.fas.usda.gov/newgainapi/api/Report/DownloadReportByFileName?fileName=...
+ * Sources (free; anonymous bearer token via eAuthClient flow):
+ *   Token swap: POST  https://apps.fas.usda.gov/newgainapi/token
+ *               body: client_id=eAuthClient&client_secret=<anon-guid>
+ *                     &grant_type=client_credentials
+ *   Lookups:    GET   /Lookup/GetAllCountries     (id, locationCode (ISO-2), locationName)
+ *               GET   /Lookup/GetReportCategories (id, categoryName)
+ *   Search:     POST  /Search/GetSearchResults
+ *               body: { keyword, categoryIds[], postIds[], postNames[],
+ *                       countryIds[], fromDate, toDate }
+ *   Download:   GET   /Report/DownloadReportByFileName?fileName=...
+ *
+ * All authenticated calls need Authorization: Bearer <access_token>.
  *
  * What this answers AFTER the Day 3 LLM extractor lands:
  *   "Who imports US wheat / soy / pork into Venezuela / DR / Jamaica?"
@@ -42,60 +51,170 @@ import { FAS_SEED_COUNTRIES } from './lib/fas-seed-countries';
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
 
-const SEARCH_URL =
-  'https://apps.fas.usda.gov/newgainapi/api/Report/SearchReports';
-const DOWNLOAD_URL =
-  'https://apps.fas.usda.gov/newgainapi/api/Report/DownloadReportByFileName';
+const API_BASE = 'https://apps.fas.usda.gov/newgainapi';
+const TOKEN_URL = `${API_BASE}/token`;
+const SEARCH_URL = `${API_BASE}/api/Search/GetSearchResults`;
+const DOWNLOAD_URL = `${API_BASE}/api/Report/DownloadReportByFileName`;
+const LOOKUP_COUNTRIES_URL = `${API_BASE}/api/Lookup/GetAllCountries`;
+const LOOKUP_CATEGORIES_URL = `${API_BASE}/api/Lookup/GetReportCategories`;
 
 /**
- * High-yield report types per brief §3.2. Regulatory reports (FAIRS,
- * SPS) name agencies, not commercial counterparties; filtered out.
+ * Anonymous client_credentials secret embedded in the GAIN portal's
+ * Angular bundle. The portal swaps this for a 24h bearer token via
+ * /newgainapi/token. Treat as a public credential — the entire flow
+ * runs in browser JS for unauthenticated visitors.
  */
-const HIGH_YIELD_REPORT_TYPES: ReadonlyArray<string> = [
+const ANON_CLIENT_SECRET =
+  '00000000-0000-0000-0000-00000000000000000000-0000-0000-0000-000000000000';
+
+/**
+ * High-yield report categories per brief §3.2. Regulatory reports
+ * (FAIRS, SPS) name agencies, not commercial counterparties; not
+ * listed here. The new API consolidated old "Annual"/"Update" subkinds
+ * under one category each (e.g. "Grain and Feed" covers both
+ * "Grain and Feed Annual" and "Grain and Feed Update"), so we keep
+ * the parent name and let publishDate-window callers chase frequency.
+ */
+const HIGH_YIELD_CATEGORY_NAMES: ReadonlyArray<string> = [
   'Exporter Guide',
+  'Food Processing Ingredients',
   'Food Service - Hotel Restaurant Institutional',
   'Retail Foods',
-  'Grain and Feed Annual',
-  'Grain and Feed Update',
-  'Oilseeds and Products Annual',
-  'Oilseeds and Products Update',
-  'Sugar Annual',
-  'Livestock and Products Annual',
-  'Poultry and Products Annual',
-  'Dairy and Products Annual',
+  'Grain and Feed',
+  'Oilseeds and Products',
+  'Sugar',
+  'Livestock and Products',
+  'Poultry and Products',
+  'Dairy and Products',
 ];
 
+interface GainBearerToken {
+  accessToken: string;
+  expiresAt: number; // epoch ms
+}
+
+let cachedToken: GainBearerToken | null = null;
+
+async function getBearerToken(): Promise<string> {
+  if (cachedToken && cachedToken.expiresAt > Date.now() + 30_000) {
+    return cachedToken.accessToken;
+  }
+  const body = new URLSearchParams({
+    client_id: 'eAuthClient',
+    client_secret: ANON_CLIENT_SECRET,
+    grant_type: 'client_credentials',
+  });
+  const resp = await fetch(TOKEN_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+      'User-Agent': 'procur-gain-ingest/0.2 (+https://procur.app)',
+    },
+    body: body.toString(),
+  });
+  if (!resp.ok) {
+    throw new Error(
+      `[gain] token swap failed: HTTP ${resp.status} ${resp.statusText}`,
+    );
+  }
+  const json = (await resp.json()) as {
+    access_token?: string;
+    expires_in?: number;
+  };
+  if (!json.access_token) {
+    throw new Error('[gain] token swap response missing access_token');
+  }
+  const expiresIn = json.expires_in ?? 86_399;
+  cachedToken = {
+    accessToken: json.access_token,
+    expiresAt: Date.now() + expiresIn * 1000,
+  };
+  return cachedToken.accessToken;
+}
+
+interface GainCountry {
+  id: number;
+  locationCode: string | null; // ISO-2 most of the time, occasionally region codes
+  locationName: string;
+}
+
+interface GainCategory {
+  id: number;
+  categoryName: string;
+}
+
+interface GainLookups {
+  countryIdByIso2: Map<string, number>;
+  highYieldCategoryIds: number[];
+  categoryNameById: Map<number, string>;
+}
+
+async function loadLookups(): Promise<GainLookups> {
+  const token = await getBearerToken();
+  const auth = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+  const [countriesResp, categoriesResp] = await Promise.all([
+    fetch(LOOKUP_COUNTRIES_URL, { headers: auth }),
+    fetch(LOOKUP_CATEGORIES_URL, { headers: auth }),
+  ]);
+  if (!countriesResp.ok || !categoriesResp.ok) {
+    throw new Error(
+      `[gain] lookup load failed: countries=${countriesResp.status} categories=${categoriesResp.status}`,
+    );
+  }
+  const countries = (await countriesResp.json()) as GainCountry[];
+  const categories = (await categoriesResp.json()) as GainCategory[];
+
+  const countryIdByIso2 = new Map<string, number>();
+  for (const c of countries) {
+    if (c.locationCode && c.locationCode.length === 2) {
+      countryIdByIso2.set(c.locationCode.toUpperCase(), c.id);
+    }
+  }
+  const categoryNameById = new Map(categories.map((c) => [c.id, c.categoryName]));
+  const wantedSet = new Set(
+    HIGH_YIELD_CATEGORY_NAMES.map((n) => n.trim().toLowerCase()),
+  );
+  const highYieldCategoryIds = categories
+    .filter((c) => wantedSet.has(c.categoryName.trim().toLowerCase()))
+    .map((c) => c.id);
+  if (highYieldCategoryIds.length === 0) {
+    console.warn(
+      '[gain] WARNING: no high-yield categories matched the lookup — the FAS taxonomy may have shifted; passing empty categoryIds will return ALL categories',
+    );
+  }
+  return { countryIdByIso2, highYieldCategoryIds, categoryNameById };
+}
+
 /**
- * GAIN search API response shape — based on observed traffic per brief
- * §3.1. The endpoint is undocumented; if FAS changes the shape, the
- * scraper logs the raw response and exits cleanly. Fields here are the
- * subset we depend on; we persist the full response in raw_metadata.
+ * GAIN search API response record. Field names per the live
+ * /Search/GetSearchResults endpoint as of 2026-05. We persist the
+ * full record in raw_metadata so additive fields are recoverable.
  */
 interface GainSearchResult {
-  reportTitle?: string;
+  reportId?: string; // GUID
+  reportName?: string; // human-readable title
   countryName?: string;
   postName?: string;
-  reportType?: string;
-  publicationDate?: string;
+  reportCategory?: string; // category name; may have leading whitespace
+  publishDate?: string; // ISO datetime
+  reportDate?: string; // ISO datetime
   /** USDA's internal report ID — 'VE2025-0008', 'JM2025-0003', etc. */
   reportNumber?: string;
   /** URL-encoded filename component, e.g.
    *  'Venezuela+Agricultural+Imports+Grow+9+Percent_Caracas_Venezuela_VE2025-0008' */
   fileName?: string;
-  [k: string]: unknown;
-}
-
-interface GainSearchResponse {
-  reportList?: GainSearchResult[];
-  reports?: GainSearchResult[];
-  data?: GainSearchResult[];
-  results?: GainSearchResult[];
-  totalCount?: number;
+  isPublic?: boolean;
+  reportStateId?: number;
+  reportState?: string;
   [k: string]: unknown;
 }
 
 async function searchCountry(
+  countryIso2: string,
   countryName: string,
+  countryId: number,
+  highYieldCategoryIds: number[],
   yearsLookback: number,
   limit: number,
 ): Promise<GainSearchResult[]> {
@@ -103,73 +222,70 @@ async function searchCountry(
   const fromDate = `${fromYear}-01-01`;
   const toDate = new Date().toISOString().slice(0, 10);
 
-  // POST shape based on observed traffic. The API is undocumented; if
-  // the shape is wrong, log the raw response and let the operator
-  // iterate. Falls back to no-op if the response shape isn't
-  // recognizable.
   const body = {
-    countryName,
-    reportTypes: HIGH_YIELD_REPORT_TYPES,
-    dateFrom: fromDate,
-    dateTo: toDate,
-    pageNumber: 1,
-    pageSize: limit,
+    keyword: '',
+    categoryIds: highYieldCategoryIds,
+    postIds: [],
+    postNames: [],
+    countryIds: [countryId],
+    fromDate,
+    toDate,
   };
 
+  const token = await getBearerToken();
   let resp: Response;
   try {
     resp = await fetch(SEARCH_URL, {
       method: 'POST',
       headers: {
+        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        'User-Agent': 'procur-gain-ingest/0.1 (+https://procur.app)',
+        'User-Agent': 'procur-gain-ingest/0.2 (+https://procur.app)',
       },
       body: JSON.stringify(body),
     });
   } catch (err) {
     console.warn(
-      `[gain] network error for ${countryName}: ${(err as Error).message}`,
+      `[gain] network error for ${countryIso2} (${countryName}): ${(err as Error).message}`,
     );
     return [];
   }
 
   if (!resp.ok) {
     console.warn(
-      `[gain] search ${countryName}: HTTP ${resp.status} ${resp.statusText}`,
+      `[gain] search ${countryIso2}: HTTP ${resp.status} ${resp.statusText}`,
     );
     return [];
   }
 
-  let parsed: GainSearchResponse;
+  let parsed: unknown;
   try {
-    parsed = (await resp.json()) as GainSearchResponse;
+    parsed = await resp.json();
   } catch (err) {
     console.warn(
-      `[gain] could not parse search response for ${countryName}: ${(err as Error).message}`,
+      `[gain] could not parse search response for ${countryIso2}: ${(err as Error).message}`,
     );
     return [];
   }
 
-  // FAS API responses occasionally vary in key naming; accept all
-  // observed shapes.
-  const list =
-    parsed.reportList ?? parsed.reports ?? parsed.data ?? parsed.results ?? [];
-  if (!Array.isArray(list)) {
+  if (!Array.isArray(parsed)) {
     console.warn(
-      `[gain] unexpected search response shape for ${countryName} — sample keys: ${Object.keys(parsed).join(',')}`,
+      `[gain] unexpected search response shape for ${countryIso2} — expected array; got ${typeof parsed}`,
     );
     return [];
   }
-  return list;
+  return (parsed as GainSearchResult[]).slice(0, limit);
 }
 
 async function downloadPdf(fileName: string): Promise<Buffer | null> {
   const url = `${DOWNLOAD_URL}?fileName=${encodeURIComponent(fileName)}`;
   try {
+    const token = await getBearerToken();
     const resp = await fetch(url, {
       headers: {
-        'User-Agent': 'procur-gain-ingest/0.1 (+https://procur.app)',
+        Authorization: `Bearer ${token}`,
+        'User-Agent': 'procur-gain-ingest/0.2 (+https://procur.app)',
       },
     });
     if (!resp.ok) {
@@ -273,32 +389,48 @@ async function main() {
     );
   }
 
+  console.log('[gain] loading country + category lookups…');
+  const lookups = await loadLookups();
+  console.log(
+    `[gain]   ${lookups.countryIdByIso2.size} ISO-2 countries, ${lookups.highYieldCategoryIds.length} high-yield categories matched`,
+  );
+
   let totalSeen = 0;
   let totalNew = 0;
-  let totalFilteredOut = 0;
+  let totalSkippedNoFile = 0;
   let totalPdfsCached = 0;
   let totalPdfErrors = 0;
 
   for (const country of seedCountries) {
     console.log(`\n[gain] ${country.iso2} (${country.name})`);
-    const results = await searchCountry(country.name, yearsLookback, limit);
+    const countryId = lookups.countryIdByIso2.get(country.iso2.toUpperCase());
+    if (countryId == null) {
+      console.warn(
+        `[gain]   ${country.iso2}: no FAS country id — skipping (lookup missing)`,
+      );
+      continue;
+    }
+    const results = await searchCountry(
+      country.iso2,
+      country.name,
+      countryId,
+      lookups.highYieldCategoryIds,
+      yearsLookback,
+      limit,
+    );
     console.log(`[gain]   ${results.length} results from search API`);
     totalSeen += results.length;
 
     for (const r of results) {
-      const reportType = normalizeReportType(r.reportType);
       const sourceFilename = r.fileName?.trim();
       if (!sourceFilename) {
-        console.warn(`[gain]   skipping result with no fileName: ${r.reportTitle ?? '(no title)'}`);
+        totalSkippedNoFile += 1;
         continue;
       }
-      if (!reportType || !HIGH_YIELD_REPORT_TYPES.some((t) => reportType.includes(t.slice(0, 12)))) {
-        // Filter out regulatory / non-high-yield types. Substring match
-        // is forgiving — USDA sometimes labels Exporter Guide as
-        // "Exporter Guide Annual" etc.
-        totalFilteredOut += 1;
-        continue;
-      }
+      // Fallback for the rare null-category record — shouldn't happen
+      // since we filtered server-side via categoryIds, but the column
+      // is NOT NULL so guard anyway.
+      const reportType = normalizeReportType(r.reportCategory) ?? 'Unknown';
 
       const pdf = await downloadPdf(sourceFilename);
       if (!pdf) {
@@ -317,8 +449,8 @@ async function main() {
           countryCode: country.iso2,
           postCity: r.postName ?? null,
           reportType,
-          title: r.reportTitle ?? sourceFilename,
-          publicationDate: parsePublicationDate(r.publicationDate),
+          title: r.reportName ?? sourceFilename,
+          publicationDate: parsePublicationDate(r.publishDate),
           sourceFilename,
           sourceUrl,
           pdfBlobUrl: blobUrl,
@@ -345,7 +477,7 @@ async function main() {
   }
 
   console.log(
-    `\n[gain] done — seen=${totalSeen}, persisted=${totalNew}, filtered-out=${totalFilteredOut}, pdfs-cached=${totalPdfsCached}, pdf-errors=${totalPdfErrors}`,
+    `\n[gain] done — seen=${totalSeen}, persisted=${totalNew}, skipped-no-file=${totalSkippedNoFile}, pdfs-cached=${totalPdfsCached}, pdf-errors=${totalPdfErrors}`,
   );
 }
 
