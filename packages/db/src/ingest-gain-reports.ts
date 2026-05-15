@@ -46,7 +46,11 @@ import { drizzle } from 'drizzle-orm/neon-http';
 import { sql } from 'drizzle-orm';
 import { put } from '@vercel/blob';
 import * as schema from './schema';
-import { FAS_SEED_COUNTRIES } from './lib/fas-seed-countries';
+import {
+  FAS_SEED_COUNTRIES,
+  normalizeCountryName,
+  type FasSeedCountry,
+} from './lib/fas-seed-countries';
 
 loadEnv({ path: '../../.env.local' });
 loadEnv({ path: '../../.env' });
@@ -145,12 +149,43 @@ interface GainCategory {
 }
 
 interface GainLookups {
-  countryIdByIso2: Map<string, number>;
+  countryIdBySeed: Map<string, number>; // keyed by seed.iso2
   highYieldCategoryIds: number[];
   categoryNameById: Map<number, string>;
 }
 
-async function loadLookups(): Promise<GainLookups> {
+/**
+ * Match a seed country against GAIN's country list. FAS's
+ * `locationCode` is its OWN 2-letter scheme — not ISO-2 — so we can't
+ * just map on iso2. (TT=Trinidad → FAS TD, HT=Haiti → FAS HA,
+ * DO=Dominican Rep → FAS DR, SR=Suriname → FAS NS.)
+ *
+ * Order:
+ *   1. exact locationName match against seed.name + aliases
+ *      (normalized: lowercase, accent-stripped)
+ *   2. exact ISO-2 match against locationCode  — catches the
+ *      countries where FAS's code happens to align with ISO-2
+ *      (VE, JM, GY, CO, PA, CU all work)
+ */
+function resolveGainCountry(
+  countries: GainCountry[],
+  seed: FasSeedCountry,
+): GainCountry | null {
+  const wantedNames = new Set(
+    [seed.name, ...seed.aliases].map(normalizeCountryName),
+  );
+  for (const c of countries) {
+    if (wantedNames.has(normalizeCountryName(c.locationName))) return c;
+  }
+  for (const c of countries) {
+    if (c.locationCode?.toUpperCase() === seed.iso2.toUpperCase()) return c;
+  }
+  return null;
+}
+
+async function loadLookups(
+  seedCountries: ReadonlyArray<FasSeedCountry>,
+): Promise<GainLookups> {
   const token = await getBearerToken();
   const auth = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
   const [countriesResp, categoriesResp] = await Promise.all([
@@ -165,12 +200,12 @@ async function loadLookups(): Promise<GainLookups> {
   const countries = (await countriesResp.json()) as GainCountry[];
   const categories = (await categoriesResp.json()) as GainCategory[];
 
-  const countryIdByIso2 = new Map<string, number>();
-  for (const c of countries) {
-    if (c.locationCode && c.locationCode.length === 2) {
-      countryIdByIso2.set(c.locationCode.toUpperCase(), c.id);
-    }
+  const countryIdBySeed = new Map<string, number>();
+  for (const seed of seedCountries) {
+    const match = resolveGainCountry(countries, seed);
+    if (match) countryIdBySeed.set(seed.iso2, match.id);
   }
+
   const categoryNameById = new Map(categories.map((c) => [c.id, c.categoryName]));
   const wantedSet = new Set(
     HIGH_YIELD_CATEGORY_NAMES.map((n) => n.trim().toLowerCase()),
@@ -183,7 +218,7 @@ async function loadLookups(): Promise<GainLookups> {
       '[gain] WARNING: no high-yield categories matched the lookup — the FAS taxonomy may have shifted; passing empty categoryIds will return ALL categories',
     );
   }
-  return { countryIdByIso2, highYieldCategoryIds, categoryNameById };
+  return { countryIdBySeed, highYieldCategoryIds, categoryNameById };
 }
 
 /**
@@ -390,9 +425,9 @@ async function main() {
   }
 
   console.log('[gain] loading country + category lookups…');
-  const lookups = await loadLookups();
+  const lookups = await loadLookups(seedCountries);
   console.log(
-    `[gain]   ${lookups.countryIdByIso2.size} ISO-2 countries, ${lookups.highYieldCategoryIds.length} high-yield categories matched`,
+    `[gain]   ${lookups.countryIdBySeed.size}/${seedCountries.length} seed countries resolved, ${lookups.highYieldCategoryIds.length} high-yield categories matched`,
   );
 
   let totalSeen = 0;
@@ -403,7 +438,7 @@ async function main() {
 
   for (const country of seedCountries) {
     console.log(`\n[gain] ${country.iso2} (${country.name})`);
-    const countryId = lookups.countryIdByIso2.get(country.iso2.toUpperCase());
+    const countryId = lookups.countryIdBySeed.get(country.iso2);
     if (countryId == null) {
       console.warn(
         `[gain]   ${country.iso2}: no FAS country id — skipping (lookup missing)`,
