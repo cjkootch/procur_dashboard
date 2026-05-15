@@ -148,6 +148,28 @@ function detectSections(pageTexts: string[]): GainSection[] {
   return sections;
 }
 
+/**
+ * Fallback when heuristic header detection finds no candidate sections.
+ * Current GAIN reports use title-case section headers ("Production
+ * Outlook", "Trade Outlook") that the all-caps / numbered heuristics
+ * miss. Rather than skip the report outright, treat the whole document
+ * as one candidate section so the LLM extractor still runs. Per the
+ * parser docstring: "The Day 3 extractor's prompt is robust to
+ * receiving large blocks of unsplit text if heuristics fail."
+ */
+function fallbackWholeDocumentSection(
+  pageTexts: ReadonlyArray<string>,
+): GainSection {
+  const joined = pageTexts.join('\n\n').trim();
+  return {
+    title: 'Full document (fallback parse)',
+    kind: 'candidate',
+    startPage: 1,
+    endPage: pageTexts.length,
+    text: joined,
+  };
+}
+
 export async function parseGainPdf(
   pdfBuffer: Buffer | Uint8Array,
 ): Promise<ParsedGainReport> {
@@ -156,9 +178,14 @@ export async function parseGainPdf(
   const pdf = await getDocumentProxy(bytes);
   const { text } = await extractText(pdf, { mergePages: false });
   const pageTexts: string[] = Array.isArray(text) ? text : [text];
+  const heuristicSections = detectSections(pageTexts);
+  const hasCandidate = heuristicSections.some((s) => s.kind === 'candidate');
+  const sections = hasCandidate
+    ? heuristicSections
+    : [fallbackWholeDocumentSection(pageTexts)];
   return {
     pageCount: pdf.numPages,
     pageTexts,
-    sections: detectSections(pageTexts),
+    sections,
   };
 }
