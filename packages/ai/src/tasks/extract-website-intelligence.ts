@@ -104,10 +104,11 @@ export const WebsiteIntelligenceOutput = z
       ),
     notes: z
       .string()
-      .max(500)
+      .max(2000)
       .describe(
-        'One-paragraph extraction notes — caveats, language detected if ' +
-          'non-English, what the website does not cover.',
+        'Extraction notes — caveats, language detected if non-English, ' +
+          'what the website does not cover. Keep to one paragraph; cap is ' +
+          '2000 chars but most cases need <300.',
       ),
   })
   .strict();
