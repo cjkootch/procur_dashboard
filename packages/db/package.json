@@ -64,6 +64,7 @@
     "ingest-mdb-cdb": "tsx src/ingest-mdb-cdb.ts",
     "ingest-mdb-ifc": "tsx src/ingest-mdb-ifc.ts",
     "ingest-usda-fsis-mpi": "tsx src/ingest-usda-fsis-mpi.ts",
+    "seed-us-grain-merchants": "tsx src/seed-us-grain-merchants.ts",
     "extract-graph": "tsx src/extract-graph.ts",
     "validate-graph-embeddings": "tsx src/validate-graph-embeddings.ts",
     "extract-bge-texts": "tsx src/extract-bge-texts.ts",
