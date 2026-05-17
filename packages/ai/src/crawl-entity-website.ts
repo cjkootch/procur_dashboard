@@ -31,6 +31,8 @@
  *   pnpm --filter @procur/ai crawl-entity-website --slug=fuel-buyer:msc-cruises
  *   pnpm --filter @procur/ai crawl-entity-website --slug=... --refresh
  *   pnpm --filter @procur/ai crawl-entity-website --country=JM --limit=20
+ *   pnpm --filter @procur/ai crawl-entity-website --tag=us-grain-seed
+ *   pnpm --filter @procur/ai crawl-entity-website --country=US --tag=us-grain-seed
  *   pnpm --filter @procur/ai crawl-entity-website --slug=... --dry-run
  */
 import 'dotenv/config';
@@ -83,6 +85,7 @@ type CrawlOptions = {
 async function loadEntities(args: {
   slug: string | null;
   country: string | null;
+  tag: string | null;
   limit: number | null;
 }): Promise<EntityRow[]> {
   if (args.slug) {
@@ -92,21 +95,19 @@ async function loadEntities(args: {
     `)).rows as unknown as EntityRow[];
     return rows;
   }
+  const conditions: ReturnType<typeof sql>[] = [
+    sql`primary_domain IS NOT NULL`,
+  ];
+  if (args.country) conditions.push(sql`country = ${args.country}`);
+  if (args.tag) conditions.push(sql`${args.tag} = ANY(tags)`);
+  const whereClause = sql.join(conditions, sql` AND `);
   const limitClause = args.limit != null ? sql`LIMIT ${args.limit}` : sql``;
-  const rows = (await (args.country
-    ? db.execute(sql`
-        SELECT slug, name, country, primary_domain
-          FROM known_entities
-         WHERE primary_domain IS NOT NULL
-           AND country = ${args.country}
-         ORDER BY slug ${limitClause}
-      `)
-    : db.execute(sql`
-        SELECT slug, name, country, primary_domain
-          FROM known_entities
-         WHERE primary_domain IS NOT NULL
-         ORDER BY slug ${limitClause}
-      `))).rows as unknown as EntityRow[];
+  const rows = (await db.execute(sql`
+    SELECT slug, name, country, primary_domain
+      FROM known_entities
+     WHERE ${whereClause}
+     ORDER BY slug ${limitClause}
+  `)).rows as unknown as EntityRow[];
   return rows;
 }
 
@@ -530,6 +531,7 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const slugArg = args.find((a) => a.startsWith('--slug='));
   const countryArg = args.find((a) => a.startsWith('--country='));
+  const tagArg = args.find((a) => a.startsWith('--tag='));
   const limitArg = args.find((a) => a.startsWith('--limit='));
   const refresh = args.includes('--refresh');
   const dryRun = args.includes('--dry-run');
@@ -537,17 +539,20 @@ async function main(): Promise<void> {
 
   const slug = slugArg ? slugArg.split('=')[1] ?? '' : null;
   const country = countryArg ? (countryArg.split('=')[1] ?? '').toUpperCase() || null : null;
+  const tag = tagArg ? (tagArg.split('=')[1] ?? '') || null : null;
   const limit = limitArg ? Number.parseInt(limitArg.split('=')[1] ?? '0', 10) : null;
   const perEntityLimit = perEntityLimitArg
     ? Math.max(1, Math.min(MAX_PAGES_PER_ENTITY, Number.parseInt(perEntityLimitArg.split('=')[1] ?? '10', 10)))
     : MAX_PAGES_PER_ENTITY;
 
-  if (!slug && !country) {
+  if (!slug && !country && !tag) {
     console.error(
       'Usage: pnpm --filter @procur/ai crawl-entity-website [options]\n' +
         '  --slug=<entity-slug>     Crawl one entity\n' +
         '  --country=CC             Crawl all entities in country (ISO-2)\n' +
-        '  --limit=N                Cap total entities crawled (with --country)\n' +
+        '  --tag=<tag>              Crawl all entities carrying this tag\n' +
+        '                           (combinable with --country)\n' +
+        '  --limit=N                Cap total entities crawled\n' +
         '  --max-pages=N            Cap pages per entity (default 10, max 10)\n' +
         '  --refresh                Force re-crawl even if data <90d old\n' +
         '  --dry-run                Print what would happen, no writes\n',
@@ -555,7 +560,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const entities = await loadEntities({ slug, country, limit });
+  const entities = await loadEntities({ slug, country, tag, limit });
   if (entities.length === 0) {
     console.log('no matching entities (with primary_domain) — exiting.');
     return;
@@ -611,7 +616,7 @@ export async function crawlSingleEntity(
     options.perEntityLimit ?? MAX_PAGES_PER_ENTITY,
   );
 
-  const entities = await loadEntities({ slug, country: null, limit: 1 });
+  const entities = await loadEntities({ slug, country: null, tag: null, limit: 1 });
   if (entities.length === 0) {
     return {
       ok: false,
