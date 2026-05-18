@@ -145,10 +145,13 @@ export const RolodexQueryFilters = z
       .enum(APPROVAL_VALUES)
       .nullable()
       .describe(
-        'Buyer/supplier KYC state. "approved" / "vetted" / "trading-ready" ' +
-          '→ "approved"; "pending" / "in KYC" → "pending"; "expired" → ' +
-          '"expired"; "not engaged" / "new" → "none". Default null when ' +
-          'unspecified.',
+        'Buyer/supplier KYC state. Map prospecting / unengaged phrasing ' +
+          'to "none": "prospects" / "prospect list" / "leads" / "untouched" ' +
+          '/ "new" / "not engaged" / "unworked" / "fresh" → "none". ' +
+          '"approved" / "vetted" / "trading-ready" / "ready to trade" ' +
+          '→ "approved". "pending" / "in KYC" / "in progress" → "pending". ' +
+          '"expired" / "lapsed" → "expired". "rejected" / "declined" → ' +
+          '"rejected". Default null when unspecified.',
       ),
     q: z
       .string()
@@ -188,6 +191,16 @@ Worked examples:
     → { category: null, country: null, state: null, role: "fuel-buyer-industrial", tag: null, approval: "approved", q: "Caribbean" }
     (Caribbean spans multiple countries — null country, region in q)
 
+  "pork buyer prospects"
+    → { category: "pork", country: null, state: null, role: null, tag: null, approval: "none", q: null }
+    ("prospects" → approval=none. "buyer" has no role match in the
+    whitelist — drop it from q since the prospects/none filter
+    already captures the unengaged intent.)
+
+  "untouched diesel leads in Jamaica"
+    → { category: "diesel", country: "JM", state: null, role: null, tag: null, approval: "none", q: null }
+    ("untouched" / "leads" both → approval=none. No residue in q.)
+
   "trading houses in Mediterranean"
     → { category: null, country: null, state: null, role: "trader", tag: "region:mediterranean", approval: null, q: null }
 
@@ -210,7 +223,7 @@ Rules:
   - country: single ISO-2 only. Multi-country regions (Caribbean, EU, LATAM, Mediterranean, Mideast) → null country + region name in q (or tag if a known region:* tag exists).
   - state: emit only when ONE specific US state or Canadian province is named. Multi-state regions ("midwest", "southeast", "Gulf Coast", "PNW") → null state, region in q. Always pair state with the parent country (state="IA" requires country="US").
   - tag: only emit a tag literal if the query maps to a known prefix (region:, compatible:, or a specific tag we've already established). Do not fabricate.
-  - q: short residue. Drop articles ("the", "a"), keep substantive nouns.`;
+  - q: short residue. Drop articles ("the", "a"). Drop tokens that have ALREADY been captured by a structured filter — specifically, drop "buyer" / "buyers" / "supplier" / "suppliers" / "merchant" / "merchants" when category and/or role were emitted; drop "prospects" / "prospect" / "leads" / "untouched" / "unengaged" / "new" when approval="none" was emitted. Keep substantive nouns only.`;
 
 export async function parseRolodexQuery(query: string): Promise<RolodexQueryFiltersT> {
   const client = getClient();
