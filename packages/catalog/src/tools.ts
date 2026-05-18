@@ -3051,6 +3051,16 @@ export function buildCatalogTools(): ToolRegistry {
         country: isoAlpha2Country
           .optional()
           .describe('ISO-2 country code.'),
+        state: z
+          .string()
+          .length(2)
+          .optional()
+          .describe(
+            "US / Canada state-or-province 2-letter code (case-insensitive). Useful for " +
+              'logistics-aware filtering: "Iowa grain elevators" → state="IA"; "Texas Gulf ' +
+              'refiners" → state="TX". Most non-US/CA rows have null state, so combining ' +
+              'with country=US (or CA) is the typical pattern.',
+          ),
         role: z
           .enum(['refiner', 'trader', 'producer', 'state-buyer'])
           .optional()
@@ -3103,6 +3113,7 @@ export function buildCatalogTools(): ToolRegistry {
                 categoryTag: input.categoryTag,
                 country: input.country,
                 role: input.role,
+                state: input.state,
                 tag: input.tag,
                 approvalStatus: input.approvalStatus,
                 verbose: input.verbose,
@@ -3114,6 +3125,7 @@ export function buildCatalogTools(): ToolRegistry {
               name: input.name,
               categoryTag: input.categoryTag,
               country: input.country,
+              state: input.state,
               role: input.role,
               tag: input.tag,
               companyId: ctx.companyId,
@@ -3149,6 +3161,7 @@ export function buildCatalogTools(): ToolRegistry {
                     name: r.name,
                     profileUrl,
                     country: r.country,
+                    state: r.state,
                     role: r.role,
                     categories: r.categories,
                     tags: (r.tags ?? []).slice(0, 6),
@@ -3162,6 +3175,7 @@ export function buildCatalogTools(): ToolRegistry {
                   name: r.name,
                   profileUrl,
                   country: r.country,
+                  state: r.state,
                   role: r.role,
                   categories: r.categories,
                   notes: r.notes,

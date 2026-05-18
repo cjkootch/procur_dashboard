@@ -103,8 +103,21 @@ export const RolodexQueryFilters = z
       .describe(
         'ISO-3166-1 alpha-2 country code. "Colombia" → "CO"; "the US" → ' +
           '"US"; "Jamaica" → "JM". If the query names a multi-country ' +
-          'region (Caribbean, LATAM, Mideast, midwest, EU), return null ' +
-          '— the region intent moves into the free-text q field instead.',
+          'region (Caribbean, LATAM, Mideast, EU), return null — the ' +
+          'region intent moves into the free-text q field instead. ' +
+          'When the user names a US state ("Iowa", "Texas"), set ' +
+          'country="US" AND state=<the 2-letter code>.',
+      ),
+    state: z
+      .string()
+      .regex(/^[A-Z]{2}$/, '2-letter state / province postal code')
+      .nullable()
+      .describe(
+        'US state or Canadian province 2-letter postal code, uppercase. ' +
+          '"Iowa" → "IA"; "Texas" → "TX"; "California" → "CA"; ' +
+          '"Ontario" → "ON". Null when no state/province is named or ' +
+          'when the query names a multi-state region ("midwest", ' +
+          '"southeast", "Gulf Coast") — region intent goes in q.',
       ),
     role: z
       .enum(ROLODEX_ROLES)
@@ -159,31 +172,43 @@ Map the query onto these dimensions and return a JSON object. Use null for any d
 
 Worked examples:
 
+  "pork suppliers in Iowa"
+    → { category: "pork", country: "US", state: "IA", role: null, tag: null, approval: null, q: null }
+    (named single state → emit state="IA" + country="US")
+
+  "Texas Gulf refiners"
+    → { category: null, country: "US", state: "TX", role: "refiner", tag: null, approval: null, q: "Gulf" }
+    (state captured; "Gulf" regional qualifier in q)
+
   "pork suppliers in the midwest"
-    → { category: "pork", country: "US", role: null, tag: null, approval: null, q: "midwest" }
-    (no state filter exists yet, so "midwest" lands in q as a fallback substring match)
+    → { category: "pork", country: "US", state: null, role: null, tag: null, approval: null, q: "midwest" }
+    (multi-state region; state null, region in q)
 
   "approved Caribbean fuel buyers"
-    → { category: null, country: null, role: "fuel-buyer-industrial", tag: null, approval: "approved", q: "Caribbean" }
+    → { category: null, country: null, state: null, role: "fuel-buyer-industrial", tag: null, approval: "approved", q: "Caribbean" }
     (Caribbean spans multiple countries — null country, region in q)
 
   "trading houses in Mediterranean"
-    → { category: null, country: null, role: "trader", tag: "region:mediterranean", approval: null, q: null }
+    → { category: null, country: null, state: null, role: "trader", tag: "region:mediterranean", approval: null, q: null }
 
   "diesel refiners in Colombia"
-    → { category: "diesel", country: "CO", role: "refiner", tag: null, approval: null, q: null }
+    → { category: "diesel", country: "CO", state: null, role: "refiner", tag: null, approval: null, q: null }
 
   "US grain merchants"
-    → { category: null, country: "US", role: null, tag: "us-grain-seed", approval: null, q: "grain" }
+    → { category: null, country: "US", state: null, role: null, tag: "us-grain-seed", approval: null, q: "grain" }
+
+  "Ontario grain elevators"
+    → { category: null, country: "CA", state: "ON", role: null, tag: null, approval: null, q: "grain elevator" }
 
   "Cargill"
-    → { category: null, country: null, role: null, tag: null, approval: null, q: "Cargill" }
+    → { category: null, country: null, state: null, role: null, tag: null, approval: null, q: "Cargill" }
     (a specific entity name — defer to substring search)
 
 Rules:
   - category MUST be from the whitelist; if no good fit, return null.
   - role MUST be from the whitelist; "supplier" / "seller" / "merchant" don't have role matches — return null and rely on category/q.
-  - country: single ISO-2 only. Multi-country regions (Caribbean, midwest, EU, LATAM, Mediterranean, Mideast) → null country + region name in q (or tag if a known region:* tag exists).
+  - country: single ISO-2 only. Multi-country regions (Caribbean, EU, LATAM, Mediterranean, Mideast) → null country + region name in q (or tag if a known region:* tag exists).
+  - state: emit only when ONE specific US state or Canadian province is named. Multi-state regions ("midwest", "southeast", "Gulf Coast", "PNW") → null state, region in q. Always pair state with the parent country (state="IA" requires country="US").
   - tag: only emit a tag literal if the query maps to a known prefix (region:, compatible:, or a specific tag we've already established). Do not fabricate.
   - q: short residue. Drop articles ("the", "a"), keep substantive nouns.`;
 

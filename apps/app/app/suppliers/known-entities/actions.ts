@@ -28,6 +28,7 @@ export async function smartSearchAction(formData: FormData): Promise<void> {
     const parsed = await parseRolodexQuery(query);
     if (parsed.category) params.set('category', parsed.category);
     if (parsed.country) params.set('country', parsed.country);
+    if (parsed.state) params.set('state', parsed.state);
     if (parsed.role) params.set('role', parsed.role);
     if (parsed.tag) params.set('tag', parsed.tag);
     if (parsed.approval) params.set('approval', parsed.approval);

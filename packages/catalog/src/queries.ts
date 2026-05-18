@@ -2936,6 +2936,10 @@ export interface KnownEntityFilters {
   categoryTag?: string;
   /** ISO-2 country filter. */
   country?: string;
+  /** State / province filter — 2-letter postal or ISO-3166-2 alpha-2
+   *  subdivision code. Case-insensitive. Only meaningful for US / CA
+   *  rows; other countries' state values are typically null. */
+  state?: string;
   /** Free-text role filter ('refiner' | 'trader' | 'producer' | 'state-buyer'). */
   role?: string;
   /** Free-text tag filter — exact match against any element of tags[]. */
@@ -2989,6 +2993,8 @@ export interface KnownEntityRow {
   slug: string;
   name: string;
   country: string;
+  /** 2-letter state / province code. Null for most non-US/CA rows. */
+  state: string | null;
   role: string;
   categories: string[];
   notes: string | null;
@@ -3069,7 +3075,7 @@ export async function lookupKnownEntities(
   const discoveryDomainFilter = filters.discoveryDomain;
   const result = await db.execute(sql`
     SELECT
-      ke.id, ke.slug, ke.name, ke.country, ke.role, ke.categories, ke.notes,
+      ke.id, ke.slug, ke.name, ke.country, ke.state, ke.role, ke.categories, ke.notes,
       ke.contact_entity, ke.aliases, ke.tags, ke.metadata,
       ke.latitude, ke.longitude,
       ke.discovery_domain,
@@ -3093,6 +3099,7 @@ export async function lookupKnownEntities(
           : sql``
       }
       ${filters.country ? sql`AND ke.country = ${filters.country}` : sql``}
+      ${filters.state ? sql`AND ke.state = upper(${filters.state})` : sql``}
       ${filters.role ? sql`AND ke.role = ${filters.role}` : sql``}
       ${filters.tag ? sql`AND ${filters.tag} = ANY(ke.tags)` : sql``}
       ${
@@ -3135,6 +3142,7 @@ export async function lookupKnownEntities(
     slug: String(r.slug),
     name: String(r.name),
     country: String(r.country),
+    state: r.state == null ? null : String(r.state),
     role: String(r.role),
     categories: (r.categories as string[] | null) ?? [],
     notes: r.notes == null ? null : String(r.notes),
@@ -3377,7 +3385,7 @@ export async function findEntitiesNearLocation(filters: {
   const result = await db.execute(sql`
     WITH scored AS (
       SELECT
-        id, slug, name, country, role, categories, notes,
+        id, slug, name, country, state, role, categories, notes,
         contact_entity, aliases, tags, metadata, latitude, longitude,
         discovery_domain,
         3440.065 * 2 * asin(sqrt(
@@ -3404,6 +3412,7 @@ export async function findEntitiesNearLocation(filters: {
     slug: String(r.slug),
     name: String(r.name),
     country: String(r.country),
+    state: r.state == null ? null : String(r.state),
     role: String(r.role),
     categories: (r.categories as string[]) ?? [],
     notes: r.notes != null ? String(r.notes) : null,

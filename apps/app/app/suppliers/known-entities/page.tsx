@@ -113,6 +113,7 @@ interface Props {
   searchParams: Promise<{
     category?: string;
     country?: string;
+    state?: string;
     role?: string;
     tag?: string;
     q?: string;
@@ -305,10 +306,11 @@ function isNoiseTag(t: string): boolean {
 }
 
 export default async function KnownEntitiesPage({ searchParams }: Props) {
-  const { category, country, role, tag, q, view, approval, smart } =
+  const { category, country, state, role, tag, q, view, approval, smart } =
     await searchParams;
   const categoryTag = category && category !== 'all' ? category : undefined;
   const nameQuery = q?.trim() || undefined;
+  const stateFilter = state?.trim().toUpperCase() || undefined;
   const smartQuery = smart?.trim() || undefined;
   const activeView: 'list' | 'map' = view === 'map' ? 'map' : 'list';
   const approvalFilter = parseApprovalFilter(approval);
@@ -329,6 +331,7 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
     lookupKnownEntities({
       categoryTag,
       country: country?.trim() || undefined,
+      state: stateFilter,
       role: role?.trim() || undefined,
       tag: tag?.trim() || undefined,
       name: nameQuery,
@@ -345,6 +348,23 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
   ]);
   const gradesByRegion = groupGradesByRegion(allCrudeGrades);
   const truncated = rows.length === queryLimit;
+
+  // Build the State filter chip list from the current result set.
+  // Driven by data so the rail only shows states that have at least
+  // one matching entity given the current other filters. Capped at 16
+  // to keep the rail tight; the active state stays pinned if it falls
+  // outside top-16.
+  const stateCounts = new Map<string, number>();
+  for (const r of rows) {
+    if (r.state) stateCounts.set(r.state, (stateCounts.get(r.state) ?? 0) + 1);
+  }
+  const topStates = [...stateCounts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 16);
+  const stateChips =
+    stateFilter && !topStates.find(([s]) => s === stateFilter)
+      ? [...topStates, [stateFilter, stateCounts.get(stateFilter) ?? 0] as const]
+      : topStates;
 
   // Group by country for at-a-glance scanning.
   const byCountry = new Map<string, typeof rows>();
@@ -363,6 +383,7 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
     override: Partial<{
       category: string;
       country: string;
+      state: string;
       role: string;
       tag: string;
       q: string;
@@ -376,6 +397,8 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
     if (cat && cat !== 'all') next.set('category', cat);
     const c = override.country ?? country;
     if (c) next.set('country', c);
+    const st = override.state ?? stateFilter;
+    if (st) next.set('state', st);
     const r = override.role ?? role;
     if (r) next.set('role', r);
     const t = override.tag ?? tag;
@@ -415,6 +438,13 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
       key: 'country',
       label: `Country: ${formatCountry(country)}`,
       clearHref: baseHref({ country: '' }),
+    });
+  }
+  if (stateFilter) {
+    activeFilters.push({
+      key: 'state',
+      label: `State: ${stateFilter}`,
+      clearHref: baseHref({ state: '' }),
     });
   }
   if (role) {
@@ -617,6 +647,7 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
                 <input type="hidden" name="category" value={category} />
               )}
               {country && <input type="hidden" name="country" value={country} />}
+              {stateFilter && <input type="hidden" name="state" value={stateFilter} />}
               {role && <input type="hidden" name="role" value={role} />}
               {tag && <input type="hidden" name="tag" value={tag} />}
               {approvalFilter && (
@@ -705,6 +736,29 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
               ))}
             </div>
           </FilterSection>
+
+          {(stateChips.length > 0 || stateFilter) && (
+            <FilterSection title="State / Province">
+              <div className="flex flex-wrap gap-1">
+                {stateFilter && (
+                  <FilterChip
+                    href={baseHref({ state: '' })}
+                    active={false}
+                    label={`× ${stateFilter}`}
+                    title={`Clear state=${stateFilter}`}
+                  />
+                )}
+                {stateChips.map(([code, count]) => (
+                  <FilterChip
+                    key={code}
+                    href={baseHref({ state: code })}
+                    active={stateFilter === code}
+                    label={`${code} · ${count}`}
+                  />
+                ))}
+              </div>
+            </FilterSection>
+          )}
 
           {regionTags.length > 0 && (
             <FilterSection title="Region">
@@ -897,6 +951,7 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
                             )}
                             <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
                               {formatCountry(e.country)}
+                              {e.state && <> · {e.state}</>}
                               {aliasLine && <> · aka {aliasLine}</>}
                             </p>
                             {stats && (
