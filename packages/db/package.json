@@ -80,6 +80,7 @@
     "backfill-entity-coords": "tsx src/backfill-entity-coords.ts",
     "backfill-known-entity-primary-domain": "tsx src/backfill-known-entity-primary-domain.ts",
     "backfill-known-entity-state": "tsx src/backfill-known-entity-state.ts",
+    "backfill-gain-entity-categories": "tsx src/backfill-gain-entity-categories.ts",
     "backfill-gamification": "tsx src/backfill-gamification.ts",
     "seed-uswc-refiners": "tsx src/seed-uswc-refiners.ts",
     "dedup-refineries": "tsx src/dedup-refineries.ts",
