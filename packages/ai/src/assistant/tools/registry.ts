@@ -102,13 +102,19 @@ export function buildToolsParam(registry: ToolRegistry): Anthropic.Tool[] {
   // saves 90% of the per-turn token cost. Cache_control on the LAST
   // tool covers every preceding tool in the same cache breakpoint
   // (the Anthropic API caches all content up to and including the
-  // breakpoint). Ephemeral 5-minute TTL is fine: assistant turns are
-  // chatty enough that the cache stays warm across a session.
+  // breakpoint).
+  //
+  // TTL=1h matches the system-prompt breakpoint. Anthropic requires
+  // non-decreasing TTLs across `tools → system → messages`; mixing a
+  // 5m tools block with the 1h system block returns HTTP 400
+  // ("a ttl='1h' cache_control block must not come after a ttl='5m'
+  // cache_control block"). Tools change rarely enough that 1h is the
+  // right choice on its own merits, too.
   const last = tools[tools.length - 1];
   if (last) {
     (last as Anthropic.Tool & {
-      cache_control?: { type: 'ephemeral' };
-    }).cache_control = { type: 'ephemeral' };
+      cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
+    }).cache_control = { type: 'ephemeral', ttl: '1h' };
   }
   return tools;
 }
