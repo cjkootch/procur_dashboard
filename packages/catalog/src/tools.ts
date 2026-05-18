@@ -1297,7 +1297,13 @@ export function buildCatalogTools(): ToolRegistry {
         'Search the Procur Discover public catalog of government tenders. ' +
         'Use this whenever the user asks to find, narrow, or filter opportunities. ' +
         'Combine filters as needed. Returns up to 20 matching opportunities with ' +
-        'title, agency, jurisdiction, deadline, value (USD), category, and a Discover URL.',
+        'title, agency, jurisdiction, deadline, value (USD), category, and a Discover URL.\n\n' +
+        'THIS IS THE CORRECT TOOL when the user says "any new <commodity> tenders" or ' +
+        '"new <commodity> opportunities" — pass category + postedWithinDays. Do NOT use ' +
+        "whats_new_for_me for filtered queries; it returns an unfiltered digest and the " +
+        'model will hallucinate category-specific tender names.\n\n' +
+        'Example: "any new fuel tenders in the past week" →\n' +
+        '  search_opportunities({ category: "petroleum-fuels", postedWithinDays: 7 })',
       kind: 'read',
       schema: z.object({
         query: z
@@ -2101,11 +2107,18 @@ export function buildCatalogTools(): ToolRegistry {
         "Personalized what's-new digest. Returns opportunities posted (or first ingested) " +
         "since the LAST time the user invoked this tool — automatically tracked per-user " +
         "via the lastAssistantSeenAt timestamp on their account. First call falls back to " +
-        'the past 7 days. Use when the user says "what\'s new", "catch me up", "anything new ' +
-        'since I last looked", "new since yesterday/last week", or starts a fresh session and ' +
-        'asks "what should I look at first". Returns total count + breakdowns by jurisdiction ' +
-        'and category + top 10 most-recent opportunities. Bumps the lastAssistantSeenAt ' +
-        'timestamp atomically — safe to call once per session at the start.',
+        'the past 7 days. Use ONLY for unfiltered, "what should I look at first" use: ' +
+        '"what\'s new", "catch me up", "anything new since I last looked".\n\n' +
+        'DO NOT use when the user names a commodity, category, jurisdiction, or country ' +
+        '(e.g. "any new fuel tenders", "new diesel tenders this week", "new opportunities ' +
+        'in Jamaica"). That maps to `search_opportunities` with postedWithinDays + the ' +
+        "appropriate category/jurisdiction filter — this tool's unfiltered digest will " +
+        'force the model to hallucinate the category-specific subset from the top-10 sample, ' +
+        'which produces fabricated tender names. Always prefer search_opportunities for ' +
+        'any filtered "new" query.\n\n' +
+        'Returns total count + breakdowns by jurisdiction and category + top 10 most-recent ' +
+        'opportunities. Bumps the lastAssistantSeenAt timestamp atomically — safe to call ' +
+        'once per session at the start.',
       kind: 'read',
       schema: z.object({}),
       handler: async (ctx) => {
