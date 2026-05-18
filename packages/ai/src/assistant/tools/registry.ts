@@ -93,11 +93,24 @@ export function defineTool<I extends z.ZodTypeAny, O>(
 }
 
 export function buildToolsParam(registry: ToolRegistry): Anthropic.Tool[] {
-  return Object.values(registry).map((tool) => ({
+  const tools: Anthropic.Tool[] = Object.values(registry).map((tool) => ({
     name: tool.name,
     description: tool.description,
     input_schema: tool.jsonSchema,
   }));
+  // Tools rarely change within a session — caching the whole block
+  // saves 90% of the per-turn token cost. Cache_control on the LAST
+  // tool covers every preceding tool in the same cache breakpoint
+  // (the Anthropic API caches all content up to and including the
+  // breakpoint). Ephemeral 5-minute TTL is fine: assistant turns are
+  // chatty enough that the cache stays warm across a session.
+  const last = tools[tools.length - 1];
+  if (last) {
+    (last as Anthropic.Tool & {
+      cache_control?: { type: 'ephemeral' };
+    }).cache_control = { type: 'ephemeral' };
+  }
+  return tools;
 }
 
 // Exported for tests.
