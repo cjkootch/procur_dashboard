@@ -3005,7 +3005,13 @@ export function buildCatalogTools(): ToolRegistry {
         "fuel, marine bunker). Filter by category (crude-oil, diesel, etc), country, role " +
         "(refiner | trader | producer | state-buyer), or tag (e.g. 'region:mediterranean', " +
         "'public-tender-visible', 'libya-historic'). Returns entity name, country, role, " +
-        'capability notes, and any contact entity that has been recorded.',
+        'capability notes, and any contact entity that has been recorded. ' +
+        '\n\nDEFAULT response is slim (name, country, role, categories, top tags, short ' +
+        'notes preview, approvalStatus) — enough to rank and pick the right row. For full ' +
+        'detail (full notes, metadata, consumption signals, Apollo cache, contact entity), ' +
+        'either pass verbose=true OR follow up with analyze_supplier on the specific slug. ' +
+        'Prefer analyze_supplier for single-entity deep-dives — it costs less context than ' +
+        'verbose=true on a list call.',
       kind: 'read',
       schema: z.object({
         name: z
@@ -3057,6 +3063,19 @@ export function buildCatalogTools(): ToolRegistry {
               'can actually trade with this week.',
           ),
         limit: z.number().min(1).max(200).optional(),
+        verbose: z
+          .boolean()
+          .optional()
+          .describe(
+            'Default false. When false, response carries a slim row per ' +
+              'entity (name, country, role, categories, top tags, short ' +
+              'notes preview, approvalStatus). When true, returns full ' +
+              'fields (full notes, metadata, fuel-consumption signals, ' +
+              'Apollo cache, contact entity, approval timestamps). ' +
+              'Prefer the slim default for list / discovery queries to ' +
+              'keep context tight; use analyze_supplier for single-entity ' +
+              'deep dives.',
+          ),
       }),
       handler: async (ctx, input) =>
         withToolTelemetry(
@@ -3073,6 +3092,7 @@ export function buildCatalogTools(): ToolRegistry {
                 role: input.role,
                 tag: input.tag,
                 approvalStatus: input.approvalStatus,
+                verbose: input.verbose,
               },
             }),
           },
@@ -3087,56 +3107,101 @@ export function buildCatalogTools(): ToolRegistry {
               approvalStatus: input.approvalStatus,
               limit: input.limit ?? 50,
             });
-            const signalsBySlug = await getFuelConsumptionSignalsBatch(
-              rows.map((r) => r.slug),
-            );
+            const verbose = input.verbose === true;
+            // Fuel-consumption signals are expensive (per-slug query)
+            // AND fat in the response — only fetch + return them in
+            // verbose mode. The non-verbose path is the hot list/
+            // discovery use case where the assistant just needs to
+            // pick the right row to deep-dive on.
+            const signalsBySlug = verbose
+              ? await getFuelConsumptionSignalsBatch(rows.map((r) => r.slug))
+              : new Map();
             return {
               count: rows.length,
-              entities: rows.map((r) => ({
-                id: r.id,
-                name: r.name,
-                profileUrl: buildEntityProfileUrl({ kind: 'known_entity', slug: r.slug }),
-                country: r.country,
-                role: r.role,
-                categories: r.categories,
-                notes: r.notes,
-                contactEntity: r.contactEntity,
-                tags: r.tags,
-                consumptionSignals: (signalsBySlug.get(r.slug) ?? []).map((s) => ({
-                  source: s.source,
-                  signalKind: s.signalKind,
-                  fuelType: s.fuelType,
-                  volumeBblYrMin: s.volumeBblYrMin,
-                  volumeBblYrMax: s.volumeBblYrMax,
-                  confidence: s.confidence,
-                  coverageYear: s.coverageYear,
-                  notes: s.notes,
-                  sourceUrl: s.sourceUrl,
-                })),
-                metadata: r.metadata,
-                approvalStatus: r.approvalStatus,
-                approvalApprovedAt: r.approvalApprovedAt,
-                approvalExpiresAt: r.approvalExpiresAt,
-                // Apollo enrichment cache — null fields when the
-                // entity hasn't been Apollo-matched. When present,
-                // gives the assistant trade-finance risk context
-                // (capital recency / scale) without a separate
-                // lookup_apollo_org call.
-                apollo:
-                  r.apolloFundingStage ||
-                  r.apolloEstimatedEmployees != null ||
-                  r.apolloAnnualRevenue != null ||
-                  r.apolloTotalFunding != null ||
-                  r.apolloLatestFundingAt
-                    ? {
-                        fundingStage: r.apolloFundingStage,
-                        latestFundingAt: r.apolloLatestFundingAt,
-                        estimatedEmployees: r.apolloEstimatedEmployees,
-                        annualRevenue: r.apolloAnnualRevenue,
-                        totalFunding: r.apolloTotalFunding,
-                      }
-                    : null,
-              })),
+              entities: rows.map((r) => {
+                const profileUrl = buildEntityProfileUrl({
+                  kind: 'known_entity',
+                  slug: r.slug,
+                });
+                if (!verbose) {
+                  // Slim row — tuned for list / discovery cost. Notes
+                  // capped at 240 chars (enough for a 1-2 sentence
+                  // disambiguator); tags capped at first 6.
+                  const notesPreview =
+                    r.notes && r.notes.length > 240
+                      ? `${r.notes.slice(0, 240).trim()}…`
+                      : r.notes;
+                  return {
+                    id: r.id,
+                    name: r.name,
+                    profileUrl,
+                    country: r.country,
+                    role: r.role,
+                    categories: r.categories,
+                    tags: (r.tags ?? []).slice(0, 6),
+                    notesPreview,
+                    approvalStatus: r.approvalStatus,
+                  };
+                }
+                // Verbose row — same shape as before for back-compat.
+                return {
+                  id: r.id,
+                  name: r.name,
+                  profileUrl,
+                  country: r.country,
+                  role: r.role,
+                  categories: r.categories,
+                  notes: r.notes,
+                  contactEntity: r.contactEntity,
+                  tags: r.tags,
+                  consumptionSignals: (signalsBySlug.get(r.slug) ?? []).map(
+                    (s: {
+                      source: string;
+                      signalKind: string;
+                      fuelType: string | null;
+                      volumeBblYrMin: number | null;
+                      volumeBblYrMax: number | null;
+                      confidence: number;
+                      coverageYear: number | null;
+                      notes: string | null;
+                      sourceUrl: string | null;
+                    }) => ({
+                      source: s.source,
+                      signalKind: s.signalKind,
+                      fuelType: s.fuelType,
+                      volumeBblYrMin: s.volumeBblYrMin,
+                      volumeBblYrMax: s.volumeBblYrMax,
+                      confidence: s.confidence,
+                      coverageYear: s.coverageYear,
+                      notes: s.notes,
+                      sourceUrl: s.sourceUrl,
+                    }),
+                  ),
+                  metadata: r.metadata,
+                  approvalStatus: r.approvalStatus,
+                  approvalApprovedAt: r.approvalApprovedAt,
+                  approvalExpiresAt: r.approvalExpiresAt,
+                  // Apollo enrichment cache — null fields when the
+                  // entity hasn't been Apollo-matched. When present,
+                  // gives the assistant trade-finance risk context
+                  // (capital recency / scale) without a separate
+                  // lookup_apollo_org call.
+                  apollo:
+                    r.apolloFundingStage ||
+                    r.apolloEstimatedEmployees != null ||
+                    r.apolloAnnualRevenue != null ||
+                    r.apolloTotalFunding != null ||
+                    r.apolloLatestFundingAt
+                      ? {
+                          fundingStage: r.apolloFundingStage,
+                          latestFundingAt: r.apolloLatestFundingAt,
+                          estimatedEmployees: r.apolloEstimatedEmployees,
+                          annualRevenue: r.apolloAnnualRevenue,
+                          totalFunding: r.apolloTotalFunding,
+                        }
+                      : null,
+                };
+              }),
               caveat:
                 'Curated analyst rolodex — facts here are public-knowledge basics (refinery name, ' +
                 'operator, country, capacity). Not a substitute for customs/AIS data (Kpler, Vortexa) ' +
