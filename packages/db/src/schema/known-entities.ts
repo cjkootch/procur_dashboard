@@ -47,6 +47,12 @@ export const knownEntities = pgTable(
     /** ISO-3166-1 alpha-2. For multinationals, the headquarters / primary registration. */
     country: text('country').notNull(),
 
+    /** State / province — 2-letter postal or ISO-3166-2 alpha-2
+     *  subdivision code (US: 'IA', 'TX'; Canada: 'ON'). Nullable —
+     *  most non-US/Canada entities stay null. Drives logistics-aware
+     *  search ("midwest grain merchants", "Texas Gulf refiners"). */
+    state: text('state'),
+
     /** 'buyer' | 'seller' | 'trader' | 'producer' | 'refiner'. Free-text
         because real entities often play multiple roles (e.g., a national
         oil company that's both producer + buyer for downstream needs). */
@@ -155,6 +161,7 @@ export const knownEntities = pgTable(
   },
   (table) => ({
     countryIdx: index('known_entities_country_idx').on(table.country),
+    stateIdx: index('known_entities_state_idx').on(table.state),
     roleIdx: index('known_entities_role_idx').on(table.role),
     categoriesIdx: index('known_entities_categories_idx').using('gin', table.categories),
     tagsIdx: index('known_entities_tags_idx').using('gin', table.tags),
