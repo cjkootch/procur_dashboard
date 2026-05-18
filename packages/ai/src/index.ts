@@ -76,6 +76,11 @@ export {
   type ExtractCompanyProfileResult,
 } from './tasks/extract-company-profile';
 export { embedText, embedMany, EMBEDDING_MODEL, EMBEDDING_DIMS } from './embeddings';
+export {
+  parseRolodexQuery,
+  RolodexQueryFilters,
+  type RolodexQueryFiltersT,
+} from './parse-rolodex-query';
 export * as assistant from './assistant';
 export {
   runAgentTurn,

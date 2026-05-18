@@ -11,6 +11,7 @@ import { KycBadge } from '../../../components/KycBadge';
 import { MapViewClient } from './_components/MapViewClient';
 import type { MapEntity } from './_components/MapView';
 import { lookupCountryCentroid } from '../../../lib/known-entity-centroids';
+import { smartSearchAction } from './actions';
 
 /**
  * Known-entities rolodex page — analyst-curated buyers / sellers /
@@ -117,6 +118,10 @@ interface Props {
     q?: string;
     view?: string;
     approval?: string;
+    /** Original NL query echoed back by smartSearchAction. Drives the
+     *  "Interpreted as …" banner so the operator can see what the LLM
+     *  picked + revert if it misread. */
+    smart?: string;
   }>;
 }
 
@@ -300,9 +305,11 @@ function isNoiseTag(t: string): boolean {
 }
 
 export default async function KnownEntitiesPage({ searchParams }: Props) {
-  const { category, country, role, tag, q, view, approval } = await searchParams;
+  const { category, country, role, tag, q, view, approval, smart } =
+    await searchParams;
   const categoryTag = category && category !== 'all' ? category : undefined;
   const nameQuery = q?.trim() || undefined;
+  const smartQuery = smart?.trim() || undefined;
   const activeView: 'list' | 'map' = view === 'map' ? 'map' : 'list';
   const approvalFilter = parseApprovalFilter(approval);
 
@@ -361,6 +368,7 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
       q: string;
       view: string;
       approval: string;
+      smart: string;
     }>,
   ) => {
     const next = new URLSearchParams();
@@ -378,6 +386,8 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
     if (v && v !== 'list') next.set('view', v);
     const a = override.approval ?? approvalFilter ?? '';
     if (a) next.set('approval', a);
+    const s = override.smart ?? smart;
+    if (s) next.set('smart', s);
     const qs = next.toString();
     return qs ? `/suppliers/known-entities?${qs}` : '/suppliers/known-entities';
   };
@@ -486,7 +496,7 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
   const containerClass =
     activeView === 'map'
       ? 'mx-auto max-w-screen-2xl px-4 py-6'
-      : 'mx-auto max-w-6xl px-6 py-10';
+      : 'mx-auto max-w-7xl px-4 py-8 sm:px-6';
 
   return (
     <div className={containerClass}>
@@ -512,351 +522,447 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
         </div>
       </header>
 
-      <section className="mb-6 space-y-3 text-xs">
-        {/* Always-visible top row: name search + active filters + the
-            full-filters disclosure trigger. The full chip walls live
-            inside <details> so the page stays scannable when nothing
-            is selected. */}
-        <div className="flex flex-wrap items-center gap-2">
-          <form
-            action="/suppliers/known-entities"
-            method="get"
-            className="flex items-center gap-1"
+      {/* Smart-search bar — full-width across the page above the two-
+          column body. Free-text NLP → server action parses to filters
+          via Haiku → redirects with structured URL params. Falls back
+          to plain ?q= if the LLM is unavailable. */}
+      <form
+        action={smartSearchAction}
+        className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center"
+      >
+        <div className="relative flex-1">
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-[color:var(--color-muted-foreground)]"
           >
-            {/* Hidden inputs preserve every other active filter on
-                submit so search doesn't wipe out the rest of the
-                URL state. */}
-            {category && category !== 'all' && (
-              <input type="hidden" name="category" value={category} />
-            )}
-            {country && <input type="hidden" name="country" value={country} />}
-            {role && <input type="hidden" name="role" value={role} />}
-            {tag && <input type="hidden" name="tag" value={tag} />}
-            {approvalFilter && (
-              <input type="hidden" name="approval" value={approvalFilter} />
-            )}
-            {activeView !== 'list' && (
-              <input type="hidden" name="view" value={activeView} />
-            )}
-            <input
-              type="search"
-              name="q"
-              defaultValue={nameQuery ?? ''}
-              placeholder="Search name…"
-              className="w-48 rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs outline-none placeholder:text-[color:var(--color-muted-foreground)] focus:border-[color:var(--color-foreground)]/50"
-            />
-          </form>
-
-          {activeFilters.map((f) => (
-            <Link
-              key={f.key}
-              href={f.clearHref}
-              className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40 px-2 py-1 hover:bg-[color:var(--color-muted)]"
-              title={`Clear ${f.key}`}
-            >
-              <span>{f.label}</span>
-              <span aria-hidden="true" className="text-[color:var(--color-muted-foreground)]">
-                ×
-              </span>
-            </Link>
-          ))}
-          {activeFilters.length > 1 && (
-            <Link
-              href="/suppliers/known-entities"
-              className="text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
-            >
-              clear all
-            </Link>
-          )}
-
-          {/* Disclosure trigger lives at the right edge of the same
-              row when there's space, drops to next line when it
-              wraps. */}
-          <details className="group ml-auto">
-            <summary className="cursor-pointer list-none rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-2 py-1 hover:border-[color:var(--color-foreground)]">
-              <span>Filters</span>
-              <span
-                aria-hidden="true"
-                className="ml-1 inline-block transition-transform group-open:rotate-180"
-              >
-                ▾
-              </span>
-            </summary>
-            {/* Panel rendered as a sibling block. Tailwind doesn't
-                surface a `details[open]` selector so we use the
-                `group-open:` variant on the trigger for the chevron
-                and rely on details' native open/close for the panel.
-                The panel is INSIDE <details> so it's only in the DOM
-                when expanded. */}
-            <div className="mt-3 space-y-2 rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/20 p-3">
-              <FilterRow label="Category">
-                {CATEGORY_OPTIONS.map((c) => (
-                  <FilterChip
-                    key={c}
-                    href={baseHref({ category: c })}
-                    active={(category ?? 'all') === c}
-                    label={c}
-                  />
-                ))}
-              </FilterRow>
-              <FilterRow label="Role">
-                {ROLE_OPTIONS.map((r) => (
-                  <FilterChip
-                    key={r.value}
-                    href={baseHref({ role: r.value })}
-                    active={(role ?? '') === r.value}
-                    label={r.label}
-                  />
-                ))}
-              </FilterRow>
-              <FilterRow label="Region">
-                {regionTags.length === 0 ? (
-                  <span className="text-[color:var(--color-muted-foreground)]">
-                    no region:* tags in rolodex yet
-                  </span>
-                ) : (
-                  regionTags.map((rt) => (
-                    <FilterChip
-                      key={rt.tag}
-                      href={baseHref({ tag: rt.tag })}
-                      active={tag === rt.tag}
-                      label={`${labelRegionTag(rt.tag)} · ${rt.count}`}
-                      title={rt.tag}
-                    />
-                  ))
-                )}
-              </FilterRow>
-              {gradesByRegion.map(({ region, grades }) => (
-                <FilterRow
-                  key={`grade-${region}`}
-                  label={
-                    region === gradesByRegion[0]?.region
-                      ? `Crude grade · ${region}`
-                      : region
-                  }
-                >
-                  {grades.map((g) => {
-                    const compat = `compatible:${g.slug}`;
-                    return (
-                      <FilterChip
-                        key={g.slug}
-                        href={baseHref({ tag: compat })}
-                        active={tag === compat}
-                        label={labelGradeChip(g)}
-                        title={compat}
-                      />
-                    );
-                  })}
-                </FilterRow>
-              ))}
-              <FilterRow label="Tags">
-                {TAG_QUICK_FILTERS.map((t) => (
-                  <FilterChip
-                    key={t}
-                    href={baseHref({ tag: t })}
-                    active={tag === t}
-                    label={t}
-                  />
-                ))}
-              </FilterRow>
-              <FilterRow label="Approval">
-                {APPROVAL_FILTERS.map((f) => (
-                  <FilterChip
-                    key={f.value || 'all'}
-                    href={baseHref({ approval: f.value })}
-                    active={(approvalFilter ?? '') === f.value}
-                    label={f.label}
-                  />
-                ))}
-              </FilterRow>
-            </div>
-          </details>
+            ✨
+          </span>
+          <input
+            type="search"
+            name="query"
+            defaultValue={smartQuery ?? ''}
+            placeholder='Smart search — e.g. "pork suppliers in the midwest", "approved Caribbean fuel buyers"'
+            className="w-full rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] py-2 pl-9 pr-3 text-sm outline-none placeholder:text-[color:var(--color-muted-foreground)] focus:border-[color:var(--color-foreground)]/50"
+          />
         </div>
-      </section>
+        <button
+          type="submit"
+          className="rounded-[var(--radius-md)] border border-[color:var(--color-foreground)] bg-[color:var(--color-foreground)] px-4 py-2 text-sm font-medium text-[color:var(--color-background)] hover:opacity-90"
+        >
+          Search
+        </button>
+      </form>
 
-      <div className="mb-4 flex items-center justify-between gap-4">
-        <p className="text-sm text-[color:var(--color-muted-foreground)]">
-          <span className="font-medium text-[color:var(--color-foreground)] tabular-nums">
-            {rows.length.toLocaleString()}
-            {truncated ? '+' : ''}
-          </span>{' '}
-          {rows.length === 1 ? 'entity' : 'entities'}
-          {truncated && (
-            <span className="ml-2 text-xs">
-              (capped — narrow filters to see all)
-            </span>
-          )}
-        </p>
-        <div className="flex gap-1 text-xs">
+      {smartQuery && (
+        <div className="mb-4 rounded-[var(--radius-md)] border border-[color:var(--color-border)] bg-[color:var(--color-muted)]/30 px-3 py-2 text-xs">
+          <span className="text-[color:var(--color-muted-foreground)]">
+            Interpreted{' '}
+            <em className="not-italic text-[color:var(--color-foreground)]">
+              &ldquo;{smartQuery}&rdquo;
+            </em>{' '}
+            as the filters in the left rail.{' '}
+          </span>
           <Link
-            href={baseHref({ view: 'list' })}
-            className={`rounded-[var(--radius-sm)] border px-3 py-1 hover:border-[color:var(--color-foreground)] ${
-              activeView === 'list'
-                ? 'border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40'
-                : 'border-[color:var(--color-border)]'
-            }`}
+            href={baseHref({ smart: '' })}
+            className="underline hover:no-underline"
           >
-            List
-          </Link>
-          <Link
-            href={baseHref({ view: 'map' })}
-            className={`rounded-[var(--radius-sm)] border px-3 py-1 hover:border-[color:var(--color-foreground)] ${
-              activeView === 'map'
-                ? 'border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40'
-                : 'border-[color:var(--color-border)]'
-            }`}
-          >
-            Map
+            Clear smart search
           </Link>
         </div>
-      </div>
+      )}
 
+      {/* Two-column body: left rail of filters + right column of
+          results. On narrow screens the rail collapses above the
+          results. The map view bypasses this — it owns the full
+          width below. */}
       {activeView === 'map' ? (
-        <MapViewClient entities={mapEntities} totalCount={rows.length} />
-      ) : rows.length === 0 ? (
-        <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-8 text-center text-sm text-[color:var(--color-muted-foreground)]">
-          No entities match these filters. Try widening the category or clearing tags.
-        </div>
+        <>
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <p className="text-sm text-[color:var(--color-muted-foreground)]">
+              <span className="font-medium text-[color:var(--color-foreground)] tabular-nums">
+                {rows.length.toLocaleString()}
+                {truncated ? '+' : ''}
+              </span>{' '}
+              {rows.length === 1 ? 'entity' : 'entities'}
+            </p>
+            <div className="flex gap-1 text-xs">
+              <Link
+                href={baseHref({ view: 'list' })}
+                className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-3 py-1 hover:border-[color:var(--color-foreground)]"
+              >
+                List
+              </Link>
+              <Link
+                href={baseHref({ view: 'map' })}
+                className="rounded-[var(--radius-sm)] border border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40 px-3 py-1 hover:border-[color:var(--color-foreground)]"
+              >
+                Map
+              </Link>
+            </div>
+          </div>
+          <MapViewClient entities={mapEntities} totalCount={rows.length} />
+        </>
       ) : (
-        countries.map((c) => {
-          const groupRows = byCountry.get(c)!;
-          const roleCounts = new Map<string, number>();
-          for (const e of groupRows) {
-            roleCounts.set(e.role, (roleCounts.get(e.role) ?? 0) + 1);
-          }
-          const roleBreakdown = [...roleCounts.entries()]
-            .sort((a, b) => b[1] - a[1])
-            .map(([r, n]) => `${n} ${r}${n === 1 ? '' : 's'}`)
-            .join(' · ');
-          return (
-            <section key={c} className="mb-6">
-              <h2 className="mb-2 flex items-baseline gap-2 text-sm font-medium tracking-tight">
-                <span>{formatCountry(c)}</span>
-                <span className="font-mono text-[10px] uppercase text-[color:var(--color-muted-foreground)]">
-                  {c}
-                </span>
-                <span className="text-xs font-normal text-[color:var(--color-muted-foreground)]">
-                  · {roleBreakdown}
-                </span>
-              </h2>
-              <ul className="divide-y divide-[color:var(--color-border)] overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] shadow-sm">
-                {groupRows.map((e) => {
-                  const rawNoteKv = parseNotes(e.notes);
-                  const noteKv = rawNoteKv ? collapseOwnership(rawNoteKv, e.country) : null;
-                  const isPlant = e.role === 'power-plant';
-                  const { stats, remaining } =
-                    isPlant && noteKv
-                      ? extractPlantStats(noteKv)
-                      : { stats: null, remaining: noteKv ?? [] };
-                  const visibleTags = e.tags.filter((t) => !isNoiseTag(t));
-                  const headlineParts: string[] = [];
-                  if (e.role) headlineParts.push(e.role);
-                  if (e.categories.length > 0) headlineParts.push(e.categories.slice(0, 2).join(' · '));
-                  const headline = headlineParts.join(' · ');
-                  const aliasLine =
-                    e.aliases.length > 1
-                      ? e.aliases.filter((a) => a !== e.name).slice(0, 2).join(', ')
-                      : null;
-                  return (
-                    <li
-                      key={e.id}
-                      className="group flex gap-4 px-4 py-4 transition-colors hover:bg-[color:var(--color-muted)]/20"
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[260px_1fr]">
+        {/* ── Left rail: filters ─────────────────────────────────── */}
+        <aside className="space-y-4 text-xs lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto lg:pr-2">
+          <FilterSection title="Search name">
+            <form
+              action="/suppliers/known-entities"
+              method="get"
+              className="space-y-2"
+            >
+              {/* Preserve every other active filter on submit. */}
+              {category && category !== 'all' && (
+                <input type="hidden" name="category" value={category} />
+              )}
+              {country && <input type="hidden" name="country" value={country} />}
+              {role && <input type="hidden" name="role" value={role} />}
+              {tag && <input type="hidden" name="tag" value={tag} />}
+              {approvalFilter && (
+                <input type="hidden" name="approval" value={approvalFilter} />
+              )}
+              {activeView !== 'list' && (
+                <input type="hidden" name="view" value={activeView} />
+              )}
+              {smart && <input type="hidden" name="smart" value={smart} />}
+              <input
+                type="search"
+                name="q"
+                defaultValue={nameQuery ?? ''}
+                placeholder="Search name…"
+                className="w-full rounded-[var(--radius-sm)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] px-2 py-1 text-xs outline-none placeholder:text-[color:var(--color-muted-foreground)] focus:border-[color:var(--color-foreground)]/50"
+              />
+            </form>
+          </FilterSection>
+
+          {activeFilters.length > 0 && (
+            <FilterSection title="Active">
+              <div className="flex flex-wrap gap-1">
+                {activeFilters.map((f) => (
+                  <Link
+                    key={f.key}
+                    href={f.clearHref}
+                    className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40 px-2 py-1 hover:bg-[color:var(--color-muted)]"
+                    title={`Clear ${f.key}`}
+                  >
+                    <span>{f.label}</span>
+                    <span
+                      aria-hidden="true"
+                      className="text-[color:var(--color-muted-foreground)]"
                     >
-                      <div className="pt-0.5">
-                        <EntityAvatar name={e.name} size="md" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <Link
-                            href={`/entities/${encodeURIComponent(e.slug)}`}
-                            className="text-base font-semibold tracking-tight hover:underline"
-                          >
-                            {e.name}
-                          </Link>
-                          {e.approvalStatus && (
-                            <KycBadge
-                              status={e.approvalStatus}
-                              expiresAt={e.approvalExpiresAt}
-                            />
-                          )}
-                          {e.apolloFundingStage && (
-                            <span
-                              className="inline-block rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]"
-                              title={
-                                e.apolloLatestFundingAt
-                                  ? `Latest funding: ${e.apolloLatestFundingAt} (Apollo)`
-                                  : 'Apollo funding stage'
-                              }
-                            >
-                              {e.apolloFundingStage}
-                            </span>
-                          )}
-                        </div>
-                        {headline && (
-                          <p className="mt-0.5 text-sm text-[color:var(--color-muted-foreground)]">
-                            {headline}
-                          </p>
-                        )}
-                        <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
-                          {formatCountry(e.country)}
-                          {aliasLine && <> · aka {aliasLine}</>}
-                        </p>
-                        {stats && (
-                          <p className="mt-2 text-sm tabular-nums">{stats}</p>
-                        )}
-                        {remaining.length > 0 && (
-                          <dl className={`${stats ? 'mt-1.5' : 'mt-2'} grid gap-x-4 gap-y-0.5 sm:grid-cols-2`}>
-                            {remaining.slice(0, 4).map((kv, i) => (
-                              <div key={i} className="flex flex-wrap gap-1 leading-snug">
-                                {kv.key && (
-                                  <dt className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-                                    {kv.key}:
-                                  </dt>
+                      ×
+                    </span>
+                  </Link>
+                ))}
+                {activeFilters.length > 1 && (
+                  <Link
+                    href="/suppliers/known-entities"
+                    className="px-1 py-1 text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+                  >
+                    clear all
+                  </Link>
+                )}
+              </div>
+            </FilterSection>
+          )}
+
+          <FilterSection title="Category">
+            <div className="flex flex-wrap gap-1">
+              {CATEGORY_OPTIONS.map((c) => (
+                <FilterChip
+                  key={c}
+                  href={baseHref({ category: c })}
+                  active={(category ?? 'all') === c}
+                  label={c}
+                />
+              ))}
+            </div>
+          </FilterSection>
+
+          <FilterSection title="Role">
+            <div className="flex flex-wrap gap-1">
+              {ROLE_OPTIONS.map((r) => (
+                <FilterChip
+                  key={r.value}
+                  href={baseHref({ role: r.value })}
+                  active={(role ?? '') === r.value}
+                  label={r.label}
+                />
+              ))}
+            </div>
+          </FilterSection>
+
+          <FilterSection title="Approval">
+            <div className="flex flex-wrap gap-1">
+              {APPROVAL_FILTERS.map((f) => (
+                <FilterChip
+                  key={f.value || 'all'}
+                  href={baseHref({ approval: f.value })}
+                  active={(approvalFilter ?? '') === f.value}
+                  label={f.label}
+                />
+              ))}
+            </div>
+          </FilterSection>
+
+          {regionTags.length > 0 && (
+            <FilterSection title="Region">
+              <div className="flex flex-wrap gap-1">
+                {regionTags.map((rt) => (
+                  <FilterChip
+                    key={rt.tag}
+                    href={baseHref({ tag: rt.tag })}
+                    active={tag === rt.tag}
+                    label={`${labelRegionTag(rt.tag)} · ${rt.count}`}
+                    title={rt.tag}
+                  />
+                ))}
+              </div>
+            </FilterSection>
+          )}
+
+          <FilterSection title="Tags">
+            <div className="flex flex-wrap gap-1">
+              {TAG_QUICK_FILTERS.map((t) => (
+                <FilterChip
+                  key={t}
+                  href={baseHref({ tag: t })}
+                  active={tag === t}
+                  label={t}
+                />
+              ))}
+            </div>
+          </FilterSection>
+
+          {/* Crude-grade compatibility chip wall — collapsed by default
+              to keep the rail tight. */}
+          <FilterSection title="Crude grade compatibility">
+            <details className="group">
+              <summary className="cursor-pointer list-none text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]">
+                <span>Expand grades</span>
+                <span
+                  aria-hidden="true"
+                  className="ml-1 inline-block transition-transform group-open:rotate-180"
+                >
+                  ▾
+                </span>
+              </summary>
+              <div className="mt-2 space-y-2">
+                {gradesByRegion.map(({ region, grades }) => (
+                  <div key={`grade-${region}`}>
+                    <div className="mb-1 text-[10px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                      {region}
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {grades.map((g) => {
+                        const compat = `compatible:${g.slug}`;
+                        return (
+                          <FilterChip
+                            key={g.slug}
+                            href={baseHref({ tag: compat })}
+                            active={tag === compat}
+                            label={labelGradeChip(g)}
+                            title={compat}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
+          </FilterSection>
+        </aside>
+
+        {/* ── Right column: results ─────────────────────────────── */}
+        <div>
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <p className="text-sm text-[color:var(--color-muted-foreground)]">
+              <span className="font-medium text-[color:var(--color-foreground)] tabular-nums">
+                {rows.length.toLocaleString()}
+                {truncated ? '+' : ''}
+              </span>{' '}
+              {rows.length === 1 ? 'entity' : 'entities'}
+              {truncated && (
+                <span className="ml-2 text-xs">
+                  (capped — narrow filters to see all)
+                </span>
+              )}
+            </p>
+            <div className="flex gap-1 text-xs">
+              <Link
+                href={baseHref({ view: 'list' })}
+                className="rounded-[var(--radius-sm)] border border-[color:var(--color-foreground)] bg-[color:var(--color-muted)]/40 px-3 py-1 hover:border-[color:var(--color-foreground)]"
+              >
+                List
+              </Link>
+              <Link
+                href={baseHref({ view: 'map' })}
+                className="rounded-[var(--radius-sm)] border border-[color:var(--color-border)] px-3 py-1 hover:border-[color:var(--color-foreground)]"
+              >
+                Map
+              </Link>
+            </div>
+          </div>
+
+          {rows.length === 0 ? (
+            <div className="rounded-[var(--radius-lg)] border border-dashed border-[color:var(--color-border)] p-8 text-center text-sm text-[color:var(--color-muted-foreground)]">
+              No entities match these filters. Try widening the category or clearing tags.
+            </div>
+          ) : (
+            countries.map((c) => {
+              const groupRows = byCountry.get(c)!;
+              const roleCounts = new Map<string, number>();
+              for (const e of groupRows) {
+                roleCounts.set(e.role, (roleCounts.get(e.role) ?? 0) + 1);
+              }
+              const roleBreakdown = [...roleCounts.entries()]
+                .sort((a, b) => b[1] - a[1])
+                .map(([r, n]) => `${n} ${r}${n === 1 ? '' : 's'}`)
+                .join(' · ');
+              return (
+                <section key={c} className="mb-6">
+                  <h2 className="mb-2 flex items-baseline gap-2 text-sm font-medium tracking-tight">
+                    <span>{formatCountry(c)}</span>
+                    <span className="font-mono text-[10px] uppercase text-[color:var(--color-muted-foreground)]">
+                      {c}
+                    </span>
+                    <span className="text-xs font-normal text-[color:var(--color-muted-foreground)]">
+                      · {roleBreakdown}
+                    </span>
+                  </h2>
+                  <ul className="divide-y divide-[color:var(--color-border)] overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-background)] shadow-sm">
+                    {groupRows.map((e) => {
+                      const rawNoteKv = parseNotes(e.notes);
+                      const noteKv = rawNoteKv
+                        ? collapseOwnership(rawNoteKv, e.country)
+                        : null;
+                      const isPlant = e.role === 'power-plant';
+                      const { stats, remaining } =
+                        isPlant && noteKv
+                          ? extractPlantStats(noteKv)
+                          : { stats: null, remaining: noteKv ?? [] };
+                      const visibleTags = e.tags.filter(
+                        (t) => !isNoiseTag(t),
+                      );
+                      const headlineParts: string[] = [];
+                      if (e.role) headlineParts.push(e.role);
+                      if (e.categories.length > 0)
+                        headlineParts.push(e.categories.slice(0, 2).join(' · '));
+                      const headline = headlineParts.join(' · ');
+                      const aliasLine =
+                        e.aliases.length > 1
+                          ? e.aliases.filter((a) => a !== e.name).slice(0, 2).join(', ')
+                          : null;
+                      return (
+                        <li
+                          key={e.id}
+                          className="group flex gap-4 px-4 py-4 transition-colors hover:bg-[color:var(--color-muted)]/20"
+                        >
+                          <div className="pt-0.5">
+                            <EntityAvatar name={e.name} size="md" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <Link
+                                href={`/entities/${encodeURIComponent(e.slug)}`}
+                                className="text-base font-semibold tracking-tight hover:underline"
+                              >
+                                {e.name}
+                              </Link>
+                              {e.approvalStatus && (
+                                <KycBadge
+                                  status={e.approvalStatus}
+                                  expiresAt={e.approvalExpiresAt}
+                                />
+                              )}
+                              {e.apolloFundingStage && (
+                                <span
+                                  className="inline-block rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]"
+                                  title={
+                                    e.apolloLatestFundingAt
+                                      ? `Latest funding: ${e.apolloLatestFundingAt} (Apollo)`
+                                      : 'Apollo funding stage'
+                                  }
+                                >
+                                  {e.apolloFundingStage}
+                                </span>
+                              )}
+                            </div>
+                            {headline && (
+                              <p className="mt-0.5 text-sm text-[color:var(--color-muted-foreground)]">
+                                {headline}
+                              </p>
+                            )}
+                            <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
+                              {formatCountry(e.country)}
+                              {aliasLine && <> · aka {aliasLine}</>}
+                            </p>
+                            {stats && (
+                              <p className="mt-2 text-sm tabular-nums">{stats}</p>
+                            )}
+                            {remaining.length > 0 && (
+                              <dl
+                                className={`${stats ? 'mt-1.5' : 'mt-2'} grid gap-x-4 gap-y-0.5 sm:grid-cols-2`}
+                              >
+                                {remaining.slice(0, 4).map((kv, i) => (
+                                  <div
+                                    key={i}
+                                    className="flex flex-wrap gap-1 leading-snug"
+                                  >
+                                    {kv.key && (
+                                      <dt className="text-[11px] uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+                                        {kv.key}:
+                                      </dt>
+                                    )}
+                                    <dd className="text-sm">{kv.value}</dd>
+                                  </div>
+                                ))}
+                                {remaining.length > 4 && (
+                                  <div className="text-[11px] text-[color:var(--color-muted-foreground)]">
+                                    +{remaining.length - 4} more
+                                  </div>
                                 )}
-                                <dd className="text-sm">{kv.value}</dd>
-                              </div>
-                            ))}
-                            {remaining.length > 4 && (
-                              <div className="text-[11px] text-[color:var(--color-muted-foreground)]">
-                                +{remaining.length - 4} more
+                              </dl>
+                            )}
+                            {e.contactEntity && (
+                              <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+                                Contact: {e.contactEntity}
+                              </p>
+                            )}
+                            {visibleTags.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {visibleTags.slice(0, 6).map((t) => (
+                                  <Link
+                                    key={t}
+                                    href={baseHref({ tag: t })}
+                                    className="rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[11px] text-[color:var(--color-muted-foreground)] hover:border-[color:var(--color-foreground)] hover:text-[color:var(--color-foreground)]"
+                                  >
+                                    {t}
+                                  </Link>
+                                ))}
                               </div>
                             )}
-                          </dl>
-                        )}
-                        {e.contactEntity && (
-                          <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
-                            Contact: {e.contactEntity}
-                          </p>
-                        )}
-                        {visibleTags.length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-1">
-                            {visibleTags.slice(0, 6).map((t) => (
-                              <Link
-                                key={t}
-                                href={baseHref({ tag: t })}
-                                className="rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[11px] text-[color:var(--color-muted-foreground)] hover:border-[color:var(--color-foreground)] hover:text-[color:var(--color-foreground)]"
-                              >
-                                {t}
-                              </Link>
-                            ))}
                           </div>
-                        )}
-                      </div>
-                      <div className="hidden shrink-0 items-start sm:flex">
-                        <Link
-                          href={`/entities/${encodeURIComponent(e.slug)}`}
-                          className="rounded-full border border-[color:var(--color-foreground)]/70 px-3 py-1 text-xs font-medium text-[color:var(--color-foreground)] hover:bg-[color:var(--color-foreground)] hover:text-[color:var(--color-background)]"
-                        >
-                          View profile
-                        </Link>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          );
-        })
+                          <div className="hidden shrink-0 items-start sm:flex">
+                            <Link
+                              href={`/entities/${encodeURIComponent(e.slug)}`}
+                              className="rounded-full border border-[color:var(--color-foreground)]/70 px-3 py-1 text-xs font-medium text-[color:var(--color-foreground)] hover:bg-[color:var(--color-foreground)] hover:text-[color:var(--color-background)]"
+                            >
+                              View profile
+                            </Link>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              );
+            })
+          )}
+        </div>
+      </div>
       )}
 
       <footer className="mt-10 border-t border-[color:var(--color-border)] pt-4 text-xs text-[color:var(--color-muted-foreground)]">
@@ -868,16 +974,18 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
   );
 }
 
-function FilterRow({
-  label,
+function FilterSection({
+  title,
   children,
 }: {
-  label: string;
+  title: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="min-w-20 text-[color:var(--color-muted-foreground)]">{label}:</span>
+    <div>
+      <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
+        {title}
+      </div>
       {children}
     </div>
   );
