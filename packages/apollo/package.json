@@ -11,7 +11,8 @@
   "scripts": {
     "type-check": "tsc --noEmit",
     "clean": "rm -rf dist .turbo node_modules",
-    "enrich-mpi": "tsx src/scripts/enrich-mpi.ts"
+    "enrich-mpi": "tsx src/scripts/enrich-mpi.ts",
+    "enrich-known-entities": "tsx src/scripts/enrich-known-entities.ts"
   },
   "dependencies": {
     "@procur/db": "workspace:*",
