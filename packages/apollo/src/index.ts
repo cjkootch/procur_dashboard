@@ -69,6 +69,12 @@ export {
 } from './usda-fsis-mpi-enrich';
 
 export {
+  enrichKnownEntitiesViaApollo,
+  type KnownEntitiesEnrichArgs,
+  type KnownEntitiesEnrichResult,
+} from './known-entities-enrich';
+
+export {
   searchPeople,
   enrichPerson,
   enrichPeopleBulk,
