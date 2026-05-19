@@ -119,6 +119,11 @@ interface Props {
     q?: string;
     view?: string;
     approval?: string;
+    /** Override the default per-page result cap. Default 500. Power
+     *  users can pass ?limit=5000 to dump a bigger set; the catalog
+     *  layer hard-caps at 50_000. The trade-off is INP — rendering
+     *  thousands of entity rows balloons React hydration time. */
+    limit?: string;
     /** Original NL query echoed back by smartSearchAction. Drives the
      *  "Interpreted as …" banner so the operator can see what the LLM
      *  picked + revert if it misread. */
@@ -306,7 +311,7 @@ function isNoiseTag(t: string): boolean {
 }
 
 export default async function KnownEntitiesPage({ searchParams }: Props) {
-  const { category, country, state, role, tag, q, view, approval, smart } =
+  const { category, country, state, role, tag, q, view, approval, smart, limit } =
     await searchParams;
   const categoryTag = category && category !== 'all' ? category : undefined;
   const nameQuery = q?.trim() || undefined;
@@ -314,19 +319,21 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
   const smartQuery = smart?.trim() || undefined;
   const activeView: 'list' | 'map' = view === 'map' ? 'map' : 'list';
   const approvalFilter = parseApprovalFilter(approval);
+  // Default cap keeps the React hydration tree tractable — at ~30 DOM
+  // nodes per entity row, 500 rows is ~15k nodes which hydrates in
+  // ~100-200ms. The prior 50_000 default was OK with a small rolodex
+  // but tripped INP once we ingested the FSIS + GAIN cohorts. Power
+  // users override via ?limit=N (catalog hard-caps at 50k).
+  const queryLimitOverride = limit ? Number.parseInt(limit, 10) : null;
+  const queryLimit =
+    queryLimitOverride && Number.isFinite(queryLimitOverride) && queryLimitOverride > 0
+      ? Math.min(queryLimitOverride, 50_000)
+      : 500;
 
   // Per-tenant approval state: requires the company id, so resolve
   // the auth context here (the rolodex is an authenticated surface).
   const { company } = await requireCompany();
 
-  // The full rolodex is currently a few thousand rows and growing
-  // (refiners + traders + producers + power plants + env-services
-  // ingest). 50k ceiling matches the lookupKnownEntities upper bound
-  // so the page is effectively uncapped for browsing — the previous
-  // 2k list cap was tripping the "capped, narrow filters" UI for
-  // normal use. The "capped" message still appears if the response
-  // genuinely hits 50k, which would be a real signal to paginate.
-  const queryLimit = 50_000;
   const [rows, allCrudeGrades, regionTags] = await Promise.all([
     lookupKnownEntities({
       categoryTag,
@@ -390,6 +397,7 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
       view: string;
       approval: string;
       smart: string;
+      limit: string;
     }>,
   ) => {
     const next = new URLSearchParams();
@@ -411,6 +419,8 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
     if (a) next.set('approval', a);
     const s = override.smart ?? smart;
     if (s) next.set('smart', s);
+    const l = override.limit ?? limit;
+    if (l && l !== '500') next.set('limit', l);
     const qs = next.toString();
     return qs ? `/suppliers/known-entities?${qs}` : '/suppliers/known-entities';
   };
@@ -657,6 +667,9 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
                 <input type="hidden" name="view" value={activeView} />
               )}
               {smart && <input type="hidden" name="smart" value={smart} />}
+              {limit && limit !== '500' && (
+                <input type="hidden" name="limit" value={limit} />
+              )}
               <input
                 type="search"
                 name="q"
@@ -840,7 +853,14 @@ export default async function KnownEntitiesPage({ searchParams }: Props) {
               {rows.length === 1 ? 'entity' : 'entities'}
               {truncated && (
                 <span className="ml-2 text-xs">
-                  (capped — narrow filters to see all)
+                  (capped at {queryLimit.toLocaleString()} —{' '}
+                  <Link
+                    href={baseHref({ limit: '5000' })}
+                    className="underline hover:no-underline"
+                  >
+                    show 5,000
+                  </Link>{' '}
+                  · narrow filters to see all)
                 </span>
               )}
             </p>
